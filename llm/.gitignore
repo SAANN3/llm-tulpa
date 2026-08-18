@@ -1,0 +1,6 @@
+*.gguf
+Modelfile
+.model_hash
+.ollama/
+.env
+.cache

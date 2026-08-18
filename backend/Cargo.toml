@@ -1,0 +1,24 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1.91"
+axum = "0.8.9"
+chrono = { version = "0.4", features = ["clock"] }
+dirs = "6.0.0"
+gfxinfo = "0.1.2"
+log = "0.4.33"
+reqwest = { version = "0.13.4", features = ["json"] }
+sea-orm = { version = "2.0.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sysinfo = "0.39.6"
+tokio = { version = "1.53.1", features = ["full"] }
+tool_derive = { path = "tool_derive" }
+tower-http = { version = "0.7.0", features = ["cors"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+utoipa = { version = "5.5.0", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }

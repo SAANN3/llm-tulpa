@@ -1,0 +1,75 @@
+include:
+  - postgres/compose.yaml
+  - llm/compose.yaml
+
+services:
+  backend:
+    build:
+      context: ./backend
+      # The isolated build-time network can't resolve deb.debian.org on this
+      # machine (a systemd-resolved-style local stub resolver that only the host
+      # itself can reach, not the container's own bridge network) — building
+      # against the host's network directly sidesteps that instead of requiring a
+      # system-wide Docker daemon DNS override.
+      network: host
+    # Runs as the invoking user instead of root, so files the storage.* tools create
+    # on the host (through the passthrough below) are owned by you, not root — no
+    # value is hardcoded here, it's whoever ran `docker compose up`. Named HOST_UID/
+    # HOST_GID rather than UID/GID: UID is a bash builtin, readonly — `UID=... cmd`
+    # silently fails to set it (bash errors but still runs the command). Set them
+    # explicitly since bash doesn't export these to child processes by default:
+    #   HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose up -d
+    # (`id -g "$(whoami)"` rather than bare `id -g` — if docker access came from
+    # `newgrp docker` instead of a real relogin, the current shell's *effective*
+    # group is temporarily `docker`, not your real one; looking the group up by
+    # username directly sidesteps that.)
+    # Falls back to 1000:1000 (the common first-user default on Linux) if unset.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME:-local-llm}
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+      - DATABASE_NAME=${DATABASE_NAME:-llm_tulpa}
+      - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
+      # Same variable name/default as llm/compose.yaml's OLLAMA_CONTEXT_LENGTH — set
+      # it once (e.g. in a root .env file) and both Ollama's real context and this
+      # backend's token-budget math stay in sync.
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
+      # 0.0.0.0 inside the container so Docker's port publishing can reach it — the
+      # host-side publish below is what actually keeps this loopback-only from
+      # outside the machine, matching the native default's intent.
+      - BIND_ADDR=0.0.0.0:3000
+      - HOME=${HOME}
+      # Tells os.get_disk_space where the host's real root is mounted (below), so it
+      # reports genuine host disk stats instead of the container's own storage.
+      - HOST_ROOT=/hostfs
+    volumes:
+      # Passthrough so the storage.* tools can read/write real files at the same
+      # absolute paths as a native run. Docker won't let a bind mount target `/`
+      # itself, so this covers every user's home directory instead — everything
+      # actually used so far lives under `~`. Add more top-level mounts the same
+      # way (e.g. `- "/mnt:/mnt"`) if something outside `/home` ever needs to be
+      # reachable too.
+      - "/home:/home"
+      # Read-only, separate from the passthrough above — exists only so
+      # os.get_disk_space can see the host's real root filesystem (size/used/free),
+      # not for tools to read/write through it.
+      - "/:/hostfs:ro"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - postgres
+      - ollama
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      network: host
+      args:
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

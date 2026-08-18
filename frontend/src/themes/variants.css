@@ -1,0 +1,258 @@
+[data-variant="primary"] {
+  background-color: var(--color-primary);
+  color: var(--color-secondary);
+}
+
+[data-variant="secondary"] {
+  background-color: var(--color-secondary);
+  color: var(--color-primary);
+}
+
+[data-variant="tertiary"] {
+  background-color: var(--color-tertiary);
+  color: var(--color-secondary);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-secondary);
+  color: var(--color-primary);
+}
+
+/*
+ * Per-element shape rules. These stay theme-agnostic on purpose: every color here is
+ * `currentColor`, which already resolves to whatever the `[data-variant="..."]` rules
+ * above set as that element's text color, so borders/focus rings automatically match
+ * the active variant/theme with no extra tokens. This is what replaces each element's
+ * native browser chrome (the default gray border every form control ships with).
+ */
+[data-variant] {
+  box-sizing: border-box;
+  font: inherit;
+}
+
+[data-variant]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+div[data-variant],
+img[data-variant] {
+  border-radius: 8px;
+}
+
+button[data-variant],
+input[type='text'][data-variant],
+textarea[data-variant] {
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0.5em 0.8em;
+}
+
+button[data-variant] {
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.05s ease;
+}
+
+button[data-variant]:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+button[data-variant]:active:not(:disabled) {
+  filter: brightness(0.85);
+  transform: translateY(1px);
+}
+
+button[data-variant]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/*
+ * `Select` isn't a native `<select>` — the closed box and the options list are both
+ * plain elements we draw ourselves, since the native element's open dropdown panel
+ * can't be restyled across browsers regardless of `appearance`. `background-color`/
+ * `color` aren't set again here: they're `inherit`ed straight from the `[data-select]`
+ * wrapper's own `[data-variant]` rule above, so there's still exactly one place a
+ * variant's colors are defined.
+ */
+[data-select] {
+  position: relative;
+  display: inline-block;
+  /* Prevents a grid/flex parent's default stretch from growing this box to the row's
+     tallest sibling — otherwise the panel's `top: 100%` below opens relative to that
+     stretched height instead of the visible trigger, reading as detached from it. */
+  align-self: start;
+}
+
+[data-select-trigger] {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background-color: inherit;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0.5em 1.8em 0.5em 0.8em;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 1.1em) center, calc(100% - 0.7em) center;
+  background-size: 0.4em 0.4em;
+  background-repeat: no-repeat;
+}
+
+[data-select-trigger]:focus-visible,
+[data-select-trigger][aria-expanded='true'] {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+[data-select-panel] {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background-color: inherit;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+[data-select-option] {
+  padding: 0.4em 0.6em;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+[data-select-option]:hover,
+[data-select-option][aria-selected='true'] {
+  background-color: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+input[type='radio'][data-variant],
+input[type='checkbox'][data-variant]:not([role='switch']) {
+  appearance: none;
+  margin: 0;
+  width: 1.1em;
+  height: 1.1em;
+  border: 2px solid currentColor;
+  background-color: transparent;
+  background-clip: content-box;
+  padding: 2px;
+}
+
+input[type='radio'][data-variant] {
+  border-radius: 50%;
+}
+
+input[type='checkbox'][data-variant]:not([role='switch']) {
+  border-radius: 4px;
+}
+
+input[type='radio'][data-variant]:checked,
+input[type='checkbox'][data-variant]:not([role='switch']):checked {
+  background-color: currentColor;
+}
+
+input[type='checkbox'][role='switch'][data-variant] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  margin: 0;
+  width: 2.2em;
+  height: 1.2em;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+input[type='checkbox'][role='switch'][data-variant]::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: calc(1.2em - 8px);
+  height: calc(1.2em - 8px);
+  border-radius: 50%;
+  background-color: currentColor;
+  box-shadow: none;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+
+input[type='checkbox'][role='switch'][data-variant]:checked {
+  background-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+input[type='checkbox'][role='switch'][data-variant]:checked::before {
+  transform: translate(1em, -50%);
+}
+
+/*
+ * `ThinkingAnimation` — three dots pulsing in sequence while playing, settling fully
+ * lit and still once `isPlaying` goes false. `currentColor` again, so it tracks
+ * whatever variant/theme is active with no new tokens.
+ */
+[data-thinking] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+[data-thinking-dot] {
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background-color: currentColor;
+  opacity: 0.3;
+}
+
+[data-thinking][data-playing='true'] [data-thinking-dot] {
+  animation: thinking-pulse 1s ease-in-out infinite;
+}
+
+[data-thinking][data-playing='true'] [data-thinking-dot]:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+[data-thinking][data-playing='true'] [data-thinking-dot]:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+[data-thinking][data-playing='false'] [data-thinking-dot] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@keyframes thinking-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}

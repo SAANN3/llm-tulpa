@@ -1,0 +1,22 @@
+services:
+  ollama:
+    image: "ollama/ollama:latest"
+    devices:
+      - "/dev/kfd:/dev/kfd"
+      - "/dev/dri:/dev/dri"
+    environment:
+      - MODEL_FILE=${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-2h}
+    volumes:
+      - ".:/root"
+    ports:
+      - "127.0.0.1:11434:11434"
+    entrypoint: ["/bin/sh", "/root/start.sh"]
+    # Almost every outbound call (Ollama's cloud calls included) resolves a hostname
+    # first — pointing DNS at the container's own loopback, where nothing listens on
+    # port 53, makes any such lookup fail instantly instead of hanging on a timeout.
+    # Doesn't touch routing/port-publishing at all (unlike an isolated network, which
+    # broke the published port here), and local serving needs no DNS to work.
+    dns:
+      - 127.0.0.1
