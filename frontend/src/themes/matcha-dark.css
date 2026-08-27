@@ -1,5 +1,5 @@
-:root[data-theme="matcha-dark"] {
-  --color-primary: #6B8F71;
+[data-theme="matcha-dark"] {
+  --color-primary: #9FBB9F;
   --color-secondary: #1D1E18;
   --color-tertiary: #AAD2BA;
 }

@@ -1,47 +1,78 @@
-import { useState } from 'react'
-
-import { Button, Checkbox, Div, Icon, Input, Label, RadioButton, Select, TextField, ToggleSwitch } from './primitives'
+import { Div, Label, RadioButton } from './primitives'
 import { useTheme } from '../context/useTheme'
+import { themeDisplayNames } from '../themes'
 import type { ThemeName } from '../themes'
 
-/** Renders every primitive once, wired to local state so you can actually interact with them — for eyeballing what the active theme's colors/CSS do to them. */
-export function ThemePreview() {
-  const [inputText, setInputText] = useState('Input')
-  const [textFieldText, setTextFieldText] = useState('TextField')
-  const [selected, setSelected] = useState('One')
-  const [radioValue, setRadioValue] = useState('A')
-  const [checked, setChecked] = useState(true)
-  const [toggled, setToggled] = useState(true)
-  const {themeName, setThemeName, themeNames} = useTheme()
+const CARD_HEIGHT = 66
 
+/** A miniature, non-interactive rendering of the app's own layout (sidebar strip, an
+ * accent row, a right-aligned "user" line, two muted "assistant" lines) — colored from
+ * `theme`'s own tokens via a locally-scoped `data-theme`, independent of whichever
+ * theme is actually active on the page. See `THEMING.md`'s "Safe: a theme's own
+ * colors" section — the same `[data-theme="..."]` rule that colors the whole app off
+ * `:root` colors this card off its own wrapper instead. */
+function ThemeMiniature({ theme }: { theme: ThemeName }) {
   return (
-    <Div className="vbox" style={{ gap: 4 }}>
-      <Select values={themeNames as string[]} onChosen={(x) => setThemeName(x as ThemeName)} selected={themeName}/>
-      <Label variant="secondary" text="Select theme that will be used for ui." />
-      <Div
-        className="panel"
+    <div
+      data-theme={theme}
+      style={{
+        display: 'flex',
+        height: CARD_HEIGHT,
+        width: '100%',
+        border: '1px solid var(--color-border)',
+        borderRadius: 7,
+        overflow: 'hidden',
+        background: 'var(--color-secondary)',
+        color: 'var(--color-primary)',
+      }}
+    >
+      <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(150px, 1fr))',
-          gap: 16,
-          padding: 16,
-          justifyItems: 'center',
-          alignItems: 'center',
+          width: 26,
+          background: 'var(--color-surface)',
+          borderRight: '1px solid var(--color-border)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+          padding: '5px 4px',
         }}
       >
-        <Label text="Label" />
-        <Button text="Button" onClicked={() => { }} />
-        <Input text={inputText} onChanged={setInputText} />
-        <TextField text={textFieldText} onChanged={setTextFieldText} />
-        <Select values={['One', 'Two', 'Three']} selected={selected} onChosen={setSelected} />
-        <Div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <RadioButton name="preview-radio" value="A" checked={radioValue === 'A'} onChanged={setRadioValue} />
-          <RadioButton name="preview-radio" value="B" checked={radioValue === 'B'} onChanged={setRadioValue} />
-        </Div>
-        <Checkbox toggled={checked} onToggled={setChecked} />
-        <ToggleSwitch toggled={toggled} onToggled={setToggled} />
-        <Icon src="/favicon.svg" />
-      </Div>
+        <div style={{ height: 5, borderRadius: 2, background: 'var(--color-tertiary)' }} />
+        <div style={{ height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.25 }} />
+        <div style={{ height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.25 }} />
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 5px' }}>
+        <div style={{ alignSelf: 'flex-end', width: '70%', height: 4, borderRadius: 2, background: 'currentColor', opacity: 0.7 }} />
+        <div style={{ width: '85%', height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.3 }} />
+        <div style={{ width: '60%', height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.3 }} />
+      </div>
+    </div>
+  )
+}
+
+/** Three clickable theme cards — a miniature preview of each theme plus its name;
+ * picking one applies it immediately via `setThemeName`. */
+export function ThemePreview() {
+  const { themeName, setThemeName, themeNames } = useTheme()
+
+  return (
+    <Div className="vbox" style={{ gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${themeNames.length}, 1fr)`, gap: 10 }}>
+        {themeNames.map((theme) => (
+          <Div
+            key={theme}
+            className="vbox"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            onClick={() => setThemeName(theme)}
+          >
+            <ThemeMiniature theme={theme} />
+            <Div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <RadioButton name="theme-picker" value={theme} checked={themeName === theme} onChanged={() => setThemeName(theme)} />
+              <Label text={themeDisplayNames[theme]} style={{ fontSize: 13 }} />
+            </Div>
+          </Div>
+        ))}
+      </div>
     </Div>
   )
 }

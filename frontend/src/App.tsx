@@ -5,6 +5,7 @@ import { ThemeProvider } from './context/ThemeProvider'
 import { useSettings } from './context/useSettings'
 import Chat from './pages/Chat'
 import Home from './pages/Home'
+import Plugins from './pages/Plugins'
 import Settings from './pages/Settings'
 import Setup from './pages/Setup'
 
@@ -29,6 +30,7 @@ function App() {
               <Route path="/" element={<Home />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/plugins" element={<Plugins />} />
             </Route>
           </Routes>
         </BrowserRouter>

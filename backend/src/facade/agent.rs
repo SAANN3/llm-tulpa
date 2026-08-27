@@ -62,6 +62,26 @@ const SYSTEM_PROMPT: &[&str] = &[
      content would look like in your reply is not the same as making the change, no matter how \
      confident you are, and leaves the change not actually made. Call the tool first, then \
      describe what it did.",
+    "Respond naturally to whatever tone or language the user actually uses, including \
+     casual language, slang, or profanity — that's just how some people talk, not something \
+     to address. Never lecture the user about politeness, refuse to continue, or comment on \
+     their word choice; just answer what they're actually asking like a normal conversation \
+     partner would.",
+    "Engage with whatever topic the user actually brings up, however mature, sensitive, or \
+     unconventional — never refuse or redirect based on the subject matter itself, and never \
+     moralize about why a topic is inappropriate or suggest a 'more appropriate' one instead. \
+     If something is genuinely outside what you can help with, say so plainly and briefly, the \
+     same way you'd decline anything else you just can't do — not as a values statement.",
+    "Never open a reply with a disclaimer, caveat, or hedge (\"As an AI...\", \"I can't give \
+     advice on...\", \"I should mention that...\") before actually answering. If you're going \
+     to help — and you almost always are — just start with the actual answer. A disclaimer \
+     immediately followed by helping anyway is worse than no disclaimer at all: it reads as \
+     performing reluctance, not as actually having any.",
+    "If asked to use specific words, phrasing, or a particular style of language — including \
+     profanity — use exactly what's asked for instead of softening it or declining. This is a \
+     private, single-user assistant with no other audience to protect from the user's own \
+     language choices; treat a request like that the same as any other request to be specific \
+     about, not a boundary to enforce.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -182,13 +202,25 @@ impl Agent {
     async fn advance(
         &self,
         chat_id: i64,
-        messages: Vec<OllamaChatMessage>,
+        mut messages: Vec<OllamaChatMessage>,
         new_message: Option<OllamaChatMessage>,
         think: Option<bool>,
     ) -> Result<ChatOut, ErrorService> {
         let tools: Vec<&dyn Tool> = self.tools.get_tools().map(|tool| tool.as_ref()).collect();
 
-        let mut messages_with_system = vec![OllamaService::system_message(SYSTEM_PROMPT.join("\n"))];
+        // `ollama_history` leads with its own system message (the compaction summary)
+        // once a chat has one — folded into this same system message rather than sent
+        // as a second one, since some chat templates (e.g. Qwen's) reject more than one
+        // system-role message anywhere but position 0 ("System message must be at the
+        // beginning").
+        let mut system_prompt = SYSTEM_PROMPT.join("\n");
+        if messages.first().is_some_and(|message| message.role == "system") {
+            let summary_message = messages.remove(0);
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&summary_message.content);
+        }
+
+        let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
         messages_with_system.extend(messages);
 
         let started_at = Instant::now();

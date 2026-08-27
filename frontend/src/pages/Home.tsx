@@ -3,13 +3,13 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Div, Label } from '../components/primitives'
+import { Mark } from '../components/Mark'
 import { Sidebar } from '../components/Sidebar'
-import { ThinkingAnimation } from '../components/ThinkingAnimation'
 import { UserInput } from '../components/UserInput'
 import { useChats } from '../hooks/useChats'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { usePrompts } from '../hooks/usePrompts'
-import { setPendingPrompt } from '../pendingPrompt'
+import { setPendingPrompt } from '../utils/pendingPrompt'
 
 function Home() {
   useDocumentTitle('Llm-tulpa')
@@ -67,19 +67,43 @@ function Home() {
     }
   }
 
+  const loading = greetingLoading || creating
+
   return (
     <Div className="page">
       <Sidebar />
-      <Div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 8, gap: 8 }}>
-        <Div className="center vbox" style={{ flex: 1, minHeight: 0, gap: 8 }}>
-          <ThinkingAnimation isPlaying={greetingLoading || creating} />
-          <Label text={greeting} style={{ textAlign: 'center' }} />
+      <Div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '8px 24px 64px',
+        }}
+      >
+        <Div className="center vbox" style={{ flex: 1, minHeight: 0, gap: 26 }}>
+          <Mark spinning={loading} />
+          {loading ? (
+            <Label
+              className="status-line"
+              variant="secondary"
+              text={creating ? 'Starting a chat' : 'Thinking'}
+              style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em' }}
+            />
+          ) : null}
+          {!greetingLoading && greeting ? (
+            <Label
+              className="greeting"
+              text={greeting}
+              style={{ fontSize: 26, lineHeight: 1.4, textAlign: 'center', maxWidth: '24ch', textWrap: 'pretty' }}
+            />
+          ) : null}
           <UserInput
             blocked={creating}
             onSended={onSend}
             placeholder={placeholder || undefined}
             clearOnSend={false}
-            style={{ width: 480, maxWidth: '100%', marginTop: 24 }}
+            style={{ width: 520, maxWidth: '100%' }}
           />
         </Div>
       </Div>

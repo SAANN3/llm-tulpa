@@ -53,27 +53,49 @@ export function UserInput({
   }
 
   return (
-    <Div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%', ...style }}>
-      <Div style={{ display: 'flex', gap: 8, width: '100%' }}>
-        <TextField
-          ref={textareaRef}
-          text={value}
-          onChanged={setValue}
-          placeholder={placeholder}
-          disabled={inputDisabled ?? blocked}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              send()
-            }
-          }}
-          style={{ width: '100%', resize: 'none', maxHeight: `calc(${1 + MAX_EXTRA_LINES} * 1.4em + 1em)`, overflowY: 'auto' }}
-        />
-        <Button text="Send" onClicked={send} disabled={blocked} />
-      </Div>
-      <Div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
-        <Label text="Thinking" style={{ fontSize: 12 }} />
+    <Div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        width: '100%',
+        boxSizing: 'border-box',
+        border: '1px solid var(--color-border)',
+        borderRadius: 12,
+        background: 'var(--color-surface)',
+        padding: 8,
+        ...style,
+      }}
+    >
+      <TextField
+        ref={textareaRef}
+        text={value}
+        onChanged={setValue}
+        placeholder={placeholder}
+        disabled={inputDisabled ?? blocked}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            send()
+          }
+        }}
+        style={{
+          width: '100%',
+          resize: 'none',
+          minHeight: 44,
+          maxHeight: `calc(${1 + MAX_EXTRA_LINES} * 1.4em + 1em)`,
+          overflowY: 'auto',
+          border: 'none',
+          borderRadius: 8,
+          padding: '11px 12px',
+        }}
+      />
+      <Div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Label variant="secondary" text="Enter to send · Shift+Enter for a new line" style={{ fontSize: 11, opacity: 0.6 }} />
+        <Div style={{ flex: 1 }} />
+        <Label variant="secondary" text="Thinking" style={{ fontSize: 12, opacity: 0.6 }} />
         <ToggleSwitch toggled={think} onToggled={setThink} />
+        <Button  text="Send" onClicked={send} disabled={blocked} />
       </Div>
     </Div>
   )

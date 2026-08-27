@@ -1,7 +1,9 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use serde_json::Value;
+use utoipa::ToSchema;
 
 
 /// Anything that can be exposed to the model as a callable tool. One impl per tool.
@@ -89,7 +91,10 @@ impl fmt::Display for ToolType {
 }
 
 /// One parameter in a tool's schema — name, JSON type, and a description the model
-/// reads to decide what value to fill in.
+/// reads to decide what value to fill in. Also doubles as a plugin settings field's
+/// schema (see `plugins::base::PluginBuilder::settings_schema`) — same shape, same
+/// derive, reused rather than duplicated for the frontend's settings-form renderer.
+#[derive(Serialize, ToSchema)]
 pub struct PropertyInfo {
     pub name: String,
     pub property_type: PropertyType,
@@ -102,6 +107,8 @@ pub struct PropertyInfo {
 
 /// JSON Schema primitive types, restricted to what Ollama's tool-calling schema
 /// actually accepts as a parameter type.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum PropertyType {
     String,
     Number,

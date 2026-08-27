@@ -24,3 +24,31 @@
 .bordered-right {
   border-right: 1px solid currentColor;
 }
+
+/* A section heading — e.g. the sidebar's "Utils"/"Chats"/"Today" labels. */
+.section-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+
+/* One row in a clickable list (chat entries, and anything similar later).
+   `:not([data-variant])` keeps the hover tint off a row that's already filled via its
+   own selected-state variant, so the two don't visually fight. */
+.list-row {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.list-row:not([data-variant]):hover {
+  background-color: var(--color-surface-strong);
+}
+
+/* Tool names, JSON, paths, timestamps echoed back, and title text like `[ Settings ]`. */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

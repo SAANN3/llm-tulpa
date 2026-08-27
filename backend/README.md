@@ -35,8 +35,10 @@ src/
 ├── facade/      # orchestration layer between routes and services
 ├── services/    # backend integrations and persistence
 ├── tools/       # every tool the model can call — see TOOLS.md
+├── plugins/     # optional integrations (chat platforms, ...) — see PLUGINS.md
 └── cache/       # background-refreshed caches for expensive-to-generate values
 ```
 
 ## Docs
 - [TOOLS.md](./TOOLS.md) — how the tool system works, how to add a tool, and the current tool list.
+- [PLUGINS.md](./PLUGINS.md) — how the plugin system works, how to add a messaging provider, and the current plugin list.

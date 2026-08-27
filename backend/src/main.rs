@@ -1,5 +1,6 @@
 mod cache;
 mod facade;
+mod plugins;
 mod routes;
 mod services;
 mod state;
@@ -14,9 +15,15 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use cache::user_cache::UserCacheService;
 use facade::{agent::Agent, prompt::PromptFacade};
+use plugins::base::PluginBuilder;
+use plugins::messaging::builder::MessagingProviderBuilder;
+use plugins::messaging::discord::DiscordProvider;
+use plugins::messaging::telegram::TelegramProvider;
+use plugins::messaging::vk::VkProvider;
+use plugins::registry::PluginRegistry;
 use services::{
     chat_store::ChatStore, llm::OllamaService, permission_store::PermissionStore,
-    settings_store::SettingsStore, tools::ToolService,
+    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
 };
 use state::AppState;
 use tools::base::Tool;
@@ -86,6 +93,31 @@ async fn main() {
     );
     let prompt = PromptFacade::new(ollama.clone());
     let user_cache = UserCacheService::new(settings_store.clone(), prompt.clone()).await;
+    let plugin_settings_store = Arc::new(PluginSettingsStore::new(&database_url, &database_name).await);
+    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store));
+
+    // A plugin chat's own `Agent` — empty `ToolService`, so a plugin conversation gets
+    // real persistence and a real reply with zero tool-calling risk, while still
+    // sharing `ollama`/`chat_store`/`permission_store` with the main app's `Agent`
+    // above rather than duplicating those services.
+    let plugin_agent = Arc::new(Agent::new(
+        ollama.clone(),
+        chat_store.clone(),
+        Arc::new(ToolService::new(vec![])),
+        permission_store.clone(),
+        agent_history_len,
+        ollama_context_length,
+    ));
+
+    let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
+        Arc::new(MessagingProviderBuilder::<TelegramProvider>::new(plugin_agent.clone(), chat_store.clone())),
+        Arc::new(MessagingProviderBuilder::<DiscordProvider>::new(plugin_agent.clone(), chat_store.clone())),
+        Arc::new(MessagingProviderBuilder::<VkProvider>::new(plugin_agent, chat_store.clone())),
+    ];
+    plugin_registry
+        .register_many(plugin_builders)
+        .await
+        .expect("registering the known plugin builders should never fail");
 
     let state = Arc::new(AppState {
         ollama,
@@ -95,7 +127,12 @@ async fn main() {
         agent,
         prompt,
         user_cache,
+        plugin_registry,
     });
+
+    // Built separately from `routes::router::router()` — see that function's own doc
+    // comment for why the plugins domain doesn't nest inside it like the others.
+    let plugin_router = routes::plugins::router::router(&state).await;
 
     let cors = CorsLayer::new()
         .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
@@ -104,6 +141,7 @@ async fn main() {
 
     let app = Router::new()
         .nest("/api", routes::router::router())
+        .nest("/api/plugins", plugin_router)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", routes::router::openapi()))
         .layer(cors)
         .with_state(state);

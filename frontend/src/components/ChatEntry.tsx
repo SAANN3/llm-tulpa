@@ -54,7 +54,8 @@ export function ChatEntry({ label, selected, onClicked, onRename, onDelete }: Ch
         onClick={onClicked}
         onContextMenu={openAtCursor}
         variant={selected ? 'primary' : undefined}
-        style={{ padding: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        className="list-row"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
       >
         <Label text={label} />
         {showTrigger ? (

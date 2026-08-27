@@ -33,6 +33,7 @@ export function TypewriterLabel({ style, className, variant = 'secondary', text,
   return (
     <span style={style} className={className} data-variant={variant}>
       {text.slice(0, visibleCount)}
+      <span className="caret">_</span>
     </span>
   )
 }

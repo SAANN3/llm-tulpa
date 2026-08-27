@@ -3,7 +3,7 @@
 ## Quickstart: adding a theme
 1. Create `src/themes/<name>.css`:
    ```css
-   :root[data-theme="<name>"] {
+   [data-theme="<name>"] {
      --color-primary: #...;
      --color-secondary: #...;
      --color-tertiary: #...;
@@ -95,15 +95,20 @@ not.
 
 #### Safe: a theme's own colors, scoped under its own `data-theme`
 ```css
-:root[data-theme="dark"] {
+[data-theme="dark"] {
   --color-primary: #F0EFEA;
   --color-secondary: #1D1E18;
   --color-tertiary: #AAD2BA;
 }
 ```
-Safe by construction: `data-theme` can only equal one string on the real DOM at once, so
-even though every theme's `:root[data-theme="..."]` block ships in the same bundle, only
-one of them ever actually matches at a time. No collision is possible.
+Safe by construction: every rule that reads `var(--color-primary)` etc. resolves it
+through normal CSS inheritance from whatever element the attribute is actually on, so
+even though every theme's `[data-theme="..."]` block ships in the same bundle, only the
+element(s) actually carrying that value pick it up. `ThemeProvider` sets this on
+`document.documentElement` (which also matches `:root`) for the app-wide theme, but
+nothing about the selector requires that — a card that wants to preview one theme's
+colors without switching the whole page can set `data-theme="..."` on its own wrapper
+instead (see `ThemePreview`'s theme-picker cards). No collision is possible either way.
 
 The same goes for anything else scoped under a theme's own `data-theme` that isn't a
 variant color — fonts, spacing, border-radius, whatever look/feel that theme wants:

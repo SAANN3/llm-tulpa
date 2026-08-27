@@ -1,21 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { Button, Div, Input, Label, ToggleSwitch } from '../components/primitives'
+import { Button, Div } from '../components/primitives'
+import { NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
 import { TypewriterLabel } from '../components/TypewriterLabel'
 import { useSettings } from '../context/useSettings'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { requestNotificationPermission } from '../notifications'
+import { requestNotificationPermission } from '../utils/notifications'
+import { validateTimezone } from '../utils/validateTimezone'
 
 /** The browser's local UTC offset in whole hours, used to prefill the timezone field. */
 function browserTimezoneOffsetHours(): number {
   return -new Date().getTimezoneOffset() / 60
 }
-
-/** Matches the backend's `SettingsStore::set_settings` range check. */
-const MIN_TIMEZONE = -12
-const MAX_TIMEZONE = 14
 
 function Settings() {
   useDocumentTitle('Settings')
@@ -44,39 +42,38 @@ function Settings() {
 
   const onBack = () => navigate('/')
 
+  const tz = validateTimezone(timezoneText)
+  const nameValid = name.trim().length > 0
+  const saveDisabled = !nameValid || !tz.valid
+
   const onSave = async () => {
-    const trimmedName = name.trim()
-    if (!trimmedName) return
+    if (saveDisabled) return
 
     const timezone = Number(timezoneText)
-    if (!Number.isInteger(timezone) || timezone < MIN_TIMEZONE || timezone > MAX_TIMEZONE) return
-
-    await setSettings({ name: trimmedName, timezone, notifications_enabled: notificationsEnabled })
+    await setSettings({ name: name.trim(), timezone, notifications_enabled: notificationsEnabled })
     navigate('/')
   }
 
   return (
     <Div className="page center vbox" style={{ gap: 16 }}>
-      <TypewriterLabel text='[ Settings ]' charIntervalMs={30}/>
-      <Div className="panel vbox" style={{ gap: 24 }}>
-        <Div className="vbox" style={{ gap: 4 }}>
-          <Input text={name} onChanged={setName} placeholder="Enter your name" />
-          <Label variant="secondary" text="This name will be used when talking with the AI." />
-        </Div>
-        <Div className="vbox" style={{ gap: 4 }}>
-          <Input text={timezoneText} onChanged={setTimezoneText} placeholder="UTC offset" />
-          <Label variant="secondary" text="Your timezone, detected automatically — change it if it's wrong." />
-        </Div>
+      <TypewriterLabel className="mono" text='[ Settings ]' charIntervalMs={30} style={{ fontSize: 15, letterSpacing: '0.14em' }} />
+      <Div
+        className="vbox"
+        style={{
+          width: 440,
+          padding: 26,
+          gap: 24,
+          borderRadius: 14,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-surface)',
+        }}
+      >
+        <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText} onTimezoneChanged={setTimezoneText} />
         <ThemePreview />
-        <Div className="vbox" style={{ gap: 4 }}>
-          <Div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Label text="Receive notifications when a message is ready" />
-            <ToggleSwitch toggled={notificationsEnabled} onToggled={onToggleNotifications} />
-          </Div>
-        </Div>
+        <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications} />
         <Div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" text="Back" onClicked={onBack} style={{ width: '50%' }} />
-          <Button text="Save" onClicked={onSave} style={{ width: '50%' }} />
+          <Button variant="secondary" text="Back" onClicked={onBack} style={{ flex: 1 }} />
+          <Button text="Save" onClicked={onSave} disabled={saveDisabled} style={{ flex: 1 }} />
         </Div>
       </Div>
     </Div>

@@ -33,33 +33,69 @@ export function ChatMessage({ role, content, created_at, thinking, thought_durat
         display: 'flex',
         flexDirection: 'column',
         alignItems: isUser ? 'flex-end' : 'flex-start',
-        padding: 8,
       }}
     >
-      <div className="markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
-      </div>
-      {thinking ? (
-        <Div className="vbox" style={{ gap: 4, marginBottom: 4, maxWidth: '100%' }}>
-          <Button
-            variant="secondary"
-            text={`${showThinking ? '▾' : '▸'} ${thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}`}
-            onClicked={() => setShowThinking((v) => !v)}
-            style={{ fontSize: 12, padding: '4px 10px', margin: '10px 0px 0px 0px' }}
-          />
-          {showThinking ? (
-            <Div variant="primary" className="panel" style={{ padding: 12, fontSize: 13, opacity: 0.85, whiteSpace: 'pre-wrap' }}>
-              {thinking}
-            </Div>
-          ) : null}
-        </Div>
-      ) : thought_duration_ms != null ? (
-        <Label text={formatThoughtDuration(thought_duration_ms)} style={{ fontSize: 12, opacity: 0.6, marginBottom: 4 }} />
-      ) : null}
       <Div
-        style={{ padding: '2px 8px', borderRadius: 10, marginTop: 4 }}
+        className={isUser ? undefined : 'vbox'}
+        style={
+          isUser
+            ? {
+                maxWidth: '68%',
+                background: 'var(--color-surface-strong)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '12px 12px 4px 12px',
+                padding: '10px 14px',
+                lineHeight: 1.5,
+              }
+            : {
+                maxWidth: '70ch',
+                borderLeft: '2px solid var(--color-border)',
+                paddingLeft: 14,
+                fontSize: 15,
+                lineHeight: 1.55,
+                gap: 8,
+              }
+        }
       >
-        <Label text={new Date(created_at).toLocaleTimeString()} style={{ fontSize: 11 }} />
+        <div className="markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+        </div>
+        {thinking ? (
+          <Div className="vbox" style={{ gap: 4, maxWidth: '100%' }}>
+            <Button
+              variant="secondary"
+              text={`${showThinking ? '▾' : '▸'} ${thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}`}
+              onClicked={() => setShowThinking((v) => !v)}
+              style={{ fontSize: 12, padding: '3px 9px', borderRadius: 5, marginTop: 8, alignSelf: 'flex-start', border: '1px solid var(--color-border)' }}
+            />
+            {showThinking ? (
+              <Div
+                className="panel"
+                style={{
+                  padding: 12,
+                  fontSize: 13,
+                  opacity: 0.85,
+                  whiteSpace: 'pre-wrap',
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                {thinking}
+              </Div>
+            ) : null}
+          </Div>
+        ) : thought_duration_ms != null ? (
+          <Label
+            variant="secondary"
+            text={formatThoughtDuration(thought_duration_ms)}
+            style={{ fontSize: 12, opacity: 0.6, marginTop: 8 }}
+          />
+        ) : null}
+        <Label
+          variant="secondary"
+          text={new Date(created_at).toLocaleTimeString()}
+          style={{ fontSize: 11, opacity: 0.6, marginTop: 6, textAlign: isUser ? 'right' : undefined }}
+        />
       </Div>
     </Div>
   )

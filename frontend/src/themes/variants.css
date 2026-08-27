@@ -1,3 +1,45 @@
+/*
+ * Derived surface tokens — not per-theme (no theme file writes these), computed once
+ * from the real page-background token so every theme gets them automatically. Three
+ * tiers, by role, reused everywhere a surface needs to read as "lifted off the page" by
+ * roughly that much — not one-off per component:
+ *   --color-surface        subtle lift  — panels, cards, the composer. Mixed toward
+ *                           neutral `gray`, not `var(--color-primary)` (this app's text
+ *                           color) — gray's mid lightness pulls a dark theme's
+ *                           background lighter and the light theme's background darker
+ *                           automatically (whichever side of middle-gray the page starts
+ *                           on), which is the direction wanted either way, without
+ *                           dragging in the text color's own hue: a moderately saturated
+ *                           text color (e.g. matcha's green) mixed straight into a
+ *                           near-black background reads as a muddy/swampy tint rather
+ *                           than a clean lift.
+ *   --color-surface-strong stronger lift — hover states, and any surface that needs to
+ *                           read as more prominent than a plain panel (e.g. a persistent
+ *                           chat bubble, which needs more presence than a hover flash but
+ *                           reuses the same value rather than inventing its own). Mixed
+ *                           toward `var(--color-tertiary)` (this app's accent token)
+ *                           instead — at this strength the surface is meant to be
+ *                           *noticed*, so it picks up each theme's own accent hue (mint
+ *                           for Matcha, blue for Slate) rather than reading as flat gray.
+ *   --color-border          most pronounced — borders/dividers. Neutral `gray`, same
+ *                           reasoning as `--color-surface`.
+ *
+ * Scoped to `[data-theme]` (any value), not `:root` — same reasoning as the theme files
+ * themselves (see THEMING.md): recomputing at every element carrying `data-theme` is
+ * what lets a *locally* themed element (e.g. `ThemePreview`'s mini theme-preview cards,
+ * which set `data-theme` on their own wrapper rather than the document root) get its
+ * own correctly-derived surface/border colors instead of inheriting the page's.
+ *
+ * New component work should reach for one of these three before reaching for its own
+ * `color-mix(...)` — a new one-off tint is a sign a 4th tier might be needed here, not a
+ * reason to write it inline.
+ */
+[data-theme] {
+  --color-surface: color-mix(in srgb, gray 6%, var(--color-secondary));
+  --color-surface-strong: color-mix(in srgb, var(--color-tertiary) 12%, var(--color-secondary));
+  --color-border: color-mix(in srgb, gray 18%, var(--color-secondary));
+}
+
 [data-variant="primary"] {
   background-color: var(--color-primary);
   color: var(--color-secondary);
@@ -11,6 +53,16 @@
 [data-variant="tertiary"] {
   background-color: var(--color-tertiary);
   color: var(--color-secondary);
+}
+
+/*
+ * `Label` renders plain inline text, never a filled surface — it shouldn't pick up the
+ * `background-color` half of the rule above just because it shares `[data-variant]` for
+ * its text color. Two attribute selectors beats one on specificity, so this wins over
+ * the rules above regardless of source order.
+ */
+[data-variant][data-label] {
+  background-color: transparent;
 }
 
 html,
@@ -152,6 +204,7 @@ input[type='checkbox'][data-variant]:not([role='switch']) {
   background-color: transparent;
   background-clip: content-box;
   padding: 2px;
+  cursor: pointer;
 }
 
 input[type='radio'][data-variant] {
@@ -254,5 +307,69 @@ input[type='checkbox'][role='switch'][data-variant]:checked::before {
   40% {
     opacity: 1;
     transform: scale(1.15);
+  }
+}
+
+/*
+ * Home's mark (`Mark.tsx`) — spins while loading/creating, sits still and slightly
+ * faded otherwise. The favicon is a four-petal pinwheel, so rotation reads naturally
+ * as "working" with no second loading asset needed.
+ */
+[data-mark] {
+  opacity: 0.9;
+}
+
+[data-mark][data-spinning='true'] {
+  opacity: 1;
+  animation: mark-spin 3.2s linear infinite;
+}
+
+@keyframes mark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Home's loading status line ("Thinking" / "Starting a chat"). */
+.status-line {
+  animation: status-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Home's greeting, on arrival. */
+.greeting {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: greeting-rise 0.5s ease-out forwards;
+}
+
+@keyframes greeting-rise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The blinking `_` caret after a `TypewriterLabel` title (Settings/Setup). */
+.caret {
+  animation: caret-blink 1.1s step-end infinite;
+}
+
+@keyframes caret-blink {
+  from,
+  to {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
   }
 }

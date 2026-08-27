@@ -1,21 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { Button, Div, Input, Label, ToggleSwitch } from '../components/primitives'
+import { Button, Div } from '../components/primitives'
+import { NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
 import { TypewriterLabel } from '../components/TypewriterLabel'
 import { useSettings } from '../context/useSettings'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { requestNotificationPermission } from '../notifications'
+import { requestNotificationPermission } from '../utils/notifications'
+import { validateTimezone } from '../utils/validateTimezone'
 
 /** The browser's local UTC offset in whole hours, used to prefill the timezone field. */
 function browserTimezoneOffsetHours(): number {
   return -new Date().getTimezoneOffset() / 60
 }
-
-/** Matches the backend's `SettingsStore::set_settings` range check. */
-const MIN_TIMEZONE = -12
-const MAX_TIMEZONE = 14
 
 function Setup() {
   useDocumentTitle('Setup')
@@ -44,61 +42,68 @@ function Setup() {
   }
 
   const pages = [
-    <Div className="vbox" style={{ gap: 24 }} key="name">
-      <Div className="vbox" style={{ gap: 4 }}>
-        <Input text={name} onChanged={setName} placeholder="Enter your name" />
-        <Label variant="secondary" text="This name will be used when talking with the AI." />
-      </Div>
-      <Div className="vbox" style={{ gap: 4 }}>
-        <Input text={timezoneText} onChanged={setTimezoneText} placeholder="UTC offset" />
-        <Label variant="secondary" text="Your timezone, detected automatically — change it if it's wrong." />
-      </Div>
-    </Div>,
+    <NameTimezoneFields
+      key="name"
+      name={name}
+      onNameChanged={setName}
+      timezoneText={timezoneText}
+      onTimezoneChanged={setTimezoneText}
+    />,
     <ThemePreview key="theme" />,
-    <Div className="vbox" style={{ gap: 4 }} key="notifications">
-      <Div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <Label text="Receive notifications when a message is ready" />
-        <ToggleSwitch toggled={notificationsEnabled} onToggled={onToggleNotifications} />
-      </Div>
-      <Label variant="secondary" text="Asks your browser for permission — you can change this later in Settings." />
-    </Div>,
+    <NotificationsField key="notifications" enabled={notificationsEnabled} onToggle={onToggleNotifications} />,
   ]
   const isFirstPage = step === 0
   const isLastPage = step === pages.length - 1
 
+  const tz = validateTimezone(timezoneText)
+  const nameValid = name.trim().length > 0
+  const primaryDisabled = !nameValid || !tz.valid
+
   const onBack = () => setStep(step - 1)
 
   const onPrimary = async () => {
-    const trimmedName = name.trim()
-    if (!trimmedName) return
-
-    const timezone = Number(timezoneText)
-    if (!Number.isInteger(timezone) || timezone < MIN_TIMEZONE || timezone > MAX_TIMEZONE) return
+    if (primaryDisabled) return
 
     if (!isLastPage) {
       setStep(step + 1)
       return
     }
 
-    await setSettings({ name: trimmedName, timezone, notifications_enabled: notificationsEnabled })
+    const timezone = Number(timezoneText)
+    await setSettings({ name: name.trim(), timezone, notifications_enabled: notificationsEnabled })
     navigate('/')
   }
 
   return (
     <Div className="page center vbox" style={{ gap: 16 }}>
-      <TypewriterLabel text='[ Setup ]' charIntervalMs={30}/>
-      <Div className="panel vbox" style={{ gap: 24 }}>
+      <TypewriterLabel className="mono" text='[ Setup ]' charIntervalMs={30} style={{ fontSize: 15, letterSpacing: '0.14em' }} />
+      <Div
+        className="vbox"
+        style={{
+          width: 440,
+          padding: 26,
+          gap: 24,
+          borderRadius: 14,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-surface)',
+        }}
+      >
         {pages[step]}
         <Div className="center" style={{ gap: 8 }}>
           {!isFirstPage && <Button variant="secondary" text="Back" onClicked={onBack} />}
-          <Button text={isLastPage ? 'Save' : 'Continue'} onClicked={onPrimary} />
+          <Button text={isLastPage ? 'Save' : 'Continue'} onClicked={onPrimary} disabled={primaryDisabled} />
         </Div>
         <Div className="center" style={{ gap: 8 }}>
           {pages.map((_, i) => (
-            <Div
+            <div
               key={i}
-              variant={i === step ? 'primary' : 'secondary'}
-              style={{ width: 8, height: 8, borderRadius: '50%', border: '1px solid currentColor' }}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                border: '1px solid var(--color-border)',
+                background: i === step ? 'currentColor' : 'transparent',
+              }}
             />
           ))}
         </Div>

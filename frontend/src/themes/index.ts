@@ -12,3 +12,10 @@ import './matcha-dark.css'
 export const themeNames = ['dark', 'white', 'matcha-dark'] as const
 
 export type ThemeName = (typeof themeNames)[number]
+
+/** Human-facing name for each theme, shown on its picker card. */
+export const themeDisplayNames: Record<ThemeName, string> = {
+  'matcha-dark': 'Matcha',
+  white: 'Paper',
+  dark: 'Slate',
+}

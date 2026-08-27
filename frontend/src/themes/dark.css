@@ -1,5 +1,5 @@
-:root[data-theme="dark"] {
-  --color-primary: #F0EFEA;
-  --color-secondary: #1D1E18;
-  --color-tertiary: #AAD2BA;
+[data-theme="dark"] {
+  --color-primary: #CBD5E1;
+  --color-secondary: #0F172A;
+  --color-tertiary: #93B7E0;
 }

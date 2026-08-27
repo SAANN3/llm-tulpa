@@ -1,6 +1,6 @@
 [package]
 name = "backend"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -10,13 +10,17 @@ chrono = { version = "0.4", features = ["clock"] }
 dirs = "6.0.0"
 gfxinfo = "0.1.2"
 log = "0.4.33"
-reqwest = { version = "0.13.4", features = ["json"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
+reqwest = { version = "0.13.4", features = ["json", "form"] }
 sea-orm = { version = "2.0.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serenity = { version = "0.12.5", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
 sysinfo = "0.39.6"
+teloxide-core = { version = "0.13.0", default-features = false, features = ["rustls"] }
 tokio = { version = "1.53.1", features = ["full"] }
 tool_derive = { path = "tool_derive" }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

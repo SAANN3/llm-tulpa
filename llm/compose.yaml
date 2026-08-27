@@ -4,12 +4,32 @@ services:
     devices:
       - "/dev/kfd:/dev/kfd"
       - "/dev/dri:/dev/dri"
+    # Docker's default locked-memory limit (8MB) is far too small for pinning a
+    # large model's GPU-DMA host buffer — without this, that allocation silently
+    # falls back to slow, page-fault-driven regular memory instead of failing loudly.
+    ulimits:
+      memlock: -1
     environment:
       - MODEL_FILE=${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-2h}
+      # Ollama's own default (5m) can be too short for a large, mostly-CPU-offloaded
+      # model under real desktop memory pressure — this only gives a slow-but-viable
+      # load more time to finish, it doesn't change how much memory it needs.
+      - OLLAMA_LOAD_TIMEOUT=${OLLAMA_LOAD_TIMEOUT:-15m}
     volumes:
       - ".:/root"
+      # Overlays just the (often large) model file on top of the bind mount above,
+      # from wherever MODEL_DIR actually points — lets the .gguf live on faster
+      # storage than this project's own directory without touching start.sh/
+      # Modelfile.template, which only ever see it at /root/<MODEL_FILE>.
+      - "${MODEL_DIR:-.}/${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}:/root/${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}:ro"
+      # Ollama's own model store (~/.ollama, i.e. /root/.ollama here) is a separate
+      # copy it builds from the .gguf above via `ollama create` — this is what
+      # actually gets read at load time, so it needs to be on fast storage too, not
+      # just the source file. Points at OLLAMA_DATA_DIR so it's as relocatable as
+      # the model file itself.
+      - "${OLLAMA_DATA_DIR:-./.ollama}:/root/.ollama"
     ports:
       - "127.0.0.1:11434:11434"
     entrypoint: ["/bin/sh", "/root/start.sh"]

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 
 import { getChats } from '../api/chats/get'
 import { ChatMessage } from '../components/ChatMessage'
+import { DateSeparator } from '../components/DateSeparator'
 import type { LazyListHandle } from '../components/LazyList'
 import { LazyList } from '../components/LazyList'
 import { PendingAssistantMessage } from '../components/PendingAssistantMessage'
@@ -14,7 +15,8 @@ import { UserInput } from '../components/UserInput'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import type { Decisions, PendingConfirmations, TurnResult } from '../hooks/useMessages'
 import { useMessages } from '../hooks/useMessages'
-import { consumePendingPrompt, peekPendingPrompt } from '../pendingPrompt'
+import { consumePendingPrompt, peekPendingPrompt } from '../utils/pendingPrompt'
+import { isSameDay } from '../utils/dates'
 
 /** A paused turn's confirm callback, held onto until the user decides. */
 interface PausedTurn {
@@ -60,6 +62,14 @@ function ChatView({ chatId }: { chatId: number }) {
       cancelled = true
     }
   }, [chatId])
+
+  // Per-message-index override of the collapsed default for `ToolMessage`. `ChatView` is
+  // reused across a chat switch (see the comment on `chatIdRef` below), so this needs its
+  // own reset alongside `pausedTurn`'s — otherwise a tool card left expanded in one chat
+  // would still show expanded after switching to another.
+  const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({})
+  const toggleToolExpanded = (index: number) =>
+    setExpandedTools((prev) => ({ ...prev, [index]: !prev[index] }))
 
   // Set whenever a turn pauses on a call needing a decision — cleared once `confirm`
   // resolves to a `TurnResult` that doesn't need one (possibly after several rounds, if
@@ -114,6 +124,7 @@ function ChatView({ chatId }: { chatId: number }) {
   // if the newly opened chat has its own pause waiting.
   useEffect(() => {
     setPausedTurn(null)
+    setExpandedTools({})
   }, [chatId])
 
   useEffect(() => {
@@ -137,27 +148,39 @@ function ChatView({ chatId }: { chatId: number }) {
     <Div className="page">
       <Sidebar />
       <Div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 8, gap: 8 }}>
-        <LazyList ref={lazyListRef} style={{ flex: 1, minHeight: 0 }} threshold={LOAD_MORE_THRESHOLD} onTopReached={loadOlder}>
-          {messages.map((m, i) =>
-            m.role === 'tool' ? (
-              <ToolMessage
-                key={i}
-                tool_name={m.tool_name ?? m.role}
-                content={m.content}
-                created_at={m.created_at}
-                arguments={m.arguments}
-              />
-            ) : (
-              <ChatMessage
-                key={i}
-                role={m.role}
-                content={m.content}
-                created_at={m.created_at}
-                thinking={m.thinking}
-                thought_duration_ms={m.thought_duration_ms}
-              />
-            ),
-          )}
+        <LazyList
+          ref={lazyListRef}
+          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 18, padding: '16px 8px' }}
+          threshold={LOAD_MORE_THRESHOLD}
+          onTopReached={loadOlder}
+        >
+          {messages.map((m, i) => {
+            const prev = messages[i - 1]
+            const showDate = !prev || !isSameDay(new Date(m.created_at), new Date(prev.created_at))
+            return (
+              <Fragment key={i}>
+                {showDate ? <DateSeparator date={new Date(m.created_at)} /> : null}
+                {m.role === 'tool' ? (
+                  <ToolMessage
+                    tool_name={m.tool_name ?? m.role}
+                    content={m.content}
+                    created_at={m.created_at}
+                    arguments={m.arguments}
+                    expanded={expandedTools[i] ?? false}
+                    onToggle={() => toggleToolExpanded(i)}
+                  />
+                ) : (
+                  <ChatMessage
+                    role={m.role}
+                    content={m.content}
+                    created_at={m.created_at}
+                    thinking={m.thinking}
+                    thought_duration_ms={m.thought_duration_ms}
+                  />
+                )}
+              </Fragment>
+            )
+          })}
           {sending ? <PendingAssistantMessage /> : null}
         </LazyList>
         {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm} /> : null}

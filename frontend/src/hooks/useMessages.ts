@@ -9,8 +9,8 @@ import { useTool as runNextTool } from '../api/agent/use_tool'
 import { getMessages } from '../api/chats/messages'
 import type { MessageOut } from '../api/chats/types'
 import { useSettings } from '../context/useSettings'
-import { notify } from '../notifications'
-import { peekPendingPrompt } from '../pendingPrompt'
+import { notify } from '../utils/notifications'
+import { peekPendingPrompt } from '../utils/pendingPrompt'
 
 const MESSAGES_PAGE_SIZE = 30
 

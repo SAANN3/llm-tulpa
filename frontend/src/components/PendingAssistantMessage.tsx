@@ -13,7 +13,7 @@ export function PendingAssistantMessage() {
   }, [])
 
   return (
-    <Div className="vbox" style={{ alignItems: 'flex-start', padding: 8, gap: 4 }}>
+    <Div className="vbox" style={{ alignItems: 'flex-start', gap: 4 }}>
       <ThinkingAnimation isPlaying />
       <Label text={`Thinking... (${elapsedSeconds}s)`} style={{ fontSize: 12, opacity: 0.6 }} />
     </Div>

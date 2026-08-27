@@ -90,7 +90,14 @@ impl UserCacheService {
     /// not old enough to be time-stale yet), then spawns a fresh one that calls `greet`
     /// and `input_examples` every `REFRESH_INTERVAL`, starting immediately — so both are
     /// already warm by the time a real request needs them, not generated live on the
-    /// frontend's first load. Errs without doing anything if no
+    /// frontend's first load.
+    ///
+    /// TEMP (remove once done testing the Telegram plugin): both calls in the loop body
+    /// below are commented out — each is a real Ollama generation, and paying for both
+    /// on every single backend restart was making the restart-heavy Telegram testing
+    /// loop unbearably slow. Uncomment them to restore normal eager warming.
+    ///
+    /// Errs without doing anything if no
     /// settings are persisted — this is the one precondition the loop can't work
     /// without. Takes `self` by owned `Arc` (not `&self`) — `Arc<Self>` is the one
     /// non-`&self`/`&mut self` receiver stable Rust allows without the
@@ -113,19 +120,24 @@ impl UserCacheService {
 
         self.clear_cache().await;
 
+        // TEMP: `#[allow]` only needed because the calls using `this` below are
+        // commented out for now — remove this attribute along with them.
+        #[allow(unused_variables)]
         let this = self.clone();
         let handle = tokio::spawn(async move {
             loop {
-                if let Err(err) = this.clone().greet().await {
-                    tracing::error!("user cache: failed to refresh greet: {}", err.message.unwrap_or_default());
-                }
-
-                if let Err(err) = this.clone().input_examples().await {
-                    tracing::error!(
-                        "user cache: failed to refresh input_examples: {}",
-                        err.message.unwrap_or_default()
-                    );
-                }
+                // TEMP: commented out during Telegram plugin testing — see this fn's
+                // own doc comment. Uncomment both blocks below when done.
+                // if let Err(err) = this.clone().greet().await {
+                //     tracing::error!("user cache: failed to refresh greet: {}", err.message.unwrap_or_default());
+                // }
+                //
+                // if let Err(err) = this.clone().input_examples().await {
+                //     tracing::error!(
+                //         "user cache: failed to refresh input_examples: {}",
+                //         err.message.unwrap_or_default()
+                //     );
+                // }
 
                 tokio::time::sleep(REFRESH_INTERVAL).await;
             }
@@ -160,9 +172,12 @@ impl UserCacheService {
 
     /// Returns the cached greeting if one exists and is younger than `REFRESH_INTERVAL`;
     /// otherwise generates a fresh one from the currently persisted settings, caches it,
-    /// and returns that. The single place this logic lives — called both by the
-    /// periodic loop and directly by the greet route, so there's no separate "real"
-    /// generation path to drift out of sync with.
+    /// and returns that. Unlike `input_examples`, not called proactively by `start_loop`'s
+    /// background loop — a greeting generation is slow enough (several seconds of Ollama
+    /// time) that doing it unprompted at every boot/settings-save noticeably delayed
+    /// getting a fresh backend up and actually usable, for a value nothing may even ask
+    /// for before it goes stale anyway. So this is the only place greet generation
+    /// happens at all now: on demand, the first time the greet route is actually called.
     ///
     /// The actual work runs inside a detached `tokio::spawn`, which this only ever
     /// *joins* (`.await`s the handle) — never `.abort()`s. If the caller's own future

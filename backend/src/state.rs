@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     cache::user_cache::UserCacheService,
     facade::{agent::Agent, prompt::PromptFacade},
+    plugins::registry::PluginRegistry,
     services::{chat_store::ChatStore, llm::OllamaService, settings_store::SettingsStore, tools::ToolService},
 };
 
@@ -14,4 +15,5 @@ pub struct AppState {
     pub agent: Agent,
     pub prompt: PromptFacade,
     pub user_cache: Arc<UserCacheService>,
+    pub plugin_registry: Arc<PluginRegistry>,
 }

@@ -1,3 +1,4 @@
 FROM MODEL_FILE_PLACEHOLDER
 PARAMETER use_mmap false
+PARAMETER use_mlock true
 PARAMETER num_thread 6

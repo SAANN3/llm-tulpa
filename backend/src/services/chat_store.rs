@@ -87,20 +87,46 @@ impl ChatStore {
             .filter(|chat| !chat.is_deleted)
             .ok_or(ChatStoreErrors::NotFound)?;
 
-        Ok(Chat {
-            id: chat.id,
-            name: chat.name,
-            created_at: chat.created_at,
-            updated_at: chat.updated_at,
-            summary: chat.summary,
-            summary_up_to_message_id: chat.summary_up_to_message_id,
-        })
+        Ok(Self::to_chat(chat))
     }
 
-    /// Non-deleted chats, newest-active first, plus the total count for pagination.
+    /// Non-deleted, non-plugin-owned chats, newest-active first, plus the total count
+    /// for pagination — this is what the ordinary chat UI lists, so a plugin-owned chat
+    /// (`plugin_name` set — see `chats::Model`) never shows up here. See
+    /// `chats_by_plugin` for the plugin-scoped counterpart.
     pub async fn chats(&self, limit: u64, skip: u64) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
-        let query = chats::Entity::find().filter(chats::Column::IsDeleted.eq(false));
+        let query = chats::Entity::find()
+            .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::PluginName.is_null());
 
+        self.paginated_chats(query, limit, skip).await
+    }
+
+    /// Same shape and pagination as `chats`, scoped to one plugin instance's chats
+    /// instead of the ordinary (non-plugin) ones.
+    pub async fn chats_by_plugin(
+        &self,
+        plugin_name: &str,
+        plugin_subname: &str,
+        limit: u64,
+        skip: u64,
+    ) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
+        let query = chats::Entity::find()
+            .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::PluginName.eq(plugin_name))
+            .filter(chats::Column::PluginSubname.eq(plugin_subname));
+
+        self.paginated_chats(query, limit, skip).await
+    }
+
+    /// Shared by `chats`/`chats_by_plugin` — counts, orders, and paginates an
+    /// already-filtered query the same way for both.
+    async fn paginated_chats(
+        &self,
+        query: Select<chats::Entity>,
+        limit: u64,
+        skip: u64,
+    ) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
         let total = query.clone().count(&self.db).await?;
 
         let chats = query
@@ -110,17 +136,24 @@ impl ChatStore {
             .all(&self.db)
             .await?
             .into_iter()
-            .map(|model| Chat {
-                id: model.id,
-                name: model.name,
-                created_at: model.created_at,
-                updated_at: model.updated_at,
-                summary: model.summary,
-                summary_up_to_message_id: model.summary_up_to_message_id,
-            })
+            .map(Self::to_chat)
             .collect();
 
         Ok((chats, total))
+    }
+
+    /// Maps a SeaORM row to the plain struct the rest of the app sees — deliberately
+    /// drops `plugin_name`/`plugin_subname`/`plugin_chat_id` (see `chats::Model`'s doc
+    /// comment for why those never leave `ChatStore`).
+    fn to_chat(model: chats::Model) -> Chat {
+        Chat {
+            id: model.id,
+            name: model.name,
+            created_at: model.created_at,
+            updated_at: model.updated_at,
+            summary: model.summary,
+            summary_up_to_message_id: model.summary_up_to_message_id,
+        }
     }
 
     /// Messages for a chat, newest first — `skip` counts from the newest end, so
@@ -239,25 +272,88 @@ impl ChatStore {
         Ok(grouped)
     }
 
-    /// Creates a chat and returns the full row — including `created_at`/`updated_at`,
-    /// which Postgres just generated, so there's no reason to make the caller guess or
-    /// regenerate them.
+    /// Creates an ordinary (non-plugin) chat and returns the full row — including
+    /// `created_at`/`updated_at`, which Postgres just generated, so there's no reason to
+    /// make the caller guess or regenerate them.
     pub async fn create_chat(&self, name: String) -> Result<Chat, ChatStoreErrors> {
+        self.insert_chat(name, None, None, None).await
+    }
+
+    /// Creates a chat owned by one plugin instance, mapped to that plugin's own
+    /// `plugin_chat_id` (e.g. a Telegram chat id) — see `chats::Model`'s doc comment for
+    /// the all-or-nothing constraint this relies on.
+    pub async fn create_plugin_chat(
+        &self,
+        name: String,
+        plugin_name: String,
+        plugin_subname: String,
+        plugin_chat_id: String,
+    ) -> Result<Chat, ChatStoreErrors> {
+        self.insert_chat(name, Some(plugin_name), Some(plugin_subname), Some(plugin_chat_id))
+            .await
+    }
+
+    /// Shared by `create_chat`/`create_plugin_chat`.
+    async fn insert_chat(
+        &self,
+        name: String,
+        plugin_name: Option<String>,
+        plugin_subname: Option<String>,
+        plugin_chat_id: Option<String>,
+    ) -> Result<Chat, ChatStoreErrors> {
         let chat = chats::ActiveModel {
             name: Set(name),
+            plugin_name: Set(plugin_name),
+            plugin_subname: Set(plugin_subname),
+            plugin_chat_id: Set(plugin_chat_id),
             ..Default::default()
         }
         .insert(&self.db)
         .await?;
 
-        Ok(Chat {
-            id: chat.id,
-            name: chat.name,
-            created_at: chat.created_at,
-            updated_at: chat.updated_at,
-            summary: chat.summary,
-            summary_up_to_message_id: chat.summary_up_to_message_id,
-        })
+        Ok(Self::to_chat(chat))
+    }
+
+    /// Looks up the chat mapped to one plugin instance's external chat id (e.g. a
+    /// Telegram chat id) — `None` if no chat has been mapped to it yet (not deleted
+    /// either, same as `chat`). Used to turn an incoming plugin message's chat id back
+    /// into the internal `Chat` it belongs to.
+    pub async fn find_by_plugin_mapped_id(
+        &self,
+        plugin_name: &str,
+        plugin_subname: &str,
+        plugin_chat_id: &str,
+    ) -> Result<Option<Chat>, ChatStoreErrors> {
+        let chat = chats::Entity::find()
+            .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::PluginName.eq(plugin_name))
+            .filter(chats::Column::PluginSubname.eq(plugin_subname))
+            .filter(chats::Column::PluginChatId.eq(plugin_chat_id))
+            .one(&self.db)
+            .await?;
+
+        Ok(chat.map(Self::to_chat))
+    }
+
+    /// `find_by_plugin_mapped_id`, creating a new plugin chat (via `name`) the first
+    /// time this external chat id is seen instead of returning `None` — the usual entry
+    /// point for an incoming plugin message, where there's always a chat to hand back
+    /// either way.
+    pub async fn find_or_create_plugin_chat(
+        &self,
+        name: String,
+        plugin_name: String,
+        plugin_subname: String,
+        plugin_chat_id: String,
+    ) -> Result<Chat, ChatStoreErrors> {
+        if let Some(chat) = self
+            .find_by_plugin_mapped_id(&plugin_name, &plugin_subname, &plugin_chat_id)
+            .await?
+        {
+            return Ok(chat);
+        }
+
+        self.create_plugin_chat(name, plugin_name, plugin_subname, plugin_chat_id).await
     }
 
     /// Persists an updated compaction summary for a chat — folds everything up to and
@@ -309,6 +405,61 @@ impl ChatStore {
         }
         .update(&self.db)
         .await?;
+
+        Ok(())
+    }
+
+    /// Deletes every message (and their tool calls) belonging to a chat, and clears its
+    /// compaction summary — unlike `delete_chat`, the chat row itself (its id, name, and
+    /// for a plugin chat, its external mapping) is left untouched, so the same
+    /// conversation keeps working with a clean slate instead of losing its identity.
+    /// Deliberately not built on `delete_chat`'s soft-delete: a plugin chat's
+    /// `(plugin_name, plugin_subname, plugin_chat_id)` triple is uniquely constrained
+    /// across *all* rows regardless of `is_deleted`, so soft-deleting one would permanently
+    /// block that same external chat from ever being linked again. Errs via `chat` if the
+    /// chat doesn't exist or is already deleted, before touching anything.
+    pub async fn clear_messages(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+
+        self.db
+            .transaction::<_, (), DbErr>(|txn| {
+                Box::pin(async move {
+                    let message_ids: Vec<i64> = messages::Entity::find()
+                        .filter(messages::Column::ChatId.eq(chat_id))
+                        .select_only()
+                        .column(messages::Column::Id)
+                        .into_tuple()
+                        .all(txn)
+                        .await?;
+
+                    if !message_ids.is_empty() {
+                        tool_calls::Entity::delete_many()
+                            .filter(tool_calls::Column::MessageId.is_in(message_ids))
+                            .exec(txn)
+                            .await?;
+                    }
+
+                    messages::Entity::delete_many()
+                        .filter(messages::Column::ChatId.eq(chat_id))
+                        .exec(txn)
+                        .await?;
+
+                    chats::ActiveModel {
+                        id: Set(chat_id),
+                        summary: Set(None),
+                        summary_up_to_message_id: Set(None),
+                        ..Default::default()
+                    }
+                    .update(txn)
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .map_err(|err| match err {
+                TransactionError::Connection(e) | TransactionError::Transaction(e) => ChatStoreErrors::from(e),
+            })?;
 
         Ok(())
     }

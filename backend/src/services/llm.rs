@@ -11,8 +11,19 @@ use crate::tools::base::Tool;
 /// A request to Ollama gets no response at all until generation finishes (`stream:
 /// false`) — without a client-side cap, a model that never emits a stop token (see
 /// `split_thinking`'s "never closed" case) blocks the request indefinitely instead of
-/// eventually failing.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// eventually failing. Scaled from `max_predict_tokens` rather than a fixed duration,
+/// so it always covers a full legitimate max-length generation with margin — a flat
+/// timeout shorter than `num_predict`'s worst case cuts off real, still-progressing
+/// generations, not just genuinely stuck ones. `MIN_TOKENS_PER_SEC` is a conservative
+/// floor, well under this project's ~8-9 t/s observed speed, to leave room for slower
+/// hardware or a loaded system; `PROMPT_PROCESSING_BUFFER` covers prefill time on a
+/// long conversation, which this floor doesn't otherwise account for.
+const MIN_TOKENS_PER_SEC: f64 = 3.0;
+const PROMPT_PROCESSING_BUFFER: Duration = Duration::from_secs(10 * 60);
+
+fn request_timeout(max_predict_tokens: i32) -> Duration {
+    Duration::from_secs_f64(max_predict_tokens as f64 / MIN_TOKENS_PER_SEC) + PROMPT_PROCESSING_BUFFER
+}
 
 /// Talks to Ollama's HTTP API and parses its responses into our own structs. Route
 /// handlers go through this rather than calling Ollama directly, so the rest of the
@@ -38,7 +49,7 @@ impl OllamaService {
     pub fn new(base_url: impl Into<String>, model_name: impl Into<String>, max_predict_tokens: i32) -> Self {
         Self {
             client: reqwest::Client::builder()
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(request_timeout(max_predict_tokens))
                 .build()
                 .expect("failed to build ollama http client"),
             base_url: base_url.into(),

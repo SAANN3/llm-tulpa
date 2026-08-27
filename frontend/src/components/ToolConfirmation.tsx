@@ -2,46 +2,42 @@ import { useState } from 'react'
 
 import type { DangerousToolCall, Decisions, PendingConfirmations } from '../hooks/useMessages'
 import { ToolAllowance } from '../hooks/useMessages'
-import { Button, Div, Label, RadioButton } from './primitives'
+import { Button, Div, Label } from './primitives'
 
 interface PendingCallRowProps {
-  index: number
   call: DangerousToolCall
-  allowance: ToolAllowance
-  onChanged: (allowance: ToolAllowance) => void
+  first: boolean
+  onDecide: (allowance: ToolAllowance) => void
 }
 
-/** One pending tool call's decision row — a radio group when the call offers an escalation to accept, otherwise just its reason with nothing to pick. */
-function PendingCallRow({ index, call, allowance, onChanged }: PendingCallRowProps) {
-  const groupName = `tool-confirm-${index}`
-  const pick = (value: string) => onChanged(value as ToolAllowance)
-
+/** One pending tool call's decision row — three one-click buttons when the call offers
+ * an escalation to accept, otherwise just its reason with a single acknowledgment
+ * button (there's nothing to grant, so the only possible outcome is `Forbid`). */
+function PendingCallRow({ call, first, onDecide }: PendingCallRowProps) {
   return (
-    <Div className="vbox panel" variant="secondary" style={{ gap: 6, padding: 12 }}>
-      <Label text={call.name} style={{ fontWeight: 600 }} />
-      <Label text={JSON.stringify(call.arguments)} style={{ fontSize: 12, opacity: 0.7 }} />
-      <Label text={call.reason} style={{ fontSize: 13, opacity: 0.85 }} />
+    <Div className="vbox" style={{ gap: 9, padding: '10px 0', borderTop: first ? undefined : '1px solid var(--color-border)' }}>
+      <Div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <Label variant="secondary" text="PERMISSION NEEDED" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }} />
+        <Label className="mono" text={call.name} style={{ fontSize: 14 }} />
+      </Div>
+      <Label variant="secondary" className="mono" text={JSON.stringify(call.arguments)} style={{ fontSize: 12 }} />
       {call.escalation ? (
         <>
-          <Label text={call.escalation.ui_message} style={{ fontSize: 13, opacity: 0.85 }} />
-          <Div style={{ display: 'flex', gap: 8, alignItems: 'center' }} variant={allowance === ToolAllowance.Permanent ? 'tertiary' : undefined }>
-            <RadioButton name={groupName} value={ToolAllowance.Permanent} checked={allowance === ToolAllowance.Permanent} onChanged={pick} />
-            <Label text="Always allow in this chat" />
-          </Div>
-          <Div style={{ display: 'flex', gap: 8, alignItems: 'center' }} variant={allowance === ToolAllowance.OnlyNow ? 'tertiary' : undefined }>
-            <RadioButton name={groupName} value={ToolAllowance.OnlyNow} checked={allowance === ToolAllowance.OnlyNow} onChanged={pick} />
-            <Label text="Allow just this once" />
-          </Div>
-          <Div className="vbox" style={{ gap: 4 }}>
-            <Div style={{ display: 'flex', gap: 8, alignItems: 'center' }} variant={allowance === ToolAllowance.Forbid ? 'tertiary' : undefined }>
-              <RadioButton name={groupName} value={ToolAllowance.Forbid} checked={allowance === ToolAllowance.Forbid} onChanged={pick} />
-              <Label text="Don't allow"/>
-            </Div>
-
+          <Label text={call.escalation.ui_message} style={{ fontSize: 15, lineHeight: 1.5, maxWidth: '70ch' }} />
+          <Label variant="secondary" text={call.reason} style={{ fontSize: 12 }} />
+          <Div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: 2 }}>
+            <Button variant="secondary" text="Don't allow" onClicked={() => onDecide(ToolAllowance.Forbid)} />
+            <Button variant="secondary" text="Always in this chat" onClicked={() => onDecide(ToolAllowance.Permanent)} />
+            <Button variant="primary" text="Allow once" onClicked={() => onDecide(ToolAllowance.OnlyNow)} />
           </Div>
         </>
       ) : (
-        <Label text="Can't be approved — nothing to grant." style={{ fontSize: 12, opacity: 0.6 }} />
+        <>
+          <Label variant="secondary" text="Can't be approved — nothing to grant." style={{ fontSize: 12 }} />
+          <Div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 2 }}>
+            <Button variant="primary" text="OK" onClicked={() => onDecide(ToolAllowance.Forbid)} />
+          </Div>
+        </>
       )}
     </Div>
   )
@@ -53,39 +49,43 @@ export interface ToolConfirmationProps {
 }
 
 /**
- * Shown when a turn pauses on one or more tool calls needing a decision — one row per
- * `pending` entry, defaulting every call to `Forbid` until changed. Purely local state:
- * nothing here talks to the backend, `onConfirm` is handed whatever's been picked and
- * it's the caller's job to act on it.
+ * Shown when a turn pauses on one or more tool calls needing a decision. Each row
+ * decides on its own click (no shared "Confirm" step): picking an option for a call
+ * records it and removes that row from view, and once every pending call has a
+ * decision, `onConfirm` fires automatically with everything collected so far. Purely
+ * local state until then — nothing here talks to the backend.
  */
 export function ToolConfirmation({ pending, onConfirm }: ToolConfirmationProps) {
   const [decisions, setDecisions] = useState<Decisions>({})
 
-  const setDecision = (index: number, allowance: ToolAllowance) =>
-    setDecisions((prev) => ({ ...prev, [index]: allowance }))
+  const decide = (index: number, allowance: ToolAllowance) => {
+    const next = { ...decisions, [index]: allowance }
+    setDecisions(next)
+    if (Object.keys(pending).every((i) => next[Number(i)] !== undefined)) onConfirm(next)
+  }
+
+  const remaining = Object.entries(pending).filter(([indexStr]) => decisions[Number(indexStr)] === undefined)
 
   return (
-    // `maxHeight` bounds the whole panel; only the row list scrolls inside it (`minHeight:
-    // 0` lets it actually shrink instead of pushing past the bound) — the header and
-    // Confirm button stay put outside that scroll area, so however many calls are
-    // pending, Confirm never ends up somewhere you have to hunt for.
-    <Div className="vbox panel" variant="tertiary" style={{ gap: 10, padding: 14, maxHeight: '45vh' }}>
-      <Label text="This turn wants to run tools that need your say-so" style={{ fontWeight: 600 }} />
-      <Div className="vbox" style={{ gap: 10, overflowY: 'auto', minHeight: 0 }}>
-        {Object.entries(pending).map(([indexStr, call]) => {
-          const index = Number(indexStr)
-          return (
-            <PendingCallRow
-              key={index}
-              index={index}
-              call={call}
-              allowance={decisions[index] ?? ToolAllowance.Forbid}
-              onChanged={(allowance) => setDecision(index, allowance)}
-            />
-          )
-        })}
-      </Div>
-      <Button text="Confirm" onClicked={() => onConfirm(decisions)} />
+    // `maxHeight` bounds the whole panel and scrolls internally — however many calls
+    // are pending, the panel never grows past a reasonable share of the screen.
+    <Div
+      className="vbox"
+      style={{
+        gap: 0,
+        padding: '4px 16px 14px',
+        maxHeight: '45vh',
+        overflowY: 'auto',
+        border: '1px solid var(--color-border)',
+        borderLeft: '3px solid var(--color-tertiary)',
+        borderRadius: 10,
+        background: 'var(--color-surface)',
+      }}
+    >
+      {remaining.map(([indexStr, call], i) => {
+        const index = Number(indexStr)
+        return <PendingCallRow key={index} call={call} first={i === 0} onDecide={(allowance) => decide(index, allowance)} />
+      })}
     </Div>
   )
 }
