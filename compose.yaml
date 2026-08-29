@@ -25,10 +25,20 @@ services:
     # username directly sidesteps that.)
     # Falls back to 1000:1000 (the common first-user default on Linux) if unset.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    # Host networking instead of the `app-net` bridge: a bridged container's
+    # traffic doesn't pass through any host-level VPN/proxy routing (e.g. sing-box's
+    # TUN mode) the way a normal host process's traffic does, which broke outbound
+    # access to providers blocked on the raw network (Telegram, for us) even though
+    # the same requests work fine from the host itself. Sharing the host's network
+    # namespace directly restores that. `postgres`/`ollama` no longer resolve as
+    # Docker service names under this mode, so both are addressed via `localhost`
+    # instead — safe since both already publish to 127.0.0.1 on the host (see
+    # postgres/compose.yaml and llm/compose.yaml).
+    network_mode: host
     environment:
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=http://localhost:11434
       - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME:-local-llm}
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+      - DATABASE_URL=postgres://postgres:postgres@localhost:5432
       - DATABASE_NAME=${DATABASE_NAME:-llm_tulpa}
       - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
       # Same variable name/default as llm/compose.yaml's OLLAMA_CONTEXT_LENGTH — set
@@ -55,8 +65,6 @@ services:
       # os.get_disk_space can see the host's real root filesystem (size/used/free),
       # not for tools to read/write through it.
       - "/:/hostfs:ro"
-    ports:
-      - "127.0.0.1:3000:3000"
     depends_on:
       - postgres
       - ollama
@@ -66,10 +74,16 @@ services:
     build:
       context: ./frontend
       network: host
+      # Unset by default — see frontend/Dockerfile and frontend/src/config.ts for why.
       args:
-        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:3000}
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
     ports:
-      - "127.0.0.1:5173:80"
+      - "5173:80"
+    networks:
+      - app-net
     depends_on:
       - backend
     restart: unless-stopped
+
+networks:
+  app-net:

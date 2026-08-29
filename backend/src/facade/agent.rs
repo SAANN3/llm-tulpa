@@ -86,8 +86,10 @@ const SYSTEM_PROMPT: &[&str] = &[
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
 /// checkable on its own, without a live `ChatStore`/`OllamaService`. `sizes` is each
-/// message's char count, oldest first (same order `compact` reverses its messages
-/// into). Walks from the newest (the end) backward, keeping a message only if it still
+/// message's weight (content + thinking chars, plus each attached image's base64
+/// length — a proportional stand-in for its real token cost, not an exact one, same
+/// spirit as `KEEP_CHARS_PER_TOKEN` below), oldest first (same order `compact` reverses
+/// its messages into). Walks from the newest (the end) backward, keeping a message only if it still
 /// fits under `keep_chars` alongside everything newer already kept; returns the index
 /// where `[0, index)` should be folded away and `[index, len)` kept verbatim. `0` means
 /// nothing needs folding — everything already fits.
@@ -153,11 +155,18 @@ impl Agent {
         }
     }
 
-    /// Persists `prompt` as a `user` message, then advances the chat same as
-    /// `continue_chat` does. The prompt is saved before the Ollama call, not after, so a
-    /// failed/slow Ollama call never loses what the user actually sent. `think` is
-    /// forwarded to Ollama as-is — see `OllamaService::chat` for its default.
-    pub async fn chat(&self, chat_id: i64, prompt: String, think: Option<bool>) -> Result<ChatOut, ErrorService> {
+    /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix)
+    /// as a `user` message, then advances the chat same as `continue_chat` does. The
+    /// prompt is saved before the Ollama call, not after, so a failed/slow Ollama call
+    /// never loses what the user actually sent. `think` is forwarded to Ollama as-is —
+    /// see `OllamaService::chat` for its default.
+    pub async fn chat(
+        &self,
+        chat_id: i64,
+        prompt: String,
+        images: Vec<String>,
+        think: Option<bool>,
+    ) -> Result<ChatOut, ErrorService> {
         let messages = self.ollama_history(chat_id).await?;
 
         self.chat_store
@@ -171,11 +180,17 @@ impl Agent {
                 tool_success: None,
                 tool_denied: false,
                 tool_calls: vec![],
+                images: images.clone(),
             })
             .await?;
 
-        self.advance(chat_id, messages, Some(OllamaService::user_message(prompt)), think)
-            .await
+        self.advance(
+            chat_id,
+            messages,
+            Some(OllamaService::user_message_with_images(prompt, images)),
+            think,
+        )
+        .await
     }
 
     /// Sends a chat's existing history to Ollama as-is and persists whatever it replies
@@ -251,6 +266,7 @@ impl Agent {
                 tool_success: None,
                 tool_denied: false,
                 tool_calls: new_tool_calls,
+                images: vec![],
             })
             .await?;
 
@@ -349,7 +365,11 @@ impl Agent {
 
         let sizes: Vec<usize> = messages
             .iter()
-            .map(|message| message.content.len() + message.thinking.as_deref().map_or(0, str::len))
+            .map(|message| {
+                message.content.len()
+                    + message.thinking.as_deref().map_or(0, str::len)
+                    + message.images.iter().map(String::len).sum::<usize>()
+            })
             .collect();
         let split_at = pick_compaction_boundary(&sizes, self.compaction_keep_chars);
 
@@ -380,12 +400,20 @@ impl Agent {
     /// visible conversation, so it doesn't go through `advance`/get persisted as a chat
     /// message itself.
     async fn summarize(&self, existing_summary: Option<String>, to_fold: &[Message]) -> Result<String, ErrorService> {
+        // The image data itself never goes into the transcript (it's not text, and this
+        // call carries no vision guarantee) — but a message that had one needs to say
+        // so, or folding it away loses any trace it ever happened, silently.
         let transcript = to_fold
             .iter()
             .map(|message| match message.role.as_str() {
                 "tool" => format!(
                     "[tool result — {}]: {}",
                     message.tool_name.as_deref().unwrap_or("?"),
+                    message.content
+                ),
+                role if !message.images.is_empty() => format!(
+                    "[{role}, {} image(s) attached]: {}",
+                    message.images.len(),
                     message.content
                 ),
                 role => format!("[{role}]: {}", message.content),
@@ -405,9 +433,12 @@ impl Agent {
              dropping it. Pay special attention to detail that's easy to accidentally \
              paraphrase away but matters a lot if lost: a tool result marked truncated (a \
              later turn needs to know it only saw part of something, not the whole thing), \
-             and exact code/text snippets that a future edit might need to reproduce \
-             verbatim — summarize the surrounding narrative, but don't rewrite exact text \
-             like that into your own words. Write plain notes, not a reply — this output \
+             exact code/text snippets that a future edit might need to reproduce verbatim \
+             — summarize the surrounding narrative, but don't rewrite exact text like that \
+             into your own words — and a message marked as having image(s) attached (the \
+             images themselves aren't in this excerpt, only that mark — keep noting that \
+             one was there, since a later turn may still need to know an image was part of \
+             what was asked). Write plain notes, not a reply — this output \
              replaces the excerpt in the conversation's history, nobody sees it directly."
                 .to_string(),
         );
@@ -531,6 +562,7 @@ impl Agent {
                 tool_success: Some(success),
                 tool_denied: denied,
                 tool_calls: vec![],
+                images: vec![],
             })
             .await?;
 
@@ -682,6 +714,7 @@ impl Agent {
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_name: message.tool_name,
             thinking: None,
+            images: (!message.images.is_empty()).then_some(message.images),
         }
     }
 }

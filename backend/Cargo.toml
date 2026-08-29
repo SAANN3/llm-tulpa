@@ -1,12 +1,20 @@
 [package]
 name = "backend"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
 async-trait = "0.1.91"
 axum = "0.8.9"
+base64 = "0.22.1"
 chrono = { version = "0.4", features = ["clock"] }
+chrono-tz = "0.10"
+# `normalize_images` (plugins/messaging/plugin.rs) always fully decodes an incoming
+# image — not just format-sniffs it — so a truncated/corrupted download gets caught
+# and dropped instead of reaching Ollama; these are every codec that decode path can
+# actually hit (whatever Ollama's own decoder already handles, plus webp, which it
+# doesn't), "png" doubling as the one format ever re-encoded into.
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif", "bmp"] }
 dirs = "6.0.0"
 gfxinfo = "0.1.2"
 log = "0.4.33"

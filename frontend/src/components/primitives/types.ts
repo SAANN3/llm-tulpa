@@ -20,6 +20,7 @@ export interface DivProps {
   children?: ReactNode
   onClick?: (e: MouseEvent<HTMLDivElement>) => void
   onContextMenu?: (e: MouseEvent<HTMLDivElement>) => void
+  onMouseDown?: (e: MouseEvent<HTMLDivElement>) => void
   onHover?: (hovering: boolean) => void
   onScroll?: (e: UIEvent<HTMLDivElement>) => void
 }
@@ -74,6 +75,7 @@ export interface CheckboxProps {
 export interface ToggleSwitchProps {
   toggled: boolean
   onToggled: (toggled: boolean) => void
+  disabled?: boolean
 }
 
 export interface IconProps {

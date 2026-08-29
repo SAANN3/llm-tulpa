@@ -7,14 +7,16 @@ import type { ChatOut } from './types'
  * Sends `prompt` as the next turn in `chatId`'s conversation and returns the model's
  * reply. If the reply carries tool calls, `can_use_tools` comes back `true` and the
  * caller drives `useTool`/`canUseTool` before asking for anything else. `think` asks
- * the model to reason before answering, and defaults to `true`. Mirrors
+ * the model to reason before answering, and defaults to `true`. `images` (base64, no
+ * data-URL prefix) requires a vision-capable model — see `llm/README.md`. Mirrors
  * `POST /api/agent/chat` on the backend.
  */
-export async function chat(chatId: number, prompt: string, think = true): Promise<ChatOut> {
+export async function chat(chatId: number, prompt: string, think = true, images: string[] = []): Promise<ChatOut> {
   const { data } = await axios.post<ChatOut>(`${BACKEND_URL}/api/agent/chat`, {
     chat_id: chatId,
     prompt,
     think,
+    images,
   })
 
   return data

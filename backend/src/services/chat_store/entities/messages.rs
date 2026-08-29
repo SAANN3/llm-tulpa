@@ -26,6 +26,9 @@ pub struct Model {
     /// one that never ran because it wasn't permitted. `false` (not meaningful) on
     /// every other row.
     pub tool_denied: bool,
+    /// Base64-encoded image data attached to this message (no data-URL prefix), if
+    /// any. Only ever set on `user`-role rows.
+    pub images: Option<Json>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

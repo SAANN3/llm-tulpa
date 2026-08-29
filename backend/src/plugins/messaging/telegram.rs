@@ -1,18 +1,23 @@
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use teloxide_core::Bot;
+use teloxide_core::net::Download;
 use teloxide_core::requests::Requester;
-use teloxide_core::types::{BotCommand, ChatId, ForceReply, MessageId, ParseMode, ReactionType, ReplyParameters, UpdateKind};
+use teloxide_core::types::{BotCommand, ChatId, ForceReply, MessageId, ParseMode, PhotoSize, ReactionType, ReplyParameters, UpdateKind};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
 use tool_derive::ToolParams;
 
 use super::chunking::{split_top_level_blocks, strip_code_fence};
 use super::markdown::to_telegram_markdown_v2;
-use super::provider::{IncomingMessage, MessagingProvider};
+use super::provider::{Attachment, IncomingMessage, MessagingProvider};
 use crate::plugins::base::PluginError;
 use crate::tools::base::{PropertyInfo, PropertyType, ToolParams};
 
@@ -30,6 +35,34 @@ pub struct TelegramSettings {
 /// empty on its own, which surfaces (misleadingly) as a generic "network error" on
 /// every single idle poll cycle rather than the client-side timeout it actually is.
 const LONG_POLL_TIMEOUT_SECS: u32 = 30;
+
+/// Telegram delivers a multi-photo album (`media_group_id`) as several independent
+/// `Update`s in quick succession — its Bot API never marks which one is last, so the
+/// only way to know an album is complete is to wait for a gap in arrivals. Every major
+/// Telegram bot framework (aiogram, telegraf, python-telegram-bot) handles albums with
+/// exactly this debounce-and-flush technique for the same reason: there's no other
+/// signal to key off. Comfortably above the sub-second gaps Telegram normally leaves
+/// between an album's parts, small enough that a real reply still feels prompt.
+const MEDIA_GROUP_DEBOUNCE: Duration = Duration::from_millis(1200);
+
+/// One in-progress album, keyed by `media_group_id` in `TelegramProvider::media_groups`
+/// — accumulates each part's image as it arrives until the debounce task (spawned when
+/// the group is first seen, see `run`) decides no more are coming and flushes it as a
+/// single `IncomingMessage`. `chat_id`/`message_id`/`author`/`author_id` are fixed from
+/// the first part seen — Telegram doesn't vary these across one album, and the first
+/// part's message id is as valid a reply-thread anchor as any other part's.
+struct MediaGroupBuffer {
+    chat_id: String,
+    message_id: String,
+    author: String,
+    author_id: String,
+    sent_at: chrono::DateTime<chrono::Utc>,
+    /// Only one part of a real album ever carries the caption; whichever part supplies
+    /// non-empty text wins, since the rest simply have none to offer.
+    text: String,
+    attachments: Vec<Attachment>,
+    last_seen: Instant,
+}
 
 /// Telegram rejects any single `sendMessage` over 4096 UTF-16 code units. This budget
 /// stays conservatively under that in plain byte count — Cyrillic/CJK/emoji-heavy text
@@ -193,6 +226,11 @@ pub struct TelegramProvider {
     /// the same process — so those resume from the real last-seen point instead of
     /// re-bootstrapping and skipping messages that arrived in between.
     offset: Mutex<Option<i32>>,
+    /// In-progress albums, keyed by `media_group_id`. `Arc`-wrapped (independent of
+    /// `self`, which `run`'s spawned per-group debounce task can't borrow — that task
+    /// has to be `'static`) so it can be cloned into that task without cloning the
+    /// whole provider.
+    media_groups: Arc<Mutex<HashMap<String, MediaGroupBuffer>>>,
 }
 
 #[async_trait]
@@ -240,7 +278,11 @@ impl MessagingProvider for TelegramProvider {
             .build()
             .map_err(|e| PluginError::FailedUnknown(format!("failed to build telegram http client: {e}")))?;
 
-        Ok(Self { bot: Bot::with_client(settings.token, client), offset: Mutex::new(None) })
+        Ok(Self {
+            bot: Bot::with_client(settings.token, client),
+            offset: Mutex::new(None),
+            media_groups: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     /// Long-polls `getUpdates`, tracking `offset` so already-delivered updates aren't
@@ -305,11 +347,19 @@ impl MessagingProvider for TelegramProvider {
                 *self.offset.lock().await = Some(offset);
 
                 let UpdateKind::Message(message) = update.kind else { continue };
-                let Some(text) = message.text() else { continue };
+                // A photo message has no `text()` (that's `None` for anything but a
+                // plain text message) — its caption, if any, is the closest equivalent.
+                // `photo()` is checked separately so a photo with no caption at all
+                // still gets through, rather than being treated as if nothing arrived.
+                let text = message.text().or_else(|| message.caption()).unwrap_or("");
+                let photo = message.photo();
+                if text.is_empty() && photo.is_none() {
+                    continue;
+                }
                 let chat_id = message.chat.id.0.to_string();
 
                 let (is_command, content) = split_command(text);
-                if is_command && content.is_empty() {
+                if is_command && content.is_empty() && photo.is_none() {
                     // `ForceReply` opens the reply UI on the *sender's* client, prefilled
                     // to reply to this exact prompt — their next message then arrives as
                     // a normal update with `reply_to_message` set, no different from any
@@ -331,10 +381,89 @@ impl MessagingProvider for TelegramProvider {
                     }
                     continue;
                 }
+                let content = if is_command { content } else { text };
+
+                let attachments = match photo {
+                    Some(sizes) => match self.download_largest_photo(sizes).await {
+                        Ok(image) => vec![Attachment::Image(image)],
+                        Err(err) => {
+                            tracing::warn!("telegram: failed to download photo in chat {chat_id}: {err}");
+                            vec![]
+                        }
+                    },
+                    None => vec![],
+                };
 
                 let author = message.from.as_ref().map(|user| user.full_name()).unwrap_or_else(|| "unknown".to_string());
-                let incoming =
-                    IncomingMessage { chat_id, message_id: message.id.0.to_string(), author, text: content.to_string() };
+                let author_id = message.from.as_ref().map(|user| user.id.0.to_string()).unwrap_or_else(|| "unknown".to_string());
+
+                // A multi-photo album: buffer this part instead of sending it on its
+                // own — see `MEDIA_GROUP_DEBOUNCE` for why a wait is unavoidable here.
+                if let Some(group_id) = message.media_group_id() {
+                    let group_id = group_id.0.clone();
+                    let mut groups = self.media_groups.lock().await;
+                    let is_new_group = !groups.contains_key(&group_id);
+                    let buffer = groups.entry(group_id.clone()).or_insert_with(|| MediaGroupBuffer {
+                        chat_id: chat_id.clone(),
+                        message_id: message.id.0.to_string(),
+                        author: author.clone(),
+                        author_id: author_id.clone(),
+                        sent_at: message.date,
+                        text: String::new(),
+                        attachments: Vec::new(),
+                        last_seen: Instant::now(),
+                    });
+                    if !content.is_empty() {
+                        buffer.text = content.to_string();
+                    }
+                    buffer.attachments.extend(attachments);
+                    buffer.last_seen = Instant::now();
+                    drop(groups);
+
+                    // One debounce task per album, spawned only when its first part
+                    // arrives — every later part just updates `last_seen` above and
+                    // lets the already-running task pick the change up.
+                    if is_new_group {
+                        let media_groups = self.media_groups.clone();
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            loop {
+                                tokio::time::sleep(MEDIA_GROUP_DEBOUNCE).await;
+                                let mut groups = media_groups.lock().await;
+                                let Some(buffer) = groups.get(&group_id) else { return };
+                                if buffer.last_seen.elapsed() < MEDIA_GROUP_DEBOUNCE {
+                                    // A newer part arrived mid-sleep — wait another round.
+                                    continue;
+                                }
+                                let buffer = groups.remove(&group_id).expect("just confirmed present above");
+                                drop(groups);
+
+                                let incoming = IncomingMessage {
+                                    chat_id: buffer.chat_id,
+                                    message_id: buffer.message_id,
+                                    author: buffer.author,
+                                    author_id: buffer.author_id,
+                                    sent_at: buffer.sent_at,
+                                    text: buffer.text,
+                                    attachments: buffer.attachments,
+                                };
+                                let _ = tx.send(incoming).await;
+                                return;
+                            }
+                        });
+                    }
+                    continue;
+                }
+
+                let incoming = IncomingMessage {
+                    chat_id,
+                    message_id: message.id.0.to_string(),
+                    author,
+                    author_id,
+                    sent_at: message.date,
+                    text: content.to_string(),
+                    attachments,
+                };
 
                 // The receiver only goes away when `MessagingPlugin::on_disabled`
                 // aborts this task anyway, but a failed send means it's already gone —
@@ -418,6 +547,35 @@ impl TelegramProvider {
         }
 
         Ok(())
+    }
+}
+
+impl TelegramProvider {
+    /// Downloads the highest-resolution size of a photo (`sizes` is Telegram's own
+    /// smallest-to-largest ordering, but picked by actual pixel count here rather than
+    /// trusting that order) and returns it base64-encoded, no data-URL prefix — the
+    /// wire format `Agent::chat`'s `images` wants. Two calls, same as any Bot API file
+    /// download: `get_file` resolves the size's `file_id` into a real path, then
+    /// `download_file` fetches the bytes from that path.
+    async fn download_largest_photo(&self, sizes: &[PhotoSize]) -> Result<String, PluginError> {
+        let largest = sizes
+            .iter()
+            .max_by_key(|size| size.width * size.height)
+            .ok_or_else(|| PluginError::FailedUnknown("telegram photo message reported no sizes".to_string()))?;
+
+        let file = self
+            .bot
+            .get_file(largest.file.id.clone())
+            .await
+            .map_err(|e| PluginError::FailedUnknown(format!("telegram get_file failed: {e}")))?;
+
+        let mut bytes: Vec<u8> = Vec::new();
+        self.bot
+            .download_file(&file.path, &mut bytes)
+            .await
+            .map_err(|e| PluginError::FailedUnknown(format!("telegram download_file failed: {e}")))?;
+
+        Ok(BASE64.encode(bytes))
     }
 }
 

@@ -87,6 +87,10 @@ pub async fn migrate(db: &DatabaseConnection) -> Result<(), DbErr> {
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS thought_duration_ms BIGINT;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS tool_success BOOLEAN;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS tool_denied BOOLEAN NOT NULL DEFAULT false;
+        -- Base64-encoded image data (no data-URL prefix), one entry per attached image.
+        -- Only ever set on `user`-role messages. Null rather than `[]` when a message
+        -- has none, same convention as `summary`/`thinking` above.
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS images JSONB;
 
         CREATE TABLE IF NOT EXISTS tool_calls (
             id BIGSERIAL PRIMARY KEY,

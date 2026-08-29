@@ -6,6 +6,7 @@ export function ToggleSwitch({
   variant = 'secondary',
   toggled,
   onToggled,
+  disabled,
 }: ThemedProps<ToggleSwitchProps>) {
   return (
     <input
@@ -15,6 +16,7 @@ export function ToggleSwitch({
       className={className}
       data-variant={variant}
       checked={toggled}
+      disabled={disabled}
       onChange={(e) => onToggled(e.target.checked)}
     />
   )

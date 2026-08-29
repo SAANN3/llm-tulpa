@@ -5,6 +5,13 @@ cd /root
 
 sed "s|MODEL_FILE_PLACEHOLDER|${MODEL_FILE}|" Modelfile.template > Modelfile
 
+# Optional vision support: pairs MODEL_FILE with a mmproj/CLIP projector .gguf.
+# Inserted as a second FROM line right after the first — Ollama bundles a FROM'd
+# projector as a separate layer and turns on the model's vision capability.
+if [ -n "${MMPROJ_FILE:-}" ]; then
+  sed -i "1a FROM models/${MMPROJ_FILE}" Modelfile
+fi
+
 ollama serve &
 SERVE_PID=$!
 

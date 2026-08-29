@@ -10,6 +10,10 @@ use crate::{facade::agent::ChatOut, services::error::ErrorService, state::AppSta
 pub(crate) struct ChatRequest {
     chat_id: i64,
     prompt: String,
+    /// Base64-encoded image data (no data-URL prefix), one entry per attached image.
+    /// Requires a vision-capable model — see `llm/README.md`.
+    #[serde(default)]
+    images: Option<Vec<String>>,
     /// Ask the model to reason before answering. Defaults to `true` when omitted.
     think: Option<bool>,
 }
@@ -33,7 +37,10 @@ pub async fn chat(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ChatRequest>,
 ) -> Result<Json<ChatOut>, ErrorService> {
-    let result = state.agent.chat(body.chat_id, body.prompt, body.think).await?;
+    let result = state
+        .agent
+        .chat(body.chat_id, body.prompt, body.images.unwrap_or_default(), body.think)
+        .await?;
 
     Ok(Json(result))
 }

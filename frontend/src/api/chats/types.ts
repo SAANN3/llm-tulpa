@@ -30,6 +30,8 @@ export interface MessageOut {
   /** How long the Ollama call for this reply took, in milliseconds. */
   thought_duration_ms: number | null
   tool_calls: MessageToolCallOut[]
+  /** Base64-encoded image data (no data-URL prefix) attached to this message, if any. Empty for every role but `user`. */
+  images: string[]
 }
 
 export interface MessagesResponse {

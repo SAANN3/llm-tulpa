@@ -18,8 +18,8 @@ export function usePrompts() {
     return result.text
   }, [])
 
-  const chatName = useCallback(async (content: string): Promise<string> => {
-    const result = await chatNameApi(content)
+  const chatName = useCallback(async (content: string, images: string[] = []): Promise<string> => {
+    const result = await chatNameApi(content, images)
     return result.response
   }, [])
 

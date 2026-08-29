@@ -6,6 +6,19 @@ use tokio::sync::mpsc::Sender;
 use crate::plugins::base::PluginError;
 use crate::tools::base::PropertyInfo;
 
+/// One attachment on an incoming message — images only for now. A future kind (a
+/// plain file, say) gets its own variant here rather than a new field on
+/// `IncomingMessage`, so everything that reads attachments (`IncomingMessage::images`
+/// today, a future `::files` alongside it) stays one filter over a single list per
+/// provider, and adding that variant is a compiler-enforced exhaustiveness check at
+/// every existing `match` on this type rather than something that can be forgotten.
+#[derive(Debug, Clone)]
+pub enum Attachment {
+    /// Base64-encoded image data (no data-URL prefix) — same convention as
+    /// `Agent::chat`'s own `images` parameter, which this is ultimately headed for.
+    Image(String),
+}
+
 /// One message received from a messaging platform, in whatever minimal shape every
 /// provider can produce regardless of the platform's own message model.
 #[derive(Debug, Clone)]
@@ -19,7 +32,31 @@ pub struct IncomingMessage {
     /// that triggered it rather than just the chat it arrived on.
     pub message_id: String,
     pub author: String,
+    /// This message's sender's platform-specific user id — opaque, like `chat_id`/
+    /// `message_id`. Distinct from `author` (a display name, which two different users
+    /// can share, and which a user can change): exists so `MessagingSettings::name_hint`
+    /// (see `plugin.rs`) can tell senders apart reliably in a group chat.
+    pub author_id: String,
+    /// When the platform says this was actually sent — not when it reached this
+    /// process, which can lag behind by however long a debounce/queue/reconnect added
+    /// (see `MediaGroupBuffer` in `telegram.rs`, e.g.). Every provider's own message
+    /// model carries this already, so there's no reason to substitute "now".
+    pub sent_at: chrono::DateTime<chrono::Utc>,
     pub text: String,
+    pub attachments: Vec<Attachment>,
+}
+
+impl IncomingMessage {
+    /// Just the image attachments' base64 data, in order — what `Agent::chat` wants.
+    /// A message can be text-only (empty), image-only (empty `text`), or both.
+    pub fn images(&self) -> Vec<String> {
+        self.attachments
+            .iter()
+            .map(|attachment| match attachment {
+                Attachment::Image(data) => data.clone(),
+            })
+            .collect()
+    }
 }
 
 /// The per-platform half of a messaging plugin (Discord, VK, Telegram, …) — everything

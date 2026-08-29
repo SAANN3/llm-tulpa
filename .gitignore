@@ -1,5 +1,6 @@
 .claude/settings.local.json
 .DS_Store
+.env
 
 # design-sync (/design-sync skill) — this project doesn't want any of its output
 # (config, previews, design-handoff templates) published or tracked at all, so the

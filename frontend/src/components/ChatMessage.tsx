@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 
+import { Attachment } from './Attachment'
 import { Button, Div, Label } from './primitives'
 
 export interface ChatMessageProps {
@@ -11,6 +12,8 @@ export interface ChatMessageProps {
   created_at: string
   thinking?: string | null
   thought_duration_ms?: number | null
+  /** Base64-encoded image data (no data-URL prefix), if any — only ever set on a `user` message. */
+  images?: string[]
 }
 
 function formatThoughtDuration(ms: number): string {
@@ -23,7 +26,7 @@ function formatThoughtDuration(ms: number): string {
 }
 
 /** One chat message bubble — aligned by `role`. Field names match `MessageOut`/`ChatOut` from the api layer so a fetched message can be spread straight in. */
-export function ChatMessage({ role, content, created_at, thinking, thought_duration_ms }: ChatMessageProps) {
+export function ChatMessage({ role, content, created_at, thinking, thought_duration_ms, images }: ChatMessageProps) {
   const isUser = role === 'user'
   const [showThinking, setShowThinking] = useState(false)
 
@@ -57,6 +60,13 @@ export function ChatMessage({ role, content, created_at, thinking, thought_durat
               }
         }
       >
+        {images && images.length > 0 ? (
+          <Div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: content ? 8 : 0 }}>
+            {images.map((image, index) => (
+              <Attachment key={index} image={image} size={240} />
+            ))}
+          </Div>
+        ) : null}
         <div className="markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
         </div>

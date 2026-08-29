@@ -218,6 +218,18 @@ impl OllamaService {
             tool_calls: None,
             tool_name: None,
             thinking: None,
+            images: None,
+        }
+    }
+
+    /// Builds a `user`-role message carrying attached images, base64-encoded (no
+    /// data-URL prefix) — same as `user_message` otherwise. `images` empty is treated
+    /// the same as no images at all (`None` on the wire), so callers don't need to
+    /// branch on whether there's actually anything to attach.
+    pub fn user_message_with_images(content: String, images: Vec<String>) -> OllamaChatMessage {
+        OllamaChatMessage {
+            images: (!images.is_empty()).then_some(images),
+            ..Self::user_message(content)
         }
     }
 
@@ -230,6 +242,7 @@ impl OllamaService {
             tool_calls: None,
             tool_name: None,
             thinking: None,
+            images: None,
         }
     }
 
@@ -244,6 +257,7 @@ impl OllamaService {
             tool_calls: None,
             tool_name: Some(tool_name),
             thinking: None,
+            images: None,
         }
     }
 }
@@ -475,6 +489,11 @@ pub struct OllamaChatMessage {
     /// outgoing messages we construct ourselves (`user_message`/`tool_message`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// Base64-encoded image data (no data-URL prefix) — see `user_message_with_images`.
+    /// Ollama never sends this back on a response message, so it's only ever `Some` on
+    /// an outgoing `user`-role message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

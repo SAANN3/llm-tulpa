@@ -11,6 +11,9 @@ services:
       memlock: -1
     environment:
       - MODEL_FILE=${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}
+      # Optional: a mmproj/CLIP projector .gguf, paired with MODEL_FILE to give it
+      # vision. Empty by default — plain-text models don't need one.
+      - MMPROJ_FILE=${MMPROJ_FILE:-}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-2h}
       # Ollama's own default (5m) can be too short for a large, mostly-CPU-offloaded
@@ -19,11 +22,13 @@ services:
       - OLLAMA_LOAD_TIMEOUT=${OLLAMA_LOAD_TIMEOUT:-15m}
     volumes:
       - ".:/root"
-      # Overlays just the (often large) model file on top of the bind mount above,
-      # from wherever MODEL_DIR actually points — lets the .gguf live on faster
-      # storage than this project's own directory without touching start.sh/
-      # Modelfile.template, which only ever see it at /root/<MODEL_FILE>.
-      - "${MODEL_DIR:-.}/${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}:/root/${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}:ro"
+      # Mounts wherever MODEL_DIR points as a whole directory, read-only, rather than
+      # binding MODEL_FILE in individually — lets MMPROJ_FILE sit alongside it and be
+      # picked up the same way, with no extra per-file mount to keep in sync. Lets the
+      # .gguf(s) live on faster storage than this project's own directory without
+      # touching start.sh/Modelfile.template, which only ever see them at
+      # /root/models/<file>.
+      - "${MODEL_DIR:-.}:/root/models:ro"
       # Ollama's own model store (~/.ollama, i.e. /root/.ollama here) is a separate
       # copy it builds from the .gguf above via `ollama create` — this is what
       # actually gets read at load time, so it needs to be on fast storage too, not
@@ -32,6 +37,8 @@ services:
       - "${OLLAMA_DATA_DIR:-./.ollama}:/root/.ollama"
     ports:
       - "127.0.0.1:11434:11434"
+    networks:
+      - app-net
     entrypoint: ["/bin/sh", "/root/start.sh"]
     # Almost every outbound call (Ollama's cloud calls included) resolves a hostname
     # first — pointing DNS at the container's own loopback, where nothing listens on

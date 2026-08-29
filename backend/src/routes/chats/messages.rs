@@ -42,6 +42,9 @@ pub(crate) struct MessageOut {
     /// `UseToolOut.denied`.
     tool_denied: bool,
     tool_calls: Vec<MessageToolCallOut>,
+    /// Base64-encoded image data (no data-URL prefix) attached to this message, if
+    /// any. Empty for every role but `user`.
+    images: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -98,6 +101,7 @@ pub async fn get_messages(
                     arguments: call.arguments,
                 })
                 .collect(),
+            images: message.images,
         })
         .collect();
 

@@ -1,16 +1,18 @@
 use std::sync::OnceLock;
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    ChannelId, Client, Context, CreateMessage, EventHandler, GatewayIntents, Http, Message, MessageId, MessageReference,
-    ReactionType, Ready, UserId,
+    Attachment as DiscordAttachment, ChannelId, Client, Context, CreateMessage, EventHandler, GatewayIntents, Http, Message,
+    MessageId, MessageReference, ReactionType, Ready, UserId,
 };
 use tokio::sync::mpsc::Sender;
 use tool_derive::ToolParams;
 
 use super::chunking::{split_top_level_blocks, strip_code_fence};
-use super::provider::{IncomingMessage, MessagingProvider};
+use super::provider::{Attachment, IncomingMessage, MessagingProvider};
 use crate::plugins::base::PluginError;
 use crate::tools::base::{PropertyInfo, PropertyType, ToolParams};
 
@@ -47,6 +49,30 @@ fn split_command(text: &str) -> (bool, &str) {
         Some((_command, rest)) => (true, rest.trim_start()),
         None => (true, ""),
     }
+}
+
+/// Whether an attachment is an image Ollama can actually look at — checked via its
+/// reported media type rather than filename extension, since Discord always fills
+/// `content_type` in for anything it recognizes.
+fn is_image_attachment(attachment: &DiscordAttachment) -> bool {
+    attachment.content_type.as_deref().is_some_and(|content_type| content_type.starts_with("image/"))
+}
+
+/// Downloads every image attachment on a message and base64-encodes each one (no
+/// data-URL prefix) — the wire format `Agent::chat`'s `images` wants. A download
+/// failure is logged and that one attachment is dropped rather than failing the whole
+/// message — the rest of what was sent (text, other images) still deserves a reply.
+async fn download_image_attachments(attachments: &[DiscordAttachment]) -> Vec<Attachment> {
+    let mut images = Vec::new();
+
+    for attachment in attachments.iter().filter(|a| is_image_attachment(a)) {
+        match attachment.download().await {
+            Ok(bytes) => images.push(Attachment::Image(BASE64.encode(bytes))),
+            Err(err) => tracing::warn!("discord: failed to download attachment {}: {err}", attachment.url),
+        }
+    }
+
+    images
 }
 
 /// Strips a single leading `<@bot_id>`/`<@!bot_id>` mention token — Discord's own raw
@@ -194,8 +220,9 @@ impl EventHandler for Handler {
 
         let raw_text = new_message.content.trim();
         let (is_command, after_command) = split_command(raw_text);
+        let has_images = new_message.attachments.iter().any(is_image_attachment);
 
-        if is_command && after_command.is_empty() {
+        if is_command && after_command.is_empty() && !has_images {
             let prompt =
                 CreateMessage::new().content(BARE_COMMAND_PROMPT).reference_message(MessageReference::from((
                     new_message.channel_id,
@@ -216,16 +243,21 @@ impl EventHandler for Handler {
 
         let content = if is_command { after_command } else { strip_bot_mention(raw_text, bot_id) };
         let content = content.trim();
-        if content.is_empty() {
+        if content.is_empty() && !has_images {
             return;
         }
+
+        let attachments = download_image_attachments(&new_message.attachments).await;
 
         let author = new_message.author.global_name.clone().unwrap_or_else(|| new_message.author.name.clone());
         let incoming = IncomingMessage {
             chat_id: new_message.channel_id.to_string(),
             message_id: new_message.id.to_string(),
             author,
+            author_id: new_message.author.id.to_string(),
+            sent_at: chrono::DateTime::from_timestamp(new_message.timestamp.unix_timestamp(), 0).unwrap_or_else(chrono::Utc::now),
             text: content.to_string(),
+            attachments,
         };
 
         // Best-effort — the receiver only goes away when `MessagingPlugin::on_disabled`

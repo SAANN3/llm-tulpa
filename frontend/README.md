@@ -9,7 +9,7 @@ React + TypeScript UI for llm-tulpa. Talks to the backend over its REST API, not
 npm install
 cp .env.example .env
 ```
-`.env`'s `VITE_BACKEND_URL` should point at wherever the backend's running (`http://localhost:3000` by default).
+`.env`'s `VITE_BACKEND_URL` only needs setting if the backend runs somewhere other than the host this page itself was loaded from — left empty, it's derived at runtime from `window.location.hostname` on port 3000, which is right for the common case (backend and frontend served from the same machine, whether that's `localhost` or a LAN IP).
 
 ## Running
 ```bash

@@ -19,6 +19,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Persistent chat history — every conversation, resumable across restarts.
 - Real tool-calling: reads/writes files, inspects hardware and disk space — see [`backend/TOOLS.md`](./backend/TOOLS.md). Anything that can actually change something is permission-gated per tool (e.g. `storage.write_file` asks per folder); nothing runs without approval.
 - Automatic history compaction, so a long or tool-heavy conversation doesn't blow the model's context window.
+- Vision — attach images to a message from the composer, or send a photo through a messaging plugin, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
 - A few themes to pick from (Slate / Paper / Matcha) — will expand in the future!

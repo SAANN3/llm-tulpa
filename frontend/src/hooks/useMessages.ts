@@ -28,6 +28,8 @@ export type DisplayMessage =
       created_at: string
       thinking?: string | null
       thought_duration_ms?: number | null
+      /** Base64-encoded image data (no data-URL prefix), if any — only ever set on a `user` message. */
+      images?: string[]
     }
   | { role: 'tool'; content: unknown; tool_name: string | null; created_at: string; arguments: Record<string, unknown> }
 
@@ -65,12 +67,13 @@ function toDisplayMessages(page: MessageOut[]): DisplayMessage[] {
       created_at: m.created_at,
       thinking: m.thinking,
       thought_duration_ms: m.thought_duration_ms,
+      images: m.images,
     }
   })
 }
 
-function userMessage(content: string): DisplayMessage {
-  return { role: 'user', content, created_at: new Date().toISOString() }
+function userMessage(content: string, images: string[]): DisplayMessage {
+  return { role: 'user', content, created_at: new Date().toISOString(), images }
 }
 
 function assistantMessage(reply: AgentChatOut): DisplayMessage {
@@ -474,16 +477,16 @@ export function useMessages(chatId: number, onAppended?: () => void) {
 
   // Looking for how a turn actually flows (the pause-for-confirmation loop)? See the
   // diagram above `findPendingConfirmations` earlier in this file.
-  const send = async (prompt: string, think = true): Promise<TurnResult> => {
+  const send = async (prompt: string, think = true, images: string[] = []): Promise<TurnResult> => {
     const requestChatId = chatId
     const guardedAppend = (message: DisplayMessage) => {
       if (chatIdRef.current === requestChatId) appendMessage(message)
     }
 
-    guardedAppend(userMessage(prompt))
+    guardedAppend(userMessage(prompt, images))
     setSendingChatId(requestChatId)
     try {
-      const reply = await sendChatMessage(chatId, prompt, think)
+      const reply = await sendChatMessage(chatId, prompt, think, images)
       guardedAppend(assistantMessage(reply))
       return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
     } finally {

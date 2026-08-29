@@ -233,6 +233,10 @@ impl ChatStore {
                     tool_success: message.tool_success,
                     tool_denied: message.tool_denied,
                     tool_calls,
+                    images: message
+                        .images
+                        .and_then(|images| serde_json::from_value(images).ok())
+                        .unwrap_or_default(),
                 }
             })
             .collect())
@@ -479,7 +483,13 @@ impl ChatStore {
             tool_success,
             tool_denied,
             tool_calls,
+            images,
         } = new_message;
+
+        // Stored as `NULL` rather than `[]` for a message with none — same convention
+        // as `summary`/`thinking` above, and keeps every pre-existing row (which has no
+        // `images` at all) indistinguishable from one explicitly sent with zero images.
+        let images_json = (!images.is_empty()).then(|| serde_json::json!(images));
 
         let tool_calls_out: Vec<ToolCallOut> = tool_calls
             .iter()
@@ -502,6 +512,7 @@ impl ChatStore {
                         thought_duration_ms: Set(thought_duration_ms),
                         tool_success: Set(tool_success),
                         tool_denied: Set(tool_denied),
+                        images: Set(images_json),
                         ..Default::default()
                     }
                     .insert(txn)
@@ -546,6 +557,7 @@ impl ChatStore {
             tool_success: message.tool_success,
             tool_denied: message.tool_denied,
             tool_calls: tool_calls_out,
+            images,
         })
     }
 }
@@ -581,6 +593,9 @@ pub struct Message {
     /// `NewMessage::tool_denied`.
     pub tool_denied: bool,
     pub tool_calls: Vec<ToolCallOut>,
+    /// Base64-encoded image data attached to this message (no data-URL prefix), if
+    /// any. Empty for every role but `user`.
+    pub images: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -620,6 +635,9 @@ pub struct NewMessage {
     /// non-`tool`-role message).
     pub tool_denied: bool,
     pub tool_calls: Vec<NewToolCall>,
+    /// Base64-encoded image data (no data-URL prefix) to attach to this message. Only
+    /// meaningful on a `user`-role message — pass empty for every other role.
+    pub images: Vec<String>,
 }
 
 /// Wraps every SeaORM failure uniformly — nothing about which specific query failed

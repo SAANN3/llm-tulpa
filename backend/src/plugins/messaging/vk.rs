@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,7 +10,7 @@ use tokio::sync::mpsc::Sender;
 use tool_derive::ToolParams;
 
 use super::chunking::{split_top_level_blocks, strip_code_fence};
-use super::provider::{IncomingMessage, MessagingProvider};
+use super::provider::{Attachment, IncomingMessage, MessagingProvider};
 use crate::plugins::base::PluginError;
 use crate::tools::base::{PropertyInfo, PropertyType, ToolParams};
 
@@ -157,6 +159,62 @@ fn hard_split(block: &str, max_chars: usize) -> Vec<&str> {
         pieces.push(rest);
     }
     pieces
+}
+
+/// The URL of a `message_new` event's photo attachments, largest size each — VK sends
+/// every size it has (`s`/`m`/`x`/… up to whichever original resolution), none of which
+/// is reliably "the biggest" by name alone (the letter codes aren't consistently
+/// ordered across photo ages), so this picks by actual pixel count instead. Only
+/// `"photo"`-typed attachments are looked at — VK's other attachment kinds (video,
+/// audio, sticker, doc, …) aren't images and are silently skipped, same as an unhandled
+/// future `Attachment` kind would be until one exists.
+fn extract_vk_photo_urls(message: &Value) -> Vec<String> {
+    message
+        .get("attachments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|attachment| attachment.get("type").and_then(Value::as_str) == Some("photo"))
+        .filter_map(|attachment| attachment.get("photo")?.get("sizes")?.as_array())
+        .filter_map(|sizes| {
+            sizes
+                .iter()
+                .max_by_key(|size| {
+                    let width = size.get("width").and_then(Value::as_i64).unwrap_or(0);
+                    let height = size.get("height").and_then(Value::as_i64).unwrap_or(0);
+                    width * height
+                })
+                .and_then(|size| size.get("url").and_then(Value::as_str))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Downloads each of `urls` and base64-encodes it (no data-URL prefix) — the wire
+/// format `Agent::chat`'s `images` wants. VK's own CDN URLs need no auth, unlike the
+/// `messages.send`/etc calls `vk_call` makes, so this is a plain GET rather than
+/// routing through that helper. A failed download is logged and that one image is
+/// dropped rather than failing the whole message — same reasoning as Discord's own
+/// `download_image_attachments`.
+async fn download_vk_images(client: &reqwest::Client, urls: &[String]) -> Vec<Attachment> {
+    let mut images = Vec::new();
+
+    for url in urls {
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::warn!("vk: failed to download photo attachment ({url}): {err}");
+                continue;
+            }
+        };
+
+        match response.bytes().await {
+            Ok(bytes) => images.push(Attachment::Image(BASE64.encode(bytes))),
+            Err(err) => tracing::warn!("vk: failed to read photo attachment body ({url}): {err}"),
+        }
+    }
+
+    images
 }
 
 /// One raw call against `https://api.vk.com/method/<method>` — `access_token` and `v`
@@ -329,10 +387,26 @@ impl MessagingProvider for VkProvider {
                     continue;
                 }
                 let Some(message) = update.get("object").and_then(|object| object.get("message")) else { continue };
-                let Some(text) = message.get("text").and_then(Value::as_str) else { continue };
+                // VK always includes `text`, empty string rather than omitted when a
+                // message is attachment-only — `unwrap_or("")` covers that same case if
+                // some client ever does omit it instead.
+                let text = message.get("text").and_then(Value::as_str).unwrap_or("");
                 let Some(peer_id) = message.get("peer_id").and_then(Value::as_i64) else { continue };
                 let Some(cmid) = message.get("conversation_message_id").and_then(Value::as_i64) else { continue };
                 let Some(from_id) = message.get("from_id").and_then(Value::as_i64) else { continue };
+                // VK's `date` is Unix seconds — missing only if VK's own payload shape
+                // ever changes, not something normally worth failing the message over.
+                let sent_at = message
+                    .get("date")
+                    .and_then(Value::as_i64)
+                    .and_then(|date| chrono::DateTime::from_timestamp(date, 0))
+                    .unwrap_or_else(chrono::Utc::now);
+
+                let photo_urls = extract_vk_photo_urls(message);
+                let has_images = !photo_urls.is_empty();
+                if text.is_empty() && !has_images {
+                    continue;
+                }
 
                 let text = text.trim();
                 let (is_command, after_command) = split_command(text);
@@ -354,7 +428,7 @@ impl MessagingProvider for VkProvider {
                     continue;
                 }
 
-                if is_command && after_command.is_empty() {
+                if is_command && after_command.is_empty() && !has_images {
                     if let Err(err) = self.send_chunks(&peer_id.to_string(), BARE_COMMAND_PROMPT, None).await {
                         tracing::warn!("vk: failed to send bare-command prompt in peer {peer_id}: {err}");
                     }
@@ -362,13 +436,21 @@ impl MessagingProvider for VkProvider {
                 }
 
                 let content = if is_command { after_command } else { text }.trim();
-                if content.is_empty() {
+                if content.is_empty() && !has_images {
                     continue;
                 }
 
+                let attachments = download_vk_images(&self.client, &photo_urls).await;
                 let author = self.resolve_author(from_id).await;
-                let incoming =
-                    IncomingMessage { chat_id: peer_id.to_string(), message_id: cmid.to_string(), author, text: content.to_string() };
+                let incoming = IncomingMessage {
+                    chat_id: peer_id.to_string(),
+                    message_id: cmid.to_string(),
+                    author,
+                    author_id: from_id.to_string(),
+                    sent_at,
+                    text: content.to_string(),
+                    attachments,
+                };
 
                 if tx.send(incoming).await.is_err() {
                     return Ok(());

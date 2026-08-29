@@ -99,9 +99,9 @@ function ChatView({ chatId }: { chatId: number }) {
     setPausedTurn(null)
     handleTurnResult(forChatId, await confirm(decisions))
   }
-  const handleSend = async (prompt: string, think?: boolean) => {
+  const handleSend = async (prompt: string, think?: boolean, images?: string[]) => {
     const forChatId = chatId
-    handleTurnResult(forChatId, await send(prompt, think))
+    handleTurnResult(forChatId, await send(prompt, think, images))
   }
 
   // Read through refs rather than depending on `send`/`resume` directly — both are
@@ -129,7 +129,7 @@ function ChatView({ chatId }: { chatId: number }) {
 
   useEffect(() => {
     const pending = consumePendingPrompt(chatId)
-    if (pending) sendRef.current(pending.prompt, pending.think)
+    if (pending) sendRef.current(pending.prompt, pending.think, pending.images)
   }, [chatId])
 
   // `canContinue` is fetched by `useMessages` as soon as the chat opens — reopening a
@@ -176,6 +176,7 @@ function ChatView({ chatId }: { chatId: number }) {
                     created_at={m.created_at}
                     thinking={m.thinking}
                     thought_duration_ms={m.thought_duration_ms}
+                    images={m.images}
                   />
                 )}
               </Fragment>

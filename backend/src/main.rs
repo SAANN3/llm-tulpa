@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::http::{HeaderValue, Method};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
 use cache::user_cache::UserCacheService;
@@ -134,8 +134,16 @@ async fn main() {
     // comment for why the plugins domain doesn't nest inside it like the others.
     let plugin_router = routes::plugins::router::router(&state).await;
 
+    // Matches on port alone (`:5173`, the frontend's fixed published port) rather
+    // than a fixed host — the frontend can be reached at `localhost`, a LAN IP, or
+    // anything else depending on which device's browser is asking, and a fixed
+    // origin here would only ever match one of those.
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
+            origin
+                .to_str()
+                .is_ok_and(|origin| origin.starts_with("http://") && origin.ends_with(":5173"))
+        }))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers(tower_http::cors::Any);
 

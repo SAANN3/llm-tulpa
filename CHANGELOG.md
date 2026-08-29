@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] - 2026-08-30
+### Added
+- Vision — attach images to a message (frontend composer, or a photo sent through any messaging plugin) when running a vision-capable model. See the new "Vision" section in `llm/README.md` for pairing a model with a mmproj/CLIP projector.
+- Messaging plugin: an optional `name_hint` setting tags every message handed to the agent with who actually sent it (name, user id, and send time, in a configurable timezone) — without it, several people talking to the same bot (e.g. a group chat) all look like one ongoing conversation.
+- Telegram: multiple photos sent as one album now reach the agent as a single message with every image attached, matching how the frontend and Discord/VK already behaved.
+
+### Changed
+- The backend container now uses Docker's host network instead of its own bridge network, so it inherits whatever routing the host itself has (a VPN/proxy in particular) instead of losing it — see `compose.yaml`. Postgres and Ollama are addressed via `localhost` under this mode rather than their old Docker service names.
+- The frontend's backend URL is no longer baked in at build time by default — an unset `VITE_BACKEND_URL` now falls back to whatever hostname the page itself was loaded from, so the same build works from `localhost`, a LAN IP, or anything else without a rebuild.
+- Backend CORS now accepts any origin on port 5173, not just `http://localhost:5173`, to match the above.
+
+### Fixed
+- An image forwarded through a messaging plugin could make Ollama's vision decoder fail outright (`mtmd_helper_bitmap_init_from_buf: failed to decode buffer`), killing the whole reply — every image sent through a plugin is now decoded and re-encoded before it ever reaches Ollama, catching both unsupported formats and files Ollama's own decoder is unexpectedly picky about.
+
 ## [0.1.1] - 2026-08-27
 ### Added
 - Plugin system — optional integrations, switched on/off from their own settings panel. First plugin type is messaging: talk to the agent from Telegram, Discord, or VK — see `backend/PLUGINS.md`.

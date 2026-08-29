@@ -9,6 +9,10 @@ use crate::{facade::prompt::GreetOut, services::error::ErrorService, state::AppS
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ChatNameRequest {
     content: String,
+    /// Base64-encoded image data (no data-URL prefix), one entry per attached image —
+    /// same convention as `/api/agent/chat`. `content` can be empty when this isn't.
+    #[serde(default)]
+    images: Option<Vec<String>>,
 }
 
 /// A very short (1-5 word) label summarizing `content`, written from the user's own
@@ -29,7 +33,7 @@ pub async fn chat_name(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ChatNameRequest>,
 ) -> Result<Json<GreetOut>, ErrorService> {
-    let result = state.prompt.chat_name(body.content).await?;
+    let result = state.prompt.chat_name(body.content, body.images.unwrap_or_default()).await?;
 
     Ok(Json(result))
 }

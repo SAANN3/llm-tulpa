@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -28,6 +30,47 @@ const CHANNEL_CAPACITY: usize = 64;
 /// stretch of time before a reply is ready, which on a thinking-heavy reply can be
 /// long enough that the user might otherwise wonder if the bot saw the message at all.
 const RECEIVED_REACTION: &str = "👀";
+
+/// Always fully decodes every image via the `image` crate, then re-encodes it as PNG —
+/// no exceptions for a format that's nominally something Ollama's own vision decoder
+/// (llama.cpp's `mtmd`/`clip.cpp`, built on `stb_image`) is supposed to handle already.
+/// Two real failures established why that shortcut isn't safe: WebP, which `stb_image`
+/// doesn't support at all — and, separately, an ordinary-looking JPEG/PNG that this
+/// crate decoded fine but still made Ollama's decoder choke with the exact same
+/// `mtmd_helper_bitmap_init_from_buf: failed to decode buffer` error passing it through
+/// unchanged. `stb_image` is evidently pickier about "valid" input than the file
+/// genuinely being corrupt — a CMYK JPEG is the classic example of a decoder gap like
+/// this. Re-encoding through this crate's own PNG writer sidesteps whatever the
+/// original encoder did, guaranteeing Ollama only ever sees output this process
+/// produced itself, in a container every decoder handles.
+///
+/// Also catches truncated/corrupted downloads: a bad file failing to decode here is
+/// dropped with a warning rather than a hard failure — one bad image shouldn't sink a
+/// message that also had real text worth answering. Runs on a blocking thread: real
+/// image data makes this genuinely CPU-bound work, not something to do inline on the
+/// async runtime that's also driving this provider's connection loop.
+async fn normalize_images(images: Vec<String>) -> Vec<String> {
+    tokio::task::spawn_blocking(move || {
+        images
+            .into_iter()
+            .filter_map(|base64_image| {
+                let bytes = BASE64.decode(&base64_image).ok()?;
+                let decoded = image::load_from_memory(&bytes)
+                    .inspect_err(|err| tracing::warn!("messaging plugin: dropping an image that failed to decode: {err}"))
+                    .ok()?;
+
+                let mut png_bytes = Vec::new();
+                decoded
+                    .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+                    .inspect_err(|err| tracing::warn!("messaging plugin: dropping an image that failed to re-encode: {err}"))
+                    .ok()?;
+                Some(BASE64.encode(png_bytes))
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
 
 /// How many times `run_with_reconnect` (below) retries a provider's `run()` loop after
 /// it ends in error before giving up on the connection entirely — a flat cap per
@@ -95,6 +138,18 @@ pub struct MessagingSettings<S> {
     /// startup or settings update.
     #[serde(default)]
     pub think: bool,
+    /// When on, every message handed to the agent is prefixed with who actually sent
+    /// it (see `on_new_message`) — off by default so a provider's replies read exactly
+    /// as before for anyone who hasn't turned it on. `#[serde(default)]`, same
+    /// forward-compatibility reasoning as `think`.
+    #[serde(default)]
+    pub name_hint: bool,
+    /// IANA timezone name (e.g. "Europe/Moscow", "America/New_York") the `sent at`
+    /// part of `name_hint`'s prefix is shown in — only read when `name_hint` is on.
+    /// Defaults to UTC so settings saved before this field existed keep behaving
+    /// exactly as before, same reasoning as `think`/`name_hint`'s own defaults.
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
     /// `#[serde(flatten)]` — `settings_schema` (below) reports `allowed_chat_ids` and
     /// every field `P::Settings` has as one flat list (`PropertyInfo` has no concept of
     /// nesting; it's the same flat leaf-list shape used for LLM tool-calling args), so
@@ -103,6 +158,10 @@ pub struct MessagingSettings<S> {
     /// would serialize as its own nested `{"provider": {...}}` sub-object instead.
     #[serde(flatten)]
     pub provider: S,
+}
+
+fn default_timezone() -> String {
+    "UTC".to_string()
 }
 
 /// Exists only so `#[derive(ToolParams)]` has a concrete, non-generic struct to read —
@@ -119,6 +178,16 @@ struct MessagingSharedSettingsSchema {
     #[tool(description = "Whether replies think before answering — slower, but can give a more careful answer.")]
     #[allow(dead_code)]
     think: bool,
+    #[tool(
+        description = "Without this, every message this bot receives looks like it's from the same person — so if several people talk to it (e.g. a group chat), it can't tell them apart. Turning this on tags each message with who actually sent it (name, user id, and when) before the agent sees it, so it knows who it's talking to and when they said it."
+    )]
+    #[allow(dead_code)]
+    name_hint: bool,
+    #[tool(
+        description = "Timezone the name hint's \"sent at\" timestamp is shown in (only matters if that's turned on) — an IANA name like \"Europe/Moscow\" or \"America/New_York\". Defaults to UTC."
+    )]
+    #[allow(dead_code)]
+    timezone: String,
 }
 
 /// The shared `allowed_chat_ids` field's schema, followed by whatever `P` itself
@@ -177,6 +246,8 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
         message: IncomingMessage,
         allowed_chat_ids: &[String],
         think: bool,
+        name_hint: bool,
+        timezone: &str,
         provider: &Arc<P>,
         agent: &Arc<Agent>,
         chat_store: &Arc<ChatStore>,
@@ -223,7 +294,26 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
             }
         };
 
-        let reply = match agent.chat(chat.id, message.text, Some(think)).await {
+        let images = normalize_images(message.images()).await;
+        // Tags the message with who actually sent it before the agent ever sees it —
+        // without this, every sender looks like the same ongoing conversation, which
+        // falls apart the moment more than one person talks to the bot (a group chat,
+        // most obviously). Only prefixed when the setting is on: the untagged form is
+        // what every provider already sent before this existed, and stays the default.
+        let text = if name_hint {
+            let tz: chrono_tz::Tz = timezone.parse().unwrap_or_else(|_| {
+                tracing::warn!("messaging plugin: invalid timezone {timezone:?} in settings, falling back to UTC");
+                chrono_tz::UTC
+            });
+            let sent_at = message.sent_at.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S %Z");
+            format!(
+                "[Message from user named {} with userid {}, sent at {sent_at}]\n{}",
+                message.author, message.author_id, message.text
+            )
+        } else {
+            message.text
+        };
+        let reply = match agent.chat(chat.id, text, images, Some(think)).await {
             Ok(reply) => reply,
             Err(err) => {
                 tracing::warn!(
@@ -275,12 +365,14 @@ impl<P: MessagingProvider> Plugin for MessagingPlugin<P> {
 
         let allowed_chat_ids = self.settings.allowed_chat_ids.clone();
         let think = self.settings.think;
+        let name_hint = self.settings.name_hint;
+        let timezone = self.settings.timezone.clone();
         let read_provider = self.provider.clone();
         let agent = self.agent.clone();
         let chat_store = self.chat_store.clone();
         let read = tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                Self::on_new_message(message, &allowed_chat_ids, think, &read_provider, &agent, &chat_store).await;
+                Self::on_new_message(message, &allowed_chat_ids, think, name_hint, &timezone, &read_provider, &agent, &chat_store).await;
             }
         });
 
