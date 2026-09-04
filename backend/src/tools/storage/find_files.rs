@@ -3,7 +3,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use tool_derive::ToolParams;
 
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams, ToolPermission, ToolSerializationError};
+use crate::tools::base::{
+    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolError, ToolParams, ToolPermission,
+    ToolSerializationError,
+};
 
 use super::{check_directory_scope, normalize};
 
@@ -44,13 +47,17 @@ impl Tool for FindFilesTool {
         FindFilesArgs::tool_properties()
     }
 
-    fn is_dangerous(
-        &self,
-        data: Value,
-        scope: Option<Value>,
-    ) -> Result<ToolPermission, ToolSerializationError> {
+    fn shared_buckets(&self) -> &'static [SharedBucket] {
+        &[SharedBucket::StorageRead]
+    }
+
+    fn is_dangerous(&self, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
         let args: FindFilesArgs = serde_json::from_value(data)?;
-        Ok(check_directory_scope(&args.directory, scope))
+        Ok(check_directory_scope(
+            &args.directory,
+            SharedBucket::StorageRead,
+            scope.shared.get(&SharedBucket::StorageRead),
+        ))
     }
 
     async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3] - 2026-09-05
+### Added
+- `os.*` extended with `get_date`, `get_process_list`, `get_network_info`, `cpu_usage`, `get_user_info`, `execute_command`, `env_read`, `env_write`. The agent's system prompt now also states the actual current date/time directly on every turn, so it doesn't assume a stale one from training.
+- `storage.detect_file_type` — identifies a file by sniffing its first bytes rather than trusting its name.
+- New `web.*` domain: `download_file` (save a URL straight to disk), `request` (GET/HEAD/POST/PUT/PATCH/DELETE, response read inline), and `search_query` (web search via a bundled local SearXNG instance) — see `backend/TOOLS.md`.
+- New `searxng`/`searxng-nginx` Docker services backing `web.search_query`: a handful of solid search engines rather than SearXNG's full default roster, and calls are throttled at the container level so a burst of searches can't hammer the underlying engines.
+
+### Changed
+- Permission grants are now shared across every tool that needs the same kind of access, instead of each tool needing its own separate approval for the same thing — approving `storage.read_file` under a folder now also covers `storage.list_directory`/`storage.find_files`/`storage.detect_file_type` there, without a second prompt. Write and delete access remain separate, independent levels.
+- `web.download_file` replaces the old `web.fetch_url` — downloads straight to disk instead of returning content inline, so it behaves the same whether the URL points at a text page, an image, or any other file type.
+
 ## [0.1.2] - 2026-08-30
 ### Added
 - Vision — attach images to a message (frontend composer, or a photo sent through any messaging plugin) when running a vision-capable model. See the new "Vision" section in `llm/README.md` for pairing a model with a mmproj/CLIP projector.

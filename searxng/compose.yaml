@@ -1,0 +1,45 @@
+services:
+  searxng:
+    image: "searxng/searxng:latest"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    volumes:
+      - "./settings.yml:/etc/searxng/settings.yml:ro"
+    # Host networking, not the `app-net` bridge — same reasoning as the `backend`
+    # service in the repo root's compose.yaml: a bridged container's outbound
+    # traffic doesn't pass through host-level VPN/proxy routing (sing-box TUN
+    # mode here), so on the bridge network every engine request timed out
+    # connecting to google.com/bing.com/duckduckgo.com (confirmed live — every
+    # web.search_query call came back with zero results, `searxng`'s own logs
+    # showed `httpx.ConnectTimeout` to all three on every attempt). No published
+    # port needed under this mode — it just binds directly on the host.
+    network_mode: host
+    # Recommended by SearXNG's own docs — the image only actually needs CHOWN/
+    # SETGID/SETUID at startup (to drop from root to its own unprivileged user),
+    # nothing else.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+
+  # Sits in front of `searxng` purely to rate-limit calls into it (see
+  # nginx.conf) — spacing out web.search_query calls so a burst of them doesn't
+  # hammer google/bing/duckduckgo all at once. Deliberately a container-level
+  # concern, not something the Rust backend enforces itself.
+  searxng-nginx:
+    image: "nginx:alpine"
+    volumes:
+      - "./nginx.conf:/etc/nginx/nginx.conf:ro"
+    # Also host networking, for the same reason as `searxng` above — under host
+    # mode `searxng` no longer resolves as a Docker service name (no embedded DNS
+    # in this mode) and isn't reachable from a bridge-network container's own
+    # separate loopback either, so this has to share the host network namespace
+    # to reach it at 127.0.0.1:8080 (see nginx.conf). Listens on a different port
+    # (8090) than searxng's own 8080 to avoid binding the same host port twice.
+    network_mode: host
+    depends_on:
+      - searxng
+    restart: unless-stopped

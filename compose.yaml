@@ -1,6 +1,7 @@
 include:
   - postgres/compose.yaml
   - llm/compose.yaml
+  - searxng/compose.yaml
 
 services:
   backend:
@@ -35,9 +36,27 @@ services:
     # instead — safe since both already publish to 127.0.0.1 on the host (see
     # postgres/compose.yaml and llm/compose.yaml).
     network_mode: host
+    # Shares the host's PID namespace too, same reasoning as network_mode above —
+    # os.get_process_list otherwise only ever sees this container's own handful of
+    # processes, never the host's real ones. Side effect worth knowing: since this
+    # container already runs as the real host user (via HOST_UID/HOST_GID above, not
+    # root), os.execute_command can now also signal (e.g. kill) real host processes
+    # owned by that same user — Linux's kill() permission check is UID-based, not
+    # PID-namespace-based, so sharing the namespace is enough once the UID already
+    # matches. Root-owned host processes stay out of reach either way. Not a new
+    # *unsupervised* risk on its own: execute_command already requires a fresh
+    # approval for every single call.
+    pid: host
     environment:
       - OLLAMA_URL=http://localhost:11434
       - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME:-local-llm}
+      # Reached the same way ollama/postgres are under host networking — port
+      # 8090 is the searxng-nginx rate-limiting sidecar in front of the real
+      # searxng service (which binds 8080 directly, see searxng/compose.yaml and
+      # searxng/nginx.conf); both run network_mode: host too, for real outbound
+      # internet access (a bridged searxng container couldn't reach google/bing/
+      # duckduckgo at all — didn't go through the host's VPN routing).
+      - SEARXNG_URL=http://localhost:8090
       - DATABASE_URL=postgres://postgres:postgres@localhost:5432
       - DATABASE_NAME=${DATABASE_NAME:-llm_tulpa}
       - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
@@ -68,6 +87,7 @@ services:
     depends_on:
       - postgres
       - ollama
+      - searxng
     restart: unless-stopped
 
   frontend:

@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tool_derive::ToolParams;
 
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams, ToolPermission, ToolSerializationError};
+use crate::tools::base::{
+    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolError, ToolParams, ToolPermission,
+    ToolSerializationError,
+};
 
 use super::{check_file_scope, normalize, replace_in_file};
 
@@ -55,13 +58,13 @@ impl Tool for ReplaceStrTool {
         ReplaceStrArgs::tool_properties()
     }
 
-    fn is_dangerous(
-        &self,
-        data: Value,
-        scope: Option<Value>,
-    ) -> Result<ToolPermission, ToolSerializationError> {
+    fn shared_buckets(&self) -> &'static [SharedBucket] {
+        &[SharedBucket::StorageWrite]
+    }
+
+    fn is_dangerous(&self, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
         let args: ReplaceStrArgs = serde_json::from_value(data)?;
-        Ok(check_file_scope(&args.path, scope))
+        Ok(check_file_scope(&args.path, SharedBucket::StorageWrite, scope.shared.get(&SharedBucket::StorageWrite)))
     }
 
     async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {

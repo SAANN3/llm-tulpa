@@ -1,0 +1,40 @@
+use_default_settings:
+  # Only a handful of solid general engines rather than SearXNG's full default
+  # roster (dozens, including image/news/video variants and .onion-only ones) —
+  # every one of these gets hit on every single web.search_query call, so keeping
+  # the list short is directly what keeps that call from hammering a pile of
+  # providers at once.
+  engines:
+    keep_only:
+      - google
+      - bing
+      - duckduckgo
+
+general:
+  instance_name: "llm-tulpa searxng"
+
+server:
+  # This instance is never reached from anywhere but this backend, over loopback
+  # via the nginx sidecar in front of it (see compose.yaml/nginx.conf) — the bot/
+  # rate limiter and a per-deployment random secret key matter for a public-facing
+  # SearXNG, not this one, so both are simplified rather than left at their
+  # public-instance defaults. Real throttling of outbound calls to google/bing/ddg
+  # lives in nginx.conf instead (see there for why).
+  secret_key: "a71dcb079882be423da57f6be5a00f2c05d8a4eb003e26d44d8fad297ca0e3e0"
+  limiter: false
+  image_proxy: false
+
+search:
+  # json is off by default (it exists to discourage scraping a public instance) —
+  # this is the one setting web.search_query actually needs turned on.
+  formats:
+    - html
+    - json
+
+# google and bing ship `disabled: true` by default (duckduckgo doesn't) — keep_only
+# above only narrows *which* engines are even in play, it doesn't turn them on.
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false

@@ -1,17 +1,19 @@
 pub mod create_directory;
 pub mod delete_directory;
 pub mod delete_file;
+pub mod detect_file_type;
 pub mod find_files;
 pub mod list_directory;
 pub mod read_file;
 pub mod replace_str;
 pub mod write_file;
 
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-use super::base::{ScopeGrant, Tool, ToolError, ToolPermission};
+use super::base::{ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolError, ToolPermission};
 
 /// Every tool in the `storage` domain (function names prefixed `storage.`), for
 /// `main.rs` to register alongside every other domain's `collect()`.
@@ -25,6 +27,7 @@ pub fn collect() -> Vec<Box<dyn Tool>> {
         Box::new(create_directory::CreateDirectoryTool),
         Box::new(delete_directory::DeleteDirectoryTool),
         Box::new(find_files::FindFilesTool),
+        Box::new(detect_file_type::DetectFileTypeTool),
     ]
 }
 
@@ -70,27 +73,41 @@ fn expand_tilde(path: &Path) -> PathBuf {
     }
 }
 
-/// The scope shape every `storage` tool shares: a single folder, granting access to
-/// everything under it (recursively). Opaque `Value` at the `Tool` trait boundary, but
-/// every `storage` tool agrees on this shape — that's what lets them all reuse
-/// `check_file_scope`/`check_directory_scope` instead of each inventing its own.
-fn granted_folder(scope: &Value) -> Option<PathBuf> {
-    scope.get("folder")?.as_str().map(PathBuf::from)
+/// The map of every folder granted under one shared bucket — `{"<bucket.json_key()>":
+/// {"<folder>": true, ...}}`. A folder is covered if it or any ancestor of it is a key
+/// in the map, so approvals accumulate across separate calls instead of the most
+/// recently granted folder silently replacing every earlier one.
+fn granted_folders(bucket: SharedBucket, scope: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
+    scope?.get(bucket.json_key())?.as_object()
 }
 
-fn check_scope(scope_root: &Path, granted: Option<Value>) -> ToolPermission {
-    if let Some(folder) = granted.as_ref().and_then(granted_folder) {
-        if scope_root.starts_with(&folder) {
+fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>) -> ToolPermission {
+    let folders = granted_folders(bucket, granted);
+
+    if let Some(folders) = folders {
+        if folders.keys().any(|folder| scope_root.starts_with(folder)) {
             return ToolPermission::Allowed;
         }
     }
 
+    // Just the one new entry, not the existing map re-sent alongside it — `Agent::
+    // allow_scope` is what actually appends it to whatever's currently granted, read
+    // fresh at persist time. Offering the whole accumulated map here instead would mean
+    // two denied calls from the same reply (e.g. reading two different ungranted
+    // folders at once) each build their escalation from the same pre-approval
+    // snapshot — approving both would have the second overwrite the first's addition.
     ToolPermission::Denied {
         reason: format!("no permission granted covering '{}'", scope_root.display()),
         escalation: Some(ScopeGrant {
-            scope: serde_json::json!({ "folder": scope_root.to_string_lossy() }),
+            scope: ResolvedScope {
+                own: None,
+                shared: HashMap::from([(
+                    bucket,
+                    serde_json::json!({ bucket.json_key(): { scope_root.to_string_lossy(): true } }),
+                )]),
+            },
             ui_message: format!(
-                "Allow access to everything under '{}' (including subfolders) for this tool only?",
+                "Allow access to everything under '{}' (including subfolders)?",
                 scope_root.display()
             ),
         }),
@@ -100,20 +117,20 @@ fn check_scope(scope_root: &Path, granted: Option<Value>) -> ToolPermission {
 /// For tools whose `path` argument names a file (`read_file`, `write_file`,
 /// `delete_file`) — scopes to the file's containing folder, so a grant covers every
 /// file in that folder, not just this one call's.
-pub(super) fn check_file_scope(path: &str, scope: Option<Value>) -> ToolPermission {
+pub(super) fn check_file_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
     let target = normalize(Path::new(path));
     let root = target
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| target.clone());
-    check_scope(&root, scope)
+    check_scope(&root, bucket, scope)
 }
 
 /// For tools whose `path` argument names a directory itself (`list_directory`,
 /// `create_directory`, `delete_directory`, `find_files`) — scopes to that directory
 /// directly, not its parent.
-pub(super) fn check_directory_scope(path: &str, scope: Option<Value>) -> ToolPermission {
-    check_scope(&normalize(Path::new(path)), scope)
+pub(super) fn check_directory_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
+    check_scope(&normalize(Path::new(path)), bucket, scope)
 }
 
 /// Adaptive human-readable byte count — individual files span a much wider range than

@@ -23,6 +23,7 @@ Or run the whole project (frontend included) via Docker — see the repo root's 
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432` | Postgres connection string, without a database name. |
 | `DATABASE_NAME` | `llm_tulpa` | Database name — created automatically if it doesn't exist. |
 | `AGENT_HISTORY_LEN` | `200` | How many of a chat's most recent messages get pulled into a single turn. |
+| `SEARXNG_URL` | `http://localhost:8090` | Where to reach the SearXNG instance `web.search_query` calls (the rate-limiting sidecar in front of it, not searxng's own port) — see the repo root's `searxng/`. |
 | `BIND_ADDR` | `127.0.0.1:3000` | What the HTTP server binds to. Loopback-only by default; Docker overrides this to `0.0.0.0:3000` since a container's own loopback isn't reachable from outside it. |
 | `RUST_LOG` | `info,sqlx::query=warn` | Standard `tracing-subscriber` filter syntax. |
 

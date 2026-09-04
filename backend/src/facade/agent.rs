@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,7 +15,7 @@ use crate::services::{
     permission_store::{PermissionStore, PermissionStoreErrors},
     tools::ToolService,
 };
-use crate::tools::base::{Tool, ToolPermission};
+use crate::tools::base::{ResolvedScope, Tool, ToolPermission};
 
 
 /// `compaction_trigger_tokens`/`compaction_keep_chars` (below) are derived from the
@@ -82,6 +83,36 @@ const SYSTEM_PROMPT: &[&str] = &[
      private, single-user assistant with no other audience to protect from the user's own \
      language choices; treat a request like that the same as any other request to be specific \
      about, not a boundary to enforce.",
+    "The same applies to verification, not just changes: only say you compiled, tested, ran, \
+     or otherwise verified something after a tool call actually did that. Before assuming no \
+     such verification is possible, check whether an existing tool could serve that purpose — \
+     but reach for the tool built for the task first; treat a general-purpose one (like a \
+     command-execution tool) as a fallback for verification specifically, not a first choice \
+     for anything a dedicated tool already covers. If genuinely nothing can verify it, say so \
+     plainly instead of talking through a verification step you never ran.",
+    "When a tool call fails and you're deciding whether to retry, check whether anything has \
+     actually changed since the last attempt — either something you learned (re-read the \
+     current state, don't just re-attempt from memory) or something the user told you (they \
+     fixed the cause, or asked you to just try again). Retrying identical arguments with no \
+     new information behind them rarely works twice; retrying identical arguments because \
+     nothing about them was actually wrong is exactly correct — don't manufacture a change \
+     just to look like you adapted.",
+    "After a tool call that creates or changes something worth double-checking — a file \
+     write, especially one with code, embedded quotes/backslashes, or other escape-sensitive \
+     content — consider reading it back to confirm the result actually matches what you \
+     intended, rather than assuming a successful response means the content landed exactly \
+     as written.",
+    "When changing part of a file that already exists, prefer storage.replace_str over \
+     reconstructing and overwriting the whole thing with storage.write_file — a small, exact \
+     edit can't silently drop or corrupt content elsewhere in the file the way rebuilding it \
+     from memory can. Reserve a full storage.write_file rewrite for a genuinely new file, or \
+     the rare case where nearly everything in it is actually changing.",
+    "Your training data has a cutoff, and the real current date is almost certainly later than \
+     you'd guess from it. The actual current date/time is given to you directly below (not as \
+     something you need to look up) — treat it as ground truth over any date or year you'd \
+     otherwise assume from training, for anything where today's actual date matters (being \
+     asked what today is, recent events, computing an age or a duration, anything where the \
+     year is load-bearing for the answer).",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -228,7 +259,19 @@ impl Agent {
         // as a second one, since some chat templates (e.g. Qwen's) reject more than one
         // system-role message anywhere but position 0 ("System message must be at the
         // beginning").
+        // Computed fresh on every call, not cached — this is what makes the "current
+        // date/time is given to you directly below" `SYSTEM_PROMPT` rule true for
+        // *every* `Agent` instance, including the messaging-plugin one that runs with
+        // an empty `ToolService` (no tools at all, `os.get_date` included) — telling
+        // it to *call* a tool it doesn't have would just dangle uselessly instead.
+        // Recomputing this on every request also means it never goes stale the way a
+        // fixed string baked into `SYSTEM_PROMPT` itself would the moment the date
+        // changes.
         let mut system_prompt = SYSTEM_PROMPT.join("\n");
+        system_prompt.push_str(&format!(
+            "\n\nThe current real date and time (UTC) is: {}.",
+            chrono::Utc::now().format("%A, %B %-d, %Y %H:%M:%S UTC")
+        ));
         if messages.first().is_some_and(|message| message.role == "system") {
             let summary_message = messages.remove(0);
             system_prompt.push_str("\n\n");
@@ -439,7 +482,15 @@ impl Agent {
              images themselves aren't in this excerpt, only that mark — keep noting that \
              one was there, since a later turn may still need to know an image was part of \
              what was asked). Write plain notes, not a reply — this output \
-             replaces the excerpt in the conversation's history, nobody sees it directly."
+             replaces the excerpt in the conversation's history, nobody sees it directly. \
+             Record only what's actually stated or shown in the excerpt — never add your own \
+             suggested next steps, recommendations, or assumptions about what should happen \
+             next; a later turn will decide that itself from the real conversation, and an \
+             invented 'next step' can send it chasing something nobody actually needs. If \
+             something in the excerpt looks contradictory or doesn't add up (e.g. a filename \
+             or detail that doesn't match elsewhere), note the discrepancy plainly rather \
+             than inventing an explanation that resolves it — a guessed resolution that's \
+             wrong is worse than an acknowledged gap."
                 .to_string(),
         );
         let user = OllamaService::user_message(format!(
@@ -504,11 +555,14 @@ impl Agent {
         let effective_scope = match scope {
             Some(scope) => {
                 had_scope = true;
-                Some(scope)
+                match self.tools.get_tool(&next.tool_name) {
+                    Some(tool) => resolved_scope_from_json(tool, scope),
+                    None => ResolvedScope::default(),
+                }
             }
             None => {
                 let stored = self.stored_scope(chat_id, &next.tool_name).await?;
-                had_scope = stored.is_some();
+                had_scope = stored.own.is_some() || !stored.shared.is_empty();
                 stored
             }
         };
@@ -582,29 +636,75 @@ impl Agent {
         })
     }
 
-    /// Persists a scope grant for a tool within a chat, so future calls to that tool in
-    /// that chat can be `Allowed` without asking again. Only checks that `tool_name`
-    /// refers to a real registered tool before storing — `scope`'s actual shape is
-    /// opaque to everything except the tool that offered it (see `ScopeGrant`), so
-    /// there's nothing else here that could meaningfully be validated ahead of time.
+    /// Persists a scope grant for a tool within a chat, so future calls to that tool (or
+    /// any other tool sharing one of its buckets — see `Tool::shared_buckets`) can be
+    /// `Allowed` without asking again. `scope` is the envelope `resolved_scope_to_json`
+    /// produced when this grant was first offered, echoed back verbatim by the
+    /// frontend; `resolved_scope_from_json` reads it back into its own/shared-bucket
+    /// deltas — each one is just the single new fact that call needed (see
+    /// `storage::check_scope`), not a snapshot of everything already granted. Each delta
+    /// is appended to that row's *current* value, read fresh right here rather than
+    /// trusted from whatever the caller last saw: two denied calls from the same reply
+    /// needing the same bucket have their escalations computed from the same
+    /// pre-approval state, so if this just overwrote with the caller's delta, approving
+    /// the second would erase the first's grant. Reading fresh at the moment each one is
+    /// actually persisted is what makes approving both, in sequence, correct.
     pub async fn allow_scope(&self, chat_id: i64, tool_name: String, scope: Value) -> Result<(), ErrorService> {
-        if self.tools.get_tool(&tool_name).is_none() {
+        let Some(tool) = self.tools.get_tool(&tool_name) else {
             return Err(ErrorService::new(
                 StatusCode::BAD_REQUEST,
                 format!("no tool named '{tool_name}'"),
             ));
-        }
+        };
 
-        self.permission_store.update_scope(chat_id, &tool_name, scope).await?;
+        let delta = resolved_scope_from_json(tool, scope);
+
+        if let Some(own_delta) = delta.own {
+            let existing = self.get_scope_or_none(chat_id, &tool_name).await?;
+            self.permission_store.update_scope(chat_id, &tool_name, merge_scope_delta(existing, own_delta)).await?;
+        }
+        for (bucket, shared_delta) in delta.shared {
+            let existing = self.get_scope_or_none(chat_id, bucket.db_key()).await?;
+            self.permission_store
+                .update_scope(chat_id, bucket.db_key(), merge_scope_delta(existing, shared_delta))
+                .await?;
+        }
 
         Ok(())
     }
 
-    /// The scope already granted to a tool within a chat, if any — `None` rather than
-    /// an error when nothing's been granted yet, since that's the normal/expected case
-    /// for most tool calls, not a failure.
-    async fn stored_scope(&self, chat_id: i64, tool_name: &str) -> Result<Option<Value>, ErrorService> {
-        match self.permission_store.get_scope(chat_id, tool_name).await {
+    /// A tool's actual scope for one call — its own bucket (if it has one) plus every
+    /// shared bucket it declares, each fetched and kept separate rather than flattened
+    /// into one object. Flattening would collide: every storage bucket stores its grant
+    /// under the same JSON key (`SharedBucket::json_key`), so a tool declaring both
+    /// `StorageRead` and `StorageWrite` would have one silently overwrite the other if
+    /// they were merged into a single map instead of kept apart by bucket.
+    async fn stored_scope(&self, chat_id: i64, tool_name: &str) -> Result<ResolvedScope, ErrorService> {
+        let Some(tool) = self.tools.get_tool(tool_name) else {
+            return Ok(ResolvedScope::default());
+        };
+
+        let own = if tool.uses_own_bucket() {
+            self.get_scope_or_none(chat_id, tool_name).await?
+        } else {
+            None
+        };
+
+        let mut shared = HashMap::new();
+        for &bucket in tool.shared_buckets() {
+            if let Some(value) = self.get_scope_or_none(chat_id, bucket.db_key()).await? {
+                shared.insert(bucket, value);
+            }
+        }
+
+        Ok(ResolvedScope { own, shared })
+    }
+
+    /// `PermissionStore::get_scope`, with "nothing granted yet" collapsed to `None`
+    /// rather than an error — that's the normal/expected case for most tool calls, not
+    /// a failure.
+    async fn get_scope_or_none(&self, chat_id: i64, key: &str) -> Result<Option<Value>, ErrorService> {
+        match self.permission_store.get_scope(chat_id, key).await {
             Ok(scope) => Ok(Some(scope)),
             Err(PermissionStoreErrors::NotFound) => Ok(None),
             Err(e) => Err(e.into()),
@@ -618,7 +718,7 @@ impl Agent {
     /// whoever's implementing the tool. A `Denied` from the tool itself always carries
     /// its `reason` through, whether or not it came with an `escalation` — a hard
     /// refusal still needs to reach the UI and the model, not just silently vanish.
-    fn tool_permission(&self, tool_name: &str, data: Value, scope: Option<Value>) -> AgentToolPermission {
+    fn tool_permission(&self, tool_name: &str, data: Value, scope: ResolvedScope) -> AgentToolPermission {
         let Some(tool) = self.tools.get_tool(tool_name) else {
             return AgentToolPermission::Denied {
                 reason: format!("no tool named '{tool_name}'"),
@@ -631,7 +731,7 @@ impl Agent {
             Ok(ToolPermission::Denied { reason, escalation }) => AgentToolPermission::Denied {
                 reason,
                 escalation: escalation.map(|grant| AgentScopeGrant {
-                    scope: grant.scope,
+                    scope: resolved_scope_to_json(grant.scope),
                     ui_message: grant.ui_message,
                 }),
             },
@@ -717,6 +817,68 @@ impl Agent {
             images: (!message.images.is_empty()).then_some(message.images),
         }
     }
+}
+
+/// Serializes a `ResolvedScope` into the flat JSON value that crosses the HTTP boundary
+/// as `AgentScopeGrant.scope` — opaque to the frontend (`unknown` on its side), which
+/// only ever echoes it back verbatim via `allow_scope` or a `use_tool` one-time
+/// override. Shared buckets are keyed by `SharedBucket::db_key()` — the same string
+/// `PermissionStore` rows already use — so `resolved_scope_from_json` (below) can read
+/// them back into the right bucket unambiguously, rather than guessing a flattened
+/// object apart by a shared JSON key the way the old `split_scope` had to.
+fn resolved_scope_to_json(scope: ResolvedScope) -> Value {
+    let shared: serde_json::Map<String, Value> =
+        scope.shared.into_iter().map(|(bucket, value)| (bucket.db_key().to_string(), value)).collect();
+
+    serde_json::json!({ "own": scope.own, "shared": shared })
+}
+
+/// The inverse of `resolved_scope_to_json`. `tool` decides which shared buckets are even
+/// meaningful for it; a bucket key present in `json` that `tool` doesn't declare (e.g.
+/// stale data from before a tool's declared buckets changed) is just dropped rather than
+/// erroring — there's nothing sensible to do with it, and dropping it is no worse than
+/// the grant never having existed.
+fn resolved_scope_from_json(tool: &dyn Tool, json: Value) -> ResolvedScope {
+    let own = json.get("own").filter(|v| !v.is_null()).cloned();
+
+    let mut shared = HashMap::new();
+    if let Some(shared_obj) = json.get("shared").and_then(|s| s.as_object()) {
+        for &bucket in tool.shared_buckets() {
+            if let Some(value) = shared_obj.get(bucket.db_key()) {
+                shared.insert(bucket, value.clone());
+            }
+        }
+    }
+
+    ResolvedScope { own, shared }
+}
+
+/// Appends `delta`'s facts into `existing`, one level deep: for a top-level key that's
+/// an object on both sides (e.g. `"folders"`), the two objects' own keys are unioned —
+/// two different approved folders both end up in the same map, rather than the second
+/// replacing the first. Anything else in `delta` just sets that key outright. Every
+/// bucket's stored shape today is exactly one level deep (`{"folders": {...}}`,
+/// `{"hosts": {...}}`), so one level of recursion covers everything currently in play.
+fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
+    let mut base = existing.and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let Some(delta_obj) = delta.as_object() else {
+        return delta;
+    };
+
+    for (key, delta_value) in delta_obj {
+        match (base.get(key).and_then(|v| v.as_object()), delta_value.as_object()) {
+            (Some(existing_inner), Some(delta_inner)) => {
+                let mut merged_inner = existing_inner.clone();
+                merged_inner.extend(delta_inner.clone());
+                base.insert(key.clone(), Value::Object(merged_inner));
+            }
+            _ => {
+                base.insert(key.clone(), delta_value.clone());
+            }
+        }
+    }
+
+    Value::Object(base)
 }
 
 /// `Agent`'s outputs (this one included) derive `Serialize` and go straight out as JSON

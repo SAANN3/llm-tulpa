@@ -7,7 +7,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 <p align="center"><em>Asked to check three paths at once — the agent reasons about it (collapsed above), then stops to ask permission before each <code>storage.list_directory</code> call.</em></p>
 
 ## Quickstart
-1. Get a model — anything Ollama can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/`, and if the filename doesn't match `llm/compose.yaml`'s default, set `MODEL_FILE` to it (a `.env` file in `llm/` is the easiest way — see [`llm/README.md`](./llm/README.md)).
+1. Get a model — anything Ollama can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/`, and if the filename doesn't match `llm/compose.yaml`'s default, set `MODEL_FILE` to it (a `.env` file in `llm/` is the easiest way — see [`llm/README.md`](./llm/README.md)). Optionally, for vision (see Features below), also grab a matching mmproj/CLIP projector `.gguf`, drop it in `llm/` too, and set `MMPROJ_FILE` to it.
 2. ```bash
    git clone https://github.com/SAANN3/llm-tulpa
    cd llm-tulpa
@@ -17,7 +17,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 
 ## Features
 - Persistent chat history — every conversation, resumable across restarts.
-- Real tool-calling: reads/writes files, inspects hardware and disk space — see [`backend/TOOLS.md`](./backend/TOOLS.md). Anything that can actually change something is permission-gated per tool (e.g. `storage.write_file` asks per folder); nothing runs without approval.
+- Real tool-calling: reads/writes files, inspects hardware and disk space, runs shell commands, downloads files and makes HTTP requests, searches the web via a local SearXNG instance — see [`backend/TOOLS.md`](./backend/TOOLS.md). Anything that can actually change or expose something is permission-gated (e.g. `storage.write_file` asks per folder, `web.request` asks per host); nothing runs without approval.
 - Automatic history compaction, so a long or tool-heavy conversation doesn't blow the model's context window.
 - Vision — attach images to a message from the composer, or send a photo through a messaging plugin, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).

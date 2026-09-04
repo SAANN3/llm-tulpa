@@ -49,7 +49,8 @@ async fn main() {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
 
-    let database_name = std::env::var("DATABASE_NAME").unwrap_or_else(|_| "llm_tulpa".to_string());
+    let database_name = std::env::var("DATABASE_NAME")
+        .unwrap_or_else(|_| "llm_tulpa".to_string());
 
     let agent_history_len: u64 = std::env::var("AGENT_HISTORY_LEN")
         .ok()
@@ -74,11 +75,16 @@ async fn main() {
 
     let ollama = Arc::new(OllamaService::new(ollama_url, ollama_model_name, ollama_context_length as i32));
     let chat_store = Arc::new(ChatStore::new(&database_url, &database_name).await);
+    
+    // Build tool list with all domains
     let mut tool_list: Vec<Box<dyn Tool>> = vec![Box::new(TemperatureTool)];
-    tool_list.extend(tools::os::collect());
-    tool_list.extend(tools::storage::collect());
+    tool_list.extend(tools::os::collect());       // os.* tools (hardware, disk, processes, network, env vars, etc.)
+    tool_list.extend(tools::storage::collect());  // storage.* tools (read/write/modify files)
+    tool_list.extend(tools::web::collect());      // web.* tools (download files)
+    
     let tools = Arc::new(ToolService::new(tool_list));
     let settings_store = Arc::new(SettingsStore::new(&database_url, &database_name).await);
+    
     // Must come after `chat_store` — `tool_permissions` has a foreign key on `chats`,
     // so `chats` needs to already exist by the time this runs its own migration.
     let permission_store = Arc::new(PermissionStore::new(&database_url, &database_name).await);
@@ -157,5 +163,4 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
 
     axum::serve(listener, app).await.unwrap();
-
 }
