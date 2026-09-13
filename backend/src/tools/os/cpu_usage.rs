@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sysinfo::System;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError, ToolParams};
 
 #[derive(Deserialize, tool_derive::ToolParams)]
 struct CpuUsageArgs {}
@@ -34,7 +34,7 @@ impl Tool for CpuUsageTool {
         CpuUsageArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let mut sys = System::new_all();
         // A single refresh right after `new_all()` has no prior sample to diff against, so
         // `cpu_usage()` always reads back 0 — sysinfo needs two refreshes spaced at least

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{
     services::error::ErrorService,
-    tools::base::{Tool, ToolError},
+    tools::base::{Tool, ToolContext, ToolError},
 };
 
 /// Owns every tool the agent can call, keyed by `Tool::function_name()`. Built once from
@@ -35,12 +35,12 @@ impl ToolService {
     /// `ToolError::FailedUnknown` rather than panicking — unlike the collision above,
     /// this can happen at runtime any time the model hallucinates a tool name, so it's a
     /// normal error the caller is expected to handle.
-    pub async fn call_tool(&self, function_name: &str, data: Value) -> Result<Value, ToolError> {
+    pub async fn call_tool(&self, function_name: &str, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let tool = self.get_tool(function_name).ok_or_else(|| {
             ToolError::FailedUnknown(format!("no tool named '{function_name}'"))
         })?;
 
-        tool.call_untyped(data).await
+        tool.call_untyped(data, ctx).await
     }
 
     pub fn get_tool(&self, function_name: &str) -> Option<&dyn Tool> {

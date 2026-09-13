@@ -13,6 +13,14 @@ services:
       # against the host's network directly sidesteps that instead of requiring a
       # system-wide Docker daemon DNS override.
       network: host
+      # Baked into the image's sudoers rule and its matching passwd entry (see
+      # Dockerfile) so both match whatever numeric uid:gid `user:` below actually runs
+      # as — same HOST_UID/HOST_GID, just also needed at build time here since
+      # Dockerfile ARGs and compose's runtime `${...}` substitution are two separate
+      # things.
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     # Runs as the invoking user instead of root, so files the storage.* tools create
     # on the host (through the passthrough below) are owned by you, not root — no
     # value is hardcoded here, it's whoever ran `docker compose up`. Named HOST_UID/
@@ -72,6 +80,18 @@ services:
       # Tells os.get_disk_space where the host's real root is mounted (below), so it
       # reports genuine host disk stats instead of the container's own storage.
       - HOST_ROOT=/hostfs
+      # Lets a GUI app the model launches (a non-headless Chromium via Playwright, or
+      # anything else that wants a real display) actually show up as a normal window
+      # on the host's own screen, instead of only ever running headless. `:0` matches
+      # this host's actual X display — this machine's Wayland session runs XWayland
+      # underneath it (confirmed: a real X11 socket already sits alongside the
+      # Wayland one), so the X11 route below works for anything that isn't
+      # Wayland-native-only, without needing native Wayland socket passthrough at
+      # all. X11 auth needs no separate handling here: the container already runs as
+      # this exact host user (see `user:` above) with `/home` passed through
+      # wholesale, so `~/.Xauthority` is already reachable at the same path Xlib
+      # expects it — only the socket directory itself (below) was actually missing.
+      - DISPLAY=${DISPLAY:-:0}
     volumes:
       # Passthrough so the storage.* tools can read/write real files at the same
       # absolute paths as a native run. Docker won't let a bind mount target `/`
@@ -84,6 +104,13 @@ services:
       # os.get_disk_space can see the host's real root filesystem (size/used/free),
       # not for tools to read/write through it.
       - "/:/hostfs:ro"
+      # The X11 socket itself — pairs with DISPLAY above. Not under /home, so it
+      # needs its own mount despite the wholesale passthrough already covering
+      # Xauthority. Worth knowing: X11 has much weaker inter-app isolation than
+      # Wayland — any client that can reach this socket can generally interact with
+      # *other* windows on the desktop too (read contents, inject input, screenshot
+      # the whole screen), not just whatever it launches itself.
+      - "/tmp/.X11-unix:/tmp/.X11-unix"
     depends_on:
       - postgres
       - ollama

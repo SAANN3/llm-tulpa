@@ -7,16 +7,31 @@ import { DateSeparator } from '../components/DateSeparator'
 import type { LazyListHandle } from '../components/LazyList'
 import { LazyList } from '../components/LazyList'
 import { PendingAssistantMessage } from '../components/PendingAssistantMessage'
-import { Div } from '../components/primitives'
+import { Button, Div, Label } from '../components/primitives'
 import { Sidebar } from '../components/Sidebar'
 import { ToolConfirmation } from '../components/ToolConfirmation'
 import { ToolMessage } from '../components/ToolMessage'
 import { UserInput } from '../components/UserInput'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import type { Decisions, PendingConfirmations, TurnResult } from '../hooks/useMessages'
-import { useMessages } from '../hooks/useMessages'
+import { ToolAllowance, useMessages } from '../hooks/useMessages'
+import { getAutoConfirm } from '../utils/autoConfirm'
 import { consumePendingPrompt, peekPendingPrompt } from '../utils/pendingPrompt'
 import { isSameDay } from '../utils/dates'
+
+/** Auto-confirm mode's own stand-in for a human's decision on every pending call: grant
+ * the escalation permanently when one's offered (matches clicking "Always in this
+ * chat" — the point of the mode is to stop asking, not to re-prompt for the same tool
+ * every single time), or acknowledge the decline when there's nothing to grant at all
+ * (matches clicking "OK" on an unapprovable call — see `ToolConfirmation`). */
+function autoConfirmDecisions(pending: PendingConfirmations): Decisions {
+  const decisions: Decisions = {}
+  for (const key of Object.keys(pending)) {
+    const index = Number(key)
+    decisions[index] = pending[index].escalation ? ToolAllowance.Permanent : ToolAllowance.Forbid
+  }
+  return decisions
+}
 
 /** A paused turn's confirm callback, held onto until the user decides. */
 interface PausedTurn {
@@ -76,6 +91,16 @@ function ChatView({ chatId }: { chatId: number }) {
   // the model's next reply asks for more tools).
   const [pausedTurn, setPausedTurn] = useState<PausedTurn | null>(null)
 
+  // Set whenever `send`/`confirm`/`resume` rejects — a turn can fail for reasons that
+  // have nothing to do with anything the user did (Ollama itself erroring or crashing
+  // mid-reply, a network hiccup, ...), and none of those get persisted as a message or
+  // recorded anywhere the backend can report back on later. Without this, that failure
+  // was previously an unhandled promise rejection: the "Thinking" indicator would just
+  // quietly disappear with zero explanation, indistinguishable from the tab having sat
+  // in the background so long its own elapsed-time display looked stale — leaving a
+  // real, silent backend/model failure looking like nothing happened at all.
+  const [turnError, setTurnError] = useState<string | null>(null)
+
   // `ChatView` is reused across a chat switch (only `chatId` changes), so a turn kicked
   // off for the old chat can still be running when its result comes back — checked
   // against this before touching `pausedTurn`, so a slow reply from a chat that's no
@@ -85,6 +110,22 @@ function ChatView({ chatId }: { chatId: number }) {
 
   const handleTurnResult = (forChatId: number, result: TurnResult) => {
     if (chatIdRef.current !== forChatId) return
+
+    // Read fresh rather than kept in state — this page never needs to re-render on
+    // the setting's own value, only to consult it at the moment a turn actually
+    // pauses, and re-reading avoids this needing any cross-tab/cross-page sync with
+    // wherever Settings last changed it.
+    if (result.needsConfirmation && getAutoConfirm()) {
+      setPausedTurn(null)
+      result.confirm(autoConfirmDecisions(result.pending)).then(
+        (next) => handleTurnResult(forChatId, next),
+        () => {
+          if (chatIdRef.current === forChatId) setTurnError('Something went wrong continuing that turn — try again.')
+        },
+      )
+      return
+    }
+
     setPausedTurn(result.needsConfirmation ? { pending: result.pending, confirm: result.confirm } : null)
   }
   const handleConfirm = async (decisions: Decisions) => {
@@ -97,11 +138,21 @@ function ChatView({ chatId }: { chatId: number }) {
     const { confirm } = pausedTurn
     const forChatId = chatId
     setPausedTurn(null)
-    handleTurnResult(forChatId, await confirm(decisions))
+    setTurnError(null)
+    try {
+      handleTurnResult(forChatId, await confirm(decisions))
+    } catch {
+      if (chatIdRef.current === forChatId) setTurnError("Something went wrong continuing that turn — try again.")
+    }
   }
-  const handleSend = async (prompt: string, think?: boolean, images?: string[]) => {
+  const handleSend = async (prompt: string, think?: boolean, images?: string[], fileIds?: number[]) => {
     const forChatId = chatId
-    handleTurnResult(forChatId, await send(prompt, think, images))
+    setTurnError(null)
+    try {
+      handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
+    } catch {
+      if (chatIdRef.current === forChatId) setTurnError('Something went wrong sending that — try again.')
+    }
   }
 
   // Read through refs rather than depending on `send`/`resume` directly — both are
@@ -125,11 +176,12 @@ function ChatView({ chatId }: { chatId: number }) {
   useEffect(() => {
     setPausedTurn(null)
     setExpandedTools({})
+    setTurnError(null)
   }, [chatId])
 
   useEffect(() => {
     const pending = consumePendingPrompt(chatId)
-    if (pending) sendRef.current(pending.prompt, pending.think, pending.images)
+    if (pending) sendRef.current(pending.prompt, pending.think, pending.images, pending.fileIds)
   }, [chatId])
 
   // `canContinue` is fetched by `useMessages` as soon as the chat opens — reopening a
@@ -139,9 +191,14 @@ function ChatView({ chatId }: { chatId: number }) {
     if (!canContinue) return
     const forChatId = chatId
 
-    resumeRef.current().then((result) => {
-      if (result) handleTurnResult(forChatId, result)
-    })
+    resumeRef
+      .current()
+      .then((result) => {
+        if (result) handleTurnResult(forChatId, result)
+      })
+      .catch(() => {
+        if (chatIdRef.current === forChatId) setTurnError('Something went wrong resuming that turn — try again.')
+      })
   }, [canContinue, chatId])
 
   return (
@@ -177,6 +234,7 @@ function ChatView({ chatId }: { chatId: number }) {
                     thinking={m.thinking}
                     thought_duration_ms={m.thought_duration_ms}
                     images={m.images}
+                    file_ids={m.file_ids}
                   />
                 )}
               </Fragment>
@@ -185,7 +243,29 @@ function ChatView({ chatId }: { chatId: number }) {
           {sending ? <PendingAssistantMessage /> : null}
         </LazyList>
         {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm} /> : null}
-        <UserInput blocked={sending || pausedTurn != null} onSended={handleSend} inputDisabled={false} initialThink={initialThink} />
+        {turnError ? (
+          <Div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 12px',
+              borderRadius: 8,
+              border: '1px solid #e5484d',
+              background: 'rgba(229, 72, 77, 0.08)',
+            }}
+          >
+            <Label text={turnError} style={{ fontSize: 13, color: '#e5484d', flex: 1 }} />
+            <Button variant="secondary" text="Dismiss" onClicked={() => setTurnError(null)} />
+          </Div>
+        ) : null}
+        <UserInput
+          blocked={sending || pausedTurn != null}
+          onSended={handleSend}
+          inputDisabled={false}
+          initialThink={initialThink}
+          chatId={chatId}
+        />
       </Div>
     </Div>
   )

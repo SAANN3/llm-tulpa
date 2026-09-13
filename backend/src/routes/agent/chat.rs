@@ -14,6 +14,11 @@ pub(crate) struct ChatRequest {
     /// Requires a vision-capable model — see `llm/README.md`.
     #[serde(default)]
     images: Option<Vec<String>>,
+    /// Ids of files already uploaded via `POST /files/upload` to attach to this
+    /// message. Just recorded on the message for now — nothing here feeds a file's
+    /// content to the model yet, that's a separate step.
+    #[serde(default)]
+    file_ids: Option<Vec<i64>>,
     /// Ask the model to reason before answering. Defaults to `true` when omitted.
     think: Option<bool>,
 }
@@ -39,7 +44,13 @@ pub async fn chat(
 ) -> Result<Json<ChatOut>, ErrorService> {
     let result = state
         .agent
-        .chat(body.chat_id, body.prompt, body.images.unwrap_or_default(), body.think)
+        .chat(
+            body.chat_id,
+            body.prompt,
+            body.images.unwrap_or_default(),
+            body.file_ids.unwrap_or_default(),
+            body.think,
+        )
         .await?;
 
     Ok(Json(result))

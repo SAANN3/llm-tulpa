@@ -15,6 +15,11 @@ Set `MMPROJ_FILE` to a mmproj/CLIP projector `.gguf` (same folder rules as `MODE
 ## Changing the context window
 `OLLAMA_CONTEXT_LENGTH` sets how much context the model gets. Set it here **and** as the same-named env var on the backend (see [`../backend/README.md`](../backend/README.md)) — the backend derives its own token budgeting (the `num_predict` cap, history-compaction thresholds) from that value, so the two need to agree.
 
+## Getting a bigger context window on tight VRAM
+`OLLAMA_KV_CACHE_TYPE=q8_0` (plus `OLLAMA_FLASH_ATTENTION=1`, required for the former to actually take effect at all — silently ignored otherwise) quantizes the KV cache itself, not the model weights, trading some precision for roughly half the VRAM cost per token of context — the difference between a context window that fits entirely on the GPU and one that spills part of the model to CPU (which costs far more speed than the quantization itself does; a partially-offloaded model was measured here at roughly a third the tokens/sec of the same model fully on GPU).
+
+Deliberately not defaulted in `compose.yaml` — it's a quality-for-VRAM trade only worth making on hardware tight enough to need it, so it's opt-in via your own `.env` in this folder. To find the right context length once it's set: raise `OLLAMA_CONTEXT_LENGTH` and check the actual result rather than assuming — `docker logs <ollama container>` while it loads shows `load_tensors: offloaded N/66 layers to GPU` (or however many layers your model has); the number to chase is *all* of them. If it's short, step the context back down (and back up, later, is safe to try again after freeing VRAM elsewhere) until it says so.
+
 ## Other knobs
 `OLLAMA_KEEP_ALIVE` — how long the model stays loaded in VRAM after the last request before Ollama unloads it.
 

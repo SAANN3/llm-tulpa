@@ -3,7 +3,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError};
 
 pub struct GetDateTool;
 
@@ -42,7 +42,7 @@ impl Tool for GetDateTool {
         vec![]
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let now_utc = Utc::now();
         let now_local = chrono::Local::now();
 

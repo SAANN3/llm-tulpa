@@ -237,6 +237,10 @@ impl ChatStore {
                         .images
                         .and_then(|images| serde_json::from_value(images).ok())
                         .unwrap_or_default(),
+                    file_ids: message
+                        .file_ids
+                        .and_then(|file_ids| serde_json::from_value(file_ids).ok())
+                        .unwrap_or_default(),
                 }
             })
             .collect())
@@ -484,12 +488,14 @@ impl ChatStore {
             tool_denied,
             tool_calls,
             images,
+            file_ids,
         } = new_message;
 
         // Stored as `NULL` rather than `[]` for a message with none — same convention
         // as `summary`/`thinking` above, and keeps every pre-existing row (which has no
         // `images` at all) indistinguishable from one explicitly sent with zero images.
         let images_json = (!images.is_empty()).then(|| serde_json::json!(images));
+        let file_ids_json = (!file_ids.is_empty()).then(|| serde_json::json!(file_ids));
 
         let tool_calls_out: Vec<ToolCallOut> = tool_calls
             .iter()
@@ -513,6 +519,7 @@ impl ChatStore {
                         tool_success: Set(tool_success),
                         tool_denied: Set(tool_denied),
                         images: Set(images_json),
+                        file_ids: Set(file_ids_json),
                         ..Default::default()
                     }
                     .insert(txn)
@@ -558,6 +565,7 @@ impl ChatStore {
             tool_denied: message.tool_denied,
             tool_calls: tool_calls_out,
             images,
+            file_ids,
         })
     }
 }
@@ -596,6 +604,12 @@ pub struct Message {
     /// Base64-encoded image data attached to this message (no data-URL prefix), if
     /// any. Empty for every role but `user`.
     pub images: Vec<String>,
+    /// Ids into `files` (see `file_store::FileStore`) for already-uploaded files
+    /// attached to this message, if any — files the user attached directly on a
+    /// `user`-role message, or a `ui.attach_file` result the agent resolved onto an
+    /// `assistant`-role reply (see `Agent::advance`). Just the ids — nothing here
+    /// reads a file's actual content, that's a separate step.
+    pub file_ids: Vec<i64>,
 }
 
 #[derive(Clone)]
@@ -638,6 +652,15 @@ pub struct NewMessage {
     /// Base64-encoded image data (no data-URL prefix) to attach to this message. Only
     /// meaningful on a `user`-role message — pass empty for every other role.
     pub images: Vec<String>,
+    /// Ids of files already uploaded via `POST /files/upload` (see `file_store::
+    /// FileStore`) to attach to this message. Meaningful on a `user`-role message
+    /// (files the user attached directly) and on an `assistant`-role message (a
+    /// `ui.attach_file` call earlier in the same turn, resolved onto the turn's final
+    /// reply — see `Agent::advance`'s `pending_attached_files`); pass empty for every
+    /// other role. Just the ids: this doesn't read or validate that they exist, and
+    /// nothing here feeds a file's content to the model — see `Agent::chat`'s doc
+    /// comment.
+    pub file_ids: Vec<i64>,
 }
 
 /// Wraps every SeaORM failure uniformly — nothing about which specific query failed

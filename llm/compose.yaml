@@ -1,6 +1,6 @@
 services:
   ollama:
-    image: "ollama/ollama:latest"
+    image: "ollama/ollama:rocm"
     devices:
       - "/dev/kfd:/dev/kfd"
       - "/dev/dri:/dev/dri"
@@ -15,6 +15,17 @@ services:
       # vision. Empty by default — plain-text models don't need one.
       - MMPROJ_FILE=${MMPROJ_FILE:-}
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
+      # No default here on purpose, unlike everything else on this list — quantizing
+      # the KV cache (not the model weights) trades answer quality for VRAM headroom,
+      # which is only a trade worth making on hardware tight enough to need it. Bare
+      # (no `:-...`) so it's simply absent from the container's environment, and
+      # Ollama falls back to its own real default, unless a deployment's own local
+      # `llm/.env` sets it — see that file for this machine's own choice. Also needs
+      # OLLAMA_FLASH_ATTENTION=1 to actually take effect at all (silently ignored
+      # otherwise), so that one belongs in the same opt-in `.env`, not defaulted here
+      # either.
+      - OLLAMA_KV_CACHE_TYPE
+      - OLLAMA_FLASH_ATTENTION
       - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-2h}
       # Ollama's own default (5m) can be too short for a large, mostly-CPU-offloaded
       # model under real desktop memory pressure — this only gives a slow-but-viable
@@ -47,3 +58,6 @@ services:
     # broke the published port here), and local serving needs no DNS to work.
     dns:
       - 127.0.0.1
+    group_add:
+      - "987"
+      - "983"

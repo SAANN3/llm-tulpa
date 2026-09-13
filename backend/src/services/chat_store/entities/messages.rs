@@ -29,6 +29,12 @@ pub struct Model {
     /// Base64-encoded image data attached to this message (no data-URL prefix), if
     /// any. Only ever set on `user`-role rows.
     pub images: Option<Json>,
+    /// Ids into `files` for already-uploaded files attached to this message, if any —
+    /// see `chat_store::NewMessage::file_ids`. Set on `user`-role rows for files the
+    /// user attached directly, and on an `assistant`-role row when a `ui.attach_file`
+    /// call earlier in the same turn resolved onto that row (see `Agent::advance`'s
+    /// `pending_attached_files`).
+    pub file_ids: Option<Json>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

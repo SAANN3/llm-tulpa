@@ -6,6 +6,7 @@ mod services;
 mod state;
 mod tools;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -22,7 +23,7 @@ use plugins::messaging::telegram::TelegramProvider;
 use plugins::messaging::vk::VkProvider;
 use plugins::registry::PluginRegistry;
 use services::{
-    chat_store::ChatStore, llm::OllamaService, permission_store::PermissionStore,
+    chat_store::ChatStore, file_store::FileStore, llm::OllamaService, permission_store::PermissionStore,
     plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
 };
 use state::AppState;
@@ -51,6 +52,17 @@ async fn main() {
 
     let database_name = std::env::var("DATABASE_NAME")
         .unwrap_or_else(|_| "llm_tulpa".to_string());
+
+    // Where `FileStore` keeps every file it manages. Defaults to a directory under the
+    // real user's home rather than anything container-relative, so it lands at the same
+    // real path whether this runs natively or in Docker — same `/home:/home` passthrough
+    // `storage.*` already relies on, no extra compose changes needed.
+    let files_dir = match std::env::var("FILES_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::home_dir()
+            .unwrap_or_else(|| panic!("could not determine home directory; set FILES_DIR to override"))
+            .join(".llm-tulpa/files"),
+    };
 
     let agent_history_len: u64 = std::env::var("AGENT_HISTORY_LEN")
         .ok()
@@ -81,6 +93,9 @@ async fn main() {
     tool_list.extend(tools::os::collect());       // os.* tools (hardware, disk, processes, network, env vars, etc.)
     tool_list.extend(tools::storage::collect());  // storage.* tools (read/write/modify files)
     tool_list.extend(tools::web::collect());      // web.* tools (download files)
+    tool_list.extend(tools::ui::collect());       // ui.* tools (show the user something in the frontend)
+    tool_list.extend(tools::files::collect());    // files.* tools (access files already attached to this chat)
+    tool_list.extend(tools::llm::collect());      // llm.* tools (a tool that itself makes a separate call to the model)
     
     let tools = Arc::new(ToolService::new(tool_list));
     let settings_store = Arc::new(SettingsStore::new(&database_url, &database_name).await);
@@ -89,10 +104,15 @@ async fn main() {
     // so `chats` needs to already exist by the time this runs its own migration.
     let permission_store = Arc::new(PermissionStore::new(&database_url, &database_name).await);
 
+    // Same ordering constraint as `permission_store` above — `files` also has a foreign
+    // key on `chats`.
+    let file_store = Arc::new(FileStore::new(&database_url, &database_name, files_dir).await);
+
     let agent = Agent::new(
         ollama.clone(),
         chat_store.clone(),
         tools.clone(),
+        file_store.clone(),
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,
@@ -110,6 +130,7 @@ async fn main() {
         ollama.clone(),
         chat_store.clone(),
         Arc::new(ToolService::new(vec![])),
+        file_store.clone(),
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,
@@ -130,6 +151,7 @@ async fn main() {
         chat_store,
         tools,
         settings_store,
+        file_store,
         agent,
         prompt,
         user_cache,

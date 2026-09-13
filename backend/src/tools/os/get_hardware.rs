@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sysinfo::System;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError};
 
 use super::format_gb;
 
@@ -37,7 +37,7 @@ impl Tool for GetHardwareTool {
         vec![]
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let mut sys = System::new_all();
         sys.refresh_all();
 

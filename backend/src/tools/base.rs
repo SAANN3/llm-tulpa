@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
+
+use crate::services::file_store::FileStore;
+use crate::services::llm::OllamaService;
 
 
 /// Anything that can be exposed to the model as a callable tool. One impl per tool.
@@ -74,8 +78,10 @@ pub trait Tool: Send + Sync {
     /// know each impl's argument shape — each impl deserializes `data` into its own
     /// typed args internally. Returns raw JSON back for the same reason: results vary
     /// per tool (a string, a number, a nested object), and the caller re-serializes
-    /// whatever comes back into the `tool` message sent back to the model.
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError>;
+    /// whatever comes back into the `tool` message sent back to the model. `ctx` gives
+    /// a tool access to the same backing services route handlers use (see
+    /// `ToolContext`) for anything beyond its own arguments — most tools ignore it.
+    async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError>;
 
     /// Shared, cross-tool permission buckets this tool's scope draws from, in addition
     /// to (or instead of) its own name-keyed bucket. Empty by default — most tools just
@@ -94,6 +100,52 @@ pub trait Tool: Send + Sync {
     /// needs somewhere to store its scope.
     fn uses_own_bucket(&self) -> bool {
         self.shared_buckets().is_empty()
+    }
+}
+
+/// Services (and per-call facts) a tool's `call_untyped` may reach for beyond its own
+/// call arguments — the same backing services route handlers reach through
+/// `AppState`, but scoped down to just what a tool should plausibly touch.
+/// Deliberately not `AppState` itself: `AppState` also holds `Agent` (a tool reaching
+/// back into the agent's own turn loop would be reentrant) and things no tool has a
+/// reason to touch (`PluginRegistry`, `UserCacheService`) — this grows a field only
+/// when some tool actually needs it. `Agent` holds one long-lived instance of this
+/// (its `chat_id` unused/meaningless there) and hands `copy_with_chat_id` a real one
+/// for each call, rather than rebuilding the whole struct field-by-field at every call
+/// site — see that method.
+#[derive(Clone)]
+pub struct ToolContext {
+    /// NOT the default way for a tool to write a file — `storage.write_file` (plain
+    /// `tokio::fs`, no DB row) stays the normal path for a tool creating/editing a file
+    /// at a path the model chose, and should keep doing that. Reach for this instead
+    /// only when a file specifically needs the identity `FileStore` provides — a DB
+    /// row with its own id, distinct from its on-disk path, e.g. something meant to be
+    /// fetched back later through `GET /files`/`GET /files/download`. Most tools will
+    /// never touch this field.
+    pub file_store: Arc<FileStore>,
+    /// For a tool that itself needs to ask the model something — e.g. `llm.read_image`
+    /// making its own one-shot vision call on an image the model can't already see
+    /// inline. Not reentrant the way holding the full `Agent`/`ToolService` would be:
+    /// `OllamaService` only ever talks to Ollama's own HTTP API, it doesn't know
+    /// about tools or turns at all, so a tool calling through this can't loop back
+    /// into anything.
+    pub ollama: Arc<OllamaService>,
+    /// The chat this call is happening within — every `FileStore` row needs one, so
+    /// anything that calls `file_store.*` reaches for this rather than taking a
+    /// `chat_id` as one of its own model-facing arguments (the model has no reason to
+    /// know or repeat back which chat it's already in).
+    pub chat_id: i64,
+}
+
+impl ToolContext {
+    /// A copy of this context for one specific chat — every service field carried over
+    /// as-is (cloning an `Arc` is just a refcount bump), only `chat_id` actually
+    /// changes. Centralizes the "copy every field, override this one" logic here
+    /// rather than in whatever calls it, so a new service field added to `ToolContext`
+    /// later needs updating in exactly one place, not at every call site that builds a
+    /// per-call context.
+    pub fn copy_with_chat_id(&self, chat_id: i64) -> Self {
+        Self { chat_id, ..self.clone() }
     }
 }
 

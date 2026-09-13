@@ -4,8 +4,8 @@ use serde_json::Value;
 use std::sync::OnceLock;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolError, ToolParams, ToolPermission,
-    ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError,
+    ToolParams, ToolPermission, ToolSerializationError,
 };
 use crate::tools::storage::normalize;
 
@@ -24,14 +24,42 @@ fn description_text() -> &'static str {
     TEXT.get_or_init(|| {
         if running_in_docker() {
             "Executes a shell command and returns stdout, stderr, and exit code. Runs inside \
-             this backend's own container, not directly on the host machine — it can freely \
-             install/use anything inside that container (e.g. `pip install x`, `cargo check`) \
-             without touching the real host's package state, and can read/write any path the \
-             storage.* tools can reach (the container shares that same filesystem access). It \
-             cannot do host-system-wide things: no host package manager, no host systemd/ \
-             service control, no host-level `docker` commands. Dangerous — needs approval per \
-             command word (e.g. approving `python` once covers any `python ...` call for the \
-             rest of the chat, with any arguments; `git` still needs its own separate approval)."
+             this backend's own container, not directly on the host machine, without touching \
+             the real host's package state, and can read/write any path the storage.* tools \
+             can reach (the container shares that same filesystem access). It cannot do \
+             host-system-wide things: no host package manager, no host systemd/service \
+             control, no host-level `docker` commands.\n\n\
+             Already installed, permanently (baked into the image, survives every restart): \
+             python3 (+pip, +venv), nodejs (+npm), go, rustc (+cargo), gcc/make \
+             (build-essential), git, jq, unzip/zip, curl, wget, poppler-utils (pdftotext), \
+             ripgrep (rg), fd, tree, sqlite3, docx2txt, gnumeric (ssconvert — .xlsx/.xls to \
+             .csv), and a real headless Chromium via Playwright (browser binary already \
+             downloaded — a fresh `npm install playwright` in a scratch directory is fast and \
+             won't re-download it; needed locally rather than global because Node's `import` \
+             resolution doesn't see a global npm install the way `require` can) for navigating \
+             a real page and screenshotting it, then reading that screenshot with \
+             llm.read_image. Don't apt-get/pip/npm install any of these, they're already \
+             there.\n\n\
+             `DISPLAY` is also set, pointing at the user's actual real screen — a GUI app \
+             launched from here (e.g. Playwright's chromium.launch with `headless: false` \
+             instead of the default headless) shows up as a genuine visible window on the \
+             user's own desktop, not just an offscreen render. Only do this when actually \
+             asked for or clearly useful (showing/demoing something live, not routine \
+             scraping/automation, which should stay headless) — and close whatever you opened \
+             once you're done with it rather than leaving it running. If the user hasn't \
+             logged into a graphical session yet (e.g. right after a reboot), this will fail \
+             with a plain \"cannot open display\" error rather than silently doing nothing.\n\n\
+             Anything else — a package not in that list, a different language runtime, \
+             whatever a task actually calls for — install it freely: `apt-get install x` \
+             (package-manager commands get the privilege they need automatically, no `sudo` \
+             required), `pip install x`, `npm install x`, `cargo add x`, `go get x`, and so \
+             on. Don't hold back or ask first just because something isn't already present — \
+             installing it is exactly what this tool is for. The one thing worth knowing: \
+             anything installed this way (unlike the baked-in list above) only lasts for as \
+             long as this container instance stays up, not permanently.\n\n\
+             Dangerous — needs approval per command word (e.g. approving `python` once covers \
+             any `python ...` call for the rest of the chat, with any arguments; `git` still \
+             needs its own separate approval)."
                 .to_string()
         } else {
             "Executes a shell command directly on the host machine this backend runs on, and \
@@ -85,6 +113,48 @@ fn base_command(cmd: &str) -> Option<&str> {
     cmd.split_whitespace().next()
 }
 
+/// Each shell statement's own first word — a rough, not-a-real-parser stand-in for
+/// "what command is actually about to run here," used only to keep the
+/// destructive-pattern check below from matching a command name that merely appears
+/// as ordinary text elsewhere in the line. Splitting on `;`/`&&`/`||`/`|`/newline
+/// isn't a real shell grammar (doesn't handle quoting, subshells, ...) but is enough
+/// to tell "`dd` is the command being run" apart from "`dd` is a word that happens to
+/// sit between two other words" (e.g. a tool-name list like `sed dd od hexdump`,
+/// which is exactly what triggered this: the old check was a raw substring search for
+/// `"dd "`, which that list contains without a `dd` invocation anywhere in it).
+fn statement_commands(cmd: &str) -> impl Iterator<Item = &str> {
+    cmd.split(['\n', ';', '|'])
+        .flat_map(|s| s.split("&&"))
+        .filter_map(|stmt| stmt.split_whitespace().next())
+}
+
+/// Shell preamble (see `call_untyped`) that makes `apt-get`/`apt`/`dpkg` resolve to a
+/// sudo'd invocation of themselves wherever they're actually called in the command
+/// that follows — not just when one happens to be the very first word. Aliases (not
+/// shell functions — this container's `/bin/sh` is dash, whose POSIX-strict function-
+/// name grammar rejects the hyphen in `apt-get`, making `apt-get() { ...; }` a flat
+/// syntax error there, breaking the *entire* script it's prepended to; `alias`, unlike
+/// a function name, isn't restricted to identifier syntax) take part in normal command
+/// lookup the same as a real binary would, so this transparently covers every position
+/// a naive "is the command's first word one of these" check would miss: chained with
+/// `&&`/`;`, inside a loop, after a pipe, however many times — confirmed live in dash
+/// across all of those. (An earlier version spliced `sudo -n` into just the command's
+/// leading word instead — that left a case like `apt-get update && apt-get install x`
+/// with only the first `apt-get` elevated, so the second still hit dpkg's lock file
+/// with a real "Permission denied.") The container's own non-root user is granted a
+/// scoped, passwordless `sudo` covering exactly these three binaries (see the
+/// Dockerfile's `pkg-mgmt` sudoers rule) — this exists so the model doesn't need to
+/// already know this particular container requires `sudo` just to install a package.
+/// Doesn't touch approval: `base_command`/`is_dangerous` still see `"apt-get"` etc. as
+/// the command word being approved, same as any other — this only changes how it's
+/// actually invoked once permitted. Defining these unconditionally rather than only
+/// when the command appears to need them is harmless (an unused alias costs nothing)
+/// and is exactly what avoids re-implementing shell parsing to detect every position
+/// one might be called from.
+const PACKAGE_MANAGER_SUDO_PREAMBLE: &str = "alias apt-get='sudo -n /usr/bin/apt-get'; \
+     alias apt='sudo -n /usr/bin/apt'; \
+     alias dpkg='sudo -n /usr/bin/dpkg';\n";
+
 #[async_trait]
 impl Tool for ExecuteCommandTool {
     fn function_name(&self) -> &str {
@@ -107,8 +177,9 @@ impl Tool for ExecuteCommandTool {
         let args: ExecuteCommandArgs = serde_json::from_value(data)?;
 
         let cmd_lower = args.command.to_lowercase();
-        if cmd_lower.contains("rm -rf /") || cmd_lower.contains("mkfs") ||
-           cmd_lower.contains("> /dev/sd") || cmd_lower.contains("dd ") {
+        let has_destructive_command = statement_commands(&cmd_lower)
+            .any(|word| word == "dd" || word == "mkfs" || word.starts_with("mkfs."));
+        if cmd_lower.contains("rm -rf /") || cmd_lower.contains("> /dev/sd") || has_destructive_command {
             return Ok(ToolPermission::Denied {
                 reason: "Blocked obviously destructive command pattern".to_string(),
                 escalation: None,
@@ -170,11 +241,28 @@ impl Tool for ExecuteCommandTool {
         })
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: ExecuteCommandArgs = serde_json::from_value(data)?;
 
+        // Prepends shell functions that redirect apt-get/apt/dpkg through a scoped
+        // `sudo -n` (see `PACKAGE_MANAGER_SUDO_PREAMBLE`) rather than wrapping the
+        // whole line in `sudo -n sh -c "..."` — the sudoers rule (see the Dockerfile)
+        // only grants those three binaries directly, not `sh`, and it has to stay
+        // that way: passwordless `sudo sh -c <anything>` would just be unrestricted
+        // root, defeating the entire point of scoping this. Everything else in the
+        // command (redirects, `;`, `&&`, non-package-manager commands) still runs as
+        // this container's own unprivileged user, exactly as typed — only the
+        // specific apt-get/apt/dpkg invocations resolve differently. `-n` (never
+        // prompt) means if the sudoers rule somehow doesn't cover this, it fails
+        // loudly with a clear stderr message instead of hanging on an unanswerable
+        // password prompt.
+        let effective_command = if running_in_docker() {
+            format!("{PACKAGE_MANAGER_SUDO_PREAMBLE}{}", args.command)
+        } else {
+            args.command.clone()
+        };
         let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg(&args.command);
+        command.arg("-c").arg(&effective_command);
         if let Some(workdir) = &args.workdir {
             command.current_dir(normalize(std::path::Path::new(workdir)));
         }

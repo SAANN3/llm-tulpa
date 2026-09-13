@@ -5,8 +5,8 @@ use tokio::io::AsyncReadExt;
 use tool_derive::ToolParams;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolError, ToolParams, ToolPermission,
-    ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
+    ToolParams, ToolPermission, ToolSerializationError,
 };
 
 use super::{check_file_scope, normalize};
@@ -61,7 +61,7 @@ impl Tool for DetectFileTypeTool {
         Ok(check_file_scope(&args.path, SharedBucket::StorageRead, scope.shared.get(&SharedBucket::StorageRead)))
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: DetectFileTypeArgs = serde_json::from_value(data)?;
         let path = normalize(std::path::Path::new(&args.path));
 

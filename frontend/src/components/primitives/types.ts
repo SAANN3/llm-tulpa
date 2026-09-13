@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
+import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
 
 /**
  * Style/class overrides every themed component accepts on top of its own props.
@@ -23,6 +23,10 @@ export interface DivProps {
   onMouseDown?: (e: MouseEvent<HTMLDivElement>) => void
   onHover?: (hovering: boolean) => void
   onScroll?: (e: UIEvent<HTMLDivElement>) => void
+  onDragOver?: (e: DragEvent<HTMLDivElement>) => void
+  onDragEnter?: (e: DragEvent<HTMLDivElement>) => void
+  onDragLeave?: (e: DragEvent<HTMLDivElement>) => void
+  onDrop?: (e: DragEvent<HTMLDivElement>) => void
 }
 
 export interface LabelProps {

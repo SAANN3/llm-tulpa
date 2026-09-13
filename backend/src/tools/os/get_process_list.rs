@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sysinfo::System;
 
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolError, ToolParams};
 
 #[derive(Deserialize, tool_derive::ToolParams)]
 struct GetProcessListArgs {
@@ -40,7 +40,7 @@ impl Tool for GetProcessListTool {
         GetProcessListArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: GetProcessListArgs = serde_json::from_value(data)?;
         let limit = args.limit.unwrap_or(100);
 

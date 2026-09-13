@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Button, Div } from '../components/primitives'
-import { NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
+import { AutoConfirmField, NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
 import { TypewriterLabel } from '../components/TypewriterLabel'
 import { useSettings } from '../context/useSettings'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { getAutoConfirm, setAutoConfirm } from '../utils/autoConfirm'
 import { requestNotificationPermission } from '../utils/notifications'
 import { validateTimezone } from '../utils/validateTimezone'
 
@@ -26,6 +27,10 @@ function Settings() {
   // needed (on save).
   const [timezoneText, setTimezoneText] = useState(String(settings?.timezone ?? browserTimezoneOffsetHours()))
   const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications_enabled ?? false)
+  // Local-to-this-browser, unlike everything else on this page — takes effect
+  // immediately on toggle rather than waiting for "Save" (see `onToggleAutoConfirm`),
+  // since it isn't part of the `Settings` object `onSave` below persists.
+  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(getAutoConfirm)
 
   // Requesting permission has to happen on the actual toggle-on gesture, browsers
   // ignore `Notification.requestPermission()` calls outside a user interaction. If it
@@ -38,6 +43,11 @@ function Settings() {
     }
 
     setNotificationsEnabled(await requestNotificationPermission())
+  }
+
+  const onToggleAutoConfirm = (enabled: boolean) => {
+    setAutoConfirm(enabled)
+    setAutoConfirmEnabled(enabled)
   }
 
   const onBack = () => navigate('/')
@@ -71,6 +81,7 @@ function Settings() {
         <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText} onTimezoneChanged={setTimezoneText} />
         <ThemePreview />
         <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications} />
+        <AutoConfirmField enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm} />
         <Div style={{ display: 'flex', gap: 8 }}>
           <Button variant="secondary" text="Back" onClicked={onBack} style={{ flex: 1 }} />
           <Button text="Save" onClicked={onSave} disabled={saveDisabled} style={{ flex: 1 }} />

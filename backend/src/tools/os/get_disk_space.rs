@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sysinfo::Disks;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError};
 
 use super::format_gb;
 
@@ -38,7 +38,7 @@ impl Tool for GetDiskSpaceTool {
         vec![]
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let disks = Disks::new_with_refreshed_list();
         // When dockerized, the host's real root filesystem is bind-mounted read-only at
         // this path purely so this tool can see genuine host disk stats instead of the

@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.4] - 2026-09-13
+### Added
+- File attachments: upload any file type to a chat (drag-and-drop, or the composer's picker), with previews for PDFs, Office documents, spreadsheets/CSV (rendered as a table), syntax-highlighted code, and plain text (also the fallback for any other extension whose content isn't binary). The model can read an attached file's actual content on request (`files.get_attached_file`), and can attach a file of its own to a reply (`ui.attach_file`) — landing on the actual message it prints, not an intermediate tool-calling one with nothing in it.
+- `llm.read_image` — a tool that makes its own one-shot vision call on an image given by path, for an image the model found or was pointed to rather than one already visible to it inline in the conversation.
+- Auto-confirm mode (Settings and Setup) — a local, per-browser toggle that resolves tool permission prompts automatically instead of showing them, for letting the agent run a task unsupervised.
+- The backend's own container now permanently ships python3 (+pip, +venv), nodejs (+npm), go, rustc (+cargo), build-essential, git, jq, unzip/zip, curl, wget, poppler-utils, ripgrep, fd, tree, sqlite3, docx2txt, gnumeric, and Playwright + a real headless Chromium — plus a scoped, passwordless `sudo` covering just `apt-get`/`apt`/`dpkg`, so `os.execute_command` can install anything else on top freely (temporarily — only what's in this list survives a container restart).
+- GUI passthrough — the host's display-server socket and `DISPLAY` are now passed into the backend container, so a GUI app launched non-headless (e.g. Playwright's Chromium) shows up as a real window on the host's own screen instead of only ever running headless.
+- The system prompt now states its own deployment context up front — a private, self-hosted, single-user instance the user themselves builds and operates.
+- `AGENTS.md` — onboarding for an AI coding agent working in this repo (how to run it, how to verify a change, doc/comment style, where each doc lives).
+
+### Changed
+- Ollama's KV cache can now be quantized (`OLLAMA_KV_CACHE_TYPE=q8_0` + `OLLAMA_FLASH_ATTENTION=1`) to trade some precision for a larger usable context window on VRAM-constrained hardware — opt-in via a deployment's own `llm/.env`, no default in the shared compose file. See `llm/README.md`.
+
+### Fixed
+- `OLLAMA_CONTEXT_LENGTH` could silently disagree between the backend and Ollama itself, since each read its own separate `.env` file — a single oversized tool result could then exceed what Ollama could actually accept, entirely silently (no log on the backend side, no error surfaced in the UI). Now sourced from one root `.env` for both; an Ollama request failure is logged with its actual status/body, and a failed turn now shows a visible, dismissible error in the chat instead of the "thinking" indicator just disappearing.
+- `web.request` returned an HTML response as raw markup rather than its actual readable content — now converted via `html2text` before the size cap applies; its description also now points at the baked-in Playwright for anything JS-rendered, interactive, or screenshot-worthy.
+- `storage.list_directory` had no cap at all, so a large enough directory's listing alone could exceed the model's context budget in one call — now returns at most 200 entries per call (sorted by name), with an `offset` argument to page through the rest.
+- `web.search_query`'s `bing` engine was returning results with nothing to do with the actual query (almost certainly Bing's own scraper-hostility blocking SearXNG's engine) — replaced with `yandex`.
+- `os.execute_command`'s destructive-command blocklist matched `dd`/`mkfs` as a raw substring anywhere in the command text, so unrelated text merely containing e.g. "sed dd od" as a list of tool names got permanently blocked with nothing to approve. Now only matches them as an actual leading word of a shell statement.
+- A `LazyList` (the chat sidebar, message history) could end up scrolled to the wrong position after loading — its `jumpToTop`/`jumpToBottom` didn't update the list's own internal scroll anchor, so the very next unrelated render could drag the scroll position back to a stale computed value.
+- A browser notification fired with an empty body when a reply's content came back blank (e.g. the model exhausted its output budget before producing an answer).
+
 ## [0.1.3] - 2026-09-05
 ### Added
 - `os.*` extended with `get_date`, `get_process_list`, `get_network_info`, `cpu_usage`, `get_user_info`, `execute_command`, `env_read`, `env_write`. The agent's system prompt now also states the actual current date/time directly on every turn, so it doesn't assume a stale one from training.

@@ -45,6 +45,9 @@ pub(crate) struct MessageOut {
     /// Base64-encoded image data (no data-URL prefix) attached to this message, if
     /// any. Empty for every role but `user`.
     images: Vec<String>,
+    /// Ids of already-uploaded files (see `POST /files/upload`) attached to this
+    /// message, if any. Empty for every role but `user`.
+    file_ids: Vec<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -102,6 +105,7 @@ pub async fn get_messages(
                 })
                 .collect(),
             images: message.images,
+            file_ids: message.file_ids,
         })
         .collect();
 

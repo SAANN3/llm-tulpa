@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolError, ToolParams};
 
 const DEFAULT_NUM_RESULTS: u32 = 5;
 const MAX_NUM_RESULTS: u32 = 20;
@@ -79,7 +79,7 @@ impl Tool for SearchQueryTool {
     // instance — same standing-Allowed default as a plain lookup tool (see
     // `Tool::is_dangerous`'s own doc comment).
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: SearchQueryArgs = serde_json::from_value(data)?;
         let num_results = args.num_results.unwrap_or(DEFAULT_NUM_RESULTS).min(MAX_NUM_RESULTS);
         let base_url = searxng_base_url();

@@ -80,3 +80,26 @@ export function NotificationsField({ enabled, onToggle }: NotificationsFieldProp
     </Div>
   )
 }
+
+export interface AutoConfirmFieldProps {
+  enabled: boolean
+  onToggle: (enabled: boolean) => void
+}
+
+/** Auto-confirm toggle — Settings only, a local-to-this-browser preference rather than
+ * a synced account setting (see `utils/autoConfirm.ts`). */
+export function AutoConfirmField({ enabled, onToggle }: AutoConfirmFieldProps) {
+  return (
+    <Div className="vbox" style={{ gap: 4 }}>
+      <Div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Label text="Auto-confirm tool permissions" style={{ fontSize: 15, maxWidth: '32ch' }} />
+        <ToggleSwitch toggled={enabled} onToggled={onToggle} />
+      </Div>
+      <FieldHelp
+        text="Skips the confirmation prompt and automatically allows whatever the model asks to do — only turn this on if you trust it to run unsupervised."
+        accent={enabled}
+        maxWidth="40ch"
+      />
+    </Div>
+  )
+}

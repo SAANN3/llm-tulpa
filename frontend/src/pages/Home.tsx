@@ -55,12 +55,12 @@ function Home() {
     return () => controller.abort()
   }, [inputExample])
 
-  const onSend = async (prompt: string, think: boolean, images: string[]) => {
+  const onSend = async (prompt: string, think: boolean, images: string[], fileIds: number[]) => {
     setCreating(true)
     try {
       const name = await chatName(prompt, images)
       const chat = await createChat(name)
-      setPendingPrompt(chat.id, prompt, think, images)
+      setPendingPrompt(chat.id, prompt, think, images, fileIds)
       navigate(`/chat?id=${chat.id}`)
     } finally {
       setCreating(false)

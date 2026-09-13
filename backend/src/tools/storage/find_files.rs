@@ -4,8 +4,8 @@ use serde_json::Value;
 use tool_derive::ToolParams;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolError, ToolParams, ToolPermission,
-    ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
+    ToolParams, ToolPermission, ToolSerializationError,
 };
 
 use super::{check_directory_scope, normalize};
@@ -60,7 +60,7 @@ impl Tool for FindFilesTool {
         ))
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: FindFilesArgs = serde_json::from_value(data)?;
         let directory = normalize(std::path::Path::new(&args.directory));
 

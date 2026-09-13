@@ -17,9 +17,11 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 
 ## Features
 - Persistent chat history — every conversation, resumable across restarts.
-- Real tool-calling: reads/writes files, inspects hardware and disk space, runs shell commands, downloads files and makes HTTP requests, searches the web via a local SearXNG instance — see [`backend/TOOLS.md`](./backend/TOOLS.md). Anything that can actually change or expose something is permission-gated (e.g. `storage.write_file` asks per folder, `web.request` asks per host); nothing runs without approval.
+- Real tool-calling: reads/writes files, inspects hardware and disk space, runs shell commands, downloads files and makes HTTP requests, searches the web via a local SearXNG instance — see [`backend/TOOLS.md`](./backend/TOOLS.md). Anything that can actually change or expose something is permission-gated (e.g. `storage.write_file` asks per folder, `web.request` asks per host); nothing runs without approval. Auto-confirm mode (Settings) resolves those prompts automatically instead, for letting it run a task unsupervised.
+- Under Docker, the backend's own container ships a real general-purpose toolkit for shell commands to actually use — Python, Node, Go, Rust, a headless (or, with a display server passed through, real on-screen) Chromium via Playwright, and more — plus the ability to install anything else on top on request.
+- File attachments — drag-and-drop or pick any file type onto the composer; previews for PDFs, Office docs, spreadsheets/CSVs, code (syntax-highlighted), and plain text, and the model can read an attached file's actual content on request.
 - Automatic history compaction, so a long or tool-heavy conversation doesn't blow the model's context window.
-- Vision — attach images to a message from the composer, or send a photo through a messaging plugin, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
+- Vision — attach images to a message from the composer, send a photo through a messaging plugin, or have the model look at an image it found itself via a file path, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
 - A few themes to pick from (Slate / Paper / Matcha) — will expand in the future!
@@ -45,6 +47,7 @@ ROCm support for this GPU is rough, but Ollama's own GPU passthrough works fine 
 - [`frontend/README.md`](./frontend/README.md) + [`frontend/THEMING.md`](./frontend/THEMING.md) — the React frontend, and how theming works.
 - [`llm/README.md`](./llm/README.md) — swapping models, changing the context window.
 - [`CHANGELOG.md`](./CHANGELOG.md) — what changed, release by release.
+- [`AGENTS.md`](./AGENTS.md) — for an AI coding agent working in this repo.
 
 ## License
 Copyright (c) 2026 Blinov Vasily

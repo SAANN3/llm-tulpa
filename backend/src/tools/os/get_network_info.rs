@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError, ToolParams};
 
 #[derive(Deserialize, tool_derive::ToolParams)]
 struct GetNetworkInfoArgs {}
@@ -31,7 +31,7 @@ impl Tool for GetNetworkInfoTool {
         GetNetworkInfoArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let networks: Vec<NetworkInterface> = {
             let nets = sysinfo::Networks::new_with_refreshed_list();
             nets.iter()

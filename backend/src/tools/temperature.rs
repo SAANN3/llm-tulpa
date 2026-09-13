@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio::time::Sleep;
 use tool_derive::ToolParams;
 
-use super::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams};
+use super::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolError, ToolParams};
 
 pub struct TemperatureTool;
 
@@ -36,7 +36,7 @@ impl Tool for TemperatureTool {
         TemperatureArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: TemperatureArgs = serde_json::from_value(data)?;
         tokio::time::sleep(Duration::from_secs(2)).await;
         let out = TemperatureOut {

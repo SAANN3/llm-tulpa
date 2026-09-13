@@ -116,20 +116,20 @@ impl OllamaService {
         };
 
         tracing::info!("calling ollama /api/generate");
-        let res = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+        let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
+            tracing::error!(error = %e, "ollama /api/generate request failed");
+            OllamaErrors::RequestFailed(e.to_string())
+        })?;
 
         // reqwest's `send` only errors on transport-level failures (connection refused,
         // timeout, TLS) — an HTTP error status like 500 still comes back as `Ok`. Without
         // this check, a non-2xx response (whose body likely isn't our expected JSON shape)
         // would surface as a confusing decode error instead of the actual status.
         if !res.status().is_success() {
-            return Err(OllamaErrors::UnexpectedStatus(res.status()));
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama /api/generate returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status));
         }
 
         // `/api/generate` never populates `thinking` for this model (see the doc comment
@@ -182,16 +182,16 @@ impl OllamaService {
         };
 
         tracing::info!("calling ollama /api/chat");
-        let res = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+        let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
+            tracing::error!(error = %e, "ollama /api/chat request failed");
+            OllamaErrors::RequestFailed(e.to_string())
+        })?;
 
         if !res.status().is_success() {
-            return Err(OllamaErrors::UnexpectedStatus(res.status()));
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama /api/chat returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status));
         }
 
         // `/api/chat` usually populates `message.thinking` correctly on its own (unlike

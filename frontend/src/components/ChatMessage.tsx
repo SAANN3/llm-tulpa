@@ -14,6 +14,8 @@ export interface ChatMessageProps {
   thought_duration_ms?: number | null
   /** Base64-encoded image data (no data-URL prefix), if any — only ever set on a `user` message. */
   images?: string[]
+  /** Ids of already-uploaded (non-image) files attached, if any — only ever set on a `user` message. */
+  file_ids?: number[]
 }
 
 function formatThoughtDuration(ms: number): string {
@@ -26,7 +28,7 @@ function formatThoughtDuration(ms: number): string {
 }
 
 /** One chat message bubble — aligned by `role`. Field names match `MessageOut`/`ChatOut` from the api layer so a fetched message can be spread straight in. */
-export function ChatMessage({ role, content, created_at, thinking, thought_duration_ms, images }: ChatMessageProps) {
+export function ChatMessage({ role, content, created_at, thinking, thought_duration_ms, images, file_ids }: ChatMessageProps) {
   const isUser = role === 'user'
   const [showThinking, setShowThinking] = useState(false)
 
@@ -60,11 +62,10 @@ export function ChatMessage({ role, content, created_at, thinking, thought_durat
               }
         }
       >
-        {images && images.length > 0 ? (
+        {(images && images.length > 0) || (file_ids && file_ids.length > 0) ? (
           <Div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: content ? 8 : 0 }}>
-            {images.map((image, index) => (
-              <Attachment key={index} image={image} size={240} />
-            ))}
+            {images?.map((image, index) => <Attachment key={`image-${index}`} kind="image" image={image} size={140} />)}
+            {file_ids?.map((id) => <Attachment key={`file-${id}`} kind="file" fileId={id} size={140} />)}
           </Div>
         ) : null}
         <div className="markdown">

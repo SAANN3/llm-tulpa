@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod chats;
+pub mod files;
 pub mod llm;
 pub mod plugins;
 pub mod prompts;

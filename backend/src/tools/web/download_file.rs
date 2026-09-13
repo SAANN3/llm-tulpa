@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolError, ToolParams,
-    ToolPermission, ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolContext,
+    ToolError, ToolParams, ToolPermission, ToolSerializationError,
 };
 use crate::tools::storage::normalize;
 
@@ -120,7 +120,7 @@ impl Tool for DownloadFileTool {
         })
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: DownloadFileArgs = serde_json::from_value(data)?;
         let path = normalize(Path::new(&args.path));
 

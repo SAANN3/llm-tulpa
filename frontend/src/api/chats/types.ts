@@ -32,6 +32,8 @@ export interface MessageOut {
   tool_calls: MessageToolCallOut[]
   /** Base64-encoded image data (no data-URL prefix) attached to this message, if any. Empty for every role but `user`. */
   images: string[]
+  /** Ids of already-uploaded files (see `api/files`) attached to this message, if any. Empty for every role but `user`. */
+  file_ids: number[]
 }
 
 export interface MessagesResponse {

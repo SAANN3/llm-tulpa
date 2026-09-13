@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, chats, llm, plugins, prompts, settings};
+use super::{agent, chats, files, llm, plugins, prompts, settings};
 
 /// The `/plugins` domain isn't nested here — unlike everything below, its route *set*
 /// depends on runtime data (which plugins are registered), not just compile-time
@@ -18,6 +18,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/llm", llm::router::router())
         .nest("/agent", agent::router::router())
         .nest("/chats", chats::router::router())
+        .nest("/files", files::router::router())
         .nest("/prompts", prompts::router::router())
         .nest("/settings", settings::router::router())
         .fallback(not_found)
@@ -37,6 +38,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     llm::router::ApiDoc::openapi()
         .merge_from(agent::router::ApiDoc::openapi())
         .merge_from(chats::router::ApiDoc::openapi())
+        .merge_from(files::router::ApiDoc::openapi())
         .merge_from(prompts::router::ApiDoc::openapi())
         .merge_from(settings::router::ApiDoc::openapi())
         .merge_from(plugins::router::ApiDoc::openapi())

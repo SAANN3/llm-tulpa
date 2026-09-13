@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolError, ToolParams};
 
 #[derive(Deserialize, tool_derive::ToolParams)]
 struct EnvReadArgs {
@@ -32,7 +32,7 @@ impl Tool for EnvReadTool {
         EnvReadArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: EnvReadArgs = serde_json::from_value(data)?;
 
         if let Some(key) = &args.key {

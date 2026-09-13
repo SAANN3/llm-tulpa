@@ -1,5 +1,6 @@
 pub mod chat_store;
 pub mod error;
+pub mod file_store;
 pub mod llm;
 pub mod permission_store;
 pub mod plugin_settings_store;

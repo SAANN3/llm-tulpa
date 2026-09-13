@@ -91,6 +91,12 @@ pub async fn migrate(db: &DatabaseConnection) -> Result<(), DbErr> {
         -- Only ever set on `user`-role messages. Null rather than `[]` when a message
         -- has none, same convention as `summary`/`thinking` above.
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS images JSONB;
+        -- Ids into `files` (see `file_store::FileStore`) for already-uploaded files
+        -- attached to this message — the id, not the file's own content; nothing here
+        -- feeds a file's bytes to the model yet, that's a separate step. Only ever set
+        -- on `user`-role messages, same as `images`. Null rather than `[]` when a
+        -- message has none, same convention as `images`.
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_ids JSONB;
 
         CREATE TABLE IF NOT EXISTS tool_calls (
             id BIGSERIAL PRIMARY KEY,

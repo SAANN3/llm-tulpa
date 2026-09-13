@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
 
-use crate::tools::base::{PropertyInfo, Tool, ToolError, ToolParams};
+use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError, ToolParams};
 
 #[derive(Deserialize, tool_derive::ToolParams)]
 struct GetUserInfoArgs {}
@@ -31,7 +31,7 @@ impl Tool for GetUserInfoTool {
         GetUserInfoArgs::tool_properties()
     }
 
-    async fn call_untyped(&self, _data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, _data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let username = env::var("USER")
             .or_else(|_| env::var("USERNAME"))
             .unwrap_or_else(|_| "unknown".to_string());

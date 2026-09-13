@@ -5,32 +5,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolError, ToolParams, ToolPermission,
-    ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError,
+    ToolParams, ToolPermission, ToolSerializationError,
 };
 
 use super::parse_host;
 
 /// How much of a response body gets returned inline when the call doesn't ask for a
-/// smaller cap itself and the response isn't HTML (see `HTML_DEFAULT_MAX_RESPONSE_BYTES`)
-/// — small enough that a typical JSON API response comes back whole, large enough to be
+/// smaller cap itself — small enough that a typical JSON API response (or a page's
+/// extracted text, see `is_html` below) comes back whole, large enough to be
 /// useless-in-practice on anything meant to be downloaded rather than read.
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 50_000;
-
-/// The default cap for anything served as `text/html` specifically — a real page's raw
-/// markup is mostly tag/script/style noise around a small amount of actual content, so
-/// even a *smaller* HTML response wastes far more of a turn's context per byte of
-/// signal than the same size of JSON or plain text does. Found the hard way: a single
-/// 50KB CAPTCHA page (all markup, no substance) dominated a chat's history and derailed
-/// the model's next several turns. Explicitly passing `max_response_bytes` always wins
-/// over this — this only changes what happens when the model didn't ask for a specific
-/// size, on the assumption it wasn't expecting mostly-markup back in the first place.
-const HTML_DEFAULT_MAX_RESPONSE_BYTES: usize = 4_000;
 
 /// Hard ceiling on `max_response_bytes` regardless of what the model asks for — this
 /// tool reads the whole body into memory and returns it inline in the reply, unlike
 /// `web.download_file`, which streams straight to disk.
 const HARD_MAX_RESPONSE_BYTES: usize = 500_000;
+
+/// Column width `html2text` wraps extracted lines to — arbitrary but generous; this is
+/// read by a model, not displayed in a terminal, so it mostly just keeps any one line
+/// from being unreasonably long rather than serving a real layout purpose.
+const HTML_TEXT_WRAP_WIDTH: usize = 120;
 
 pub struct WebRequestTool;
 
@@ -44,7 +39,7 @@ struct WebRequestArgs {
     headers: Option<HashMap<String, String>>,
     #[tool(description = "Raw request body to send (e.g. a JSON string for a POST/PUT). Omit for methods that don't send a body.")]
     body: Option<String>,
-    #[tool(description = "Maximum bytes of the response body to return inline. Defaults to 50000 (or just 4000 for an HTML response specifically — raw markup is mostly noise, so ask for more explicitly if you actually need it), hard-capped at 500000 either way. For anything larger, or for binary content, use web.download_file to save it to disk instead.")]
+    #[tool(description = "Maximum bytes of the response body to return inline. Defaults to 50000, hard-capped at 500000. For anything larger, or for binary content, use web.download_file to save it to disk instead.")]
     max_response_bytes: Option<u32>,
 }
 
@@ -54,7 +49,9 @@ struct WebRequestOut {
     content_type: String,
     /// Decoded lossily as UTF-8 — a binary response will come back as garbled text
     /// rather than an error. Use `web.download_file` for anything not meant to be
-    /// read as text.
+    /// read as text. An HTML response is converted to plain readable text first (tags,
+    /// scripts, and styles stripped) rather than returned as raw markup — see `is_html`
+    /// in `call_untyped`.
     body: String,
     bytes_returned: u64,
     truncated: bool,
@@ -90,14 +87,19 @@ impl Tool for WebRequestTool {
     fn description(&self) -> &str {
         "Makes an HTTP request (GET, HEAD, POST, PUT, PATCH, or DELETE) and returns the status \
          code, content type, and response body inline — unlike web.download_file, nothing is \
-         written to disk, so this is for reading an API response or a small page right now, not \
-         for saving arbitrary or binary content. The body is decoded as UTF-8 (lossily) and \
-         capped in size (see max_response_bytes — HTML responses default to a much smaller cap \
-         than anything else, since raw markup is mostly noise); a binary response will look \
-         garbled — use web.download_file for that instead. Permission is granted per host, not \
-         per call: approving GET/HEAD to a host covers GET/HEAD there from then on; approving \
-         any one of POST/PUT/PATCH/DELETE to a host covers all four there from then on, and \
-         GET/HEAD too."
+         written to disk, so this is for reading an API response or a page right now, not for \
+         saving arbitrary or binary content. An HTML response comes back as its extracted \
+         readable text (tags/scripts/styles stripped), not raw markup — but this is a plain \
+         HTTP GET, nothing here actually runs the page's JavaScript, so a page whose real \
+         content only appears after JS runs (most single-page apps, anything dynamically \
+         loaded) will come back as a mostly-empty shell. For that case, or for anything \
+         needing an actual interaction or a screenshot, use the baked-in Playwright/Chromium via \
+         os.execute_command instead. The body is decoded as UTF-8 (lossily) and capped in size \
+         (see max_response_bytes); a binary response will look garbled — use web.download_file \
+         for that instead. Permission is granted per host, \
+         not per call: approving GET/HEAD to a host covers GET/HEAD there from then on; \
+         approving any one of POST/PUT/PATCH/DELETE to a host covers all four there from then \
+         on, and GET/HEAD too."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {
@@ -171,7 +173,7 @@ impl Tool for WebRequestTool {
         })
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: WebRequestArgs = serde_json::from_value(data)?;
 
         let method = reqwest::Method::from_bytes(args.method.to_uppercase().as_bytes())
@@ -209,16 +211,29 @@ impl Tool for WebRequestTool {
             .to_string();
 
         let is_html = content_type.to_ascii_lowercase().starts_with("text/html");
-        let default_cap = if is_html { HTML_DEFAULT_MAX_RESPONSE_BYTES } else { DEFAULT_MAX_RESPONSE_BYTES };
-        let cap = (args.max_response_bytes.map(|b| b as usize).unwrap_or(default_cap)).min(HARD_MAX_RESPONSE_BYTES);
+        let cap = (args.max_response_bytes.map(|b| b as usize).unwrap_or(DEFAULT_MAX_RESPONSE_BYTES)).min(HARD_MAX_RESPONSE_BYTES);
 
         let bytes = response
             .bytes()
             .await
             .map_err(|e| ToolError::FailedUnknown(format!("couldn't read response body: {e}")))?;
 
-        let truncated = bytes.len() > cap;
-        let returned = &bytes[..bytes.len().min(cap)];
+        // An HTML page's raw markup is mostly tag/script/style noise around a small
+        // amount of actual content — extracted first (on the *whole* response, before
+        // any truncation, so the extraction itself isn't fed a body cut off mid-tag)
+        // so what gets capped and returned below is the readable text, not soup. Falls
+        // back to the raw decoded body if extraction itself fails for some reason
+        // (better than erroring the whole call over a formatting nicety).
+        let full_body = String::from_utf8_lossy(&bytes).to_string();
+        let full_body = if is_html {
+            html2text::from_read(full_body.as_bytes(), HTML_TEXT_WRAP_WIDTH).unwrap_or(full_body)
+        } else {
+            full_body
+        };
+
+        let full_bytes = full_body.as_bytes();
+        let truncated = full_bytes.len() > cap;
+        let returned = &full_bytes[..full_bytes.len().min(cap)];
         let body = String::from_utf8_lossy(returned).to_string();
 
         Ok(serde_json::to_value(WebRequestOut {

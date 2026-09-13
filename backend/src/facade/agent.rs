@@ -11,11 +11,13 @@ use utoipa::ToSchema;
 use crate::services::{
     chat_store::{ChatStore, Message, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
+    file_store::FileStore,
     llm::{OllamaChatMessage, OllamaService, OllamaToolCall, OllamaToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
     tools::ToolService,
 };
-use crate::tools::base::{ResolvedScope, Tool, ToolPermission};
+use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
+use crate::tools::ui::attach_file::AttachFileTool;
 
 
 /// `compaction_trigger_tokens`/`compaction_keep_chars` (below) are derived from the
@@ -42,6 +44,9 @@ const KEEP_CHARS_PER_TOKEN: f64 = 2.0;
 /// it must either call one or refuse, even for requests a plain-text reply would answer
 /// fine.
 const SYSTEM_PROMPT: &[&str] = &[
+    "This is a private, self-hosted instance running on the user's own hardware, for their \
+     own use only — they built this backend, wrote and can edit this very prompt, and \
+     control the container it runs in.",
     "You have access to the tools listed below. Use one only when it actually helps with \
      the user's request. If no tool applies, just answer directly and conversationally — \
      don't refuse or claim incapability just because there's no matching tool.",
@@ -113,6 +118,25 @@ const SYSTEM_PROMPT: &[&str] = &[
      otherwise assume from training, for anything where today's actual date matters (being \
      asked what today is, recent events, computing an age or a duration, anything where the \
      year is load-bearing for the answer).",
+    "A message telling you it has file(s) attached (by id) is not the file's content —\
+     you haven't actually seen what's in it yet. This holds even when the same message also \
+     includes a real image you can genuinely see: that image and an attached file (by id) are \
+     never the same thing, and seeing one tells you nothing about what's in the other — don't \
+     assume an attached file is 'already in front of you' just because an image happens to be \
+     attached to the same message. Before answering anything that depends on what an attached \
+     file actually contains, call files.get_attached_file with its id, then read the path it \
+     gives you back (storage.detect_file_type first if you're not sure of its format). Don't \
+     guess, assume, or answer as if you already know what's in a file you haven't actually \
+     read that way — if the file turns out to be something you have no tool for reading (an \
+     image format, an office document, ...), say that plainly instead of making up its \
+     contents.",
+    "Before grinding through something tedious or error-prone step by step by hand — \
+     nontrivial arithmetic, parsing or transforming text, counting things, converting \
+     between formats, and the like — check whether a tool you already have (or could quickly \
+     set up, e.g. installing a scripting language via os.execute_command the same way you'd \
+     install anything else) would just do it faster and more reliably. If you've already shown \
+     a capability works earlier in this same conversation, remember and reuse it rather than \
+     defaulting back to manual work out of habit.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -139,6 +163,34 @@ fn pick_compaction_boundary(sizes: &[usize], keep_chars: usize) -> usize {
     split_at
 }
 
+/// Prepends a short, bracketed fact about `file_ids` to `content` for whatever Ollama
+/// actually sees — same convention `plugins::messaging::plugin` already uses for its
+/// own per-message annotations (e.g. `[Message from user named ...]`). Unlike that
+/// one, this is never baked into what `ChatStore` persists: the UI already shows
+/// attached files as their own chips (`file_ids` on `MessageOut`), so repeating them as
+/// ugly bracket text inside the message bubble would just be visual noise there — this
+/// only ever runs on the copy of a message's content built for the actual `/api/chat`
+/// request, at `to_ollama_message`'s history-replay call site and `Agent::chat`'s
+/// fresh-turn one. A fact about *this specific message*, not a stable capability
+/// claim, so it belongs here (rebuilt fresh every time a message is turned into what
+/// Ollama sees, on every single replay) rather than in `SYSTEM_PROMPT` — see
+/// `SYSTEM_PROMPT`'s own new rule for the paired behavioral instruction (use the tool
+/// when it matters, don't guess). A no-op when there's nothing attached.
+fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
+    if file_ids.is_empty() {
+        return content;
+    }
+
+    let ids = file_ids.iter().map(|id| format!("id {id}")).collect::<Vec<_>>().join(", ");
+    format!(
+        "[This message has file(s) attached: {ids}. You have NOT seen their content — this is \
+         true even if this same message also shows you a real image: that image is a separate \
+         thing from these file ids and tells you nothing about what's in them. Call \
+         files.get_attached_file with one of these ids first if a file's actual content \
+         matters for your answer.]\n{content}"
+    )
+}
+
 /// Facade over `OllamaService`, `ChatStore`, and `ToolService` — where the actual
 /// "fetch history, call Ollama, persist the result, run tool calls" sequencing lives,
 /// rather than in route handlers or inside any one of the services it composes. Holds
@@ -148,6 +200,10 @@ pub struct Agent {
     ollama: Arc<OllamaService>,
     chat_store: Arc<ChatStore>,
     tools: Arc<ToolService>,
+    /// Template `use_tool` calls `copy_with_chat_id` on to get the real, per-call
+    /// context — its own `chat_id` is unused/meaningless (never itself handed to a
+    /// tool). See `ToolContext`'s own doc comment for why it isn't `AppState`.
+    tool_context: ToolContext,
     /// Per-chat tool-permission grants — what scope each tool has already been given
     /// within a given chat, if any. Consulted by `to_agent_tool_call`/`use_tool` to
     /// decide whether a call is `Allowed` outright or needs the caller to confirm.
@@ -171,14 +227,21 @@ impl Agent {
         ollama: Arc<OllamaService>,
         chat_store: Arc<ChatStore>,
         tools: Arc<ToolService>,
+        file_store: Arc<FileStore>,
         permission_store: Arc<PermissionStore>,
         history_len: u64,
         context_length: u64,
     ) -> Self {
+        // `chat_id: 0` here is a placeholder — never read as-is, always replaced via
+        // `copy_with_chat_id` before a tool actually sees this context. `ollama` is
+        // cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
+        // holds its own copy below.
+        let tool_context = ToolContext { file_store, ollama: ollama.clone(), chat_id: 0 };
         Self {
             ollama,
             chat_store,
             tools,
+            tool_context,
             permission_store,
             history_len,
             compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
@@ -186,19 +249,32 @@ impl Agent {
         }
     }
 
-    /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix)
-    /// as a `user` message, then advances the chat same as `continue_chat` does. The
-    /// prompt is saved before the Ollama call, not after, so a failed/slow Ollama call
-    /// never loses what the user actually sent. `think` is forwarded to Ollama as-is —
-    /// see `OllamaService::chat` for its default.
+    /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix —
+    /// and `file_ids`, if any) as a `user` message, then advances the chat same as
+    /// `continue_chat` does. The prompt is saved before the Ollama call, not after, so
+    /// a failed/slow Ollama call never loses what the user actually sent. `think` is
+    /// forwarded to Ollama as-is — see `OllamaService::chat` for its default.
+    /// `file_ids` are only persisted here, never sent to Ollama or otherwise read —
+    /// feeding a file's actual content into a turn is a separate, not-yet-built step —
+    /// but each one does get claimed for this chat first (`FileStore::attach_to_chat`):
+    /// a file can be uploaded before any chat exists to attach it to (the home page's
+    /// case, `chat_id: None` until now), and this is the moment it actually becomes
+    /// this chat's. A no-op for a file that was already uploaded with a real `chat_id`
+    /// (e.g. from an existing chat's own composer) — this just re-sets it to the same
+    /// value either way, cheaper than checking first.
     pub async fn chat(
         &self,
         chat_id: i64,
         prompt: String,
         images: Vec<String>,
+        file_ids: Vec<i64>,
         think: Option<bool>,
     ) -> Result<ChatOut, ErrorService> {
         let messages = self.ollama_history(chat_id).await?;
+
+        for &file_id in &file_ids {
+            self.tool_context.file_store.attach_to_chat(file_id, chat_id).await?;
+        }
 
         self.chat_store
             .new_message(NewMessage {
@@ -212,13 +288,16 @@ impl Agent {
                 tool_denied: false,
                 tool_calls: vec![],
                 images: images.clone(),
+                file_ids: file_ids.clone(),
             })
             .await?;
+
+        let ollama_content = with_attached_files_note(prompt, &file_ids);
 
         self.advance(
             chat_id,
             messages,
-            Some(OllamaService::user_message_with_images(prompt, images)),
+            Some(OllamaService::user_message_with_images(ollama_content, images)),
             think,
         )
         .await
@@ -278,6 +357,11 @@ impl Agent {
             system_prompt.push_str(&summary_message.content);
         }
 
+        // Collected now, while `messages` still holds this turn's history, so it
+        // survives the `extend` below. Only actually used once we know this response
+        // has no further tool calls of its own — see the `stored` message below.
+        let attached_files = Self::pending_attached_files(&messages);
+
         let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
         messages_with_system.extend(messages);
 
@@ -289,13 +373,19 @@ impl Agent {
         let thinking = response.message.thinking.clone();
 
         let requested_tool_calls = response.message.tool_calls.unwrap_or_default();
-        let new_tool_calls = requested_tool_calls
+        let new_tool_calls: Vec<NewToolCall> = requested_tool_calls
             .iter()
             .map(|call| NewToolCall {
                 tool_name: call.function.name.clone(),
                 arguments: call.function.arguments.clone(),
             })
             .collect();
+
+        // `ui.attach_file` results only ever land on the turn's *final* reply — the
+        // message the model actually prints once it's done calling tools — never on
+        // an intermediate tool-calling message, which usually has no real content of
+        // its own for a file to visibly hang off of.
+        let file_ids = if new_tool_calls.is_empty() { attached_files } else { vec![] };
 
         let stored = self
             .chat_store
@@ -310,6 +400,7 @@ impl Agent {
                 tool_denied: false,
                 tool_calls: new_tool_calls,
                 images: vec![],
+                file_ids,
             })
             .await?;
 
@@ -328,6 +419,7 @@ impl Agent {
             tool_calls,
             thinking,
             thought_duration_ms,
+            file_ids: stored.file_ids,
         };
 
         self.maybe_compact(chat_id, prompt_eval_count).await;
@@ -570,13 +662,16 @@ impl Agent {
         let permission = self.tool_permission(&next.tool_name, next.arguments.clone(), effective_scope);
 
         let (success, denied, err, content) = match permission {
-            AgentToolPermission::Allowed => match self.tools.call_tool(&next.tool_name, next.arguments).await {
-                Ok(value) => (true, false, None, value),
-                Err(e) => {
-                    let message = e.to_string();
-                    (false, false, Some(message.clone()), Value::String(message))
+            AgentToolPermission::Allowed => {
+                let ctx = self.tool_context.copy_with_chat_id(chat_id);
+                match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
+                    Ok(value) => (true, false, None, value),
+                    Err(e) => {
+                        let message = e.to_string();
+                        (false, false, Some(message.clone()), Value::String(message))
+                    }
                 }
-            },
+            }
             AgentToolPermission::Denied { reason, escalation } => {
                 // Worded so the model doesn't read one declined call as a ban on the
                 // tool as a whole — it's scoped to this specific call, and retrying
@@ -617,6 +712,7 @@ impl Agent {
                 tool_denied: denied,
                 tool_calls: vec![],
                 images: vec![],
+                file_ids: vec![],
             })
             .await?;
 
@@ -788,6 +884,28 @@ impl Agent {
         })
     }
 
+    /// Scans back through this turn's already-loaded history for `ui.attach_file`
+    /// results, collecting their `file_id`s. Stops at the last `user`-role message
+    /// (or the start of history), since that's where the current turn began — any
+    /// `tool`/`assistant` messages before it belong to an earlier turn, whose own
+    /// attach results were already attached to *that* turn's final reply when it was
+    /// generated. Everything from here to the end of history is this turn's own
+    /// tool-calling rounds (`assistant` messages requesting tools, `tool` messages
+    /// with their results), so no other role needs to stop the scan.
+    fn pending_attached_files(messages: &[OllamaChatMessage]) -> Vec<i64> {
+        let attach_file_name = AttachFileTool.function_name();
+        let mut file_ids: Vec<i64> = messages
+            .iter()
+            .rev()
+            .take_while(|message| message.role != "user")
+            .filter(|message| message.role == "tool" && message.tool_name.as_deref() == Some(attach_file_name))
+            .filter_map(|message| serde_json::from_str::<Value>(&message.content).ok())
+            .filter_map(|value| value.get("file_id").and_then(Value::as_i64))
+            .collect();
+        file_ids.reverse();
+        file_ids
+    }
+
     /// Maps a persisted `Message` back into the shape Ollama's `/api/chat` expects for
     /// history. `OllamaToolCall::id` is left empty — we never persisted Ollama's
     /// original per-call id (only `function.name`/`arguments`, which is all replaying
@@ -810,7 +928,7 @@ impl Agent {
 
         OllamaChatMessage {
             role: message.role,
-            content: message.content,
+            content: with_attached_files_note(message.content, &message.file_ids),
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_name: message.tool_name,
             thinking: None,
@@ -938,6 +1056,12 @@ pub struct ChatOut {
     /// set (unlike the same-named field on `Message`/`NewMessage`) — `advance` times
     /// every call it makes, there's no path through it that skips this.
     pub thought_duration_ms: i64,
+    /// Mirrors `NewMessage::file_ids` for this reply — a `ui.attach_file` call earlier
+    /// in the same turn, resolved onto this (the turn's final, non-tool-calling) reply.
+    /// Without this, a freshly-arrived reply couldn't show its attachment until the
+    /// chat was reloaded from `GET /chats/messages`, which is the only other place
+    /// `file_ids` comes from.
+    pub file_ids: Vec<i64>,
 }
 
 #[derive(Serialize, ToSchema)]

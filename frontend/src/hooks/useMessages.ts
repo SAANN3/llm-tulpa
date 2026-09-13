@@ -9,6 +9,7 @@ import { useTool as runNextTool } from '../api/agent/use_tool'
 import { getMessages } from '../api/chats/messages'
 import type { MessageOut } from '../api/chats/types'
 import { useSettings } from '../context/useSettings'
+import { getAutoConfirm } from '../utils/autoConfirm'
 import { notify } from '../utils/notifications'
 import { peekPendingPrompt } from '../utils/pendingPrompt'
 
@@ -30,6 +31,8 @@ export type DisplayMessage =
       thought_duration_ms?: number | null
       /** Base64-encoded image data (no data-URL prefix), if any — only ever set on a `user` message. */
       images?: string[]
+      /** Ids of already-uploaded (non-image) files attached, if any — files the user attached directly on a `user` message, or a `ui.attach_file` call resolved onto an `assistant` message's final reply. */
+      file_ids?: number[]
     }
   | { role: 'tool'; content: unknown; tool_name: string | null; created_at: string; arguments: Record<string, unknown> }
 
@@ -68,12 +71,13 @@ function toDisplayMessages(page: MessageOut[]): DisplayMessage[] {
       thinking: m.thinking,
       thought_duration_ms: m.thought_duration_ms,
       images: m.images,
+      file_ids: m.file_ids,
     }
   })
 }
 
-function userMessage(content: string, images: string[]): DisplayMessage {
-  return { role: 'user', content, created_at: new Date().toISOString(), images }
+function userMessage(content: string, images: string[], fileIds: number[]): DisplayMessage {
+  return { role: 'user', content, created_at: new Date().toISOString(), images, file_ids: fileIds }
 }
 
 function assistantMessage(reply: AgentChatOut): DisplayMessage {
@@ -83,6 +87,7 @@ function assistantMessage(reply: AgentChatOut): DisplayMessage {
     created_at: reply.created_at,
     thinking: reply.thinking,
     thought_duration_ms: reply.thought_duration_ms,
+    file_ids: reply.file_ids,
   }
 }
 
@@ -448,14 +453,22 @@ export function useMessages(chatId: number, onAppended?: () => void) {
 
     if (!result.needsConfirmation) {
       // Fires once per turn, after the final assistant reply — not per intermediate
-      // tool-call message, those are noise for this purpose.
-      if (isCurrent() && settings?.notifications_enabled) {
+      // tool-call message, those are noise for this purpose. Skipped when the reply
+      // itself is blank (the model can end a turn with nothing to say — e.g. running
+      // out of its output budget mid-thought before producing real content) — a
+      // notification with an empty body is more confusing than no notification at
+      // all, and the empty reply is still visible in the chat either way.
+      if (isCurrent() && settings?.notifications_enabled && result.reply.content.trim().length > 0) {
         notify('llm-tulpa', truncateForNotification(result.reply.content))
       }
       return result
     }
 
-    if (isCurrent() && settings?.notifications_enabled) {
+    // Skipped in auto-confirm mode — `Chat.tsx` resolves this pause itself, right
+    // after `finishOrPause` returns, without ever actually showing anything for the
+    // user to act on, so "waiting on your OK" is simply false in that mode: nothing
+    // is waiting on anything.
+    if (isCurrent() && settings?.notifications_enabled && !getAutoConfirm()) {
       const names = Object.values(result.pending)
         .map((call) => call.name)
         .join(', ')
@@ -477,16 +490,16 @@ export function useMessages(chatId: number, onAppended?: () => void) {
 
   // Looking for how a turn actually flows (the pause-for-confirmation loop)? See the
   // diagram above `findPendingConfirmations` earlier in this file.
-  const send = async (prompt: string, think = true, images: string[] = []): Promise<TurnResult> => {
+  const send = async (prompt: string, think = true, images: string[] = [], fileIds: number[] = []): Promise<TurnResult> => {
     const requestChatId = chatId
     const guardedAppend = (message: DisplayMessage) => {
       if (chatIdRef.current === requestChatId) appendMessage(message)
     }
 
-    guardedAppend(userMessage(prompt, images))
+    guardedAppend(userMessage(prompt, images, fileIds))
     setSendingChatId(requestChatId)
     try {
-      const reply = await sendChatMessage(chatId, prompt, think, images)
+      const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
       guardedAppend(assistantMessage(reply))
       return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
     } finally {

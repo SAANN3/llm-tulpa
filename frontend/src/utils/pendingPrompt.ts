@@ -6,23 +6,32 @@ interface PendingPrompt {
   prompt: string
   think: boolean
   images: string[]
+  fileIds: number[]
   expiresAt: number
 }
 
 /**
- * Stashes a prompt (and its `think` toggle plus any attached `images`, as set on the
- * home page's composer at send time) so the chat page can auto-send it the moment it
- * lands, right after creating a new chat from the home page's composer —
+ * Stashes a prompt (and its `think` toggle plus any attached `images`/`fileIds`, as
+ * set on the home page's composer at send time) so the chat page can auto-send it the
+ * moment it lands, right after creating a new chat from the home page's composer —
  * sessionStorage rather than a query param since prompt text (and image data) can be
  * arbitrarily long (query params/URLs have practical length limits; sessionStorage's
- * per-origin quota is megabytes).
+ * per-origin quota is megabytes). `fileIds` are files already uploaded (with no
+ * `chat_id` yet, since the chat didn't exist at upload time — see `uploadFile`) that
+ * get claimed for this chat the moment the stashed prompt is actually sent.
  */
-export function setPendingPrompt(chatId: number, prompt: string, think: boolean, images: string[] = []): void {
-  const value: PendingPrompt = { chatId, prompt, think, images, expiresAt: Date.now() + VALID_WINDOW_MS }
+export function setPendingPrompt(
+  chatId: number,
+  prompt: string,
+  think: boolean,
+  images: string[] = [],
+  fileIds: number[] = [],
+): void {
+  const value: PendingPrompt = { chatId, prompt, think, images, fileIds, expiresAt: Date.now() + VALID_WINDOW_MS }
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value))
 }
 
-function readPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[] } | null {
+function readPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
   const raw = sessionStorage.getItem(STORAGE_KEY)
   if (!raw) return null
 
@@ -36,7 +45,7 @@ function readPendingPrompt(chatId: number): { prompt: string; think: boolean; im
   if (parsed.chatId !== chatId) return null
   if (Date.now() > parsed.expiresAt) return null
 
-  return { prompt: parsed.prompt, think: parsed.think, images: parsed.images ?? [] }
+  return { prompt: parsed.prompt, think: parsed.think, images: parsed.images ?? [], fileIds: parsed.fileIds ?? [] }
 }
 
 /**
@@ -45,7 +54,7 @@ function readPendingPrompt(chatId: number): { prompt: string; think: boolean; im
  * toggle) that needs to already show the right value on first render, before the effect
  * that actually consumes and sends it has had a chance to run.
  */
-export function peekPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[] } | null {
+export function peekPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
   return readPendingPrompt(chatId)
 }
 
@@ -56,7 +65,7 @@ export function peekPendingPrompt(chatId: number): { prompt: string; think: bool
  * read, whether or not it actually matched, so a stale entry can never fire twice or
  * leak into some later unrelated chat.
  */
-export function consumePendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[] } | null {
+export function consumePendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
   const result = readPendingPrompt(chatId)
   sessionStorage.removeItem(STORAGE_KEY)
   return result

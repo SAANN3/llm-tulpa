@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Button, Div } from '../components/primitives'
-import { NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
+import { AutoConfirmField, NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
 import { TypewriterLabel } from '../components/TypewriterLabel'
 import { useSettings } from '../context/useSettings'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { getAutoConfirm, setAutoConfirm } from '../utils/autoConfirm'
 import { requestNotificationPermission } from '../utils/notifications'
 import { validateTimezone } from '../utils/validateTimezone'
 
@@ -26,6 +27,11 @@ function Setup() {
   // needed (on save).
   const [timezoneText, setTimezoneText] = useState(String(settings?.timezone ?? browserTimezoneOffsetHours()))
   const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications_enabled ?? false)
+  // Local-to-this-browser, unlike everything else in this wizard — takes effect
+  // immediately on toggle rather than waiting for the final "Save" (see
+  // `onToggleAutoConfirm`), since it isn't part of the `Settings` object `onPrimary`
+  // below persists.
+  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(getAutoConfirm)
   const [step, setStep] = useState(0)
 
   // Requesting permission has to happen on the actual toggle-on gesture, browsers
@@ -41,6 +47,11 @@ function Setup() {
     setNotificationsEnabled(await requestNotificationPermission())
   }
 
+  const onToggleAutoConfirm = (enabled: boolean) => {
+    setAutoConfirm(enabled)
+    setAutoConfirmEnabled(enabled)
+  }
+
   const pages = [
     <NameTimezoneFields
       key="name"
@@ -51,6 +62,7 @@ function Setup() {
     />,
     <ThemePreview key="theme" />,
     <NotificationsField key="notifications" enabled={notificationsEnabled} onToggle={onToggleNotifications} />,
+    <AutoConfirmField key="autoconfirm" enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm} />,
   ]
   const isFirstPage = step === 0
   const isLastPage = step === pages.length - 1

@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolError, ToolParams, ToolPermission,
-    ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError,
+    ToolParams, ToolPermission, ToolSerializationError,
 };
 
 #[derive(Deserialize, tool_derive::ToolParams)]
@@ -95,7 +95,7 @@ impl Tool for EnvWriteTool {
         })
     }
 
-    async fn call_untyped(&self, data: Value) -> Result<Value, ToolError> {
+    async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: EnvWriteArgs = serde_json::from_value(data)?;
 
         // Get previous value if it exists

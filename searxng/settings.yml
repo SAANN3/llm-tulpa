@@ -7,7 +7,7 @@ use_default_settings:
   engines:
     keep_only:
       - google
-      - bing
+      - yandex
       - duckduckgo
 
 general:
@@ -31,10 +31,18 @@ search:
     - html
     - json
 
-# google and bing ship `disabled: true` by default (duckduckgo doesn't) — keep_only
+# google and yandex ship `disabled: true` by default (duckduckgo doesn't) — keep_only
 # above only narrows *which* engines are even in play, it doesn't turn them on.
+#
+# bing used to be the third engine here instead of yandex — dropped after it started
+# returning results with nothing to do with the actual query (confirmed directly
+# against this instance: the same query got back Dutch plumber listings one run and
+# French cake recipes the next), almost certainly Bing's scraper-hostile side blocking
+# SearXNG's engine and serving it a bot-check/fallback page instead of real results.
+# yandex actually has good Cyrillic/Russian-language coverage as a bonus, which is
+# exactly the kind of query that surfaced the bing problem in the first place.
 engines:
   - name: google
     disabled: false
-  - name: bing
+  - name: yandex
     disabled: false

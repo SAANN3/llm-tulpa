@@ -34,6 +34,8 @@ export interface ChatOut {
   thinking: string | null
   /** How long the Ollama call for this reply took, in milliseconds. */
   thought_duration_ms: number
+  /** Ids of already-uploaded files attached to this reply, if any — a `ui.attach_file` call earlier in the same turn, resolved onto this (the turn's final, non-tool-calling) reply. */
+  file_ids: number[]
 }
 
 export interface CanUseTool {
