@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 
+import type { ThinkChoice } from '../api/agent/types'
 import { getChats } from '../api/chats/get'
 import { ChatMessage } from '../components/ChatMessage'
 import { DateSeparator } from '../components/DateSeparator'
@@ -145,7 +146,7 @@ function ChatView({ chatId }: { chatId: number }) {
       if (chatIdRef.current === forChatId) setTurnError("Something went wrong continuing that turn — try again.")
     }
   }
-  const handleSend = async (prompt: string, think?: boolean, images?: string[], fileIds?: number[]) => {
+  const handleSend = async (prompt: string, think?: ThinkChoice, images?: string[], fileIds?: number[]) => {
     const forChatId = chatId
     setTurnError(null)
     try {
@@ -167,7 +168,11 @@ function ChatView({ chatId }: { chatId: number }) {
   // already shows the right value on first render — the effect that actually consumes
   // and sends the pending prompt runs after mount, which would otherwise show a
   // flash of the default before snapping to the real value.
-  const [initialThink] = useState(() => peekPendingPrompt(chatId)?.think ?? true)
+  // `peekPendingPrompt`'s `think` may now be a specific effort-level string (a mode
+  // chosen on Home's composer before this chat existed) — only the on/off toggle
+  // state matters for this particular seed (see `UserInput.initialThink`'s own doc
+  // comment), so anything other than a literal `false` means "thinking was on."
+  const [initialThink] = useState(() => peekPendingPrompt(chatId)?.think !== false)
 
   // Switching chats reuses this same `ChatView` instance (just a new `chatId` prop), so
   // a pause left over from the chat just navigated away from would otherwise still be

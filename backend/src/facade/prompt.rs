@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::services::{error::ErrorService, llm::OllamaService};
+use crate::services::{error::ErrorService, llm::{OllamaService, ThinkChoice}};
 
 /// Facade for one-shot, predefined-prompt generation — the caller asks for a specific
 /// kind of string and, if the prompt calls for it, supplies values to be interpolated
@@ -86,7 +86,7 @@ impl PromptFacade {
                 vec![system],
                 Some(OllamaService::user_message_with_images(content, images)),
                 &[],
-                Some(false),
+                Some(ThinkChoice::Enabled(false)),
             )
             .await?;
 

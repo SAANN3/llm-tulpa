@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{facade::agent::ChatOut, services::error::ErrorService, state::AppState};
+use crate::{facade::agent::ChatOut, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ChatRequest {
@@ -19,8 +19,11 @@ pub(crate) struct ChatRequest {
     /// content to the model yet, that's a separate step.
     #[serde(default)]
     file_ids: Option<Vec<i64>>,
-    /// Ask the model to reason before answering. Defaults to `true` when omitted.
-    think: Option<bool>,
+    /// Ask the model to reason before answering. Defaults to enabled (Ollama's own
+    /// default effort) when omitted. Either a plain bool, or a specific effort level
+    /// string (e.g. `"low"`) — see `GET /api/llm/thinking_capability` for what the
+    /// active model actually supports before sending one of these.
+    think: Option<ThinkChoice>,
 }
 
 /// Sends `prompt` as the next turn in `chat_id`'s conversation and returns the model's

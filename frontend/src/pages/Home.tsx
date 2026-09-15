@@ -2,6 +2,7 @@ import axios from 'axios'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import type { ThinkChoice } from '../api/agent/types'
 import { Div, Label } from '../components/primitives'
 import { Mark } from '../components/Mark'
 import { Sidebar } from '../components/Sidebar'
@@ -55,7 +56,7 @@ function Home() {
     return () => controller.abort()
   }, [inputExample])
 
-  const onSend = async (prompt: string, think: boolean, images: string[], fileIds: number[]) => {
+  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[]) => {
     setCreating(true)
     try {
       const name = await chatName(prompt, images)

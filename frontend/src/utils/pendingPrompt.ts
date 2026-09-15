@@ -1,10 +1,12 @@
+import type { ThinkChoice } from '../api/agent/types'
+
 const STORAGE_KEY = 'pending_prompt'
 const VALID_WINDOW_MS = 2 * 60 * 1000
 
 interface PendingPrompt {
   chatId: number
   prompt: string
-  think: boolean
+  think: ThinkChoice
   images: string[]
   fileIds: number[]
   expiresAt: number
@@ -23,7 +25,7 @@ interface PendingPrompt {
 export function setPendingPrompt(
   chatId: number,
   prompt: string,
-  think: boolean,
+  think: ThinkChoice,
   images: string[] = [],
   fileIds: number[] = [],
 ): void {
@@ -31,7 +33,7 @@ export function setPendingPrompt(
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value))
 }
 
-function readPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
+function readPendingPrompt(chatId: number): { prompt: string; think: ThinkChoice; images: string[]; fileIds: number[] } | null {
   const raw = sessionStorage.getItem(STORAGE_KEY)
   if (!raw) return null
 
@@ -54,7 +56,7 @@ function readPendingPrompt(chatId: number): { prompt: string; think: boolean; im
  * toggle) that needs to already show the right value on first render, before the effect
  * that actually consumes and sends it has had a chance to run.
  */
-export function peekPendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
+export function peekPendingPrompt(chatId: number): { prompt: string; think: ThinkChoice; images: string[]; fileIds: number[] } | null {
   return readPendingPrompt(chatId)
 }
 
@@ -65,7 +67,7 @@ export function peekPendingPrompt(chatId: number): { prompt: string; think: bool
  * read, whether or not it actually matched, so a stale entry can never fire twice or
  * leak into some later unrelated chat.
  */
-export function consumePendingPrompt(chatId: number): { prompt: string; think: boolean; images: string[]; fileIds: number[] } | null {
+export function consumePendingPrompt(chatId: number): { prompt: string; think: ThinkChoice; images: string[]; fileIds: number[] } | null {
   const result = readPendingPrompt(chatId)
   sessionStorage.removeItem(STORAGE_KEY)
   return result

@@ -1,15 +1,11 @@
 import { lazy, Suspense } from 'react'
 
 import type { FileOut } from '../api/files/types'
+import { getFileExtension } from '../utils/fileExtension'
 import { Div, Label } from './primitives'
 import { getPreviewer } from './previewers/registry'
 
 const UnknownFilePreview = lazy(() => import('./previewers/UnknownFilePreview'))
-
-function getExtension(fileName: string): string {
-  const dot = fileName.lastIndexOf('.')
-  return dot === -1 ? '' : fileName.slice(dot + 1).toLowerCase()
-}
 
 export interface AttachmentPreviewProps {
   file: FileOut
@@ -25,7 +21,7 @@ export interface AttachmentPreviewProps {
  * downloadable — that's the popup shell's own header button (`WindowsPopup`'s
  * `onDownload`), not something this handles. */
 export function AttachmentPreview({ file }: AttachmentPreviewProps) {
-  const extension = getExtension(file.file_name)
+  const extension = getFileExtension(file.file_name)
   const Previewer = getPreviewer(extension) ?? UnknownFilePreview
 
   return (

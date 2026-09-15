@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react'
 import { getFileDownloadUrl } from '../api/files/download'
 import { getFile } from '../api/files/get'
 import type { FileOut } from '../api/files/types'
+import { getFileExtension } from '../utils/fileExtension'
 import { AttachmentPreview } from './AttachmentPreview'
 import { Button, Div, Label } from './primitives'
+import { getMediaKind } from './previewers/registry'
 import { WindowsPopup } from './WindowsPopup'
 
 export type AttachmentProps = {
@@ -111,22 +113,34 @@ export function Attachment(props: AttachmentProps) {
     else if (file) triggerDownload(getFileDownloadUrl(file.id), file.file_name)
   }
 
+  // For a `file`-kind attachment that's actually an image/video — the small chip
+  // shows the real thing, same as an inline `kind: 'image'` attachment already does,
+  // instead of always falling back to a generic file icon just because the content
+  // happens to be referenced by id rather than inlined as base64.
+  const mediaKind = props.kind === 'file' && file ? getMediaKind(getFileExtension(file.file_name)) : null
+  const thumbnailStyle = {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as const,
+    borderRadius: 8,
+    border: '1px solid var(--color-border)',
+    cursor: 'zoom-in',
+  }
+
   return (
     <>
       <Div style={{ position: 'relative', width: size, height: size }}>
         {props.kind === 'image' ? (
-          <img
-            src={toDataUrl(props.image)}
-            alt=""
+          <img src={toDataUrl(props.image)} alt="" onClick={() => setPreviewOpen(true)} style={thumbnailStyle} />
+        ) : mediaKind === 'image' && file ? (
+          <img src={getFileDownloadUrl(file.id)} alt={file.file_name} onClick={() => setPreviewOpen(true)} style={thumbnailStyle} />
+        ) : mediaKind === 'video' && file ? (
+          <video
+            src={getFileDownloadUrl(file.id)}
+            muted
+            preload="metadata"
             onClick={() => setPreviewOpen(true)}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              borderRadius: 8,
-              border: '1px solid var(--color-border)',
-              cursor: 'zoom-in',
-            }}
+            style={{ ...thumbnailStyle, cursor: 'pointer', background: 'black' }}
           />
         ) : (
           <Div

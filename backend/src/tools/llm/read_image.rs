@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tool_derive::ToolParams;
 
-use crate::services::llm::OllamaService;
+use crate::services::llm::{OllamaService, ThinkChoice};
 use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
     ToolParams, ToolPermission, ToolSerializationError,
@@ -84,7 +84,7 @@ impl Tool for ReadImageTool {
         // relaying the answer back. `think: Some(false)`: nothing here needs a
         // reasoning trace, just a direct answer.
         let message = OllamaService::user_message_with_images(prompt, vec![STANDARD.encode(&bytes)]);
-        let response = ctx.ollama.chat(vec![], Some(message), &[], Some(false)).await.map_err(|e| {
+        let response = ctx.ollama.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false))).await.map_err(|e| {
             let reason = match e {
                 crate::services::llm::OllamaErrors::RequestFailed(msg) => msg,
                 crate::services::llm::OllamaErrors::UnexpectedStatus(status) => {

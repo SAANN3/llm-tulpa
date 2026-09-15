@@ -4,7 +4,7 @@ import { allowScope } from '../api/agent/allow_scope'
 import { canUseTool } from '../api/agent/can_use_tool'
 import { chat as sendChatMessage } from '../api/agent/chat'
 import { continueChat } from '../api/agent/continue_chat'
-import type { AgentScopeGrant, AgentToolCall, ChatOut as AgentChatOut, UseToolOut } from '../api/agent/types'
+import type { AgentScopeGrant, AgentToolCall, ChatOut as AgentChatOut, ThinkChoice, UseToolOut } from '../api/agent/types'
 import { useTool as runNextTool } from '../api/agent/use_tool'
 import { getMessages } from '../api/chats/messages'
 import type { MessageOut } from '../api/chats/types'
@@ -230,7 +230,7 @@ function findPendingConfirmations(toolCalls: AgentToolCall[]): PendingConfirmati
  */
 async function resolveToolCallsAndContinue(
   chatId: number,
-  think: boolean,
+  think: ThinkChoice,
   decisions: Decisions,
   pending: PendingConfirmations,
   toolCalls: AgentToolCall[],
@@ -268,7 +268,7 @@ async function resolveToolCallsAndContinue(
  */
 async function driveTurn(
   chatId: number,
-  think: boolean,
+  think: ThinkChoice,
   reply: AgentChatOut,
   onMessage: (message: DisplayMessage) => void,
 ): Promise<TurnResult> {
@@ -289,7 +289,7 @@ async function driveTurn(
  */
 async function driveToolCalls(
   chatId: number,
-  think: boolean,
+  think: ThinkChoice,
   toolCalls: AgentToolCall[],
   onMessage: (message: DisplayMessage) => void,
 ): Promise<TurnResult> {
@@ -490,7 +490,7 @@ export function useMessages(chatId: number, onAppended?: () => void) {
 
   // Looking for how a turn actually flows (the pause-for-confirmation loop)? See the
   // diagram above `findPendingConfirmations` earlier in this file.
-  const send = async (prompt: string, think = true, images: string[] = [], fileIds: number[] = []): Promise<TurnResult> => {
+  const send = async (prompt: string, think: ThinkChoice = true, images: string[] = [], fileIds: number[] = []): Promise<TurnResult> => {
     const requestChatId = chatId
     const guardedAppend = (message: DisplayMessage) => {
       if (chatIdRef.current === requestChatId) appendMessage(message)
@@ -515,7 +515,7 @@ export function useMessages(chatId: number, onAppended?: () => void) {
   // already-loaded message history is simply where things stand. Otherwise runs through
   // the exact same `driveToolCalls` branch a live turn would, so a still-pending
   // permission pauses here as if the browser had never gone away.
-  const resume = async (think = true): Promise<TurnResult | null> => {
+  const resume = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
     const requestChatId = chatId
     const guardedAppend = (message: DisplayMessage) => {
       if (chatIdRef.current === requestChatId) appendMessage(message)

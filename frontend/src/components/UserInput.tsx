@@ -1,9 +1,11 @@
 import type { ChangeEvent, CSSProperties, DragEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import type { ThinkChoice } from '../api/agent/types'
 import { uploadFile } from '../api/files/upload'
+import { getThinkingCapability } from '../api/llm/thinking_capability'
 import { Attachment } from './Attachment'
-import { Button, Div, Label, TextField, ToggleSwitch } from './primitives'
+import { Button, Div, Label, Select, TextField, ToggleSwitch } from './primitives'
 
 export interface UserInputProps {
   text?: string
@@ -11,7 +13,7 @@ export interface UserInputProps {
   /** `images` are base64-encoded (no data-URL prefix), one entry per attached image.
    * `fileIds` are ids of non-image files already uploaded while composing (see
    * `chatId`). */
-  onSended: (text: string, think: boolean, images: string[], fileIds: number[]) => void
+  onSended: (text: string, think: ThinkChoice, images: string[], fileIds: number[]) => void
   style?: CSSProperties
   /** Placeholder shown in the empty textarea — passed in rather than hardcoded so different pages (or a future generated prompt) can supply their own. */
   placeholder?: string
@@ -67,6 +69,15 @@ export function UserInput({
 }: UserInputProps) {
   const [value, setValue] = useState(text ?? '')
   const [think, setThink] = useState(initialThink)
+  // Discovered fresh every time this composer mounts — not cached/stored anywhere,
+  // by design (the active model can change without this app restarting, and this
+  // call is cheap: Ollama's `/api/show` reads stored model metadata, no load
+  // required). `null` while loading/unknown; a specific mode is only ever sent on
+  // the wire once the user actually picks one (see `send` below) — until then,
+  // thinking-on falls back to the model's own default effort, unchanged from before
+  // this feature existed.
+  const [thinkingModes, setThinkingModes] = useState<string[] | null>(null)
+  const [thinkMode, setThinkMode] = useState<string | null>(null)
   const [images, setImages] = useState<string[]>([])
   const [fileIds, setFileIds] = useState<number[]>([])
   const [uploading, setUploading] = useState(false)
@@ -88,11 +99,40 @@ export function UserInput({
     el.style.height = `${el.scrollHeight}px`
   }, [value])
 
+  useEffect(() => {
+    let cancelled = false
+    getThinkingCapability().then(
+      (capability) => {
+        if (cancelled) return
+        if (capability.kind === 'graduated') {
+          setThinkingModes(capability.modes)
+          setThinkMode((current) => current ?? capability.modes[0] ?? null)
+        } else {
+          setThinkingModes(null)
+        }
+      },
+      () => {
+        // A model with no thinking control at all, or a transient failure to reach
+        // it, both look the same from here: no graduated modes to offer — the
+        // existing on/off toggle (which needs no capability info) still works
+        // either way.
+        if (!cancelled) setThinkingModes(null)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
 
   const send = () => {
     if (blocked || !canSend) return
-    onSended(value, think, images, fileIds)
+    // `false` (toggle off) always wins. Otherwise: a specific mode if the model
+    // supports levels and one's actually selected, else plain `true` — the model's
+    // own default effort, exactly what this app sent before this feature existed.
+    const thinkChoice: ThinkChoice = !think ? false : thinkMode ?? true
+    onSended(value, thinkChoice, images, fileIds)
     if (clearOnSend) {
       setValue('')
       setImages([])
@@ -246,6 +286,20 @@ export function UserInput({
         <Div style={{ flex: 1 }} />
         <Label variant="secondary" text="Thinking" style={{ fontSize: 12, opacity: 0.6 }} />
         <ToggleSwitch toggled={think} onToggled={setThink} disabled={blocked} />
+        {thinkingModes ? (
+          // `Select` has no native `disabled` prop — blocked visually and
+          // functionally (no click-through) via the wrapper instead, rather than
+          // adding one just for this single usage. Blocked whenever thinking itself
+          // is off, since a mode choice is meaningless without it.
+          <Div style={{ opacity: !think ? 0.4 : 1, pointerEvents: !think ? 'none' : undefined }}>
+            <Select
+              values={thinkingModes}
+              selected={thinkMode ?? undefined}
+              onChosen={setThinkMode}
+              style={{ fontSize: 12 }}
+            />
+          </Div>
+        ) : null}
         <Button
           onClicked={() => fileInputRef.current?.click()}
           disabled={dropDisabled}

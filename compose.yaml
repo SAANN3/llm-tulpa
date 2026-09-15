@@ -56,6 +56,15 @@ services:
     # approval for every single call.
     pid: host
     environment:
+      # Plain Ollama is the default day-to-day backend — real-world testing
+      # (through this actual chat API, not an isolated benchmark) found `llama-mtp`
+      # unbearably slow on real conversation-depth context (~4-5 tok/s) despite a
+      # much faster clean-benchmark ceiling, while Ollama itself easily clears
+      # 60+ tok/s on the current model at the same real context depth. `llama-mtp`/
+      # `mtp-proxy` (llm/compose.yaml) stay fully configured and buildable for
+      # occasional per-task A/B (`docker compose up -d llama-mtp mtp-proxy`, then
+      # point this at :11435 instead) — see that file's own comment and project
+      # memory for the fuller writeup, including where MTP *did* win.
       - OLLAMA_URL=http://localhost:11434
       - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME:-local-llm}
       # Reached the same way ollama/postgres are under host networking — port

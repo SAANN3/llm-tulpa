@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 import { BACKEND_URL } from '../../config'
-import type { ChatOut } from './types'
+import type { ChatOut, ThinkChoice } from './types'
 
 /**
  * Sends `prompt` as the next turn in `chatId`'s conversation and returns the model's
@@ -16,7 +16,7 @@ import type { ChatOut } from './types'
 export async function chat(
   chatId: number,
   prompt: string,
-  think = true,
+  think: ThinkChoice = true,
   images: string[] = [],
   fileIds: number[] = [],
 ): Promise<ChatOut> {

@@ -12,7 +12,7 @@ use crate::services::{
     chat_store::{ChatStore, Message, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
     file_store::FileStore,
-    llm::{OllamaChatMessage, OllamaService, OllamaToolCall, OllamaToolCallFunction},
+    llm::{OllamaChatMessage, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
     tools::ToolService,
 };
@@ -268,7 +268,7 @@ impl Agent {
         prompt: String,
         images: Vec<String>,
         file_ids: Vec<i64>,
-        think: Option<bool>,
+        think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
         let messages = self.ollama_history(chat_id).await?;
 
@@ -310,7 +310,7 @@ impl Agent {
     /// message, no requirement that every pending tool call has been resolved first (a
     /// tool failing is a valid reason to continue too, and forcing the caller through the
     /// rest of an in-flight batch first would just be busywork).
-    pub async fn continue_chat(&self, chat_id: i64, think: Option<bool>) -> Result<ChatOut, ErrorService> {
+    pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
         let messages = self.ollama_history(chat_id).await?;
         self.advance(chat_id, messages, None, think).await
     }
@@ -329,7 +329,7 @@ impl Agent {
         chat_id: i64,
         mut messages: Vec<OllamaChatMessage>,
         new_message: Option<OllamaChatMessage>,
-        think: Option<bool>,
+        think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
         let tools: Vec<&dyn Tool> = self.tools.get_tools().map(|tool| tool.as_ref()).collect();
 
@@ -596,7 +596,7 @@ impl Agent {
         // struct/field names and per-tool specifics, which is exactly what the system
         // prompt above asks it to preserve. Reasoning first turned out to hurt the
         // thing it was meant to help here, not just cost more.
-        let response = self.ollama.chat(vec![system], Some(user), &[], Some(false)).await?;
+        let response = self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await?;
         Ok(response.message.content)
     }
 

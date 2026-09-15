@@ -4,13 +4,15 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{facade::agent::ChatOut, services::error::ErrorService, state::AppState};
+use crate::{facade::agent::ChatOut, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ContinueChatRequest {
     chat_id: i64,
-    /// Ask the model to reason before answering. Defaults to `true` when omitted.
-    think: Option<bool>,
+    /// Ask the model to reason before answering. Defaults to enabled (Ollama's own
+    /// default effort) when omitted. Either a plain bool, or a specific effort level
+    /// string (e.g. `"low"`) — see `GET /api/llm/thinking_capability`.
+    think: Option<ThinkChoice>,
 }
 
 /// Sends `chat_id`'s existing history to the model as-is, with no new turn added, and

@@ -183,6 +183,14 @@ button[data-variant]:disabled {
   overflow-y: auto;
 }
 
+/* Set by `Select.tsx` when there isn't 240px of room below the trigger (e.g. the
+   chat composer, near the bottom of the viewport) — opens above the trigger
+   instead of clipping off-screen. */
+[data-select-panel][data-direction='up'] {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 [data-select-option] {
   padding: 0.4em 0.6em;
   border-radius: 4px;

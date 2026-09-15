@@ -23,12 +23,20 @@ fn description_text() -> &'static str {
     static TEXT: OnceLock<String> = OnceLock::new();
     TEXT.get_or_init(|| {
         if running_in_docker() {
-            "Executes a shell command and returns stdout, stderr, and exit code. Runs inside \
-             this backend's own container, not directly on the host machine, without touching \
-             the real host's package state, and can read/write any path the storage.* tools \
-             can reach (the container shares that same filesystem access). It cannot do \
-             host-system-wide things: no host package manager, no host systemd/service \
-             control, no host-level `docker` commands.\n\n\
+            "Executes a shell command and returns stdout, stderr, and exit code — each capped \
+             independently at 40,000 characters (see `stdout_truncated`/`stderr_truncated`); a \
+             command whose real output is bigger than that gets cut off, not silently sent in \
+             full. Be careful with anything that can match inside large or single-line files \
+             (e.g. `grep -r` across a directory with minified/bundled files) — `| head -N` \
+             only limits line *count*, not size, so a handful of very long matched lines can \
+             still produce a huge result; prefer a narrower search path or piping through \
+             something byte-bounded (e.g. `| head -c 5000`) when the target directory's \
+             contents aren't known ahead of time. Runs inside this backend's own container, \
+             not directly on the host machine, without touching the real host's package state, \
+             and can read/write any path the storage.* tools can reach (the container shares \
+             that same filesystem access). It cannot do host-system-wide things: no host \
+             package manager, no host systemd/service control, no host-level `docker` \
+             commands.\n\n\
              Already installed, permanently (baked into the image, survives every restart): \
              python3 (+pip, +venv), nodejs (+npm), go, rustc (+cargo), gcc/make \
              (build-essential), git, jq, unzip/zip, curl, wget, poppler-utils (pdftotext), \
@@ -63,9 +71,17 @@ fn description_text() -> &'static str {
                 .to_string()
         } else {
             "Executes a shell command directly on the host machine this backend runs on, and \
-             returns stdout, stderr, and exit code. This is real host access, not a sandbox — \
-             it can affect actual host system state (installed packages, running services, \
-             anything a normal shell command could touch), not just this backend's own files. \
+             returns stdout, stderr, and exit code — each capped independently at 40,000 \
+             characters (see `stdout_truncated`/`stderr_truncated`); a command whose real \
+             output is bigger than that gets cut off, not silently sent in full. Be careful \
+             with anything that can match inside large or single-line files (e.g. `grep -r` \
+             across a directory with minified/bundled files) — `| head -N` only limits line \
+             *count*, not size, so a handful of very long matched lines can still produce a \
+             huge result; prefer a narrower search path or piping through something \
+             byte-bounded (e.g. `| head -c 5000`) when the target directory's contents aren't \
+             known ahead of time. This is real host access, not a sandbox — it can affect \
+             actual host system state (installed packages, running services, anything a \
+             normal shell command could touch), not just this backend's own files. \
              Dangerous — needs approval per command word (e.g. approving `python` once covers \
              any `python ...` call for the rest of the chat, with any arguments; `git` still \
              needs its own separate approval)."
@@ -84,11 +100,47 @@ struct ExecuteCommandArgs {
 
 pub struct ExecuteCommandTool;
 
+/// Same cap and truncation-marker convention as `storage.read_file`'s
+/// `MAX_READ_CHARS` — this tool had none at all until a real incident: `grep -r`
+/// across a directory containing a few minified/single-line files (VS Code
+/// extension bundles) matched a handful of megabytes-long lines; `| head -20`
+/// still let all of them through (it caps *lines*, not bytes), producing an
+/// 8MB+ tool result that got stored as a real chat message. On the next turn,
+/// sending that message as history blew ~30x past the model's context window;
+/// Ollama silently truncated it down to fit (no error anywhere in the pipeline
+/// — this shipped with zero logging for that path), and what survived excluded
+/// nearly the entire actual conversation, so the model's very next reply looked
+/// like it had genuinely forgotten everything — confirmed via Postgres directly
+/// (`prompt_eval_count` cratered from ~43,000 to ~6,800 between consecutive
+/// calls in the same chat, no compaction summary ever involved). Capping stdout
+/// and stderr independently here is the actual fix — matches `storage.read_file`
+/// so a single command can never again silently blow the whole context budget.
+const MAX_OUTPUT_CHARS: usize = 40_000;
+
+fn truncate_output(content: String) -> (String, bool) {
+    let total_chars = content.chars().count();
+    if total_chars <= MAX_OUTPUT_CHARS {
+        return (content, false);
+    }
+    let cropped: String = content.chars().take(MAX_OUTPUT_CHARS).collect();
+    (
+        format!(
+            "{cropped}\n\n[... output truncated: showing the first {MAX_OUTPUT_CHARS} of {total_chars} characters ...]"
+        ),
+        true,
+    )
+}
+
 #[derive(Serialize)]
 struct CommandOutput {
     stdout: String,
     stderr: String,
     exit_code: i32,
+    /// `true` when `stdout` is only the first `MAX_OUTPUT_CHARS` characters of the
+    /// real output — see `truncate_output`.
+    stdout_truncated: bool,
+    /// Same as `stdout_truncated`, for `stderr`.
+    stderr_truncated: bool,
 }
 
 fn parse_command_for_scope(cmd: &str) -> Option<String> {
@@ -272,13 +324,15 @@ impl Tool for ExecuteCommandTool {
             .await
             .map_err(|e| ToolError::FailedUnknown(format!("couldn't execute command: {e}")))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let (stdout, stdout_truncated) = truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
+        let (stderr, stderr_truncated) = truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
 
         Ok(serde_json::to_value(CommandOutput {
             stdout,
             stderr,
             exit_code: output.status.code().unwrap_or(-1),
+            stdout_truncated,
+            stderr_truncated,
         })?)
     }
 }

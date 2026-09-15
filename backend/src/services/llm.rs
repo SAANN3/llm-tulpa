@@ -4,6 +4,7 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
 use crate::services::error::ErrorService;
 use crate::tools::base::Tool;
@@ -101,17 +102,20 @@ impl OllamaService {
     /// completion string out. No message roles, no chat history, no tool calls — kept
     /// around as the simplest possible path to a model response. `chat` below is the
     /// one actually meant for multi-turn/tool-calling use. `think` asks the model to
-    /// reason before answering and defaults to `true` when not given; see
-    /// `split_thinking` — this endpoint's `thinking` response field isn't populated for
-    /// this model, so the reasoning trace comes back embedded in `response` instead and
-    /// has to be pulled back out on our end.
+    /// reason before answering and defaults to `true` when not given — plain
+    /// bool only, no effort-level choice, since every caller of this endpoint is an
+    /// internal, non-user-facing call (chat naming, compaction summaries) with no UI
+    /// behind it to pick a level from; see `split_thinking` — this endpoint's
+    /// `thinking` response field isn't populated for this model, so the reasoning
+    /// trace comes back embedded in `response` instead and has to be pulled back out
+    /// on our end.
     pub async fn generate(&self, prompt: String, think: Option<bool>) -> Result<OllamaGenerateResponse, OllamaErrors> {
         let url = format!("{}/api/generate", self.base_url);
         let body = OllamaGenerateRequest {
             model: self.model_name.clone(),
             prompt,
             stream: false,
-            think: think.unwrap_or(true),
+            think: Value::Bool(think.unwrap_or(true)),
             options: OllamaOptions { num_predict: self.max_predict_tokens },
         };
 
@@ -150,13 +154,15 @@ impl OllamaService {
     /// `tools` is whatever the caller wants advertised to the model for this call, mapped
     /// via `tool_definitions` and omitted entirely if empty. Assembling and executing on
     /// a `tool_calls` response is the caller's job. `think` asks the model to reason
-    /// before answering and defaults to `true` when not given.
+    /// before answering and defaults to enabled (no specific effort level — Ollama's
+    /// own default) when not given — see `think_param` for exactly what gets sent on
+    /// the wire for each `ThinkChoice` variant.
     pub async fn chat(
         &self,
         messages: Vec<OllamaChatMessage>,
         new_message: Option<OllamaChatMessage>,
         tools: &[&dyn Tool],
-        think: Option<bool>,
+        think: Option<ThinkChoice>,
     ) -> Result<OllamaChatResponse, OllamaErrors> {
         let url = format!("{}/api/chat", self.base_url);
 
@@ -176,7 +182,7 @@ impl OllamaService {
             model: self.model_name.clone(),
             messages,
             stream: false,
-            think: think.unwrap_or(true),
+            think: think_param(think),
             tools,
             options: OllamaOptions { num_predict: self.max_predict_tokens },
         };
@@ -207,6 +213,44 @@ impl OllamaService {
         result.message.thinking = thinking;
         result.message.content = content;
         Ok(result)
+    }
+
+    /// What the *currently active* model actually supports for `think`, discovered
+    /// live from its own chat template rather than hardcoded for one specific model —
+    /// deliberately not cached/persisted anywhere: this calls out fresh every time a
+    /// caller asks (cheap — Ollama's `/api/show` reads stored model metadata, no load
+    /// required), so it's automatically correct the moment the active model changes,
+    /// with nothing to invalidate. Calls Ollama's `/api/show` (not `/api/chat`/
+    /// `/api/generate`) specifically because it returns the model's raw `template`
+    /// text — confirmed live that this is the *actual* Jinja chat template embedded in
+    /// the GGUF (byte-for-byte the same content `llama-mtp`'s own `/props` returns for
+    /// the same model), not some Ollama-internal abstraction of it, despite
+    /// `OLLAMA_GO_TEMPLATE` appearing in its own startup config. This is also exactly
+    /// why `mtp-proxy` implements its own `/api/show` (translating from `/props`) —
+    /// this method works unchanged against either backend.
+    pub async fn thinking_capability(&self) -> Result<ThinkingCapability, OllamaErrors> {
+        let url = format!("{}/api/show", self.base_url);
+        let body = serde_json::json!({ "model": self.model_name });
+
+        let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
+            tracing::error!(error = %e, "ollama /api/show request failed");
+            OllamaErrors::RequestFailed(e.to_string())
+        })?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama /api/show returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status));
+        }
+
+        #[derive(Deserialize, Default)]
+        struct ShowResponse {
+            #[serde(default)]
+            template: String,
+        }
+        let parsed: ShowResponse = decode_response(res).await?;
+        Ok(parse_thinking_capability(&parsed.template))
     }
 
     /// Builds a `user`-role message from plain text, so callers can hand `chat` a
@@ -330,12 +374,109 @@ fn ensure_thinking_split(existing_thinking: Option<String>, content: String) -> 
     (existing_thinking.or(derived_thinking), clean_content)
 }
 
+/// A caller-requested `think` setting, from the API boundary down to `chat`. Plain
+/// `true`/`false` preserves this project's original behavior exactly (Ollama's own
+/// default reasoning effort, no override) — every internal, non-user-facing call
+/// site (compaction's fold check, `llm.read_image`, the messaging plugins) uses only
+/// this form, deliberately: none of them have a UI behind them to pick a level from,
+/// so there's nothing to decide and no reason to second-guess Ollama's default.
+/// `Level` is a specific effort string (e.g. `"low"`), used only when a caller
+/// actually has one to offer — today that's the frontend's thinking-mode selector,
+/// via `Agent::chat`/`continue_chat`, populated from `OllamaService::thinking_capability`.
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
+#[serde(untagged)]
+pub enum ThinkChoice {
+    Enabled(bool),
+    Level(String),
+}
+
+/// What the wire-level `think` field actually sends for a given `ThinkChoice`.
+/// Confirmed directly against the running Ollama binary (`grep -a` over
+/// `/bin/ollama` turns up the literal strings `reasoning_effort` and `"low",
+/// "medium", "high", "xhigh"`) that a graded string here is genuine, native
+/// behavior, not a guess — Ollama forwards it straight through to the model's own
+/// chat template, same mechanism `llama-mtp`'s `chat_template_kwargs.reasoning_effort`
+/// uses. No default level is forced here — `None`/`Enabled(true)` sends plain `true`,
+/// matching this project's original behavior exactly (a hardcoded default level was
+/// tried and deliberately reverted in favor of this real, discoverable, user-chosen
+/// one — see project memory).
+fn think_param(think: Option<ThinkChoice>) -> Value {
+    match think {
+        None | Some(ThinkChoice::Enabled(true)) => Value::Bool(true),
+        Some(ThinkChoice::Enabled(false)) => Value::Bool(false),
+        Some(ThinkChoice::Level(level)) => Value::String(level),
+    }
+}
+
+/// What a model's own chat template actually supports for `think`, discovered by
+/// inspecting its raw text rather than hardcoded per model family. `Graduated`
+/// carries the exact accepted effort strings, in the order the template lists them
+/// (e.g. `["xhigh", "medium", "low"]`) — a frontend selector should offer exactly
+/// these, nothing assumed beyond them. `OnOff` means the template supports enabling/
+/// disabling thinking but has no graduated-effort concept at all (no levels to
+/// offer — a plain toggle is the most this model supports). `Unsupported` means no
+/// thinking-control markers were found at all (not even on/off) — hide any thinking
+/// control entirely for this model.
+#[derive(Serialize, Clone, Debug, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ThinkingCapability {
+    Graduated { modes: Vec<String> },
+    OnOff,
+    Unsupported,
+}
+
+/// Parses a model's raw Jinja chat template text for what it actually supports —
+/// this is real per-model detection, not a fact about one specific model baked into
+/// code. Looks first for a graduated `reasoning_effort` enum (the pattern this
+/// Unsloth/Qwen convention uses: `{%- if resolved_reasoning_effort not in ('xhigh',
+/// 'medium', 'low') %}` right before a `raise_exception` naming the supported set —
+/// `extract_reasoning_effort_levels` pulls the quoted literals straight out of that
+/// `not in (...)` check, since that's the actual enforced logic, not just the
+/// human-readable error text restating it). Falls back to a plain `enable_thinking`
+/// substring check for "does this model support on/off at all" if no graduated
+/// pattern is found — this is NOT a universal chat-template standard (other model
+/// families phrase reasoning effort differently, or don't support it at all), so
+/// failing to find the `reasoning_effort` pattern correctly degrades to `OnOff`
+/// rather than claiming levels that don't exist; failing to find `enable_thinking`
+/// either degrades further to `Unsupported` rather than showing a control that would
+/// do nothing.
+fn parse_thinking_capability(template: &str) -> ThinkingCapability {
+    if let Some(modes) = extract_reasoning_effort_levels(template) {
+        if !modes.is_empty() {
+            return ThinkingCapability::Graduated { modes };
+        }
+    }
+    if template.contains("enable_thinking") {
+        return ThinkingCapability::OnOff;
+    }
+    ThinkingCapability::Unsupported
+}
+
+fn extract_reasoning_effort_levels(template: &str) -> Option<Vec<String>> {
+    let anchor = template.find("reasoning_effort")?;
+    let window = &template[anchor..];
+    let not_in = window.find("not in (")?;
+    let after = &window[not_in + "not in (".len()..];
+    let close = after.find(')')?;
+    let inside = &after[..close];
+
+    let levels: Vec<String> = inside
+        .split(',')
+        .filter_map(|raw| {
+            let trimmed = raw.trim().trim_matches(|c| c == '\'' || c == '"');
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .collect();
+
+    (!levels.is_empty()).then_some(levels)
+}
+
 #[derive(Serialize)]
 struct OllamaGenerateRequest {
     model: String,
     prompt: String,
     stream: bool,
-    think: bool,
+    think: Value,
     options: OllamaOptions,
 }
 
@@ -361,7 +502,7 @@ struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaChatMessage>,
     stream: bool,
-    think: bool,
+    think: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OllamaToolDefinition>>,
     options: OllamaOptions,
