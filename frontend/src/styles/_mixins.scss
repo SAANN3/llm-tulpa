@@ -1,0 +1,17 @@
+@use 'tokens' as *;
+
+// The DOS dialog frame — a sharp-cornered, double-line box drawn in `$color`, over the
+// page background. Pair with `.dos-frame__title` (utilities.scss) to hang a caption on
+// the top border, MS-DOS dialog style.
+@mixin dos-frame($color: var(--color-primary)) {
+  border: $frame-border double $color;
+  border-radius: 0;
+  background: var(--color-secondary);
+}
+
+// A hard, offset drop shadow with no blur — the solid "cell shadow" a Turbo-Vision-era
+// dialog or button casts to its lower-right. Not a soft elevation shadow; it's a second
+// opaque rectangle peeking out from behind.
+@mixin dos-shadow($color: var(--color-border), $offset: $shadow-offset) {
+  box-shadow: $offset $offset 0 0 $color;
+}

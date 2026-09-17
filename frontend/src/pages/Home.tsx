@@ -1,7 +1,8 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import '../styles/Home.scss'
 import type { ThinkChoice } from '../api/agent/types'
 import { Div, Label } from '../components/primitives'
 import { Mark } from '../components/Mark'
@@ -73,38 +74,25 @@ function Home() {
   return (
     <Div className="page">
       <Sidebar />
-      <Div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '8px 24px 64px',
-        }}
-      >
-        <Div className="center vbox" style={{ flex: 1, minHeight: 0, gap: 26 }}>
+      <Div className="home">
+        <Div className="center vbox home__stage">
           <Mark spinning={loading} />
           {loading ? (
             <Label
-              className="status-line"
+              className="status-line home__status"
               variant="secondary"
               text={creating ? 'Starting a chat' : 'Thinking'}
-              style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em' }}
             />
           ) : null}
           {!greetingLoading && greeting ? (
-            <Label
-              className="greeting"
-              text={greeting}
-              style={{ fontSize: 26, lineHeight: 1.4, textAlign: 'center', maxWidth: '24ch', textWrap: 'pretty' }}
-            />
+            <Label className="greeting home__greeting" text={greeting} />
           ) : null}
           <UserInput
             blocked={creating}
             onSended={onSend}
             placeholder={placeholder || undefined}
             clearOnSend={false}
-            style={{ width: 520, maxWidth: '100%' }}
+            className="home__composer"
           />
         </Div>
       </Div>

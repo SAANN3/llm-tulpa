@@ -42,7 +42,7 @@ silently colliding with each other. Read this before adding a new theme or touch
 ## Two layers of components
 
 **Primitives** (`primitives/`) — `Div`, `Label`, `Button`, `Input`, `TextField`,
-`Select`, `RadioButton`, `Checkbox`, `ToggleSwitch`, `Icon`. One fixed implementation,
+`Select`, `RadioButton`, `Checkbox`, `ToggleSwitch`. One fixed implementation,
 plain HTML elements with no logic of their own — they just forward props to DOM
 attributes/events (`onClicked` → `onClick`, `onChanged` → `onChange` + extracting
 `e.target.value`, etc.) and accept `style`/`className`/`variant` on top via

@@ -1,0 +1,11 @@
+﻿@use 'tokens' as *;
+
+.pending-message {
+  align-items: flex-start;
+  gap: $space-1;
+}
+
+.pending-message__label {
+  font-size: 12px;
+  opacity: 0.6;
+}

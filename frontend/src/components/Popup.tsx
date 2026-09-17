@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+﻿import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 
+import '../styles/Popup.scss'
 import { Div } from './primitives'
 
 export interface PopupProps {
@@ -44,20 +45,7 @@ export function Popup({ open, onClose, position, centered, children }: PopupProp
     : { left: position?.x ?? 0, top: position?.y ?? 0 }
 
   return (
-    <Div
-      ref={ref}
-      variant="secondary"
-      className="vbox"
-      style={{
-        position: 'fixed',
-        ...placement,
-        zIndex: 1000,
-        border: '1px solid currentColor',
-        borderRadius: 6,
-        overflow: 'hidden',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-      }}
-    >
+    <Div ref={ref} variant="secondary" className="vbox popup" style={placement}>
       {children}
     </Div>
   )

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Close, File as FileIcon } from 'pixelarticons/react'
 
 import { getFileDownloadUrl } from '../api/files/download'
 import { getFile } from '../api/files/get'
@@ -73,12 +74,7 @@ function triggerDownload(href: string, filename: string): void {
   document.body.removeChild(a)
 }
 
-const FILE_ICON = (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <path d="M14 2v6h6" />
-  </svg>
-)
+const FILE_ICON = <FileIcon width={20} height={20} />
 
 /** One attachment, however it's used: a small removable thumbnail while composing, or
  * a plain one attached to an already-sent message — clicking either opens a preview
@@ -122,7 +118,7 @@ export function Attachment(props: AttachmentProps) {
     width: '100%',
     height: '100%',
     objectFit: 'cover' as const,
-    borderRadius: 8,
+    borderRadius: 0,
     border: '1px solid var(--color-border)',
     cursor: 'zoom-in',
   }
@@ -153,7 +149,7 @@ export function Attachment(props: AttachmentProps) {
               boxSizing: 'border-box',
               gap: 4,
               padding: 4,
-              borderRadius: 8,
+              borderRadius: 0,
               border: '1px solid var(--color-border)',
               cursor: 'pointer',
             }}
@@ -176,7 +172,6 @@ export function Attachment(props: AttachmentProps) {
         )}
         {onRemove ? (
           <Button
-            text="×"
             onClicked={onRemove}
             style={{
               position: 'absolute',
@@ -185,11 +180,14 @@ export function Attachment(props: AttachmentProps) {
               width: 18,
               height: 18,
               padding: 0,
-              borderRadius: '50%',
-              fontSize: 12,
-              lineHeight: 1,
+              borderRadius: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
-          />
+          >
+            <Close width={12} height={12} />
+          </Button>
         ) : null}
       </Div>
       <WindowsPopup

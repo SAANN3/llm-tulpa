@@ -1,3 +1,6 @@
+﻿@use 'tokens' as *;
+@use 'mixins' as *;
+
 /*
  * Derived surface tokens — not per-theme (no theme file writes these), computed once
  * from the real page-background token so every theme gets them automatically. Three
@@ -40,17 +43,17 @@
   --color-border: color-mix(in srgb, gray 18%, var(--color-secondary));
 }
 
-[data-variant="primary"] {
+[data-variant='primary'] {
   background-color: var(--color-primary);
   color: var(--color-secondary);
 }
 
-[data-variant="secondary"] {
+[data-variant='secondary'] {
   background-color: var(--color-secondary);
   color: var(--color-primary);
 }
 
-[data-variant="tertiary"] {
+[data-variant='tertiary'] {
   background-color: var(--color-tertiary);
   color: var(--color-secondary);
 }
@@ -75,6 +78,11 @@ body {
 body {
   background-color: var(--color-secondary);
   color: var(--color-primary);
+  // One typeface for the whole app — the TUI look is monospace everywhere, not just in
+  // the `.mono` spots the old proportional-body design reserved it for.
+  font-family: $font-mono;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 /*
@@ -83,47 +91,61 @@ body {
  * above set as that element's text color, so borders/focus rings automatically match
  * the active variant/theme with no extra tokens. This is what replaces each element's
  * native browser chrome (the default gray border every form control ships with).
+ *
+ * DOS TUI: everything is sharp-cornered (`border-radius: 0`) and the focus ring is a
+ * hard block outline rather than a soft rounded one.
  */
 [data-variant] {
   box-sizing: border-box;
   font: inherit;
+  border-radius: 0;
 }
 
 [data-variant]:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
+  outline: 2px solid var(--color-tertiary);
+  outline-offset: 1px;
 }
 
 div[data-variant],
 img[data-variant] {
-  border-radius: 8px;
+  border-radius: 0;
 }
 
 button[data-variant],
 input[type='text'][data-variant],
 textarea[data-variant] {
-  border: 1px solid currentColor;
-  border-radius: 6px;
+  border: $line-border solid currentColor;
+  border-radius: 0;
   padding: 0.5em 0.8em;
 }
 
+/*
+ * Buttons read as raised blocks: a hard, un-blurred shadow to the lower-right, and on
+ * hover/focus they invert to the accent fill (the "highlighted menu item" look from the
+ * reference dialog) rather than just brightening. Pressing drops the block into its own
+ * shadow.
+ */
 button[data-variant] {
   cursor: pointer;
-  transition: filter 0.15s ease, transform 0.05s ease;
+  @include dos-shadow;
+  transition: transform 0.05s ease, background-color 0.1s ease, color 0.1s ease;
 }
 
-button[data-variant]:hover:not(:disabled) {
-  filter: brightness(1.15);
+button[data-variant]:hover:not(:disabled),
+button[data-variant]:focus-visible:not(:disabled) {
+  background-color: var(--color-tertiary);
+  color: var(--color-secondary);
 }
 
 button[data-variant]:active:not(:disabled) {
-  filter: brightness(0.85);
-  transform: translateY(1px);
+  transform: translate($shadow-offset, $shadow-offset);
+  box-shadow: none;
 }
 
 button[data-variant]:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+  box-shadow: none;
 }
 
 /*
@@ -149,8 +171,8 @@ button[data-variant]:disabled {
   text-align: left;
   background-color: inherit;
   color: inherit;
-  border: 1px solid currentColor;
-  border-radius: 6px;
+  border: $line-border solid currentColor;
+  border-radius: 0;
   padding: 0.5em 1.8em 0.5em 0.8em;
   cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
@@ -162,8 +184,8 @@ button[data-variant]:disabled {
 
 [data-select-trigger]:focus-visible,
 [data-select-trigger][aria-expanded='true'] {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
+  outline: 2px solid var(--color-tertiary);
+  outline-offset: 1px;
 }
 
 [data-select-panel] {
@@ -177,8 +199,8 @@ button[data-variant]:disabled {
   padding: 4px;
   background-color: inherit;
   color: inherit;
-  border: 1px solid currentColor;
-  border-radius: 6px;
+  border: $line-border solid currentColor;
+  border-radius: 0;
   max-height: 240px;
   overflow-y: auto;
 }
@@ -193,13 +215,14 @@ button[data-variant]:disabled {
 
 [data-select-option] {
   padding: 0.4em 0.6em;
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
 }
 
 [data-select-option]:hover,
 [data-select-option][aria-selected='true'] {
-  background-color: color-mix(in srgb, currentColor 15%, transparent);
+  background-color: var(--color-tertiary);
+  color: var(--color-secondary);
 }
 
 input[type='radio'][data-variant],
@@ -215,12 +238,13 @@ input[type='checkbox'][data-variant]:not([role='switch']) {
   cursor: pointer;
 }
 
+/* Radios stay round (a DOS `( )` bullet); checkboxes are sharp squares (`[x]`). */
 input[type='radio'][data-variant] {
   border-radius: 50%;
 }
 
 input[type='checkbox'][data-variant]:not([role='switch']) {
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 input[type='radio'][data-variant]:checked,
@@ -228,6 +252,8 @@ input[type='checkbox'][data-variant]:not([role='switch']):checked {
   background-color: currentColor;
 }
 
+/* Toggle switch, blocked-out: a sharp rectangular track with a square knob that slides
+   from one end to the other — no rounded pill, matching the rest of the TUI chrome. */
 input[type='checkbox'][role='switch'][data-variant] {
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -235,10 +261,10 @@ input[type='checkbox'][role='switch'][data-variant] {
   box-sizing: border-box;
   position: relative;
   margin: 0;
-  width: 2.2em;
+  width: 2.4em;
   height: 1.2em;
   border: 2px solid currentColor;
-  border-radius: 999px;
+  border-radius: 0;
   background-color: transparent;
   background-image: none;
   box-shadow: none;
@@ -254,11 +280,11 @@ input[type='checkbox'][role='switch'][data-variant]::before {
   left: 2px;
   width: calc(1.2em - 8px);
   height: calc(1.2em - 8px);
-  border-radius: 50%;
+  border-radius: 0;
   background-color: currentColor;
   box-shadow: none;
   transform: translateY(-50%);
-  transition: transform 0.15s ease;
+  transition: transform 0.15s steps(3, end);
 }
 
 input[type='checkbox'][role='switch'][data-variant]:checked {
@@ -266,7 +292,7 @@ input[type='checkbox'][role='switch'][data-variant]:checked {
 }
 
 input[type='checkbox'][role='switch'][data-variant]:checked::before {
-  transform: translate(1em, -50%);
+  transform: translate(1.2em, -50%);
 }
 
 /*
@@ -283,7 +309,7 @@ input[type='checkbox'][role='switch'][data-variant]:checked::before {
 [data-thinking-dot] {
   width: 0.5em;
   height: 0.5em;
-  border-radius: 50%;
+  border-radius: 0;
   background-color: currentColor;
   opacity: 0.3;
 }

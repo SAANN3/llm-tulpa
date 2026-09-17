@@ -1,6 +1,7 @@
-import { useRef } from 'react'
+﻿import { useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
+import '../styles/Sidebar.scss'
 import { ChatEntry } from './ChatEntry'
 import type { LazyListHandle } from './LazyList'
 import { LazyList } from './LazyList'
@@ -50,18 +51,7 @@ export function Sidebar() {
   const onNewChat = () => navigate('/')
 
   return (
-    <Div
-      className="vbox"
-      style={{
-        width: 240,
-        minWidth: 240,
-        flexShrink: 0,
-        gap: 6,
-        padding: 8,
-        background: 'var(--color-surface)',
-        borderRight: '1px solid var(--color-border)',
-      }}
-    >
+    <Div className="vbox sidebar">
       <Button variant="primary" text="New chat" onClicked={onNewChat} />
       <Label className="section-heading" text="Utils" />
       <Div className="vbox">
@@ -69,11 +59,11 @@ export function Sidebar() {
         <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')} />
       </Div>
       <Label className="section-heading" text="Chats" />
-      <LazyList ref={chatsListRef} onBottomReached={loadOlder} style={{ flex: 1, minHeight: 0 }}>
-        <Div className="vbox" style={{ gap: 4 }}>
+      <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">
+        <Div className="vbox sidebar__groups">
           {groupByRecency(chats).map(([group, groupChats]) => (
-            <Div className="vbox" key={group} style={{ gap: 2 }}>
-              <Label className="section-heading" text={group} style={{ fontSize: 11 }} />
+            <Div className="vbox sidebar__group" key={group}>
+              <Label className="section-heading sidebar__group-heading" text={group} />
               {groupChats.map((c) => (
                 <ChatEntry
                   key={c.id}

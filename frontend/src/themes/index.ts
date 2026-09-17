@@ -1,8 +1,8 @@
-import './variants.css'
+﻿import '../styles/variants.scss'
 
-import './dark.css'
-import './white.css'
-import './matcha-dark.css'
+import '../styles/dark.scss'
+import '../styles/white.scss'
+import '../styles/matcha-dark.scss'
 /**
  * Known theme names — each corresponds to a `themes/<name>/` CSS file providing that
  * theme's `:root[data-theme="<name>"]` color tokens (see `../THEMING.md`). Plain

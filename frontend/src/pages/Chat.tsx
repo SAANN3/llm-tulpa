@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+﻿import { Fragment, useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 
+import '../styles/Chat.scss'
 import type { ThinkChoice } from '../api/agent/types'
 import { getChats } from '../api/chats/get'
 import { ChatMessage } from '../components/ChatMessage'
@@ -209,13 +210,8 @@ function ChatView({ chatId }: { chatId: number }) {
   return (
     <Div className="page">
       <Sidebar />
-      <Div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 8, gap: 8 }}>
-        <LazyList
-          ref={lazyListRef}
-          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 18, padding: '16px 8px' }}
-          threshold={LOAD_MORE_THRESHOLD}
-          onTopReached={loadOlder}
-        >
+      <Div className="chat">
+        <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD} onTopReached={loadOlder}>
           {messages.map((m, i) => {
             const prev = messages[i - 1]
             const showDate = !prev || !isSameDay(new Date(m.created_at), new Date(prev.created_at))
@@ -249,18 +245,8 @@ function ChatView({ chatId }: { chatId: number }) {
         </LazyList>
         {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm} /> : null}
         {turnError ? (
-          <Div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '8px 12px',
-              borderRadius: 8,
-              border: '1px solid #e5484d',
-              background: 'rgba(229, 72, 77, 0.08)',
-            }}
-          >
-            <Label text={turnError} style={{ fontSize: 13, color: '#e5484d', flex: 1 }} />
+          <Div className="chat__error">
+            <Label className="chat__error-text" text={turnError} />
             <Button variant="secondary" text="Dismiss" onClicked={() => setTurnError(null)} />
           </Div>
         ) : null}

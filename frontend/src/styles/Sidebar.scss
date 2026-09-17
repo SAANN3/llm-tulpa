@@ -1,0 +1,28 @@
+﻿@use 'tokens' as *;
+
+.sidebar {
+  width: 240px;
+  min-width: 240px;
+  flex-shrink: 0;
+  gap: $space-2;
+  padding: $space-2;
+  background: var(--color-surface);
+  border-right: $line-border solid var(--color-border);
+}
+
+.sidebar__list {
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar__groups {
+  gap: $space-1;
+}
+
+.sidebar__group {
+  gap: 2px;
+}
+
+.sidebar__group-heading {
+  font-size: 11px;
+}

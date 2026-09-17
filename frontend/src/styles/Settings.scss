@@ -1,0 +1,29 @@
+﻿@use 'tokens' as *;
+
+.settings {
+  gap: $space-5;
+}
+
+.settings__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.settings__panel {
+  width: 460px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.settings__body {
+  gap: $space-6;
+}
+
+.settings__actions {
+  display: flex;
+  gap: $space-4;
+  margin-top: $space-2;
+}
+
+.settings__action {
+  flex: 1;
+}

@@ -1,8 +1,10 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import { ChevronDown, ChevronRight } from 'pixelarticons/react'
 
+import '../styles/ChatMessage.scss'
 import { Attachment } from './Attachment'
 import { Button, Div, Label } from './primitives'
 
@@ -33,37 +35,10 @@ export function ChatMessage({ role, content, created_at, thinking, thought_durat
   const [showThinking, setShowThinking] = useState(false)
 
   return (
-    <Div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: isUser ? 'flex-end' : 'flex-start',
-      }}
-    >
-      <Div
-        className={isUser ? undefined : 'vbox'}
-        style={
-          isUser
-            ? {
-                maxWidth: '68%',
-                background: 'var(--color-surface-strong)',
-                border: '1px solid var(--color-border)',
-                borderRadius: '12px 12px 4px 12px',
-                padding: '10px 14px',
-                lineHeight: 1.5,
-              }
-            : {
-                maxWidth: '70ch',
-                borderLeft: '2px solid var(--color-border)',
-                paddingLeft: 14,
-                fontSize: 15,
-                lineHeight: 1.55,
-                gap: 8,
-              }
-        }
-      >
+    <Div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}`}>
+      <Div className={isUser ? 'chat-message__bubble' : 'vbox chat-message__body'}>
         {(images && images.length > 0) || (file_ids && file_ids.length > 0) ? (
-          <Div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: content ? 8 : 0 }}>
+          <Div className={`chat-message__attachments${content ? ' chat-message__attachments--spaced' : ''}`}>
             {images?.map((image, index) => <Attachment key={`image-${index}`} kind="image" image={image} size={140} />)}
             {file_ids?.map((id) => <Attachment key={`file-${id}`} kind="file" fileId={id} size={140} />)}
           </Div>
@@ -72,40 +47,24 @@ export function ChatMessage({ role, content, created_at, thinking, thought_durat
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
         </div>
         {thinking ? (
-          <Div className="vbox" style={{ gap: 4, maxWidth: '100%' }}>
+          <Div className="vbox chat-message__thinking">
             <Button
+              className="chat-message__thinking-toggle"
               variant="secondary"
-              text={`${showThinking ? '▾' : '▸'} ${thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}`}
               onClicked={() => setShowThinking((v) => !v)}
-              style={{ fontSize: 12, padding: '3px 9px', borderRadius: 5, marginTop: 8, alignSelf: 'flex-start', border: '1px solid var(--color-border)' }}
-            />
-            {showThinking ? (
-              <Div
-                className="panel"
-                style={{
-                  padding: 12,
-                  fontSize: 13,
-                  opacity: 0.85,
-                  whiteSpace: 'pre-wrap',
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                }}
-              >
-                {thinking}
-              </Div>
-            ) : null}
+            >
+              {showThinking ? <ChevronDown width={13} height={13} /> : <ChevronRight width={13} height={13} />}
+              <span>{thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}</span>
+            </Button>
+            {showThinking ? <Div className="chat-message__thinking-body">{thinking}</Div> : null}
           </Div>
         ) : thought_duration_ms != null ? (
-          <Label
-            variant="secondary"
-            text={formatThoughtDuration(thought_duration_ms)}
-            style={{ fontSize: 12, opacity: 0.6, marginTop: 8 }}
-          />
+          <Label variant="secondary" className="chat-message__thought" text={formatThoughtDuration(thought_duration_ms)} />
         ) : null}
         <Label
           variant="secondary"
+          className={`chat-message__time${isUser ? ' chat-message__time--user' : ''}`}
           text={new Date(created_at).toLocaleTimeString()}
-          style={{ fontSize: 11, opacity: 0.6, marginTop: 6, textAlign: isUser ? 'right' : undefined }}
         />
       </Div>
     </Div>

@@ -1,15 +1,20 @@
-import type { ChangeEvent, CSSProperties, DragEvent } from 'react'
+﻿import type { ChangeEvent, CSSProperties, DragEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ThinkChoice } from '../api/agent/types'
 import { uploadFile } from '../api/files/upload'
 import { getThinkingCapability } from '../api/llm/thinking_capability'
+import { Attachment as AttachmentIcon } from 'pixelarticons/react'
+
+import '../styles/UserInput.scss'
 import { Attachment } from './Attachment'
 import { Button, Div, Label, Select, TextField, ToggleSwitch } from './primitives'
 
 export interface UserInputProps {
   text?: string
   blocked: boolean
+  /** Extra class on the outer container — e.g. Home sizes the composer via `home__composer`. */
+  className?: string
   /** `images` are base64-encoded (no data-URL prefix), one entry per attached image.
    * `fileIds` are ids of non-image files already uploaded while composing (see
    * `chatId`). */
@@ -30,9 +35,6 @@ export interface UserInputProps {
    * sent message. */
   chatId?: number
 }
-
-/** How many lines tall the textarea is allowed to grow before it caps and scrolls internally instead — 1 starting line plus this many more. */
-const MAX_EXTRA_LINES = 3
 
 const DEFAULT_PLACEHOLDER = 'Message...'
 
@@ -55,12 +57,13 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith('image/')
 }
 
-/** The chat composer — holds its own draft text (optionally seeded by `text`), clears it and calls `onSended` on send. `blocked` disables sending while the model is still answering. Enter sends; Shift+Enter inserts a newline. Grows in height as the draft wraps to more lines, up to `MAX_EXTRA_LINES` past the first, then scrolls internally instead of growing further. `style` overrides the outer container's own defaults (e.g. `width`), so callers can size it differently per page. */
+/** The chat composer — holds its own draft text (optionally seeded by `text`), clears it and calls `onSended` on send. `blocked` disables sending while the model is still answering. Enter sends; Shift+Enter inserts a newline. Grows in height as the draft wraps to more lines, up to a few past the first (capped in `UserInput.scss`), then scrolls internally instead of growing further. `style` overrides the outer container's own defaults (e.g. `width`), so callers can size it differently per page. */
 export function UserInput({
   text,
   blocked,
   onSended,
   style,
+  className,
   placeholder = DEFAULT_PLACEHOLDER,
   clearOnSend = true,
   inputDisabled,
@@ -216,39 +219,16 @@ export function UserInput({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      style={{
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        width: '100%',
-        boxSizing: 'border-box',
-        border: `1px ${draggingOver ? 'dashed' : 'solid'} var(--color-border)`,
-        borderColor: draggingOver ? 'var(--color-primary)' : 'var(--color-border)',
-        borderRadius: 12,
-        background: 'var(--color-surface)',
-        padding: 8,
-        ...style,
-      }}
+      className={['composer', draggingOver && 'composer--dragging', className].filter(Boolean).join(' ')}
+      style={style}
     >
       {draggingOver ? (
-        <Div
-          className="vbox center"
-          style={{
-            position: 'absolute',
-            inset: 4,
-            borderRadius: 8,
-            background: 'var(--color-surface)',
-            opacity: 0.92,
-            zIndex: 1,
-            pointerEvents: 'none',
-          }}
-        >
-          <Label text="Drop to attach" style={{ fontSize: 13, fontWeight: 600, opacity: 0.8 }} />
+        <Div className="vbox center composer__overlay">
+          <Label className="composer__overlay-text" text="Drop to attach" />
         </Div>
       ) : null}
       {images.length > 0 || fileIds.length > 0 ? (
-        <Div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Div className="composer__attachments">
           {images.map((image, index) => (
             <Attachment key={`image-${index}`} kind="image" image={image} onRemove={() => removeImage(index)} />
           ))}
@@ -260,6 +240,7 @@ export function UserInput({
       <input ref={fileInputRef} type="file" multiple onChange={onFilePicked} style={{ display: 'none' }} />
       <TextField
         ref={textareaRef}
+        className="composer__input"
         text={value}
         onChanged={setValue}
         placeholder={placeholder}
@@ -270,46 +251,25 @@ export function UserInput({
             send()
           }
         }}
-        style={{
-          width: '100%',
-          resize: 'none',
-          minHeight: 44,
-          maxHeight: `calc(${1 + MAX_EXTRA_LINES} * 1.4em + 1em)`,
-          overflowY: 'auto',
-          border: 'none',
-          borderRadius: 8,
-          padding: '11px 12px',
-        }}
       />
-      <Div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Label variant="secondary" text="Enter to send · Shift+Enter for a new line" style={{ fontSize: 11, opacity: 0.6 }} />
-        <Div style={{ flex: 1 }} />
-        <Label variant="secondary" text="Thinking" style={{ fontSize: 12, opacity: 0.6 }} />
+      <Div className="composer__footer">
+        <Label variant="secondary" className="composer__hint" text="Enter to send · Shift+Enter for a new line" />
+        <Div className="composer__spacer" />
+        <Label variant="secondary" className="composer__think-label" text="Thinking" />
         <ToggleSwitch toggled={think} onToggled={setThink} disabled={blocked} />
         {thinkingModes ? (
           // `Select` has no native `disabled` prop — blocked visually and
           // functionally (no click-through) via the wrapper instead, rather than
           // adding one just for this single usage. Blocked whenever thinking itself
           // is off, since a mode choice is meaningless without it.
-          <Div style={{ opacity: !think ? 0.4 : 1, pointerEvents: !think ? 'none' : undefined }}>
-            <Select
-              values={thinkingModes}
-              selected={thinkMode ?? undefined}
-              onChosen={setThinkMode}
-              style={{ fontSize: 12 }}
-            />
+          <Div className={['composer__mode', !think && 'composer__mode--disabled'].filter(Boolean).join(' ')}>
+            <Select values={thinkingModes} selected={thinkMode ?? undefined} onChosen={setThinkMode} />
           </Div>
         ) : null}
-        <Button
-          onClicked={() => fileInputRef.current?.click()}
-          disabled={dropDisabled}
-          style={{ width: 28, height: 28, padding: 0, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
+        <Button className="composer__icon-button" onClicked={() => fileInputRef.current?.click()} disabled={dropDisabled}>
+          <AttachmentIcon width={20} height={20} />
         </Button>
-        <Button text="Send" onClicked={send} disabled={blocked || !canSend} />
+        <Button className="composer__send" text="Send" onClicked={send} disabled={blocked || !canSend} />
       </Div>
     </Div>
   )

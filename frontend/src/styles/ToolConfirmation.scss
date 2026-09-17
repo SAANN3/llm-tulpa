@@ -1,0 +1,58 @@
+﻿@use 'tokens' as *;
+
+.tool-confirm {
+  gap: 0;
+  padding: $space-1 $space-4 14px;
+  max-height: 45vh;
+  overflow-y: auto;
+  border: $line-border solid var(--color-border);
+  border-left: 3px solid var(--color-tertiary);
+  background: var(--color-surface);
+}
+
+.tool-confirm__row {
+  gap: 9px;
+  padding: 10px 0;
+}
+
+.tool-confirm__row--divided {
+  border-top: $line-border solid var(--color-border);
+}
+
+.tool-confirm__head {
+  display: flex;
+  align-items: baseline;
+  gap: $space-2;
+}
+
+.tool-confirm__badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tool-confirm__name {
+  font-size: 14px;
+}
+
+.tool-confirm__args {
+  font-size: 12px;
+}
+
+.tool-confirm__message {
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 70ch;
+}
+
+.tool-confirm__reason {
+  font-size: 12px;
+}
+
+.tool-confirm__actions {
+  display: flex;
+  gap: $space-2;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}

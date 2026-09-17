@@ -1,0 +1,39 @@
+﻿@use 'tokens' as *;
+
+.setup {
+  gap: $space-5;
+}
+
+.setup__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.setup__panel {
+  width: 460px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.setup__body {
+  gap: $space-6;
+}
+
+.setup__nav {
+  gap: $space-2;
+}
+
+.setup__dots {
+  gap: $space-2;
+}
+
+.setup__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  border: $line-border solid var(--color-border);
+  background: transparent;
+}
+
+.setup__dot--active {
+  background: currentColor;
+}

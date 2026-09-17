@@ -1,0 +1,84 @@
+﻿@use 'tokens' as *;
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-message--user {
+  align-items: flex-end;
+}
+
+.chat-message--assistant {
+  align-items: flex-start;
+}
+
+/* User turn: a sharp-cornered bordered block, right-aligned. */
+.chat-message__bubble {
+  max-width: 68%;
+  background: var(--color-surface-strong);
+  border: $line-border solid var(--color-border);
+  border-radius: 0;
+  padding: 10px 14px;
+  line-height: 1.5;
+}
+
+/* Assistant turn: a flush left rule instead of a bubble. */
+.chat-message__body {
+  max-width: 70ch;
+  border-left: 2px solid var(--color-border);
+  padding-left: 14px;
+  font-size: 15px;
+  line-height: 1.55;
+  gap: $space-2;
+}
+
+.chat-message__attachments {
+  display: flex;
+  gap: $space-2;
+  flex-wrap: wrap;
+}
+
+.chat-message__attachments--spaced {
+  margin-bottom: $space-2;
+}
+
+.chat-message__thinking {
+  gap: $space-1;
+  max-width: 100%;
+}
+
+.chat-message__thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-1;
+  font-size: 12px;
+  padding: 3px 9px;
+  margin-top: $space-2;
+  align-self: flex-start;
+}
+
+.chat-message__thinking-body {
+  padding: $space-3;
+  font-size: 13px;
+  opacity: 0.85;
+  white-space: pre-wrap;
+  background: var(--color-surface);
+  border: $line-border solid var(--color-border);
+}
+
+.chat-message__thought {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-top: $space-2;
+}
+
+.chat-message__time {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 6px;
+}
+
+.chat-message__time--user {
+  text-align: right;
+}

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 
+import '../styles/PendingAssistantMessage.scss'
 import { Div, Label } from './primitives'
 import { ThinkingAnimation } from './ThinkingAnimation'
 
@@ -26,9 +27,9 @@ export function PendingAssistantMessage() {
   }, [])
 
   return (
-    <Div className="vbox" style={{ alignItems: 'flex-start', gap: 4 }}>
+    <Div className="vbox pending-message">
       <ThinkingAnimation isPlaying />
-      <Label text={`Thinking... (${elapsedSeconds}s)`} style={{ fontSize: 12, opacity: 0.6 }} />
+      <Label className="pending-message__label" text={`Thinking... (${elapsedSeconds}s)`} />
     </Div>
   )
 }

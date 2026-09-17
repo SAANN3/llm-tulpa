@@ -1,5 +1,6 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { useRef, useState } from 'react'
+import { Close, Download } from 'pixelarticons/react'
 
 import { Button, Div, Label } from './primitives'
 
@@ -201,7 +202,7 @@ export function WindowsPopup({ open, onClose, title, children, onDownload, defau
         // trigger this in the first place.
         width: size ? size.width : undefined,
         zIndex: 1000,
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+        boxShadow: '4px 4px 0 0 rgba(0, 0, 0, 0.4)',
       }}
     >
       <Div
@@ -219,8 +220,6 @@ export function WindowsPopup({ open, onClose, title, children, onDownload, defau
           justifyContent: 'space-between',
           gap: 12,
           padding: '4px 4px 4px 10px',
-          // Themed `Div`s get an 8px radius from `variants.css` by default — overridden
-          // back to square here, deliberately, for the retro-window look this wants.
           borderRadius: 0,
           cursor: dragging ? 'grabbing' : 'grab',
           userSelect: 'none',
@@ -256,18 +255,17 @@ export function WindowsPopup({ open, onClose, title, children, onDownload, defau
           {onDownload ? (
             <Button
               onClicked={onDownload}
-              style={{ width: 20, height: 20, padding: 0, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 20, height: 20, padding: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3v13m0 0l-5-5m5 5l5-5M4 21h16" />
-              </svg>
+              <Download width={13} height={13} />
             </Button>
           ) : null}
           <Button
-            text="×"
             onClicked={onClose}
-            style={{ width: 20, height: 20, padding: 0, borderRadius: 4, fontSize: 13, lineHeight: 1 }}
-          />
+            style={{ width: 20, height: 20, padding: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Close width={14} height={14} />
+          </Button>
         </Div>
       </Div>
       {/* The frame around the content, deliberately separate from the title bar's own

@@ -1,0 +1,59 @@
+﻿@use 'tokens' as *;
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+/* Wraps several related fields (e.g. name + timezone) as one group. */
+.field__group {
+  display: flex;
+  flex-direction: column;
+  gap: $space-5;
+}
+
+.field__label {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.field__control {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.field__input--tz {
+  width: 120px;
+}
+
+.field__help {
+  font-size: 12.5px;
+  line-height: 1.45;
+  opacity: 0.6;
+}
+
+.field__help--accent {
+  opacity: 1;
+  color: var(--color-tertiary);
+}
+
+/* A label sitting opposite a control (e.g. a toggle), pushed to the row's edges. */
+.field__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-2;
+}
+
+.field__row-label {
+  font-size: 15px;
+  max-width: 32ch;
+}
+
+.field__help--wide {
+  max-width: 40ch;
+}

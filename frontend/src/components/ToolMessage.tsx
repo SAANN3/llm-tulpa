@@ -1,3 +1,6 @@
+﻿import { ChevronDown, ChevronRight } from 'pixelarticons/react'
+
+import '../styles/ToolMessage.scss'
 import { Div, Label } from './primitives'
 
 export interface ToolMessageProps {
@@ -51,23 +54,9 @@ function describeResult(content: unknown): string {
 /** A bounded, independently-scrollable, labelled block of pre-formatted JSON. */
 function DetailBlock({ label, text }: { label: string; text: string }) {
   return (
-    <Div className="vbox" style={{ gap: 4 }}>
-      <Label variant="secondary" text={label} style={{ fontSize: 11, letterSpacing: '0.06em' }} />
-      <pre
-        className="mono"
-        style={{
-          margin: 0,
-          fontSize: 12,
-          lineHeight: 1.5,
-          opacity: 0.85,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: 180,
-          overflow: 'auto',
-        }}
-      >
-        {text}
-      </pre>
+    <Div className="vbox tool-message__block">
+      <Label variant="secondary" className="tool-message__block-label" text={label} />
+      <pre className="mono tool-message__pre">{text}</pre>
     </Div>
   )
 }
@@ -80,70 +69,32 @@ export function ToolMessage({ tool_name, content, created_at, arguments: args, s
   const resultChip = success === false ? 'error' : describeResult(content)
 
   return (
-    <Div style={{ maxWidth: '70ch', borderLeft: '2px solid var(--color-border)', paddingLeft: 14 }}>
-      <Div
-        className="vbox"
-        style={{
-          borderRadius: 8,
-          overflow: 'hidden',
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-surface)',
-        }}
-      >
-        <Div
-          onClick={onToggle}
-          className="list-row"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '9px 12px',
-            borderRadius: 0,
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              backgroundColor: 'var(--color-tertiary)',
-              flexShrink: 0,
-            }}
-          />
-          <Label className="mono" text={tool_name} style={{ fontSize: 13 }} />
+    <Div className="tool-message">
+      <Div className="vbox tool-message__card">
+        <Div onClick={onToggle} className="list-row tool-message__header">
+          <span className="tool-message__dot" />
+          <Label className="mono tool-message__name" text={tool_name} />
           {!expanded ? (
-            <Label
-              variant="secondary"
-              className="mono"
-              text={argsSummary}
-              style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            />
+            <Label variant="secondary" className="mono tool-message__summary" text={argsSummary} />
           ) : (
-            <Div style={{ flex: 1 }} />
+            <Div className="tool-message__spacer" />
           )}
           {!expanded && resultChip ? (
-            <Label
-              variant="secondary"
-              className="mono"
-              text={resultChip}
-              style={{ fontSize: 11, border: '1px solid var(--color-border)', borderRadius: 4, padding: '1px 6px' }}
-            />
+            <Label variant="secondary" className="mono tool-message__chip" text={resultChip} />
           ) : null}
-          <Label variant="secondary" text={expanded ? '▾' : '▸'} style={{ fontSize: 11 }} />
+          <span className="tool-message__caret">
+            {expanded ? <ChevronDown width={14} height={14} /> : <ChevronRight width={14} height={14} />}
+          </span>
         </Div>
         {expanded ? (
-          <Div className="vbox" style={{ gap: 10, padding: '10px 12px', borderTop: '1px solid var(--color-border)' }}>
+          <Div className="vbox tool-message__detail">
             {argsText ? <DetailBlock label="ARGUMENTS" text={argsText} /> : null}
             <DetailBlock label="RESULT" text={contentText} />
-            {success === false && err ? <Label variant="secondary" text={err} style={{ fontSize: 12 }} /> : null}
+            {success === false && err ? <Label variant="secondary" className="tool-message__err" text={err} /> : null}
           </Div>
         ) : null}
       </Div>
-      <Label
-        variant="secondary"
-        text={new Date(created_at).toLocaleTimeString()}
-        style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}
-      />
+      <Label variant="secondary" className="tool-message__time" text={new Date(created_at).toLocaleTimeString()} />
     </Div>
   )
 }

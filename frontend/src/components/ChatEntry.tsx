@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react'
+﻿import { useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
+import { MoreVertical } from 'pixelarticons/react'
 
+import '../styles/ChatEntry.scss'
 import { Button, Div, Input, Label } from './primitives'
 import { Popup } from './Popup'
 
@@ -54,23 +56,22 @@ export function ChatEntry({ label, selected, onClicked, onRename, onDelete }: Ch
         onClick={onClicked}
         onContextMenu={openAtCursor}
         variant={selected ? 'primary' : undefined}
-        className="list-row"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        className="list-row chat-entry"
       >
         <Label text={label} />
         {showTrigger ? (
-          <Div ref={triggerRef} onClick={openAtTrigger} style={{ padding: '0 6px', cursor: 'pointer' }}>
-            <Label text="⋮" />
+          <Div ref={triggerRef} onClick={openAtTrigger} className="chat-entry__menu-trigger">
+            <MoreVertical width={16} height={16} />
           </Div>
         ) : null}
       </Div>
 
       {hasMenu ? (
         <Popup open={menuPosition != null} onClose={closeMenu} position={menuPosition ?? { x: 0, y: 0 }}>
-          <Div onClick={startRename} style={{ padding: '8px 16px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <Div onClick={startRename} className="popup-menu__item">
             <Label text="Rename chat" />
           </Div>
-          <Div variant="primary" onClick={startDelete} style={{ padding: '8px 16px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <Div variant="primary" onClick={startDelete} className="popup-menu__item">
             <Label text="Delete chat" />
           </Div>
         </Popup>
@@ -78,23 +79,18 @@ export function ChatEntry({ label, selected, onClicked, onRename, onDelete }: Ch
 
       {hasMenu ? (
         <Popup open={confirmingDelete} onClose={() => setConfirmingDelete(false)} centered>
-          <Div className="vbox" style={{ padding: 16, gap: 12, maxWidth: 320 }}>
+          <Div className="vbox dialog">
             <Label text={`Are you sure that you want to delete "${label}"`} />
-            <Div style={{ display: 'flex', gap: 8 }}>
+            <Div className="dialog__actions">
+              <Button className="dialog__action" text="Cancel" variant="primary" onClicked={() => setConfirmingDelete(false)} />
               <Button
-                text="Cancel"
-                variant="primary"
-                onClicked={() => setConfirmingDelete(false)}
-                style={{ flex: 1 }}
-              />
-              <Button
+                className="dialog__action"
                 text="Continue"
                 variant="secondary"
                 onClicked={() => {
                   setConfirmingDelete(false)
                   onDelete?.()
                 }}
-                style={{ flex: 1 }}
               />
             </Div>
           </Div>
@@ -103,18 +99,18 @@ export function ChatEntry({ label, selected, onClicked, onRename, onDelete }: Ch
 
       {hasMenu ? (
         <Popup open={renaming} onClose={() => setRenaming(false)} centered>
-          <Div className="vbox" style={{ padding: 16, gap: 12, maxWidth: 320 }}>
+          <Div className="vbox dialog">
             <Input text={renameDraft} onChanged={setRenameDraft} />
-            <Div style={{ display: 'flex', gap: 8 }}>
-              <Button text="Cancel" variant="primary" onClicked={() => setRenaming(false)} style={{ flex: 1 }} />
+            <Div className="dialog__actions">
+              <Button className="dialog__action" text="Cancel" variant="primary" onClicked={() => setRenaming(false)} />
               <Button
+                className="dialog__action"
                 text="Save"
                 variant="secondary"
                 onClicked={() => {
                   setRenaming(false)
                   onRename?.(renameDraft)
                 }}
-                style={{ flex: 1 }}
               />
             </Div>
           </Div>

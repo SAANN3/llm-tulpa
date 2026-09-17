@@ -32,6 +32,11 @@ use tools::temperature::TemperatureTool;
 
 #[tokio::main]
 async fn main() {
+    // Loads backend/.env into the process environment if present — never overrides a
+    // variable already set (e.g. by Docker or the shell), and it's fine if the file
+    // doesn't exist at all (native runs can rely on real env vars instead).
+    dotenvy::dotenv().ok();
+
     // sqlx logs every query at INFO by default, which drowns out our own logs — quiet
     // it down to WARN unless RUST_LOG says otherwise.
     tracing_subscriber::fmt()

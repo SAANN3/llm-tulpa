@@ -1,6 +1,7 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import '../styles/Settings.scss'
 import { Button, Div } from '../components/primitives'
 import { AutoConfirmField, NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
@@ -65,26 +66,19 @@ function Settings() {
   }
 
   return (
-    <Div className="page center vbox" style={{ gap: 16 }}>
-      <TypewriterLabel className="mono" text='[ Settings ]' charIntervalMs={30} style={{ fontSize: 15, letterSpacing: '0.14em' }} />
-      <Div
-        className="vbox"
-        style={{
-          width: 440,
-          padding: 26,
-          gap: 24,
-          borderRadius: 14,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-surface)',
-        }}
-      >
-        <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText} onTimezoneChanged={setTimezoneText} />
-        <ThemePreview />
-        <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications} />
-        <AutoConfirmField enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm} />
-        <Div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" text="Back" onClicked={onBack} style={{ flex: 1 }} />
-          <Button text="Save" onClicked={onSave} disabled={saveDisabled} style={{ flex: 1 }} />
+    <Div className="page center vbox settings">
+      <TypewriterLabel className="settings__title" text="[ Settings ]" charIntervalMs={30} />
+      <Div className="dos-frame settings__panel">
+        <span className="dos-frame__title">Settings</span>
+        <Div className="dos-frame__body settings__body">
+          <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText} onTimezoneChanged={setTimezoneText} />
+          <ThemePreview />
+          <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications} />
+          <AutoConfirmField enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm} />
+          <Div className="settings__actions">
+            <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack} />
+            <Button className="settings__action" text="Save" onClicked={onSave} disabled={saveDisabled} />
+          </Div>
         </Div>
       </Div>
     </Div>

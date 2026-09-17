@@ -1,0 +1,26 @@
+// SCSS build-time tokens — spacing, DOS frame metrics, and the font stack.
+//
+// Colors deliberately live NOT here but as CSS custom properties (`--color-*`), set
+// per-theme under `[data-theme]` (see THEMING.md). SCSS variables can't be swapped at
+// runtime, so anything that changes with the active theme has to stay a CSS var. These
+// tokens are only the things that are the same across every theme.
+
+// Spacing scale (px). Kept small and named by step so component SCSS reaches for a rung
+// rather than an arbitrary pixel value.
+$space-1: 4px;
+$space-2: 8px;
+$space-3: 12px;
+$space-4: 16px;
+$space-5: 20px;
+$space-6: 24px;
+$space-8: 32px;
+
+// DOS chrome metrics.
+$frame-border: 3px; // the double-line dialog frame thickness
+$line-border: 1px; // single-line controls (inputs, buttons)
+$shadow-offset: 4px; // hard, un-blurred drop-shadow offset — the "raised block" look
+
+// The one typeface — JetBrains Mono, self-hosted via @fontsource (see main.tsx). Falls
+// back to the platform monospace stack if it somehow fails to load, so the TUI look
+// degrades to *a* monospace rather than a proportional font.
+$font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;

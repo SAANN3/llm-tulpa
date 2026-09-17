@@ -1,0 +1,103 @@
+﻿@use 'tokens' as *;
+@use 'mixins' as *;
+
+.page {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vbox {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  border: $line-border solid currentColor;
+  border-radius: 0;
+  padding: $space-6;
+}
+
+.bordered-right {
+  border-right: $line-border solid currentColor;
+}
+
+/* A section heading — e.g. the sidebar's "Utils"/"Chats"/"Today" labels. */
+.section-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+
+/* One row in a clickable list (chat entries, and anything similar later).
+   `:not([data-variant])` keeps the hover tint off a row that's already filled via its
+   own selected-state variant, so the two don't visually fight. */
+.list-row {
+  cursor: pointer;
+  border-radius: 0;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.list-row:not([data-variant]):hover {
+  background-color: var(--color-surface-strong);
+}
+
+/* Tool names, JSON, paths, timestamps echoed back, and title text like `[ Settings ]`.
+   The whole app is monospace now (see variants.scss `body`), so this is effectively a
+   no-op alias kept only so existing `className="mono"` call sites keep working. */
+.mono {
+  font-family: $font-mono;
+}
+
+/*
+ * DOS dialog frame — a sharp, double-line box with an optional caption hung on its top
+ * border, in the style of an MS-DOS / Turbo Vision dialog. Reusable BEM block:
+ *
+ *   <div class="dos-frame">
+ *     <span class="dos-frame__title">Title</span>
+ *     <div class="dos-frame__body"> ... </div>
+ *   </div>
+ *
+ * `--accent` recolors the frame line to the theme's accent instead of its foreground.
+ */
+.dos-frame {
+  @include dos-frame;
+  @include dos-shadow;
+  position: relative;
+}
+
+.dos-frame--accent {
+  @include dos-frame(var(--color-tertiary));
+}
+
+/* The caption chip. Sits centered on the top border, its own background painted in the
+   page color so it "cuts" a gap in the double line, exactly like a titled DOS dialog. */
+.dos-frame__title {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 $space-3;
+  background: var(--color-secondary);
+  color: var(--color-primary);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dos-frame__body {
+  display: flex;
+  flex-direction: column;
+  padding: $space-6;
+}

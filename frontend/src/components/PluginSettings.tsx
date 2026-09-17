@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-import type { CSSProperties } from 'react'
+﻿import { useEffect, useState } from 'react'
+import { Minus, Plus } from 'pixelarticons/react'
 
+import '../styles/PluginSettings.scss'
 import type { PluginInfo, PropertyInfo, PropertyType } from '../api/plugins/types'
 import { Button, Div, Input, Label, TextField, ToggleSwitch } from './primitives'
 
@@ -24,24 +25,6 @@ function cleanList(items: string[]): string[] {
 
 function defaultTextFor(type: PropertyType): string {
   return type === 'object' ? '{}' : ''
-}
-
-/** The +/− row buttons in an `array` field's editor — a fixed small square rather than
- * the `Button` primitive, which is built for full-width text buttons, not a compact
- * per-row control. */
-const rowButtonStyle: CSSProperties = {
-  boxSizing: 'border-box',
-  width: 28,
-  height: 28,
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 6,
-  border: '1px solid var(--color-border)',
-  cursor: 'pointer',
-  fontSize: 15,
-  lineHeight: 1,
 }
 
 /** "<what kind of value> — <a concrete example>", shown above the field's own
@@ -189,40 +172,25 @@ export function PluginSettings({ plugin, getSchema, getHelp, onSave, onBack }: P
     setArrayValues((prev) => ({ ...prev, [fieldName]: (prev[fieldName] ?? []).filter((_, i) => i !== index) }))
 
   return (
-    <Div className="vbox" style={{ gap: 16 }}>
-      <Label text={`${plugin.plugin_subname} settings`} style={{ fontSize: 15 }} />
+    <Div className="vbox plugin-settings">
+      <Label className="plugin-settings__heading" text={`${plugin.plugin_subname} settings`} />
 
       {/* One scroll region for everything below the heading — help card included — so a
           long help message and a long field list scroll together instead of the help
           card pushing the (separately scrollable) field list off screen. */}
-      <Div className="vbox" style={{ gap: 16, maxHeight: '50vh', overflowY: 'auto' }}>
+      <Div className="vbox plugin-settings__scroll">
         {help ? (
-          <Div
-            className="vbox"
-            style={{
-              gap: 4,
-              padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-background)',
-            }}
-          >
-            <Div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-              <Label className="section-heading" text="How to use" style={{ fontSize: 11, letterSpacing: '0.09em' }} />
+          <Div className="vbox plugin-settings__help">
+            <Div className="plugin-settings__help-head">
+              <Label className="section-heading plugin-settings__label" text="How to use" />
               <Button
+                className="plugin-settings__help-toggle"
                 variant="secondary"
                 text={helpExpanded ? 'Hide' : 'Show'}
                 onClicked={() => setHelpExpanded((prev) => !prev)}
-                style={{ padding: '3px 10px', fontSize: 11.5, width: 'auto' }}
               />
             </Div>
-            {helpExpanded ? (
-              <Label
-                variant="secondary"
-                text={help}
-                style={{ fontSize: 12.5, lineHeight: 1.5, opacity: 0.75, whiteSpace: 'pre-wrap' }}
-              />
-            ) : null}
+            {helpExpanded ? <Label variant="secondary" className="plugin-settings__help-text" text={help} /> : null}
           </Div>
         ) : null}
 
@@ -230,9 +198,9 @@ export function PluginSettings({ plugin, getSchema, getHelp, onSave, onBack }: P
           <Label variant="secondary" text="Loading…" />
         ) : (
           schema.map((field) => (
-            <Div className="vbox" key={field.name} style={{ gap: 4 }}>
-              <Div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Label className="section-heading" text={field.name} style={{ fontSize: 11, letterSpacing: '0.09em' }} />
+            <Div className="vbox plugin-settings__field" key={field.name}>
+              <Div className="plugin-settings__field-head">
+                <Label className="section-heading plugin-settings__label" text={field.name} />
                 {field.property_type === 'boolean' ? (
                   <ToggleSwitch
                     toggled={boolValues[field.name] ?? false}
@@ -242,50 +210,49 @@ export function PluginSettings({ plugin, getSchema, getHelp, onSave, onBack }: P
               </Div>
               {field.property_type === 'boolean' ? null : field.property_type === 'object' ? (
                 <TextField
+                  className="mono plugin-settings__object"
                   text={textValues[field.name] ?? ''}
                   onChanged={(text) => setTextValues((prev) => ({ ...prev, [field.name]: text }))}
-                  style={{ borderRadius: 7, padding: '9px 11px', minHeight: 70, fontFamily: 'ui-monospace, monospace', fontSize: 13 }}
                 />
               ) : field.property_type === 'array' ? (
-                <Div className="vbox" style={{ gap: 6 }}>
+                <Div className="vbox plugin-settings__array">
                   {(arrayValues[field.name] ?? []).map((item, index) => (
                     // eslint-disable-next-line react/no-array-index-key -- rows have no other stable id, and are always read/written by this same index anyway
-                    <Div key={index} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <Div key={index} className="plugin-settings__array-row">
                       <Input
+                        className="plugin-settings__array-input"
                         text={item}
                         onChanged={(text) => updateArrayItem(field.name, index, text)}
-                        style={{ flex: 1, borderRadius: 7, padding: '9px 11px' }}
                       />
-                      <Div style={rowButtonStyle} onClick={() => removeArrayItem(field.name, index)}>
-                        <Label text="−" />
+                      <Div className="plugin-settings__row-button" onClick={() => removeArrayItem(field.name, index)}>
+                        <Minus width={16} height={16} />
                       </Div>
                     </Div>
                   ))}
-                  <Div style={{ ...rowButtonStyle, width: '100%' }} onClick={() => addArrayItem(field.name)}>
-                    <Label text="+" />
+                  <Div className="plugin-settings__row-button plugin-settings__row-button--full" onClick={() => addArrayItem(field.name)}>
+                    <Plus width={16} height={16} />
                   </Div>
                 </Div>
               ) : (
                 <Input
                   text={textValues[field.name] ?? ''}
                   onChanged={(text) => setTextValues((prev) => ({ ...prev, [field.name]: text }))}
-                  style={{ borderRadius: 7, padding: '9px 11px' }}
                 />
               )}
               {typeHint(field.property_type) ? (
-                <Label className="mono" variant="secondary" text={typeHint(field.property_type)!} style={{ fontSize: 11.5, opacity: 0.55 }} />
+                <Label className="mono plugin-settings__hint" variant="secondary" text={typeHint(field.property_type)!} />
               ) : null}
-              <Label variant="secondary" text={field.description} style={{ fontSize: 12.5, lineHeight: 1.45, opacity: 0.6 }} />
+              <Label variant="secondary" className="plugin-settings__desc" text={field.description} />
             </Div>
           ))
         )}
       </Div>
 
-      {error ? <Label text={error} style={{ fontSize: 12.5, color: 'var(--color-tertiary)' }} /> : null}
+      {error ? <Label className="plugin-settings__error" text={error} /> : null}
 
-      <Div style={{ display: 'flex', gap: 8 }}>
-        <Button variant="secondary" text="Cancel" onClicked={onBack} style={{ flex: 1 }} />
-        <Button text="Save" onClicked={onSubmit} disabled={schema === null || saving} style={{ flex: 1 }} />
+      <Div className="plugin-settings__actions">
+        <Button className="plugin-settings__action" variant="secondary" text="Cancel" onClicked={onBack} />
+        <Button className="plugin-settings__action" text="Save" onClicked={onSubmit} disabled={schema === null || saving} />
       </Div>
     </Div>
   )

@@ -81,7 +81,3 @@ export interface ToggleSwitchProps {
   onToggled: (toggled: boolean) => void
   disabled?: boolean
 }
-
-export interface IconProps {
-  src: string
-}

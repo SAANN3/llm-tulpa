@@ -1,9 +1,10 @@
+﻿import type { CSSProperties } from 'react'
+
+import '../styles/ThemePreview.scss'
 import { Div, Label, RadioButton } from './primitives'
 import { useTheme } from '../context/useTheme'
 import { themeDisplayNames } from '../themes'
 import type { ThemeName } from '../themes'
-
-const CARD_HEIGHT = 66
 
 /** A miniature, non-interactive rendering of the app's own layout (sidebar strip, an
  * accent row, a right-aligned "user" line, two muted "assistant" lines) — colored from
@@ -13,38 +14,16 @@ const CARD_HEIGHT = 66
  * `:root` colors this card off its own wrapper instead. */
 function ThemeMiniature({ theme }: { theme: ThemeName }) {
   return (
-    <div
-      data-theme={theme}
-      style={{
-        display: 'flex',
-        height: CARD_HEIGHT,
-        width: '100%',
-        border: '1px solid var(--color-border)',
-        borderRadius: 7,
-        overflow: 'hidden',
-        background: 'var(--color-secondary)',
-        color: 'var(--color-primary)',
-      }}
-    >
-      <div
-        style={{
-          width: 26,
-          background: 'var(--color-surface)',
-          borderRight: '1px solid var(--color-border)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 3,
-          padding: '5px 4px',
-        }}
-      >
-        <div style={{ height: 5, borderRadius: 2, background: 'var(--color-tertiary)' }} />
-        <div style={{ height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.25 }} />
-        <div style={{ height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.25 }} />
+    <div data-theme={theme} className="theme-picker__miniature">
+      <div className="theme-picker__mini-sidebar">
+        <div className="theme-picker__bar theme-picker__bar--accent" />
+        <div className="theme-picker__bar theme-picker__bar--muted" />
+        <div className="theme-picker__bar theme-picker__bar--muted" />
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 5px' }}>
-        <div style={{ alignSelf: 'flex-end', width: '70%', height: 4, borderRadius: 2, background: 'currentColor', opacity: 0.7 }} />
-        <div style={{ width: '85%', height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.3 }} />
-        <div style={{ width: '60%', height: 3, borderRadius: 2, background: 'currentColor', opacity: 0.3 }} />
+      <div className="theme-picker__mini-content">
+        <div className="theme-picker__bar theme-picker__bar--user" />
+        <div className="theme-picker__bar theme-picker__bar--wide" />
+        <div className="theme-picker__bar theme-picker__bar--narrow" />
       </div>
     </div>
   )
@@ -56,23 +35,16 @@ export function ThemePreview() {
   const { themeName, setThemeName, themeNames } = useTheme()
 
   return (
-    <Div className="vbox" style={{ gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${themeNames.length}, 1fr)`, gap: 10 }}>
-        {themeNames.map((theme) => (
-          <Div
-            key={theme}
-            className="vbox"
-            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-            onClick={() => setThemeName(theme)}
-          >
-            <ThemeMiniature theme={theme} />
-            <Div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <RadioButton name="theme-picker" value={theme} checked={themeName === theme} onChanged={() => setThemeName(theme)} />
-              <Label text={themeDisplayNames[theme]} style={{ fontSize: 13 }} />
-            </Div>
+    <div className="theme-picker" style={{ '--theme-count': themeNames.length } as CSSProperties}>
+      {themeNames.map((theme) => (
+        <Div key={theme} className="theme-picker__card" onClick={() => setThemeName(theme)}>
+          <ThemeMiniature theme={theme} />
+          <Div className="theme-picker__label-row">
+            <RadioButton name="theme-picker" value={theme} checked={themeName === theme} onChanged={() => setThemeName(theme)} />
+            <Label className="theme-picker__name" text={themeDisplayNames[theme]} />
           </Div>
-        ))}
-      </div>
-    </Div>
+        </Div>
+      ))}
+    </div>
   )
 }

@@ -389,6 +389,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dirs",
+ "dotenvy",
  "gfxinfo",
  "html2text",
  "image",

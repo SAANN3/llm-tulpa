@@ -1,6 +1,7 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import '../styles/Setup.scss'
 import { Button, Div } from '../components/primitives'
 import { AutoConfirmField, NameTimezoneFields, NotificationsField } from '../components/SettingsFields'
 import { ThemePreview } from '../components/ThemePreview'
@@ -87,37 +88,21 @@ function Setup() {
   }
 
   return (
-    <Div className="page center vbox" style={{ gap: 16 }}>
-      <TypewriterLabel className="mono" text='[ Setup ]' charIntervalMs={30} style={{ fontSize: 15, letterSpacing: '0.14em' }} />
-      <Div
-        className="vbox"
-        style={{
-          width: 440,
-          padding: 26,
-          gap: 24,
-          borderRadius: 14,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-surface)',
-        }}
-      >
-        {pages[step]}
-        <Div className="center" style={{ gap: 8 }}>
-          {!isFirstPage && <Button variant="secondary" text="Back" onClicked={onBack} />}
-          <Button text={isLastPage ? 'Save' : 'Continue'} onClicked={onPrimary} disabled={primaryDisabled} />
-        </Div>
-        <Div className="center" style={{ gap: 8 }}>
-          {pages.map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                border: '1px solid var(--color-border)',
-                background: i === step ? 'currentColor' : 'transparent',
-              }}
-            />
-          ))}
+    <Div className="page center vbox setup">
+      <TypewriterLabel className="setup__title" text="[ Setup ]" charIntervalMs={30} />
+      <Div className="dos-frame setup__panel">
+        <span className="dos-frame__title">Setup</span>
+        <Div className="dos-frame__body setup__body">
+          {pages[step]}
+          <Div className="center setup__nav">
+            {!isFirstPage && <Button variant="secondary" text="Back" onClicked={onBack} />}
+            <Button text={isLastPage ? 'Save' : 'Continue'} onClicked={onPrimary} disabled={primaryDisabled} />
+          </Div>
+          <Div className="center setup__dots">
+            {pages.map((_, i) => (
+              <div key={i} className={`setup__dot${i === step ? ' setup__dot--active' : ''}`} />
+            ))}
+          </Div>
         </Div>
       </Div>
     </Div>

@@ -9,6 +9,7 @@ axum = { version = "0.8.9", features = ["multipart"] }
 base64 = "0.22.1"
 chrono = { version = "0.4", features = ["clock"] }
 chrono-tz = "0.10"
+dotenvy = "0.15"
 # `normalize_images` (plugins/messaging/plugin.rs) always fully decodes an incoming
 # image — not just format-sniffs it — so a truncated/corrupted download gets caught
 # and dropped instead of reaching Ollama; these are every codec that decode path can
