@@ -98,6 +98,12 @@ pub async fn migrate(db: &DatabaseConnection) -> Result<(), DbErr> {
         -- message has none, same convention as `images`.
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_ids JSONB;
 
+        -- Key facts (structured, append-only, never rewritten): one sentence per fact
+        -- (paths, names+versions, confirmed idioms, decisions, constraints, config,
+        -- open items) plus an optional goal (the user's core request for the whole chat).
+        -- NULL until the first fold — same convention as summary/images/file_ids.
+        ALTER TABLE chats ADD COLUMN IF NOT EXISTS key_facts JSONB;
+
         CREATE TABLE IF NOT EXISTS tool_calls (
             id BIGSERIAL PRIMARY KEY,
             message_id BIGINT NOT NULL REFERENCES messages (id),

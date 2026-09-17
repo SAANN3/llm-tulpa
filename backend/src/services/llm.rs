@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -536,7 +536,14 @@ struct OllamaToolParameters {
     #[serde(rename = "type")]
     parameters_type: String,
     required: Vec<String>,
-    properties: HashMap<String, OllamaToolProperty>,
+    /// `BTreeMap`, not `HashMap` — this gets rebuilt fresh on every `chat` call, and
+    /// `HashMap`'s randomized per-instance hasher seed means its (and therefore
+    /// `serde_json`'s) key order isn't stable across two builds of the same content.
+    /// The chat template renders this into the literal prompt text, so an unstable
+    /// order here changes the prompt's bytes on every single call — right alongside
+    /// `Agent::advance`'s own prompt-cache fix, this is the other half of what made
+    /// Ollama/llama.cpp's prefix cache fail to match almost immediately on every turn.
+    properties: BTreeMap<String, OllamaToolProperty>,
 }
 
 #[derive(Serialize)]

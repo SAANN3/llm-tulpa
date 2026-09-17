@@ -10,6 +10,7 @@ use sea_orm::{
     prelude::*, sea_query::Expr, ActiveValue::Set, Database, DatabaseConnection, DbBackend,
     PaginatorTrait, QueryOrder, QuerySelect, Statement, TransactionError, TransactionTrait,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::services::error::ErrorService;
 
@@ -153,6 +154,7 @@ impl ChatStore {
             updated_at: model.updated_at,
             summary: model.summary,
             summary_up_to_message_id: model.summary_up_to_message_id,
+            key_facts: model.key_facts.and_then(|v| serde_json::from_value(v).ok()),
         }
     }
 
@@ -367,15 +369,28 @@ impl ChatStore {
     /// Persists an updated compaction summary for a chat — folds everything up to and
     /// including `up_to_message_id` into `summary`, so the next `ollama_history` build
     /// (in `Agent`) sends the summary plus only what's newer instead of the full
-    /// history. This is replay bookkeeping, not conversational content — nothing about
-    /// the chat's actual message rows changes.
-    pub async fn set_summary(&self, chat_id: i64, summary: String, up_to_message_id: i64) -> Result<(), ChatStoreErrors> {
+    /// history. Also persists updated `key_facts` (or clears them if empty). This is
+    /// replay bookkeeping, not conversational content — nothing about the chat's actual
+    /// message rows changes.
+    pub async fn set_summary(
+        &self,
+        chat_id: i64,
+        summary: String,
+        key_facts: ChatFacts,
+        up_to_message_id: i64,
+    ) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
+
+        // Persist NULL when the struct is empty (goal is None and facts is empty) —
+        // same convention as `summary`/`images`/`file_ids` above, so a pre-feature
+        // chat (no facts at all) stays indistinguishable from one explicitly cleared.
+        let key_facts_json = (!key_facts.is_empty()).then(|| serde_json::json!(key_facts));
 
         chats::ActiveModel {
             id: Set(chat_id),
             summary: Set(Some(summary)),
             summary_up_to_message_id: Set(Some(up_to_message_id)),
+            key_facts: Set(key_facts_json),
             ..Default::default()
         }
         .update(&self.db)
@@ -456,6 +471,7 @@ impl ChatStore {
                         id: Set(chat_id),
                         summary: Set(None),
                         summary_up_to_message_id: Set(None),
+                        key_facts: Set(None),
                         ..Default::default()
                     }
                     .update(txn)
@@ -580,6 +596,9 @@ pub struct Chat {
     /// compaction threshold at least once — `None` until then. See `Agent::compact`.
     pub summary: Option<String>,
     pub summary_up_to_message_id: Option<i64>,
+    /// Key facts (structured, append-only) for this chat. NULL until the first fold
+    /// — same convention as `summary`. See `Agent::compact` and the `ChatFacts` struct.
+    pub key_facts: Option<ChatFacts>,
 }
 
 pub struct Message {
@@ -661,6 +680,30 @@ pub struct NewMessage {
     /// nothing here feeds a file's content to the model — see `Agent::chat`'s doc
     /// comment.
     pub file_ids: Vec<i64>,
+}
+
+/// Structured, append-only key facts for a chat — exact facts extracted from
+/// compaction folds. Old entries are never re-sent to the model as text to be
+/// rewritten; each fold only asks for new facts, and merging is deterministic
+/// in Rust (append + dedupe). Erosion is impossible by construction.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ChatFacts {
+    /// One sentence: the user's core request for the whole chat.
+    /// Set on the first fold, never modified afterwards.
+    pub goal: Option<String>,
+    /// Append-only durable facts: exact paths, names+versions, confirmed API
+    /// idioms, decisions, constraints, config values, open/unresolved items.
+    pub facts: Vec<String>,
+}
+
+impl ChatFacts {
+    /// Whether this is the zero/empty state — used to decide whether to persist
+    /// NULL (a pre-feature chat with no facts at all) versus a real struct with
+    /// no facts yet on its first fold.
+    pub fn is_empty(&self) -> bool {
+        self.goal.is_none() && self.facts.is_empty()
+    }
 }
 
 /// Wraps every SeaORM failure uniformly — nothing about which specific query failed

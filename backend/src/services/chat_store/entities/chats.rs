@@ -11,6 +11,12 @@ pub struct Model {
     pub updated_at: DateTimeUtc,
     pub summary: Option<String>,
     pub summary_up_to_message_id: Option<i64>,
+    /// Key facts (structured, append-only, never rewritten) for this chat.
+    /// NULL until the first fold — same convention as `summary`.
+    /// Stored as a plain `JsonValue` so old binary code that doesn't know this
+    /// field still round-trips through SeaORM without error; the chat_store layer
+    /// serializes/deserializes the flat `ChatFacts` struct around it.
+    pub key_facts: Option<serde_json::Value>,
     /// All three null (an ordinary chat) or all three filled (a plugin-owned one) —
     /// see `chat_store::migrate` for the constraint that enforces this. Deliberately
     /// not on the public `Chat` struct — nothing outside `ChatStore` needs to know a

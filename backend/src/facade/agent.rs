@@ -4,12 +4,12 @@ use std::time::Instant;
 
 use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::{ChatStore, Message, NewMessage, NewToolCall, ToolCallOut},
+    chat_store::{ChatStore, ChatFacts, Message, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
     file_store::FileStore,
     llm::{OllamaChatMessage, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
@@ -113,8 +113,9 @@ const SYSTEM_PROMPT: &[&str] = &[
      from memory can. Reserve a full storage.write_file rewrite for a genuinely new file, or \
      the rare case where nearly everything in it is actually changing.",
     "Your training data has a cutoff, and the real current date is almost certainly later than \
-     you'd guess from it. The actual current date/time is given to you directly below (not as \
-     something you need to look up) — treat it as ground truth over any date or year you'd \
+     you'd guess from it. The actual current date/time is appended, in brackets, to the end of \
+     the newest message in this conversation (not as something you need to look up) — treat \
+     it as ground truth over any date or year you'd \
      otherwise assume from training, for anything where today's actual date matters (being \
      asked what today is, recent events, computing an age or a duration, anything where the \
      year is load-bearing for the answer).",
@@ -337,20 +338,12 @@ impl Agent {
         // once a chat has one — folded into this same system message rather than sent
         // as a second one, since some chat templates (e.g. Qwen's) reject more than one
         // system-role message anywhere but position 0 ("System message must be at the
-        // beginning").
-        // Computed fresh on every call, not cached — this is what makes the "current
-        // date/time is given to you directly below" `SYSTEM_PROMPT` rule true for
-        // *every* `Agent` instance, including the messaging-plugin one that runs with
-        // an empty `ToolService` (no tools at all, `os.get_date` included) — telling
-        // it to *call* a tool it doesn't have would just dangle uselessly instead.
-        // Recomputing this on every request also means it never goes stale the way a
-        // fixed string baked into `SYSTEM_PROMPT` itself would the moment the date
-        // changes.
+        // beginning"). Deliberately holds no per-call-volatile content (no timestamp —
+        // see `now_note` below for why) so it stays byte-identical across a chat's
+        // turns except when a compaction fold actually changes the summary — that's
+        // what lets Ollama/llama.cpp's prompt cache match this prefix and reuse it
+        // instead of reprocessing the whole history on every single turn.
         let mut system_prompt = SYSTEM_PROMPT.join("\n");
-        system_prompt.push_str(&format!(
-            "\n\nThe current real date and time (UTC) is: {}.",
-            chrono::Utc::now().format("%A, %B %-d, %Y %H:%M:%S UTC")
-        ));
         if messages.first().is_some_and(|message| message.role == "system") {
             let summary_message = messages.remove(0);
             system_prompt.push_str("\n\n");
@@ -364,6 +357,36 @@ impl Agent {
 
         let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
         messages_with_system.extend(messages);
+
+        // Stamped onto whichever message is newest — `new_message` when there is one
+        // (`chat`'s fresh-turn path), otherwise the last entry already in
+        // `messages_with_system` (`continue_chat`'s path, where that's the tool result
+        // `use_tool` just persisted). Either way that's content this request sends to
+        // Ollama for the first time, so appending it here doesn't cost any additional
+        // prompt-cache reuse — unlike baking it into `system_prompt` above (the old
+        // approach), which changed every single call and, being the prompt's very
+        // first tokens, invalidated the *entire* cached prefix on every turn (see
+        // `SYSTEM_PROMPT`'s own rule for the paired instruction — it now points here
+        // instead of claiming a fixed position). Computed fresh each call so it's
+        // never stale, same as before; still reaches every `Agent` instance including
+        // the messaging-plugin one (empty `ToolService`, no `os.get_date` to fall back
+        // on).
+        let now_note = format!(
+            "\n\n[Current real date and time (UTC): {}]",
+            chrono::Utc::now().format("%A, %B %-d, %Y %H:%M:%S UTC")
+        );
+        let new_message = match new_message {
+            Some(mut msg) => {
+                msg.content.push_str(&now_note);
+                Some(msg)
+            }
+            None => {
+                if let Some(last) = messages_with_system.last_mut() {
+                    last.content.push_str(&now_note);
+                }
+                None
+            }
+        };
 
         let started_at = Instant::now();
         let response = self.ollama.chat(messages_with_system, new_message, &tools, think).await?;
@@ -430,22 +453,40 @@ impl Agent {
     /// A chat's message history mapped into Ollama's wire format, oldest first. Once a
     /// chat has a compaction summary (`Chat::summary`/`summary_up_to_message_id` — see
     /// `compact`), that replaces everything up to the boundary as a single system
-    /// message, and only what's newer is sent verbatim; otherwise this is the full
-    /// history up to `history_len`, same as before compaction existed.
+    /// message, prefixed with key facts (if any). Only what's newer is sent verbatim;
+    /// otherwise this is the full history up to `history_len`, same as before compaction
+    /// existed.
     async fn ollama_history(&self, chat_id: i64) -> Result<Vec<OllamaChatMessage>, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
 
-        match (chat.summary, chat.summary_up_to_message_id) {
+        match (&chat.summary, chat.summary_up_to_message_id) {
             (Some(summary), Some(boundary_id)) => {
                 let recent = self
                     .chat_store
                     .messages_after(chat_id, boundary_id, self.history_len)
                     .await?;
 
-                let mut history = vec![OllamaService::system_message(format!(
+                let mut system_content = String::from(
                     "Earlier parts of this conversation were summarized to keep it within \
-                     the model's context window. Summary of everything before this point:\n\n{summary}"
-                ))];
+                     the model's context window."
+                );
+
+                // Prepend key facts (goal + list) if available. Facts are durable —
+                // they persist across folds and don't get rewritten.
+                if let Some(ref key_facts) = chat.key_facts {
+                    system_content.push_str("\n\nKey facts (durable; still in effect unless a later message contradicts them):");
+                    if let Some(ref goal) = key_facts.goal {
+                        system_content.push_str(&format!("\nGoal: {goal}"));
+                    }
+                    for fact in &key_facts.facts {
+                        system_content.push_str(&format!("\n- {fact}"));
+                    }
+                }
+
+                system_content.push_str("\n\nSummary of everything before this point:\n\n");
+                system_content.push_str(summary);
+
+                let mut history = vec![OllamaService::system_message(system_content)];
                 history.extend(recent.into_iter().rev().map(Self::to_ollama_message));
                 Ok(history)
             }
@@ -522,10 +563,19 @@ impl Agent {
             "calling summarize for chat_id {chat_id}"
         );
 
-        let summary = self.summarize(chat.summary, to_fold).await?;
-        self.chat_store.set_summary(chat_id, summary, new_boundary_id).await?;
+        let summary = self.summarize(chat.summary.clone(), to_fold).await?;
+        let facts = self.extract_facts(to_fold, chat.key_facts.clone()).await;
+        let existing_facts_count = chat.key_facts.as_ref().map_or(0, |f| f.facts.len());
+        let merged = Self::merge_facts(chat.key_facts.clone().unwrap_or_default(), facts.goal, facts.facts);
+        // `merge_facts` only ever appends, so this can't underflow in practice — saturating
+        // anyway rather than trusting that invariant never breaks in the future.
+        let facts_added = merged.facts.len().saturating_sub(existing_facts_count);
 
-        tracing::info!(chat_id, new_boundary_id, "compaction finished for chat_id {chat_id}");
+        self.chat_store
+            .set_summary(chat_id, summary, merged, new_boundary_id)
+            .await?;
+
+        tracing::info!(chat_id, new_boundary_id, facts_added, "compaction finished for chat_id {chat_id}");
 
         Ok(())
     }
@@ -582,7 +632,10 @@ impl Agent {
              something in the excerpt looks contradictory or doesn't add up (e.g. a filename \
              or detail that doesn't match elsewhere), note the discrepancy plainly rather \
              than inventing an explanation that resolves it — a guessed resolution that's \
-             wrong is worse than an acknowledged gap."
+             wrong is worse than an acknowledged gap.\n\n\
+             Exact facts (paths, names+versions, confirmed API idioms, decisions, constraints, \
+             config, open items) are tracked in a separate structured list; don't reproduce \
+             them exhaustively in the summary — focus on what was asked, done, and learned."
                 .to_string(),
         );
         let user = OllamaService::user_message(format!(
@@ -599,6 +652,193 @@ impl Agent {
         let response = self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await?;
         Ok(response.message.content)
     }
+
+    /// Returns a plain-text transcript of messages suitable for both summarize and
+    /// extract-facts prompts — same role annotations and image/mark conventions as
+    /// summarize's own transcript, factored out so the code isn't duplicated.
+    fn transcript_of(to_fold: &[Message]) -> String {
+        to_fold
+            .iter()
+            .map(|message| match message.role.as_str() {
+                "tool" => format!(
+                    "[tool result — {}]: {}",
+                    message.tool_name.as_deref().unwrap_or("?"),
+                    message.content
+                ),
+                role if !message.images.is_empty() => format!(
+                    "[{role}, {} image(s) attached]: {}",
+                    message.images.len(),
+                    message.content
+                ),
+                role => format!("[{role}]: {}", message.content),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Extracts new key facts from the fold, producing a `ChatFacts` with optional
+    /// `goal` (only if existing goal is absent) and a list of new facts.
+    ///
+    /// Best-effort: on parse failure or Ollama error, logs a warning and falls back
+    /// to the existing facts (cloned, or `ChatFacts::default()` if none). This means
+    /// the fold still proceeds even when fact extraction fails — the model just
+    /// doesn't get better-structured context on the next fold until extraction works.
+    async fn extract_facts(
+        &self,
+        to_fold: &[Message],
+        existing_key_facts: Option<ChatFacts>,
+    ) -> ChatFacts {
+        let existing = existing_key_facts.as_ref();
+        let existing_goal = existing.and_then(|f| f.goal.clone());
+        let existing_facts_str = existing.map_or("none".into(), |f| {
+            if f.facts.is_empty() {
+                "none".into()
+            } else {
+                format!(
+                    "\nExisting facts (do not repeat):\n{}",
+                    f.facts
+                        .iter()
+                        .map(|fact| format!("- {}", fact))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
+        });
+
+        let transcript = Self::transcript_of(to_fold);
+
+        let system = OllamaService::system_message(format!(
+            "Extract key facts from the conversation excerpt. Output ONLY a JSON object: \
+             {{\"goal\": <string|null>, \"facts\": [<string>]}}. No prose, no markdown, no \
+             code fences.\n\
+             \n\
+             Rules:\n\
+             - goal: the user's core request for the whole chat (one sentence, \
+             present-tense). Only set if the existing goal is absent/NULL. Never modify an \
+             existing goal. If the chat has no clear goal or the existing goal is already \
+             set, send null.\n\
+             - facts: a short list of new, specific facts extracted from this excerpt. Only \
+             include facts not already in the existing list. Deduplicate yourself. Skip \
+             empty or whitespace-only results.\n\
+             \n\
+             What is a fact:\n\
+             - Exact paths, names, versions, identifiers (e.g., \
+             'backend/src/services/chat_store.rs')\n\
+             - Confirmed API idioms and tool-call patterns (e.g., 'Ollama /api/chat with \
+             tool_calls: []')\n\
+             - Design decisions and constraints ('key_facts is JSONB, nullable, persisted \
+             via set_summary')\n\
+             - Configuration, feature flags, environment variables\n\
+             - Open or unresolved items that a later turn might need to know about\n\
+             \n\
+             What is NOT a fact:\n\
+             - Narrative descriptions of what happened\n\
+             - Next steps, recommendations, or suggestions\n\
+             - Vague or generic observations\n\
+             \n\
+             Verbatim strings for paths, identifiers, and API signatures. One sentence per \
+             fact. If nothing new: {{\"goal\": null, \"facts\": []}}\n\
+             {existing_facts_str}"
+        ));
+
+        let user = OllamaService::user_message(format!(
+            "Extract new key facts from the conversation excerpt below.
+
+Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
+            existing_goal.as_deref().unwrap_or("(none)"),
+        ));
+
+        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await {
+            Err(err) => {
+                let es: ErrorService = err.into();
+                tracing::warn!(
+                    error = es.message.as_deref().unwrap_or("unknown error"),
+                    "fact extraction ollama call failed, using existing facts"
+                );
+                ChatFacts {
+                    goal: existing_goal,
+                    facts: existing.map_or(vec![], |f| f.facts.clone()),
+                }
+            }
+            Ok(response) => {
+                let raw = response.message.content;
+
+                match Self::parse_extracted_facts(&raw) {
+                    Ok((trimmed_goal, new_facts)) => {
+                        if trimmed_goal.is_none() && existing_goal.is_some() {
+                            tracing::debug!("extracted goal was empty/none, keeping existing");
+                        }
+
+                        if new_facts.is_empty() && trimmed_goal.is_none() {
+                            tracing::debug!("extracted facts empty");
+                        } else {
+                            tracing::info!(
+                                facts_extracted = new_facts.len(),
+                                "successfully extracted facts from fold"
+                            );
+                        }
+
+                        ChatFacts {
+                            goal: trimmed_goal,
+                            facts: new_facts,
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            raw = %raw,
+                            "fact extraction parse failed, using existing facts"
+                        );
+                        ChatFacts {
+                            goal: existing_goal,
+                            facts: existing.map_or(vec![], |f| f.facts.clone()),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Strips a leading/trailing ```` ```json ```` or ```` ``` ```` fence if the model wrapped
+    /// its output in one, otherwise returns the trimmed input unchanged.
+    fn strip_json_fences(raw: &str) -> &str {
+        raw.strip_prefix("```json")
+            .or_else(|| raw.strip_prefix("```"))
+            .map(|s| s.trim_start().strip_suffix("```").map(|s| s.trim()).unwrap_or(s.trim()))
+            .unwrap_or(raw.trim())
+    }
+
+    /// Parses `extract_facts`'s raw Ollama response into `(goal, facts)`, tolerating an
+    /// optional code fence around the JSON. Trims and drops empty entries so callers never
+    /// see whitespace-only facts or an empty-string goal. A pure function (no I/O, no
+    /// `self`) so it's unit-testable without a live Ollama call — see the tests below.
+    fn parse_extracted_facts(raw: &str) -> Result<(Option<String>, Vec<String>), serde_json::Error> {
+        #[derive(Deserialize)]
+        struct WireFacts {
+            goal: Option<String>,
+            facts: Vec<String>,
+        }
+
+        let cleaned = Self::strip_json_fences(raw);
+        let wire: WireFacts = serde_json::from_str(cleaned)?;
+
+        let goal = wire
+            .goal
+            .as_deref()
+            .map(str::trim)
+            .filter(|g| !g.is_empty())
+            .map(str::to_string);
+
+        let facts = wire
+            .facts
+            .into_iter()
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty())
+            .collect();
+
+        Ok((goal, facts))
+    }
+
 
     /// The tool calls the model has asked for that haven't been run yet, without
     /// actually running them — lets a caller check each one's `permission` (and warn
@@ -934,6 +1174,38 @@ impl Agent {
             thinking: None,
             images: (!message.images.is_empty()).then_some(message.images),
         }
+    }
+
+    /// Deterministic merge of existing facts with a fresh extraction.
+    ///
+    /// - goal: keep existing.goal if set and non-empty, else take new_goal (if non-empty).
+    /// - facts: push each new fact, skipping empty/whitespace-only ones and any whose
+    ///   trimmed form case-insensitively equals an existing entry's trimmed form.
+    /// - Never reorder, never rewrite, never drop existing entries.
+    ///
+    /// This is a pure function so it's unit-testable and independent of any service
+    /// wiring — correctness-critical invariants are enforced here, not by the model.
+    fn merge_facts(existing: ChatFacts, new_goal: Option<String>, new_facts: Vec<String>) -> ChatFacts {
+        let goal = existing.goal.or_else(|| {
+            let trimmed = new_goal?.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
+
+        let mut facts = existing.facts;
+        for new_fact in new_facts {
+            let trimmed = new_fact.trim().to_string();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let exists = facts.iter().any(|existing_fact| {
+                existing_fact.trim().to_lowercase() == trimmed.to_lowercase()
+            });
+            if !exists {
+                facts.push(trimmed);
+            }
+        }
+
+        ChatFacts { goal, facts }
     }
 }
 
