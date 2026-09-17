@@ -1,0 +1,17 @@
+import axios from 'axios'
+
+import { BACKEND_URL } from '../../config'
+
+export interface GetPluginHelpQuery {
+  pluginName: string
+  pluginSubname: string
+}
+
+/** Fetches a plugin's own help message */
+export async function getPluginHelp(query: GetPluginHelpQuery): Promise<string> {
+  const { data } = await axios.get<string>(`${BACKEND_URL}/api/plugins/help`, {
+    params: { plugin_name: query.pluginName, plugin_subname: query.pluginSubname },
+  })
+
+  return data
+}

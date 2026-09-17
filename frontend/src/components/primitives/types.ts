@@ -1,19 +1,11 @@
 import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
 
-/**
- * Style/class overrides every themed component accepts on top of its own props.
- * `variant` is forwarded as a `data-variant` DOM attribute, not resolved to a color here —
- * each theme's own CSS decides what (if anything) a variant looks like. See
- * `../THEMING.md` for the rules on where variant colors are (and aren't) allowed to be
- * defined — getting this wrong causes silent collisions between themes.
- */
 export interface OverrideThemeParams {
   style?: CSSProperties
   className?: string
   variant?: 'primary' | 'secondary' | 'tertiary'
 }
 
-/** A component's own props, flattened together with the override params every themed component accepts. */
 export type ThemedProps<T> = T & OverrideThemeParams
 
 export interface DivProps {

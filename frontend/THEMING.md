@@ -29,7 +29,7 @@ silently colliding with each other. Read this before adding a new theme or touch
 
 - `components/primitives/` — the fixed component set, see below. Stays under
   `components/` since it's the one piece here that's actually made of React components.
-- `src/context/` — `ThemeContext.ts`/`ThemeProvider.tsx`/`useTheme.ts`, split into three
+- `src/context/` — `theme-context.ts`/`theme-provider.tsx`/`use-еheme.ts`, split into three
   files (not because any of them is complex) because oxlint's `only-export-components`
   fast-refresh rule flags any file that exports a component alongside a non-component
   value — the context object and the hook both count, so they can't share a file with the
@@ -63,8 +63,8 @@ some nested `props.children` wrapper).
 ## Theme names
 
 `src/themes/index.ts` exports `themeNames` — the flat list of valid `data-theme` values
-(see the file for the current list). `context/ThemeProvider.tsx` exposes
-`themeName`/`setThemeName`/`themeNames` via `useTheme()`; setting `themeName` updates
+(see the file for the current list). `context/theme-provider.tsx` exposes
+`themeName`/`setThemeName`/`themeNames` via `useHeme()`; setting `themeName` updates
 `:root[data-theme="..."]`, which is what everything below keys off. See the Quickstart
 above for what adding one actually involves.
 
