@@ -27,11 +27,24 @@ use crate::tools::ui::attach_file::AttachFileTool;
 /// (rather than waiting until a turn is already at risk of the same truncation failure
 /// `storage::read_file`'s size cap exists to avoid downstream of); `KEEP_CHARS_PER_TOKEN`
 /// is a rough token-to-char proxy (same reasoning as `storage::read_file`'s
-/// `MAX_READ_CHARS`), not an exact budget — undershooting just means
-/// `compaction_trigger_tokens` catches it again sooner next time, no correctness risk
-/// either way.
+/// `MAX_READ_CHARS`), not an exact budget.
+///
+/// `KEEP_CHARS_PER_TOKEN` needs real margin below the *actual* chars-per-token ratio
+/// of whatever content a chat holds, not just a plausible-looking average — an
+/// agentic, tool/code-heavy chat's real content tokenizes far less efficiently than
+/// prose (observed ~2.3 chars/token on a real chat's `os.execute_command`/
+/// `web.request`-heavy tail, against a naive ~4+ for plain English). Too little
+/// margin here means `compaction_keep_chars` ends up corresponding to nearly the
+/// *entire* context window in real tokens instead of a meaningfully smaller kept
+/// slice — the kept tail then sits right at that ceiling with almost nothing left
+/// eligible to fold, so compaction re-triggers on nearly every turn (each one
+/// changing the summary/facts and re-paying a full prompt-cache miss) instead of
+/// settling comfortably below the trigger for a while. Undershooting the other way
+/// (folding somewhat more than strictly necessary) has no correctness risk — it only
+/// costs a bit of verbatim detail that the summary/facts channel already exists to
+/// preserve.
 const TRIGGER_FRACTION: f64 = 0.75;
-const KEEP_CHARS_PER_TOKEN: f64 = 2.0;
+const KEEP_CHARS_PER_TOKEN: f64 = 1.2;
 
 /// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
 /// call (see `advance`), applying to every conversation. One entry per rule, so
@@ -138,6 +151,12 @@ const SYSTEM_PROMPT: &[&str] = &[
      install anything else) would just do it faster and more reliably. If you've already shown \
      a capability works earlier in this same conversation, remember and reuse it rather than \
      defaulting back to manual work out of habit.",
+    "Before each tool call, briefly say (1-2 sentences, not a wall of reasoning) what you're \
+     about to do, why, and what you expect the result to tell you. After the result comes \
+     back, briefly note whether it matched that expectation before deciding the next step. \
+     This applies every time, including partway through a long chain of tool calls in the \
+     same turn — someone reading the conversation should be able to follow what you're doing \
+     and why without reading your thinking.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is

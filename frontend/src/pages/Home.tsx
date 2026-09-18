@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import type { ThinkChoice } from '../api/agent/types'
 import { Div, Label } from '../components/primitives'
@@ -15,12 +15,35 @@ import { setPendingPrompt } from '../utils/pendingPrompt'
 function Home() {
   useDocumentTitle('Llm-tulpa')
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { greet, inputExample, chatName } = usePrompts()
   const { createChat } = useChats()
   const [greeting, setGreeting] = useState('')
   const [greetingLoading, setGreetingLoading] = useState(true)
   const [placeholder, setPlaceholder] = useState('')
   const [creating, setCreating] = useState(false)
+
+  // Seed the input from a ?prompt= query param (set by the launcher) and auto-send.
+  const launchPrompt = searchParams.get('prompt')
+
+  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[]) => {
+    setCreating(true)
+    try {
+      const name = await chatName(prompt, images)
+      const chat = await createChat(name)
+      setPendingPrompt(chat.id, prompt, think, images, fileIds)
+      navigate(`/chat?id=${chat.id}`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  useEffect(() => {
+    if (launchPrompt && !creating) {
+      const decoded = decodeURIComponent(launchPrompt)
+      void onSend(decoded, true, [], [])
+    }
+  }, [])
 
   // Both `greet` and `inputExample` can take many seconds on a cache miss. Without
   // aborting on unmount, navigating away mid-request (and back, repeatedly) leaves the
@@ -55,18 +78,6 @@ function Home() {
 
     return () => controller.abort()
   }, [inputExample])
-
-  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[]) => {
-    setCreating(true)
-    try {
-      const name = await chatName(prompt, images)
-      const chat = await createChat(name)
-      setPendingPrompt(chat.id, prompt, think, images, fileIds)
-      navigate(`/chat?id=${chat.id}`)
-    } finally {
-      setCreating(false)
-    }
-  }
 
   const loading = greetingLoading || creating
 

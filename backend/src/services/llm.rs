@@ -22,6 +22,28 @@ use crate::tools::base::Tool;
 const MIN_TOKENS_PER_SEC: f64 = 3.0;
 const PROMPT_PROCESSING_BUFFER: Duration = Duration::from_secs(10 * 60);
 
+/// How many characters per token for a rough prompt-size estimate used to cap
+/// `num_predict` per-request — applied before subtracting from `max_predict_tokens` to
+/// leave room for whatever the model generates. Needs real margin *below* the actual
+/// ratio of whatever content is being estimated, not a plausible-looking average — this
+/// project's real, agentic tool/code-heavy traffic measures close to ~2.3 chars/token
+/// (English prose alone would be ~3.5–4), and a value too close to or above that lets
+/// the estimate undercount real prompt-token usage on exactly the workload that matters
+/// most here. Undercounting is the dangerous direction: it inflates the computed
+/// `num_predict`, so a request already close to the real context ceiling can still be
+/// sent believing it has far more generation room than it actually does, and get
+/// hard-truncated by llama.cpp mid-output — including mid-tool-call-JSON, which fails
+/// the whole turn outright rather than just returning a short answer.
+const PROMPT_CHARS_PER_TOKEN: f64 = 1.5;
+
+/// A flat token overhead added to the prompt-size estimate for content that character
+/// count alone can't capture — tool definition JSON schemas, chat template special
+/// tokens (`<s>`, `<|start_header|>`, etc.), and per-token overhead from the tokenizer
+/// itself. Chosen to comfortably cover a typical tool-calling workload (6–8 tools with
+/// full parameter schemas ≈ 3–5K tokens) with room for heavier setups; also doubles
+/// for the `generate` path where it covers template overhead without tool definitions.
+const PROMPT_TOKEN_SAFETY_MARGIN: u64 = 1024;
+
 fn request_timeout(max_predict_tokens: i32) -> Duration {
     Duration::from_secs_f64(max_predict_tokens as f64 / MIN_TOKENS_PER_SEC) + PROMPT_PROCESSING_BUFFER
 }
@@ -33,16 +55,6 @@ pub struct OllamaService {
     client: reqwest::Client,
     base_url: String,
     model_name: String,
-    /// Hard ceiling on how many tokens a single generation can produce, sent as
-    /// `options.num_predict` on every request. Ollama defaults `num_predict` to `-1`
-    /// (unlimited) when it's omitted, so without this a model that never emits a stop
-    /// token keeps generating indefinitely — the actual root cause of the
-    /// runaway-generation incident that `REQUEST_TIMEOUT` above only band-aids over
-    /// (that timeout stops the client from waiting forever, but does nothing to stop
-    /// Ollama's own generation from continuing to run server-side after the client's
-    /// given up). Sourced from `OLLAMA_CONTEXT_LENGTH` (`main.rs`) — matches Ollama's
-    /// real context window by construction instead of a separately hardcoded number
-    /// that could silently drift out of sync with it.
     max_predict_tokens: i32,
 }
 
@@ -97,6 +109,36 @@ impl OllamaService {
             .collect()
     }
 
+    /// Computes a per-request `num_predict` cap for the `generate` path: `char_count`
+    /// is just `prompt`'s own length, no tool overhead — see `compute_num_predict_base`.
+    fn compute_num_predict_generate(&self, prompt: &str) -> i32 {
+        self.compute_num_predict_base(prompt.len(), 0)
+    }
+
+    /// Computes a per-request `num_predict` cap for the `chat` path. `tool_overhead_tokens`
+    /// is the real token count of the serialized tool-definition JSON actually being sent
+    /// (computed at the call site, not guessed) — see `compute_num_predict_base`.
+    fn compute_num_predict_chat(&self, messages: &[OllamaChatMessage], tool_overhead_tokens: u64) -> i32 {
+        let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+        self.compute_num_predict_base(total_chars, tool_overhead_tokens)
+    }
+
+    /// Shared calculation: `max_predict_tokens - (char_count / PROMPT_CHARS_PER_TOKEN) -
+    /// PROMPT_TOKEN_SAFETY_MARGIN - tool_overhead_tokens`, clamped to a positive floor.
+    /// `saturating_sub` rather than a plain `-` — `char_count`'s real token cost can
+    /// exceed this estimate (see `PROMPT_CHARS_PER_TOKEN`'s own doc comment), and on a
+    /// prompt already this close to `max_predict_tokens`, an unsigned underflow here
+    /// would silently wrap to a huge value in a release build instead of panicking,
+    /// producing a nonsense `num_predict` that could reopen the exact unbounded-
+    /// generation failure mode this whole mechanism exists to prevent.
+    fn compute_num_predict_base(&self, char_count: usize, tool_overhead_tokens: u64) -> i32 {
+        let estimated_tokens = (char_count as f64 / PROMPT_CHARS_PER_TOKEN) as u64;
+        let reserved = estimated_tokens + PROMPT_TOKEN_SAFETY_MARGIN + tool_overhead_tokens;
+        let remaining = (self.max_predict_tokens as u64).saturating_sub(reserved);
+        // Minimum generation budget so a response can at least be returned (even if short)
+        // rather than being truncated to zero tokens.
+        remaining.max(256) as i32
+    }
 
     /// Calls Ollama's legacy `/api/generate` endpoint: raw prompt string in, raw
     /// completion string out. No message roles, no chat history, no tool calls — kept
@@ -111,12 +153,13 @@ impl OllamaService {
     /// on our end.
     pub async fn generate(&self, prompt: String, think: Option<bool>) -> Result<OllamaGenerateResponse, OllamaErrors> {
         let url = format!("{}/api/generate", self.base_url);
+        let num_predict = self.compute_num_predict_generate(&prompt);
         let body = OllamaGenerateRequest {
             model: self.model_name.clone(),
             prompt,
             stream: false,
             think: Value::Bool(think.unwrap_or(true)),
-            options: OllamaOptions { num_predict: self.max_predict_tokens },
+            options: OllamaOptions { num_predict },
         };
 
         tracing::info!("calling ollama /api/generate");
@@ -167,6 +210,17 @@ impl OllamaService {
         let url = format!("{}/api/chat", self.base_url);
 
         let definitions = Self::tool_definitions(tools);
+
+        // Serialize the tool definitions to compact JSON (exactly what hits Ollama's wire)
+        // and count the bytes → tokens for an accurate overhead estimate, computed before
+        // `definitions` moves into `tools` below so nothing needs cloning for this.
+        let tool_overhead_tokens = if definitions.is_empty() {
+            0
+        } else {
+            let json_bytes = serde_json::to_string(&definitions).unwrap_or_default().len();
+            (json_bytes as f64 / PROMPT_CHARS_PER_TOKEN).ceil() as u64
+        };
+
         let tools = if definitions.is_empty() {
             None
         } else {
@@ -178,13 +232,14 @@ impl OllamaService {
             messages.push(new_message);
         }
 
+        let num_predict = self.compute_num_predict_chat(&messages, tool_overhead_tokens);
         let body = OllamaChatRequest {
             model: self.model_name.clone(),
             messages,
             stream: false,
             think: think_param(think),
             tools,
-            options: OllamaOptions { num_predict: self.max_predict_tokens },
+            options: OllamaOptions { num_predict },
         };
 
         tracing::info!("calling ollama /api/chat");

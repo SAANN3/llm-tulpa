@@ -41,9 +41,9 @@ RUN apt-get update \
 # there:
 #   - python3 + pip + venv: the most common ad hoc scripting/calculator need (see
 #     the "grinding through arithmetic by hand" SYSTEM_PROMPT rule this unblocks)
-#   - nodejs (npm bundled, via NodeSource above), golang-go, rustc + cargo: the
-#     other three languages likely to come up, each with their own package manager
-#     already present
+#   - nodejs (npm bundled, via NodeSource above), golang-go: two of the other
+#     languages likely to come up, each with its own package manager already
+#     present (rustc/cargo come from the builder stage instead — see below)
 #   - build-essential: gcc/make, needed by anything that compiles C/C++ or a native
 #     Python extension
 #   - git: cloning/inspecting a repo
@@ -67,7 +67,6 @@ RUN apt-get update \
         python3 python3-pip python3-venv \
         nodejs \
         golang-go \
-        rustc cargo \
         build-essential \
         git jq unzip zip curl wget poppler-utils \
         ripgrep fd-find tree sqlite3 \
@@ -78,6 +77,29 @@ RUN apt-get update \
     # run `fd` like anywhere else, instead of needing to already know this
     # distro-specific rename.
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# rustc/cargo, copied from the builder stage instead of `apt-get install rustc
+# cargo` above — Debian bookworm's own packaged rustc is old enough (1.63) to
+# reject current-edition crates outright, and the builder stage already has a
+# current, verified-working toolchain (it just built this very binary with it) —
+# copying it costs no extra download and can't drift out of sync with what
+# actually built `backend`. `/usr/local/cargo/bin` holds only small rustup-proxy
+# binaries (~20MB, no registry/target cache — that's `/usr/local/cargo/registry`,
+# a sibling directory deliberately left behind so this doesn't drag the builder's
+# own dependency cache along); the real compiler and std libs are the ~600MB
+# under `/usr/local/rustup`, which is what `RUSTUP_HOME` below points the proxies
+# at. Both copied with the official rust image's own permissions intact (already
+# world-read/write/execute there, not tightened here) — this container runs as a
+# non-root numeric UID (`user:` in compose.yaml), same reasoning as the
+# Playwright browsers' `chmod -R a+rX` a few lines up. `CARGO_HOME` is
+# deliberately left unset (defaults to `$HOME/.cargo`) rather than pointed here —
+# cargo needs somewhere *writable* for its own registry/target cache, and the
+# real per-user home this container's `/home:/home` mount exposes already is
+# one; this directory only ever needs to be read from.
+COPY --from=builder /usr/local/rustup /usr/local/rustup
+COPY --from=builder /usr/local/cargo/bin /usr/local/cargo/bin
+ENV RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:$PATH
 
 # Playwright + a real headless Chromium, baked in the same permanent way as
 # everything else above — for driving/screenshotting a real page (navigate, wait,
