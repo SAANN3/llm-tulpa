@@ -1,7 +1,7 @@
 services:
   ollama:
-    # This is the default, day-to-day backend — root `compose.yaml`'s `OLLAMA_URL`
-    # points here. `llama-mtp`/`mtp-proxy` below are the optional ones now: real
+    # This is the default, day-to-day backend — the backend's `ollama.url`
+    # (backend/data/settings.json) points here. `llama-mtp`/`mtp-proxy` below are the optional ones now: real
     # testing through the actual chat API (not an isolated benchmark) found MTP
     # unbearably slow at real conversation-depth context on the model this project
     # was running at the time (~4-5 tok/s sustained, despite a much faster
@@ -18,7 +18,10 @@ services:
     ulimits:
       memlock: -1
     environment:
-      - MODEL_FILE=${MODEL_FILE:-Qwen3-4B-Q4_K_M.gguf}
+      # Optional: a .gguf under MODEL_DIR to register as the model `local-llm` at container
+      # start. Empty by default — models are added from the app instead (pull one, or import
+      # any .gguf from MODEL_DIR), and nothing needs to be named here.
+      - MODEL_FILE=${MODEL_FILE:-}
       # Optional: a mmproj/CLIP projector .gguf, paired with MODEL_FILE to give it
       # vision. Empty by default — plain-text models don't need one.
       - MMPROJ_FILE=${MMPROJ_FILE:-}
@@ -91,7 +94,7 @@ services:
   # MTP *did* clearly win — this is genuinely task-dependent, not a flat "don't
   # use it," which is why it's kept configured and easy to reach for rather than
   # deleted: `docker compose up -d llama-mtp mtp-proxy`, then point the backend's
-  # OLLAMA_URL (root `compose.yaml`) at `http://localhost:11435` instead.
+  # `ollama.url` (backend/data/settings.json) at `http://localhost:11435` instead.
   #
   # `profiles: ["mtp"]` is what keeps this (and `mtp-proxy` below) out of a plain
   # `docker compose up -d` (confirmed: Compose excludes a profiled service from a

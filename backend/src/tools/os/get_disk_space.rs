@@ -44,7 +44,7 @@ impl Tool for GetDiskSpaceTool {
         // this path purely so this tool can see genuine host disk stats instead of the
         // container's own (irrelevant to the user) overlay storage — see compose.yaml.
         // Unset on a native run, where paths are already the real ones.
-        let host_root = std::env::var("HOST_ROOT").ok();
+        let host_root = crate::config::host_root();
 
         let mut seen_mount_points = HashSet::new();
         let out: Vec<DiskOut> = disks

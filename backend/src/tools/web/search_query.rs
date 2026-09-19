@@ -13,7 +13,7 @@ const MAX_NUM_RESULTS: u32 = 20;
 /// zero-arg unit struct, like every other tool, so there's nowhere to stash a
 /// constructor-time value.
 fn searxng_base_url() -> String {
-    std::env::var("SEARXNG_URL").unwrap_or_else(|_| "http://localhost:8080".to_string())
+    crate::config::searxng_url()
 }
 
 pub struct SearchQueryTool;

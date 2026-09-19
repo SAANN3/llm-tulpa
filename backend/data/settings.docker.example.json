@@ -1,0 +1,12 @@
+{
+  "bind_addr": "0.0.0.0:3000",
+  "ollama": {
+    "url": "http://localhost:11434",
+    "context_length": 32768
+  },
+  "agent_history_len": 200,
+  "searxng_url": "http://localhost:8090",
+  "files_dir": null,
+  "host_root": "/hostfs",
+  "model_dir": "/models"
+}

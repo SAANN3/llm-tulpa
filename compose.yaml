@@ -56,41 +56,13 @@ services:
     # approval for every single call.
     pid: host
     environment:
-      # Plain Ollama is the default day-to-day backend — real-world testing
-      # (through this actual chat API, not an isolated benchmark) found `llama-mtp`
-      # unbearably slow on real conversation-depth context (~4-5 tok/s) despite a
-      # much faster clean-benchmark ceiling, while Ollama itself easily clears
-      # 60+ tok/s on the current model at the same real context depth. `llama-mtp`/
-      # `mtp-proxy` (llm/compose.yaml) stay fully configured and buildable for
-      # occasional per-task A/B (`docker compose up -d llama-mtp mtp-proxy`, then
-      # point this at :11435 instead) — see that file's own comment and project
-      # memory for the fuller writeup, including where MTP *did* win.
-      - OLLAMA_URL=http://localhost:11434
-      # Reached the same way ollama/postgres are under host networking — port
-      # 8090 is the searxng-nginx rate-limiting sidecar in front of the real
-      # searxng service (which binds 8080 directly, see searxng/compose.yaml and
-      # searxng/nginx.conf); both run network_mode: host too, for real outbound
-      # internet access (a bridged searxng container couldn't reach google/bing/
-      # duckduckgo at all — didn't go through the host's VPN routing).
-      - SEARXNG_URL=http://localhost:8090
-      # No database settings here on purpose: the backend reads its connection only from its
-      # JSON config file (`data/settings.json` next to the binary, persisted in the
-      # `backend-data` volume below), which the first-run setup wizard writes. Postgres
-      # is reached at `localhost:5432` (host networking), user/password as in
-      # postgres/compose.yaml.
-      - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
-      # Same variable name/default as llm/compose.yaml's OLLAMA_CONTEXT_LENGTH — set
-      # it once (e.g. in a root .env file) and both Ollama's real context and this
-      # backend's token-budget math stay in sync.
-      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}
-      # 0.0.0.0 inside the container so Docker's port publishing can reach it — the
-      # host-side publish below is what actually keeps this loopback-only from
-      # outside the machine, matching the native default's intent.
-      - BIND_ADDR=0.0.0.0:3000
+      # Nothing about *the app* is configured here: Ollama's and SearXNG's addresses, the
+      # context length, the bind address and everything else live in the backend's own
+      # `backend/data/settings.json` (bind-mounted below; `backend/data/settings.docker.example.json`
+      # lists every option, and `start-docker.sh` copies it into place on first run). Ollama and
+      # SearXNG are reached at `localhost` there, since this container shares the host's network.
+      # What stays here is only what the *tools* need from the process environment:
       - HOME=${HOME}
-      # Tells os.get_disk_space where the host's real root is mounted (below), so it
-      # reports genuine host disk stats instead of the container's own storage.
-      - HOST_ROOT=/hostfs
       # Lets a GUI app the model launches (a non-headless Chromium via Playwright, or
       # anything else that wants a real display) actually show up as a normal window
       # on the host's own screen, instead of only ever running headless. `:0` matches
@@ -104,10 +76,17 @@ services:
       # expects it — only the socket directory itself (below) was actually missing.
       - DISPLAY=${DISPLAY:-:0}
     volumes:
-      # The backend's config file (`data/settings.json` next to the binary — database
-      # connection and JWT secret). A named volume so it survives rebuilds/recreation;
-      # it inherits the ownership the Dockerfile gives that directory.
-      - backend-data:/usr/local/bin/data
+      # The backend's config file (`data/settings.json` next to the binary — the database
+      # connection, the JWT secret, and every other setting). A host folder rather than a named
+      # volume so it can be edited by hand, and survives rebuilds/recreation either way. Created
+      # by the repo (`backend/data/.gitkeep`) so it's owned by you, not by root.
+      - ./backend/data:/usr/local/bin/data
+      # The folder of local .gguf model files, read-only — the same one Ollama mounts (see
+      # llm/compose.yaml), so the app can list them and import them as models without any
+      # download. `settings.json`'s `model_dir` names it as `/models` in here. Same variable as
+      # llm/compose.yaml's; the included llm compose reads the root `.env` too, so setting
+      # `MODEL_DIR` there (when it isn't the default `./llm`) points both services at it.
+      - "${MODEL_DIR:-./llm}:/models:ro"
       # Passthrough so the storage.* tools can read/write real files at the same
       # absolute paths as a native run. Docker won't let a bind mount target `/`
       # itself, so this covers every user's home directory instead — everything
@@ -146,9 +125,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  backend-data:
 
 networks:
   app-net:
