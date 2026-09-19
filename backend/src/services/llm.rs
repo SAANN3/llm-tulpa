@@ -1,3 +1,5 @@
+mod transfer;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -5,6 +7,8 @@ use axum::http::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
+
+pub use transfer::ImportProgress;
 
 use crate::services::error::ErrorService;
 use crate::tools::base::Tool;
@@ -287,13 +291,8 @@ impl OllamaService {
         Ok(parsed.models)
     }
 
-    /// Proxies a fetch of ollama.com's public model library so the frontend can parse a
-    /// discoverable catalog without tripping over CORS (ollama.com sends no permissive
-    /// CORS headers, so the browser can't fetch it directly). Returns the raw page text
-    /// as-is — parsing/searching lives on the client (a deliberate decision: the catalog's
-    /// HTML shape is brittle, and keeping the parser client-side means a shape change only
-    /// needs a frontend fix, not a backend redeploy). The client keeps its own small
-    /// bundled fallback list for when this can't be reached.
+    /// Fetches ollama.com's public model library page. There is no API behind it, so
+    /// `ModelLibrary` parses the returned HTML into a structured catalog.
     pub async fn fetch_catalog(&self) -> Result<String, OllamaErrors> {
         let res = self
             .client
@@ -313,28 +312,6 @@ impl OllamaService {
         }
 
         res.text().await.map_err(|e| OllamaErrors::DecodeFailed(e.to_string()))
-    }
-
-    /// Pulls a model into this Ollama instance (`/api/pull`, non-streaming — the call
-    /// returns only once the pull finishes or fails). A pull of an already-present model
-    /// is a fast no-op on Ollama's side, so callers don't need to check first.
-    pub async fn pull_model(&self, name: &str) -> Result<(), OllamaErrors> {
-        let url = format!("{}/api/pull", self.base_url);
-        let body = serde_json::json!({ "model": name, "stream": false });
-
-        let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
-            tracing::error!(error = %e, "ollama /api/pull request failed");
-            OllamaErrors::RequestFailed(e.to_string())
-        })?;
-
-        if !res.status().is_success() {
-            let status = res.status();
-            let body = res.text().await.unwrap_or_default();
-            tracing::error!(%status, body, "ollama /api/pull returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
-        }
-
-        Ok(())
     }
 
     /// Builds a `user`-role message from plain text, so callers can hand `chat` a
@@ -766,6 +743,12 @@ pub enum OllamaErrors {
     RequestFailed(String),
     UnexpectedStatus(StatusCode),
     DecodeFailed(String),
+    /// Ollama refused a model-management request and said why (a bad model name, a corrupt
+    /// file, ...) — the text is meant to be shown to the person who asked.
+    Rejected(StatusCode, String),
+    /// A model-management operation failed for a reason of its own (an unreadable file, a pull
+    /// that ended without success).
+    Failed(String),
 }
 
 impl From<OllamaErrors> for ErrorService {
@@ -782,6 +765,10 @@ impl From<OllamaErrors> for ErrorService {
                 StatusCode::BAD_GATEWAY,
                 format!("ollama returned status {code}"),
             ),
+            OllamaErrors::Rejected(code, msg) => {
+                ErrorService::new(if code.is_client_error() { StatusCode::BAD_REQUEST } else { StatusCode::BAD_GATEWAY }, msg)
+            }
+            OllamaErrors::Failed(msg) => ErrorService::new(StatusCode::BAD_GATEWAY, msg),
             OllamaErrors::DecodeFailed(msg) => {
                 // The precise cause (including the raw body Ollama sent) is already
                 // logged at the source in `decode_response` — this only has the

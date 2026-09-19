@@ -5,6 +5,7 @@ pub mod error;
 pub mod file_store;
 pub mod llm;
 pub mod migrate;
+pub mod model_library;
 pub mod model_store;
 pub mod permission_store;
 pub mod plugin_settings_store;

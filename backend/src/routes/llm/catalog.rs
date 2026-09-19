@@ -1,32 +1,22 @@
 use std::sync::Arc;
 
 use axum::{extract::State, Json};
-use serde::Serialize;
-use utoipa::ToSchema;
 
-use crate::state::AppState;
+use crate::{routes::auth::OwnerUser, services::model_library::Catalog, state::AppState};
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct CatalogResponse {
-    /// The raw ollama.com/library page, proxied for the client to parse — `null` when
-    /// ollama.com couldn't be reached, in which case the client falls back to its own
-    /// small bundled list rather than showing an error. See `OllamaService::fetch_catalog`.
-    html: Option<String>,
-}
-
-/// Proxies ollama.com's public model library so the frontend can present a discoverable
-/// catalog it otherwise couldn't fetch directly (CORS). Never fails the request on a
-/// fetch error — an unreachable ollama.com just yields `html: null`, letting the client
-/// degrade to its bundled fallback list. Parsing lives entirely on the client.
+/// Owner-only. Ollama's public model library as structured data — what the model picker offers
+/// to pull. Parsed on the backend from ollama.com's page (see `model_library::parse_catalog`);
+/// never fails the request on a fetch error — when ollama.com can't be reached, `live` is
+/// `false` and `models` is a short built-in list.
 #[utoipa::path(
     get,
     path = "/api/llm/catalog",
     tag = "llm",
     responses(
-        (status = 200, description = "Proxied catalog page (or null if unreachable)", body = CatalogResponse),
+        (status = 200, description = "The model library (or a built-in fallback)", body = Catalog),
+        (status = 403, description = "Only the owner can browse the catalog", body = crate::services::error::ErrorBody),
     ),
 )]
-pub async fn catalog(State(state): State<Arc<AppState>>) -> Json<CatalogResponse> {
-    let html = state.ollama.fetch_catalog().await.ok();
-    Json(CatalogResponse { html })
+pub async fn catalog(State(state): State<Arc<AppState>>, _owner: OwnerUser) -> Json<Catalog> {
+    Json(state.library.catalog().await)
 }

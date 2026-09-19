@@ -91,6 +91,7 @@ impl Tool for ReadImageTool {
                     format!("ollama returned status {status}")
                 }
                 crate::services::llm::OllamaErrors::DecodeFailed(msg) => msg,
+                crate::services::llm::OllamaErrors::Rejected(_, msg) | crate::services::llm::OllamaErrors::Failed(msg) => msg,
             };
             ToolError::FailedUnknown(format!("couldn't read the image: {reason}"))
         })?;

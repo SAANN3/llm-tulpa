@@ -69,3 +69,30 @@
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
+
+.model-picker__meta--error {
+  color: var(--color-danger);
+  white-space: normal;
+}
+
+.model-picker__row--task {
+  align-items: flex-start;
+}
+
+.model-picker__bar {
+  height: 6px;
+  margin-top: $space-1;
+  border: $line-border solid var(--color-border);
+}
+
+.model-picker__bar-fill {
+  height: 100%;
+  width: calc(var(--fraction, 0) * 100%);
+  background: var(--color-tertiary);
+  transition: width 0.4s linear;
+}
+
+.model-picker__projector {
+  flex-shrink: 0;
+  max-width: 40%;
+}
