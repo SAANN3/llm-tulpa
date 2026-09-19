@@ -6,5 +6,5 @@
   border: 1px solid currentColor;
   border-radius: 0;
   overflow: hidden;
-  @include dos-shadow(rgba(0, 0, 0, 0.4));
+  @include dos-shadow(var(--color-shadow));
 }

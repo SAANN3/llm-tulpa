@@ -31,7 +31,8 @@ src/
 ├── context/         # app-wide React context providers
 ├── hooks/           # data-fetching and other stateful logic shared across pages
 ├── pages/           # one file per route
-└── themes/          # theme CSS files + the variant system — see THEMING.md
+├── styles/          # one .scss per component/page, plus variants.scss (the shared variant system)
+└── themes/          # one .scss per theme (the three palette colors) — see THEMING.md
 ```
 
 ## Docs

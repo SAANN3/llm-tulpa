@@ -6,6 +6,11 @@
   --color-surface: color-mix(in srgb, gray 6%, var(--color-secondary));
   --color-surface-strong: color-mix(in srgb, var(--color-tertiary) 12%, var(--color-secondary));
   --color-border: color-mix(in srgb, gray 18%, var(--color-secondary));
+  --color-surface-accent: color-mix(in srgb, gray 12%, transparent);
+  --color-shadow: color-mix(in srgb, black 40%, transparent);
+  // Semantic, not part of a theme's palette: an error reads as an error on every theme,
+  // so it's defined once here instead of being repeated in each theme file.
+  --color-danger: #e5484d;
 }
 
 @supports not selector(::-webkit-scrollbar) {
