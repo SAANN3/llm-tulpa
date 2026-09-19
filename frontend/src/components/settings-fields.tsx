@@ -1,4 +1,4 @@
-﻿import {useState} from 'react'
+import {useState} from 'react'
 import '../styles/settings-fields.scss'
 import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
 import {ModelPicker} from './model-picker.tsx'

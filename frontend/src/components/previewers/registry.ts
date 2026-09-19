@@ -12,6 +12,8 @@ const ImagePreview = lazy(() => import('./image-preview.tsx'))
 const VideoPreview = lazy(() => import('./video-preview.tsx'))
 const AudioPreview = lazy(() => import('./audio-preview.tsx'))
 
+// Not exhaustive by design: an extension missing here falls back to plain text (still readable,
+// just uncolored), not "unknown file type".
 const CODE_EXTENSIONS = [
     'py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'go', 'c', 'h', 'cpp', 'hpp', 'cc',
     'java', 'kt', 'kts', 'swift', 'rb', 'php', 'cs', 'json', 'yaml', 'yml', 'toml', 'ini',
@@ -19,6 +21,9 @@ const CODE_EXTENSIONS = [
     'hs', 'elm', 'clj', 'vue', 'svelte', 'graphql', 'proto', 'dockerfile', 'diff', 'patch',
 ]
 
+// Media previewers serve `kind: 'file'` attachments (referenced by id, so an uploaded or
+// `ui.attach_file`-attached image lands here) — a separate path from `kind: 'image'`, an
+// inline base64 image typed into the composer, which never goes through `getPreviewer`.
 export const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif']
 export const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v']
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']
@@ -32,6 +37,8 @@ const EXTENSION_PREVIEWERS: Record<string, Previewer> = {
     docx: DocxPreview,
     xlsx: XlsxPreview,
     xls: XlsxPreview,
+    // SheetJS auto-detects CSV from raw bytes just like xlsx, so this gets a real table view
+    // instead of a wall of plain text.
     csv: XlsxPreview,
 }
 
@@ -43,6 +50,8 @@ for (const extension of CODE_EXTENSIONS) {
     EXTENSION_PREVIEWERS[extension] = CodePreview
 }
 
+// `.pptx` is deliberately unmapped: there's no good lightweight client-side slide renderer,
+// so it lands on `UnknownFilePreview`'s fallback rather than a half-working dedicated one.
 export const getPreviewer = (extension: string): Previewer | null => EXTENSION_PREVIEWERS[extension] ?? null;
 
 export const getMediaKind = (extension: string): 'image' | 'video' | null => {

@@ -1,4 +1,4 @@
-﻿import {ChevronDown, ChevronRight} from 'pixelarticons/react'
+import {ChevronDown, ChevronRight} from 'pixelarticons/react'
 
 import '../styles/tool-message.scss'
 import {Div, Label} from './primitives'

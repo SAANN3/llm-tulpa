@@ -1,4 +1,4 @@
-﻿import {useState} from 'react'
+import {useState} from 'react'
 import '../styles/tool-confirmation.scss'
 import type {DangerousToolCall, Decisions, PendingConfirmations} from '../hooks/use-messages.ts'
 import {ToolAllowance} from '../hooks/use-messages.ts'

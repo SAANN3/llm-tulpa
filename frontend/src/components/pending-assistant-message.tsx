@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import '../styles/pending-assistant-message.scss'
 import { Div, Label } from './primitives'
@@ -10,7 +10,10 @@ export function PendingAssistantMessage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
   useEffect(() => {
-    /** Recomputes elapsed time from a fixed start so background throttling doesn't leave it stale */
+    // Derived from a fixed start time on every tick rather than incremented: a background
+    // tab's timers are throttled, so a counter falls behind real time and a turn that is
+    // still running looks stalled the moment you tab back in. `visibilitychange` forces one
+    // tick on refocus instead of waiting for the next throttled interval.
     const tick = () => setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000))
     const id = setInterval(tick, 1000)
     document.addEventListener('visibilitychange', tick)

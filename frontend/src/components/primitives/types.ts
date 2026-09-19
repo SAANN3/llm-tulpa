@@ -1,5 +1,8 @@
 import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
 
+// `variant` is forwarded as a `data-variant` attribute, not resolved to a color here — see
+// THEMING.md for where variant colors may (and may not) be defined; getting that wrong causes
+// silent collisions between themes.
 export interface OverrideThemeParams {
   style?: CSSProperties
   className?: string

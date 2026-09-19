@@ -1,4 +1,4 @@
-﻿import {useState} from 'react'
+import {useState} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'

@@ -1,4 +1,4 @@
-﻿import type {ChangeEvent, CSSProperties, DragEvent} from 'react'
+import type {ChangeEvent, CSSProperties, DragEvent} from 'react'
 import {useEffect, useRef, useState} from 'react'
 import type {ThinkChoice} from '../api/agent/types'
 import {uploadFile} from '../api/files/upload'

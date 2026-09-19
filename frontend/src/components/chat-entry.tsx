@@ -1,4 +1,4 @@
-﻿import {useRef, useState} from 'react'
+import {useRef, useState} from 'react'
 import type {MouseEvent} from 'react'
 import {MoreVertical} from 'pixelarticons/react'
 import '../styles/chat-entry.scss'

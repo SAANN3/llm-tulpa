@@ -2,7 +2,11 @@ import axios from 'axios'
 import {BACKEND_URL} from '../../config'
 import type {FileOut} from './types'
 
-/** Uploads a file as multipart form data */
+/**
+ * Uploads a file as multipart form data. `chatId` may be omitted to upload before a chat
+ * exists (composing on the home page): the file comes back with `chat_id: null` and is
+ * claimed automatically when it's attached to a sent message.
+ */
 export const uploadFile = async (file: File, chatId?: number, readOnly?: boolean): Promise<FileOut> => {
     const form = new FormData()
     if (chatId !== undefined) form.append('chat_id', String(chatId))

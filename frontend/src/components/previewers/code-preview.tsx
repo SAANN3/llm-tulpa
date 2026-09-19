@@ -1,6 +1,6 @@
 import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter'
 import {oneDark, oneLight} from 'react-syntax-highlighter/dist/esm/styles/prism'
-import {useTheme} from '../../context/use-еheme.ts'
+import {useTheme} from '../../context/use-theme.ts'
 import {Div, Label} from '../primitives'
 import type {PreviewerProps} from './types'
 import {useTextContent} from './use-text-content.ts'

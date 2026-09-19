@@ -1,7 +1,7 @@
-﻿import type {CSSProperties} from 'react'
+import type {CSSProperties} from 'react'
 import '../styles/theme-preview.scss'
 import {Div, Label, RadioButton} from './primitives'
-import {useTheme} from '../context/use-еheme.ts'
+import {useTheme} from '../context/use-theme.ts'
 import {themeDisplayNames} from '../themes'
 import type {ThemeName} from '../themes'
 

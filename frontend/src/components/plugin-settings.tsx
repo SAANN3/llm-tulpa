@@ -1,4 +1,4 @@
-﻿import {useEffect, useState} from 'react'
+import {useEffect, useState} from 'react'
 import {Minus, Plus} from 'pixelarticons/react'
 import '../styles/plugin-settings.scss'
 import type {PluginInfo, PropertyInfo, PropertyType} from '../api/plugins/types'

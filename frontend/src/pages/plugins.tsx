@@ -1,4 +1,4 @@
-﻿import {useState} from 'react'
+import {useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 
 import {Gear} from 'pixelarticons/react'

@@ -1,4 +1,4 @@
-﻿import {useRef} from 'react'
+import {useRef} from 'react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'

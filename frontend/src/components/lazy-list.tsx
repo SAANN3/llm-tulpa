@@ -17,13 +17,26 @@ export interface LazyListProps {
   className?: string
 }
 
-/** A scrollable container for incrementally-loaded content, firing callbacks near either edge */
+/**
+ * A scrollable container for incrementally-loaded content (chat history). Fires
+ * `onTopReached`/`onBottomReached` within `threshold` px of either edge — the caller decides
+ * whether to load more and guards against firing again while that load is in flight.
+ *
+ * When `children` change on their own (older items prepended after a top-reach load), scroll
+ * position is kept relative to the content rather than to the raw scrollbar offset, so growth
+ * above the viewport doesn't yank it. `jumpToTop`/`jumpToBottom` (via `ref`) are the explicit
+ * override for when the caller wants an edge snap instead, e.g. after sending a message.
+ */
 export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyList(
   { children, threshold = 80, onTopReached, onBottomReached, style, className },
   ref,
 ) {
   const innerRef = useRef<HTMLDivElement>(null)
   const anchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  // Set synchronously when a jump is *called*, not when its deferred `requestAnimationFrame`
+  // runs — a render committing in that gap (the one that paints the content the jump is
+  // reacting to) would otherwise run the anchor-restore effect below against the old anchor and
+  // leave `scrollTop` somewhere between the two edges. Both layout effects skip while it's set.
   const pendingJumpRef = useRef<'top' | 'bottom' | null>(null)
 
   useImperativeHandle(
@@ -53,6 +66,8 @@ export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyL
     [],
   )
 
+  // After every commit: restore position relative to the last known anchor, then re-anchor to
+  // the post-restore state. A cheap no-op when nothing moved.
   useLayoutEffect(() => {
     if (pendingJumpRef.current) return
     const el = innerRef.current

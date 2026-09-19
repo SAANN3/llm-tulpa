@@ -1,4 +1,4 @@
-﻿import {useEffect, useRef} from 'react'
+import {useEffect, useRef} from 'react'
 import type {ReactNode} from 'react'
 import '../styles/popup.scss'
 import {Div} from './primitives'

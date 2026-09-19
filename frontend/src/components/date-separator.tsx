@@ -1,4 +1,4 @@
-﻿import '../styles/date-separator.scss'
+import '../styles/date-separator.scss'
 import {Div, Label} from './primitives'
 import {daysBefore} from '../utils/dates'
 
