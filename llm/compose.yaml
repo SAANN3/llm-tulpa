@@ -31,7 +31,7 @@ services:
       # which is only a trade worth making on hardware tight enough to need it. Bare
       # (no `:-...`) so it's simply absent from the container's environment, and
       # Ollama falls back to its own real default, unless a deployment's own local
-      # `llm/.env` sets it — see that file for this machine's own choice. Also needs
+      # the root `.env` sets it — see `.env.example` for how. Also needs
       # OLLAMA_FLASH_ATTENTION=1 to actually take effect at all (silently ignored
       # otherwise), so that one belongs in the same opt-in `.env`, not defaulted here
       # either.
