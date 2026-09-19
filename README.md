@@ -7,13 +7,15 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 <p align="center"><em>Asked to check three paths at once — the agent reasons about it (collapsed above), then stops to ask permission before each <code>storage.list_directory</code> call.</em></p>
 
 ## Quickstart
-1. Get a model — anything Ollama can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/`, and if the filename doesn't match `llm/compose.yaml`'s default, set `MODEL_FILE` to it (a `.env` file in `llm/` is the easiest way — see [`llm/README.md`](./llm/README.md)). Optionally, for vision (see Features below), also grab a matching mmproj/CLIP projector `.gguf`, drop it in `llm/` too, and set `MMPROJ_FILE` to it.
+1. Get a model — anything Ollama can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/` (or a folder you point `MODEL_DIR` at) — the app can import it from there without downloading anything, or set `MODEL_FILE` to have Ollama register it at start (copy `.env.example` to `.env` in the repo root — see [`llm/README.md`](./llm/README.md)). You can also pull a model (from Ollama's library or Hugging Face) from inside the app. Optionally, for vision (see Features below), also grab a matching mmproj/CLIP projector `.gguf` and pair it with the model when importing it (or set `MMPROJ_FILE`).
 2. ```bash
    git clone https://github.com/SAANN3/llm-tulpa
    cd llm-tulpa
+   cp backend/data/settings.docker.example.json backend/data/settings.json
    HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose up -d
    ```
-3. Open `http://localhost:5173`. On first run a setup wizard walks you through it — timezone, an **owner account** (username + password), the model to chat with (pick an installed one or pull one from the catalog), a theme, and notifications. Under Docker the database is already configured, so that step is skipped. After setup you sign in with the owner account; the owner can add more users from the in-app Users page (there's no open self-registration), and each user's chats and settings are their own.
+   (`./start-docker.sh` does both the copy and the `up`.)
+3. Open `http://localhost:5173`. On first run a setup wizard walks you through it — timezone, an **owner account** (username + password), the model to chat with (pick an installed one or pull one from the catalog), a theme, and notifications. With Postgres from the bundled compose file, the wizard's database step is one form (`localhost`, port `5432`, user/password `postgres`); the connection is saved to `backend/data/settings.json`, which also holds every other backend setting — see [`backend/README.md`](./backend/README.md). After setup you sign in with the owner account; the owner can add more users from the in-app Users page (there's no open self-registration), and each user's chats and settings are their own.
 
 ## Features
 - Persistent chat history — every conversation, resumable across restarts.
@@ -24,7 +26,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Vision — attach images to a message from the composer, send a photo through a messaging plugin, or have the model look at an image it found itself via a file path, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Multi-user with an owner account — each user's chats and settings are their own; the owner manages the rest.
-- Switch the model per chat from the chat header, or pull a new one from the Ollama catalog without leaving the app.
+- Switch the model per chat from the chat header; the owner can pull a new one (Ollama's catalog, or a Hugging Face GGUF) or import `.gguf` files already on disk without leaving the app.
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
 - A few themes to pick from (Slate / Paper / Matcha) — will expand in the future!
 
