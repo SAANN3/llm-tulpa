@@ -26,7 +26,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Vision — attach images to a message from the composer, send a photo through a messaging plugin, or have the model look at an image it found itself via a file path, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
-- A few themes to pick from (Slate / Paper / Matcha) — will expand in the future!
+- Themes to pick from — Slate, Paper, Matcha, and the warm dark Ember, Twilight and Cinder — will expand in the future!
 
 ## Screenshots
 | | | |
