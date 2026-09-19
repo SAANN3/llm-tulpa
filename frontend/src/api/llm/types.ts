@@ -17,7 +17,13 @@ export interface LocalFile {
     /** Relative to the model directory — what an import refers to it by */
     path: string
     size_bytes: number
-    kind: 'model' | 'projector'
+    /** Read from the file's own header, not its name; `invalid` means it isn't a readable GGUF */
+    kind: 'model' | 'projector' | 'invalid'
+    error: string | null
+    /** For a model: the projector files that fit it (all that can't be ruled out) */
+    compatible_projectors: string[]
+    /** For a model: the projector to preselect, when there's a clear answer */
+    suggested_projector: string | null
 }
 
 export interface LocalFiles {

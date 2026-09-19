@@ -10,6 +10,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::services::error::ErrorService;
+use crate::services::gguf::{read_gguf_info, GgufInfo, GgufKind};
 use crate::services::llm::{ImportProgress, OllamaService};
 
 /// How long a fetched catalog is reused. The library changes slowly, and opening the model
@@ -51,15 +52,26 @@ pub enum LocalFileKind {
     Model,
     /// A vision projector (`mmproj`) — not a model on its own, paired with one to add vision.
     Projector,
+    /// Named `.gguf` but not a readable GGUF file (empty, truncated, or something else).
+    Invalid,
 }
 
-/// A `.gguf` file found in the model directory.
+/// A `.gguf` file found in the model directory. What kind it is comes from the file's own
+/// metadata header, not its name.
 #[derive(Serialize, ToSchema)]
 pub struct LocalFile {
     /// Path relative to the model directory — what an import refers to it by.
     pub path: String,
     pub size_bytes: u64,
     pub kind: LocalFileKind,
+    /// Why the file couldn't be read, when `kind` is `invalid`.
+    pub error: Option<String>,
+    /// For a model: the projector files that can give it vision (the projector's output size
+    /// matches the model's hidden size, or the files don't say so it can't be ruled out).
+    pub compatible_projectors: Vec<String>,
+    /// For a model: the one projector worth preselecting, when there's a clear answer — a
+    /// compatible projector with the same `general.name`, or the only compatible one.
+    pub suggested_projector: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -119,6 +131,9 @@ pub struct ImportRequest {
 pub struct ModelLibrary {
     ollama: Arc<OllamaService>,
     model_dir: Option<PathBuf>,
+    /// Parsed GGUF headers by path, valid while the file's size and modification time match —
+    /// listing the folder shouldn't re-read a dozen multi-megabyte headers every time.
+    headers: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, Result<GgufInfo, String>)>>>,
     catalog: tokio::sync::Mutex<Option<(Instant, Vec<CatalogModel>)>>,
     tasks: Arc<Mutex<Vec<ModelTask>>>,
     next_id: std::sync::atomic::AtomicU64,
@@ -129,6 +144,7 @@ impl ModelLibrary {
         Self {
             ollama,
             model_dir,
+            headers: Arc::new(Mutex::new(HashMap::new())),
             catalog: tokio::sync::Mutex::new(None),
             tasks: Arc::new(Mutex::new(Vec::new())),
             next_id: std::sync::atomic::AtomicU64::new(1),
@@ -165,15 +181,31 @@ impl ModelLibrary {
 
     // ---- local files ----
 
-    /// The `.gguf` files under the model directory, projectors marked as such.
-    pub fn local_files(&self) -> LocalFiles {
-        let Some(root) = &self.model_dir else {
+    /// The `.gguf` files under the model directory, each classified from its own metadata, with
+    /// every model's compatible projectors worked out. Reads file headers, so it runs on the
+    /// blocking pool.
+    pub async fn local_files(&self) -> LocalFiles {
+        let Some(root) = self.model_dir.clone() else {
             return LocalFiles { configured: false, files: Vec::new() };
         };
+        let headers = self.headers.clone();
 
-        let mut files = Vec::new();
-        scan(root, root, 0, &mut files);
-        files.sort_by(|a, b| a.path.cmp(&b.path));
+        let files = tokio::task::spawn_blocking(move || {
+            let mut found = Vec::new();
+            scan(&root, &root, 0, &mut found);
+            found.sort_by(|a, b| a.0.cmp(&b.0));
+            let scanned = found
+                .into_iter()
+                .map(|(relative, full, size)| {
+                    let info = header_of(&headers, &full);
+                    (relative, size, info)
+                })
+                .collect();
+            classify(scanned)
+        })
+        .await
+        .unwrap_or_default();
+
         LocalFiles { configured: true, files }
     }
 
@@ -202,6 +234,48 @@ impl ModelLibrary {
             return Err(bad("must be a file inside the model directory"));
         }
         Ok(full)
+    }
+
+    /// Refuses an import whose files aren't what the request says: the first must be a language
+    /// model, the second (if any) a vision projector, and the projector has to fit the model —
+    /// otherwise Ollama would build the model without complaint and it would answer nonsense
+    /// about every image. `files` are the resolved paths; `model_name` is only for messages.
+    async fn check_pairing(&self, model_name: &str, files: &[PathBuf]) -> Result<(), ErrorService> {
+        let (headers, paths) = (self.headers.clone(), files.to_vec());
+        let infos: Vec<Result<GgufInfo, String>> = tokio::task::spawn_blocking(move || {
+            paths.iter().map(|p| header_of(&headers, p)).collect()
+        })
+        .await
+        .map_err(|_| ErrorService::internal("could not read the model files"))?;
+
+        let bad = |message: String| ErrorService::new(StatusCode::BAD_REQUEST, message);
+        let label = |index: usize| {
+            files[index].file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string()
+        };
+
+        let model = infos[0].as_ref().map_err(|e| bad(format!("'{model_name}' isn't a usable GGUF file: {e}")))?;
+        if model.kind != GgufKind::Model {
+            return Err(bad(format!("'{}' is a vision projector, not a model", label(0))));
+        }
+
+        if let Some(projector) = infos.get(1) {
+            let projector = projector
+                .as_ref()
+                .map_err(|e| bad(format!("'{}' isn't a usable GGUF file: {e}", label(1))))?;
+            if projector.kind != GgufKind::Projector {
+                return Err(bad(format!("'{}' isn't a vision projector (mmproj) file", label(1))));
+            }
+            if model.accepts(projector) == Some(false) {
+                return Err(bad(format!(
+                    "'{}' doesn't fit '{}': it projects to {} dimensions but the model works in {}",
+                    label(1),
+                    label(0),
+                    projector.projection_dim.unwrap_or_default(),
+                    model.embedding_length.unwrap_or_default(),
+                )));
+            }
+        }
+        Ok(())
     }
 
     // ---- tasks ----
@@ -337,6 +411,7 @@ impl ModelLibrary {
             if let Some(projector) = &request.projector {
                 files.push(self.resolve_local(projector)?);
             }
+            self.check_pairing(&request.file, &files).await?;
             let total = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
             prepared.push(Prepared { name, files, total });
         }
@@ -395,9 +470,10 @@ fn describe(err: &crate::services::llm::OllamaErrors) -> String {
     }
 }
 
-/// Recursively collects `.gguf` files under `dir`, skipping hidden entries (which keeps
-/// Ollama's own data directory, when it sits inside the model directory, out of the list).
-fn scan(root: &Path, dir: &Path, depth: usize, out: &mut Vec<LocalFile>) {
+/// Recursively collects `(relative path, full path, size)` for `.gguf` files under `dir`,
+/// skipping hidden entries (which keeps Ollama's own data directory, when it sits inside the
+/// model directory, out of the list).
+fn scan(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf, u64)>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -412,15 +488,116 @@ fn scan(root: &Path, dir: &Path, depth: usize, out: &mut Vec<LocalFile>) {
             }
         } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
             let Ok(relative) = path.strip_prefix(root) else { continue };
-            let relative = relative.to_string_lossy().replace('\\', "/");
-            let kind = if relative.to_ascii_lowercase().contains("mmproj") {
-                LocalFileKind::Projector
-            } else {
-                LocalFileKind::Model
-            };
-            out.push(LocalFile { path: relative, size_bytes: meta.len(), kind });
+            out.push((relative.to_string_lossy().replace('\\', "/"), path, meta.len()));
         }
     }
+}
+
+/// A file's parsed GGUF header, from the cache when the file hasn't changed since it was read.
+fn header_of(
+    cache: &Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, Result<GgufInfo, String>)>>,
+    path: &Path,
+) -> Result<GgufInfo, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let stamp = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
+
+    if let Some((modified, len, info)) = cache.lock().unwrap().get(path) {
+        if (*modified, *len) == stamp {
+            return info.clone();
+        }
+    }
+    let info = read_gguf_info(path).map_err(|e| e.to_string());
+    cache.lock().unwrap().insert(path.to_path_buf(), (stamp.0, stamp.1, info.clone()));
+    info
+}
+
+/// The item of an iterator, if it yields exactly one.
+fn only_one<T>(mut items: impl Iterator<Item = T>) -> Option<T> {
+    let first = items.next()?;
+    items.next().is_none().then_some(first)
+}
+
+/// A file name reduced to its meaningful words: lowercase, without the extension, with the
+/// `mmproj` marker, precision tags (`f16`, `bf16`, ...) and bare numbers such as a `(1)` copy
+/// suffix dropped, joined with `-`.
+fn name_key(path: &str) -> String {
+    let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    stem.split(|c: char| matches!(c, '-' | '_' | ' ' | '(' | ')'))
+        .filter(|w| !w.is_empty() && !matches!(*w, "mmproj" | "f16" | "bf16" | "f32" | "q8") && !w.chars().all(|c| c.is_ascii_digit()))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Among `candidates`, the projector whose name (see `name_key`) appears as a whole run of words
+/// in the model's file name and is the longest such — but only if it's the sole longest, so two
+/// equally good projectors (say two precisions of one) yield nothing.
+fn best_by_file_name<'a>(model_path: &str, candidates: &[(&'a String, &'a GgufInfo)]) -> Option<(&'a String, &'a GgufInfo)> {
+    let model_key = format!("-{}-", name_key(model_path));
+    let mut scored: Vec<(usize, (&String, &GgufInfo))> = candidates
+        .iter()
+        .filter_map(|c| {
+            let key = name_key(c.0);
+            (!key.is_empty() && model_key.contains(&format!("-{key}-"))).then_some((key.len(), *c))
+        })
+        .collect();
+    scored.sort_by_key(|(len, _)| std::cmp::Reverse(*len));
+    match scored.as_slice() {
+        [(_, best)] => Some(*best),
+        [(a, best), (b, _), ..] if a > b => Some(*best),
+        _ => None,
+    }
+}
+
+/// Turns scanned files into the listing: each classified by its header, and each model given
+/// the projectors that fit it.
+fn classify(scanned: Vec<(String, u64, Result<GgufInfo, String>)>) -> Vec<LocalFile> {
+    let projectors: Vec<(&String, &GgufInfo)> = scanned
+        .iter()
+        .filter_map(|(path, _, info)| match info {
+            Ok(i) if i.kind == GgufKind::Projector => Some((path, i)),
+            _ => None,
+        })
+        .collect();
+
+    scanned
+        .iter()
+        .map(|(path, size, info)| {
+            let (kind, error) = match info {
+                Ok(i) if i.kind == GgufKind::Projector => (LocalFileKind::Projector, None),
+                Ok(_) => (LocalFileKind::Model, None),
+                Err(e) => (LocalFileKind::Invalid, Some(e.clone())),
+            };
+
+            let mut compatible = Vec::new();
+            let mut suggested = None;
+            if let Some(model) = info.as_ref().ok().filter(|i| i.kind == GgufKind::Model) {
+                let fits: Vec<(&String, &GgufInfo)> =
+                    projectors.iter().filter(|(_, p)| model.accepts(p) != Some(false)).copied().collect();
+                compatible = fits.iter().map(|(p, _)| (*p).clone()).collect();
+
+                // Only ever a suggestion, and only when one candidate stands out — in order:
+                // the one projector carrying the model's author-given name; the one whose file
+                // name is the model's file name up to its quantization (`mmproj-<model>-f16`);
+                // the only candidate whose size is *confirmed* to fit. Ties suggest nothing.
+                suggested = only_one(fits.iter().copied().filter(|(_, p)| model.name.is_some() && p.name == model.name))
+                    .or_else(|| best_by_file_name(path, &fits))
+                    .or_else(|| match fits.as_slice() {
+                        [only] if model.accepts(only.1) == Some(true) => Some(*only),
+                        _ => None,
+                    })
+                    .map(|(p, _)| (*p).clone());
+            }
+
+            LocalFile {
+                path: path.clone(),
+                size_bytes: *size,
+                kind,
+                error,
+                compatible_projectors: compatible,
+                suggested_projector: suggested,
+            }
+        })
+        .collect()
 }
 
 /// A model name Ollama will accept: lowercase letters, digits, `.`, `_` and `-`, with an

@@ -8,7 +8,7 @@ import type {LocalModel} from '../api/llm/models'
 import {listModels} from '../api/llm/models'
 import {startPull} from '../api/llm/pull'
 import {fetchCatalog} from '../api/llm/catalog'
-import type {Catalog, LocalFiles, ModelTask} from '../api/llm/types'
+import type {Catalog, LocalFile, LocalFiles, ModelTask} from '../api/llm/types'
 import {useAuth} from '../context/use-auth.ts'
 import {useModelTasks} from '../hooks/use-model-tasks.ts'
 import {formatBytes} from '../utils/format-bytes.ts'
@@ -89,8 +89,8 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
         .filter((m) => !installedBases.has(baseName(m.name)))
         .filter((m) => m.name.toLowerCase().includes(query) || m.description?.toLowerCase().includes(query))
 
-    const modelFiles = (files?.files ?? []).filter((f) => f.kind === 'model')
-    const projectorFiles = (files?.files ?? []).filter((f) => f.kind === 'projector')
+    // Projectors aren't models on their own: they only appear as the vision option of a model.
+    const modelFiles = (files?.files ?? []).filter((f) => f.kind !== 'projector')
     const filteredFiles = modelFiles.filter((f) => f.path.toLowerCase().includes(query))
 
     const exactTag = search.trim()
@@ -112,13 +112,18 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
         }
     }
 
-    const toggleFile = (path: string, on: boolean) =>
+    const toggleFile = (file: LocalFile, on: boolean) => {
         setChecked((prev) => {
             const next = new Set(prev)
-            if (on) next.add(path)
-            else next.delete(path)
+            if (on) next.add(file.path)
+            else next.delete(file.path)
             return next
         })
+        // Ticking a model preselects its projector when the backend found a clear match.
+        if (on && file.suggested_projector) {
+            setProjectors((prev) => (file.path in prev ? prev : {...prev, [file.path]: file.suggested_projector!}))
+        }
+    }
 
     const onImport = async () => {
         setImporting(true)
@@ -197,16 +202,24 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
                             <Label variant="secondary" className="model-picker__meta"
                                    text={modelFiles.length === 0 ? 'No .gguf files in the model folder.' : 'No file matches.'}/>
                         ) : null}
-                        {filteredFiles.map((f) => (
+                        {filteredFiles.map((f) => f.kind === 'invalid' ? (
+                            <Div key={f.path} className="model-picker__row model-picker__row--invalid">
+                                <Div className="model-picker__info">
+                                    <Label className="model-picker__name" text={f.path}/>
+                                    <Label variant="secondary" className="model-picker__meta model-picker__meta--error"
+                                           text={`Not a usable GGUF file — ${f.error ?? 'unreadable'}`}/>
+                                </Div>
+                            </Div>
+                        ) : (
                             <Div key={f.path} className="model-picker__row">
-                                <Checkbox toggled={checked.has(f.path)} onToggled={(on) => toggleFile(f.path, on)}/>
+                                <Checkbox toggled={checked.has(f.path)} onToggled={(on) => toggleFile(f, on)}/>
                                 <Div className="model-picker__info">
                                     <Label className="model-picker__name" text={f.path}/>
                                     <Label variant="secondary" className="model-picker__meta" text={formatBytes(f.size_bytes)}/>
                                 </Div>
-                                {projectorFiles.length > 0 && checked.has(f.path) ? (
+                                {f.compatible_projectors.length > 0 && checked.has(f.path) ? (
                                     <Select className="model-picker__projector"
-                                            values={[NO_PROJECTOR, ...projectorFiles.map((p) => p.path)]}
+                                            values={[NO_PROJECTOR, ...f.compatible_projectors]}
                                             selected={projectors[f.path] ?? NO_PROJECTOR}
                                             onChosen={(value) => setProjectors((prev) => ({...prev, [f.path]: value}))}/>
                                 ) : null}

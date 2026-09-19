@@ -6,7 +6,7 @@ use crate::{routes::auth::OwnerUser, services::model_library::LocalFiles, state:
 
 /// Owner-only. The `.gguf` files sitting in the configured model directory (`model_dir` in
 /// settings.json — the same folder Ollama's `MODEL_DIR` points at), ready to be imported as
-/// models with `POST /api/llm/import`. Vision projectors (`mmproj`) are marked as such.
+/// models with `POST /api/llm/import`. Each file is classified from its own GGUF header (model, vision projector, or invalid), and every model lists the projectors that fit it and, when there's a clear answer, the one to preselect.
 #[utoipa::path(
     get,
     path = "/api/llm/local_files",
@@ -17,5 +17,5 @@ use crate::{routes::auth::OwnerUser, services::model_library::LocalFiles, state:
     ),
 )]
 pub async fn local_files(State(state): State<Arc<AppState>>, _owner: OwnerUser) -> Json<LocalFiles> {
-    Json(state.library.local_files())
+    Json(state.library.local_files().await)
 }

@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod chat_store;
 pub mod error;
 pub mod file_store;
+pub mod gguf;
 pub mod llm;
 pub mod migrate;
 pub mod model_library;
