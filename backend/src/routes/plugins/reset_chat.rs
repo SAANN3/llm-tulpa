@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub struct ResetPluginChatBody {
@@ -34,6 +34,7 @@ pub struct ResetPluginChatBody {
 )]
 pub async fn reset_plugin_chat(
     State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
     Json(body): Json<ResetPluginChatBody>,
 ) -> Result<StatusCode, ErrorService> {
     let services = state.services().await?;

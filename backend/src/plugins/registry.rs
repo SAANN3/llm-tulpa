@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::Request;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -12,6 +12,7 @@ use tower::ServiceExt;
 use utoipa::ToSchema;
 
 use super::base::{Plugin, PluginBuilder, PluginError};
+use crate::services::error::ErrorService;
 use crate::services::plugin_settings_store::PluginSettingsStore;
 
 /// Identifies one plugin instance: (plugin_name, plugin_subname) — e.g.
@@ -105,14 +106,26 @@ impl PluginRegistry {
             ));
         }
 
+        // Stored settings the builder now rejects (a schema that changed since they were
+        // saved, say) must not take the whole backend down with them: the plugin stays listed,
+        // unconfigured and disabled, and its settings form can be filled in again. What's
+        // stored is left as it was, not overwritten with nothing.
+        let mut restore_failed = false;
         let (plugin, router) = match initial_settings.clone() {
-            Some(settings) => {
-                let plugin = builder.build(settings).await?;
-                let router = plugin.api_router();
-                (Some(plugin), Some(router))
-            }
+            Some(settings) => match builder.build(settings).await {
+                Ok(plugin) => {
+                    let router = plugin.api_router();
+                    (Some(plugin), Some(router))
+                }
+                Err(e) => {
+                    tracing::warn!("stored settings for {plugin_name}/{plugin_subname} were rejected ({e:?}); leaving it unconfigured");
+                    restore_failed = true;
+                    (None, None)
+                }
+            },
             None => (None, None),
         };
+        let enabled = enabled && !restore_failed;
 
         if enabled {
             if let Some(plugin) = &plugin {
@@ -122,7 +135,7 @@ impl PluginRegistry {
 
         // Only persisted when there's actually something to persist — a plugin
         // registered with no settings at all (from either source) has nothing to write.
-        if let Some(settings) = initial_settings {
+        if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
             self.store.set(&plugin_name, &plugin_subname, settings, enabled).await?;
         }
 
@@ -145,6 +158,31 @@ impl PluginRegistry {
             self.register(builder, None, false).await?;
         }
         Ok(())
+    }
+
+    /// Re-runs registration for every plugin that has no live instance yet, so settings that
+    /// appeared in the store after startup are picked up — the owner account (which plugin
+    /// settings belong to) doesn't exist until first-run setup, and a previous install's plugin
+    /// settings only get attached to it then. Plugins that already have an instance are left
+    /// alone: re-registering one would orphan its running background tasks. One plugin failing
+    /// to restore (say, imported settings its builder rejects) is logged and doesn't stop the
+    /// others.
+    pub async fn reload_unconfigured(&self) {
+        let builders: Vec<Arc<dyn PluginBuilder>> = self
+            .entries
+            .read()
+            .await
+            .values()
+            .filter(|entry| entry.plugin.is_none())
+            .map(|entry| entry.builder.clone())
+            .collect();
+
+        for builder in builders {
+            let label = format!("{}/{}", builder.plugin_name(), builder.plugin_subname());
+            if let Err(e) = self.register(builder, None, false).await {
+                tracing::warn!("could not restore plugin {label} from stored settings: {e:?}");
+            }
+        }
     }
 
     /// Builds (or rebuilds) a registered plugin's instance from settings, via the same
@@ -286,58 +324,26 @@ impl PluginRegistry {
             .collect()
     }
 
-    /// Builds one `Router` nesting a stable proxy for every plugin key registered *so
-    /// far* — call once at startup, after every `register()` call, and mount the result
-    /// under `/api/plugins`. A plugin key registered later than this call never gets a
-    /// route (axum's tree is fixed once handed to the server — see `proxy_for`'s own
-    /// doc comment for the same constraint one level down); this project always
-    /// registers every known plugin at startup before serving, same as the tool list,
-    /// so that's not a real limitation in practice.
-    pub async fn router(self: &Arc<Self>) -> Router {
-        let keys: Vec<PluginKey> = self.entries.read().await.keys().cloned().collect();
-        let mut router = Router::new();
-        for (plugin_name, plugin_subname) in keys {
-            let path = format!("/{plugin_name}/{plugin_subname}");
-            router = router.nest(&path, self.proxy_for(plugin_name, plugin_subname));
-        }
-        router
-    }
-
-    /// A stable stand-in for one plugin's `api_router()` — mount *this* under the
-    /// plugin's path once, forever, instead of the plugin's own router directly.
-    ///
-    /// axum's route tree is fixed the moment the server starts serving: nesting a
-    /// specific `Router` value bakes that exact value in, so a later
-    /// `update_settings()` rebuild (a brand new `Arc<dyn Plugin>`, per
-    /// `PluginBuilder`'s doc comment) would be invisible to already-mounted routes if
-    /// they were wired to the old instance directly. This proxy sidesteps that by never
-    /// closing over a specific instance at all — its handler looks up whatever's
-    /// *currently* in the registry fresh, on every single request, and forwards into
-    /// that instance's own `api_router()` (via `Router: tower::Service`, `.oneshot()`
-    /// runs one request through it). So the mounted route never changes, but the plugin
-    /// behind it can be swapped any number of times.
-    ///
-    /// A disabled-but-configured plugin's routes 404 through here too — `get_router`
-    /// itself is the enabled gate (see its own doc comment), so this handler doesn't
-    /// need a separate check.
-    ///
-    /// Looks up the *cached* router (see `PluginEntry::router`/`get_router`), not a
-    /// fresh `plugin.api_router()` — the router only needs rebuilding when the plugin
-    /// does, which already happens in `register`/`update_settings`, not once per
+    /// Runs `req` through a plugin's own `api_router()`, with `req`'s path already relative to
+    /// that plugin's mount point. Looks the plugin up fresh on every call — a settings change
+    /// rebuilds it into a brand new `Arc<dyn Plugin>` (see `PluginBuilder`), so nothing may
+    /// hold on to an instance's router across requests — and uses the *cached* router
+    /// (`PluginEntry::router`), which only needs rebuilding when the plugin does, not per
     /// request.
-    fn proxy_for(self: &Arc<Self>, plugin_name: String, plugin_subname: String) -> Router {
-        let registry = self.clone();
-        Router::new().fallback(move |req: Request| {
-            let registry = registry.clone();
-            let plugin_name = plugin_name.clone();
-            let plugin_subname = plugin_subname.clone();
-            async move {
-                let Some(router) = registry.get_router(&plugin_name, &plugin_subname).await else {
-                    return StatusCode::NOT_FOUND.into_response();
-                };
-                router.oneshot(req).await.unwrap().into_response()
-            }
-        })
+    ///
+    /// A disabled-but-configured plugin's routes 404 here too: `get_router` is itself the
+    /// enabled gate (see its doc comment), so no separate check is needed.
+    pub async fn dispatch(
+        &self,
+        plugin_name: &str,
+        plugin_subname: &str,
+        req: Request,
+    ) -> Result<Response, ErrorService> {
+        let router = self
+            .get_router(plugin_name, plugin_subname)
+            .await
+            .ok_or_else(|| ErrorService::new(StatusCode::NOT_FOUND, "no such plugin route"))?;
+        Ok(router.oneshot(req).await.unwrap().into_response())
     }
 
     fn key(plugin_name: &str, plugin_subname: &str) -> PluginKey {

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub struct SetPluginSettingsBody {
@@ -35,6 +35,7 @@ pub struct SetPluginSettingsBody {
 )]
 pub async fn set_plugin_settings(
     State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
     Json(body): Json<SetPluginSettingsBody>,
 ) -> Result<StatusCode, ErrorService> {
     state

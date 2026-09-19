@@ -12,9 +12,8 @@ const DEFAULT_PROVIDER: &str = "ollama";
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct SetModelRequest {
     chat_id: i64,
-    /// The model this chat should use from now on. Registered in the database if it isn't
-    /// known yet; the client is expected to have pulled it first (`POST /api/llm/pull`)
-    /// if it wasn't already installed.
+    /// The model this chat should use from now on. Must be installed (pull or import it
+    /// first); it's registered in the database if it isn't known yet.
     model: String,
     /// The provider the model belongs to; defaults to `ollama`.
     provider: Option<String>,
@@ -29,7 +28,7 @@ pub(crate) struct SetModelRequest {
     request_body = SetModelRequest,
     responses(
         (status = 204, description = "Model set"),
-        (status = 400, description = "Unknown provider", body = crate::services::error::ErrorBody),
+        (status = 400, description = "Unknown provider, or a model that isn't installed", body = crate::services::error::ErrorBody),
         (status = 404, description = "No such chat", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
@@ -43,6 +42,7 @@ pub async fn set_model(
     services.chat_store.owned_chat(auth.id, body.chat_id).await?;
 
     let provider = body.provider.as_deref().unwrap_or(DEFAULT_PROVIDER);
+    state.require_installed_model(&services, provider, &body.model).await?;
     let model = services.model_store.ensure(provider, &body.model).await?;
     services.chat_store.set_model(body.chat_id, model.id).await?;
 
