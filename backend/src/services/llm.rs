@@ -24,17 +24,24 @@ const PROMPT_PROCESSING_BUFFER: Duration = Duration::from_secs(10 * 60);
 
 /// How many characters per token for a rough prompt-size estimate used to cap
 /// `num_predict` per-request — applied before subtracting from `max_predict_tokens` to
-/// leave room for whatever the model generates. Needs real margin *below* the actual
-/// ratio of whatever content is being estimated, not a plausible-looking average — this
-/// project's real, agentic tool/code-heavy traffic measures close to ~2.3 chars/token
-/// (English prose alone would be ~3.5–4), and a value too close to or above that lets
-/// the estimate undercount real prompt-token usage on exactly the workload that matters
-/// most here. Undercounting is the dangerous direction: it inflates the computed
-/// `num_predict`, so a request already close to the real context ceiling can still be
-/// sent believing it has far more generation room than it actually does, and get
-/// hard-truncated by llama.cpp mid-output — including mid-tool-call-JSON, which fails
-/// the whole turn outright rather than just returning a short answer.
-const PROMPT_CHARS_PER_TOKEN: f64 = 1.5;
+/// leave room for whatever the model generates. Should sit slightly *below* the real
+/// ratio of this project's actual traffic, not far from it in either direction: agentic
+/// tool/code-heavy content measured ~2.5 chars/token over the counted message text on a
+/// real 48k-token chat (English prose alone would be ~3.5–4). Too high undercounts the
+/// prompt, so a request already near the real context ceiling gets a `num_predict`
+/// larger than the room actually left and is hard-truncated by llama.cpp mid-output —
+/// including mid-tool-call-JSON, which fails the whole turn. Too low overcounts, which
+/// is worse in practice: the estimate exceeds the whole window on an ordinary
+/// mid-size prompt, `num_predict` collapses to its floor, and every reply gets cut off
+/// (thinking alone can consume a small budget) on every turn, not just near the ceiling.
+const PROMPT_CHARS_PER_TOKEN: f64 = 2.5;
+
+/// Lowest `num_predict` the per-request calculation will ever return. Has to be big
+/// enough for a reply with thinking enabled to actually finish — a budget in the low
+/// hundreds is spent entirely inside the reasoning trace, leaving an empty reply. If
+/// the real room left is smaller than this the request is near the context ceiling
+/// regardless, and compaction (not this cap) is what's meant to prevent that.
+const MIN_NUM_PREDICT: u64 = 2048;
 
 /// A flat token overhead added to the prompt-size estimate for content that character
 /// count alone can't capture — tool definition JSON schemas, chat template special
@@ -135,9 +142,7 @@ impl OllamaService {
         let estimated_tokens = (char_count as f64 / PROMPT_CHARS_PER_TOKEN) as u64;
         let reserved = estimated_tokens + PROMPT_TOKEN_SAFETY_MARGIN + tool_overhead_tokens;
         let remaining = (self.max_predict_tokens as u64).saturating_sub(reserved);
-        // Minimum generation budget so a response can at least be returned (even if short)
-        // rather than being truncated to zero tokens.
-        remaining.max(256) as i32
+        remaining.max(MIN_NUM_PREDICT) as i32
     }
 
     /// Calls Ollama's legacy `/api/generate` endpoint: raw prompt string in, raw
@@ -284,6 +289,25 @@ impl OllamaService {
     /// why `mtp-proxy` implements its own `/api/show` (translating from `/props`) —
     /// this method works unchanged against either backend.
     pub async fn thinking_capability(&self) -> Result<ThinkingCapability, OllamaErrors> {
+        Ok(parse_thinking_capability(&self.chat_template().await?))
+    }
+
+    /// The tags the active model's own chat template wraps a tool call in (e.g.
+    /// `<tool_call>` and `</tool_call>`), discovered live the same way as
+    /// `thinking_capability` — see `extract_tool_call_markers`. Empty if the template
+    /// has none or can't be read, in which case nothing that looks for them can
+    /// trigger: a failure to look is never treated as a finding.
+    pub async fn tool_call_markers(&self) -> Vec<String> {
+        match self.chat_template().await {
+            Ok(template) => extract_tool_call_markers(&template),
+            Err(_) => vec![],
+        }
+    }
+
+    /// The active model's raw Jinja chat template, straight from Ollama's `/api/show`
+    /// — see `thinking_capability` for why that's the real template and why it's read
+    /// fresh every time.
+    async fn chat_template(&self) -> Result<String, OllamaErrors> {
         let url = format!("{}/api/show", self.base_url);
         let body = serde_json::json!({ "model": self.model_name });
 
@@ -305,7 +329,7 @@ impl OllamaService {
             template: String,
         }
         let parsed: ShowResponse = decode_response(res).await?;
-        Ok(parse_thinking_capability(&parsed.template))
+        Ok(parsed.template)
     }
 
     /// Builds a `user`-role message from plain text, so callers can hand `chat` a
@@ -376,6 +400,32 @@ async fn decode_response<T: DeserializeOwned>(res: reqwest::Response) -> Result<
         tracing::error!("failed to decode ollama response: {e}\nbody = {body_text}");
         OllamaErrors::DecodeFailed(e.to_string())
     })
+}
+
+/// The tags a chat template wraps a tool call in, as literal text: every `<name>` and
+/// `</name>` where the template mentions a tag whose name contains `tool_call` or
+/// `function_call` (Qwen's and Hermes-style templates spell theirs `<tool_call>` /
+/// `</tool_call>`). Read from the template rather than assumed, so it follows whatever
+/// model is active; a model whose template has no such tag yields nothing, and nothing
+/// downstream fires for it. Order-preserving, no duplicates.
+fn extract_tool_call_markers(template: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+
+    for (start, _) in template.match_indices('<') {
+        let rest = &template[start + 1..];
+        let rest = rest.strip_prefix('/').unwrap_or(rest);
+        let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        if !rest[name.len()..].starts_with('>') {
+            continue;
+        }
+
+        let lower = name.to_ascii_lowercase();
+        if (lower.contains("tool_call") || lower.contains("function_call")) && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    names.into_iter().flat_map(|name| [format!("<{name}>"), format!("</{name}>")]).collect()
 }
 
 /// Splits a `</think>`-delimited reasoning block out of raw model output. Ollama's own

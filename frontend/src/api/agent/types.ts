@@ -45,7 +45,7 @@ export interface AgentToolCall {
   arguments: Record<string, unknown>
 }
 
-/** Response shape shared by `chat` and `continue_chat` — the model's reply for a turn. */
+/** Response shape shared by `chat`, `continue_chat` and `job_notices` — the model's reply for a turn. */
 export interface ChatOut {
   content: string
   created_at: string
@@ -57,6 +57,14 @@ export interface ChatOut {
   thought_duration_ms: number
   /** Ids of already-uploaded files attached to this reply, if any — a `ui.attach_file` call earlier in the same turn, resolved onto this (the turn's final, non-tool-calling) reply. */
   file_ids: number[]
+  /** Background-job notices persisted just before this reply, oldest first — show them in the chat ahead of `content`, in this order. Empty unless a job finished since the previous turn. */
+  notices: NoticeOut[]
+}
+
+/** One `notice` message: the backend telling the chat a background job ended. */
+export interface NoticeOut {
+  content: string
+  created_at: string
 }
 
 export interface CanUseTool {

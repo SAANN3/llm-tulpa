@@ -21,6 +21,8 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Under Docker, the backend's own container ships a real general-purpose toolkit for shell commands to actually use — Python, Node, Go, Rust, a headless (or, with a display server passed through, real on-screen) Chromium via Playwright, and more — plus the ability to install anything else on top on request.
 - File attachments — drag-and-drop or pick any file type onto the composer; previews for PDFs, Office docs, spreadsheets/CSVs, code (syntax-highlighted), and plain text, and the model can read an attached file's actual content on request.
 - Automatic history compaction, so a long or tool-heavy conversation doesn't blow the model's context window.
+- Background jobs — the model can start a long-running command (a dev server, a big build) as a job with its own log, and is told in the chat when it finishes, so it can end its turn instead of waiting. With the chat open, the reply to that notice starts on its own — see [`backend/TOOLS.md`](./backend/TOOLS.md).
+- A quick launcher (`extensions/launcher`) — a small always-on-top input bar that starts a chat from your desktop without opening the browser first — see [its README](./extensions/launcher/README.md).
 - Vision — attach images to a message from the composer, send a photo through a messaging plugin, or have the model look at an image it found itself via a file path, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.

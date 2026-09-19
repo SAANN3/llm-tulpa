@@ -77,6 +77,9 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@localhost:5432
       - DATABASE_NAME=${DATABASE_NAME:-llm_tulpa}
       - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
+      # Days a finished background job's log is kept before the sweep at backend startup
+      # deletes it (0 keeps them all) — see backend/README.md.
+      - JOB_LOG_RETENTION_DAYS=${JOB_LOG_RETENTION_DAYS:-7}
       # Same variable name/default as llm/compose.yaml's OLLAMA_CONTEXT_LENGTH — set
       # it once (e.g. in a root .env file) and both Ollama's real context and this
       # backend's token-budget math stay in sync.

@@ -24,15 +24,21 @@ const MAX_READ_CHARS: usize = 40_000;
 struct ReadFileArgs {
     #[tool(description = "Absolute or relative path to the file to read.")]
     path: String,
+    #[tool(description = "How many characters to skip from the start of the file before reading — to read past where an earlier call was cut off, pass the `next_offset` it returned. Defaults to 0 (start of the file).")]
+    offset: Option<usize>,
 }
 
 #[derive(Serialize)]
 struct ReadFileOut {
     content: String,
-    /// `true` when `content` is only the first `MAX_READ_CHARS` characters of the real
-    /// file — the model needs to know its view is partial, not just get silently fed
-    /// less than what's actually there.
+    /// `true` when there's more of the file after what `content` covers — the model
+    /// needs to know its view is partial, not just get silently fed less than what's
+    /// actually there.
     truncated: bool,
+    /// The file's full length in characters, wherever this read started.
+    total_chars: usize,
+    /// Where to continue from (pass it back as `offset`) — only set when `truncated`.
+    next_offset: Option<usize>,
 }
 
 #[async_trait]
@@ -45,7 +51,7 @@ impl Tool for ReadFileTool {
         "Reads a file's contents as text. Fails if the file isn't valid UTF-8 text. \
          Files longer than 40,000 characters come back truncated (see `truncated` in \
          the response) — the file itself is untouched, only what's returned here is cut \
-         short."
+         short; pass the response's `next_offset` as `offset` to read the next part."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {
@@ -70,18 +76,30 @@ impl Tool for ReadFileTool {
             .map_err(|e| ToolError::FailedUnknown(format!("couldn't read '{}': {e}", path.display())))?;
 
         let total_chars = content.chars().count();
-        let (content, truncated) = if total_chars > MAX_READ_CHARS {
-            let cropped: String = content.chars().take(MAX_READ_CHARS).collect();
-            (
-                format!(
-                    "{cropped}\n\n[... file truncated: showing the first {MAX_READ_CHARS} of {total_chars} characters ...]"
-                ),
-                true,
+        let offset = args.offset.unwrap_or(0);
+
+        if offset >= total_chars && total_chars > 0 {
+            return Ok(serde_json::to_value(ReadFileOut {
+                content: format!("[offset {offset} is past the end of the file, which is {total_chars} characters long]"),
+                truncated: false,
+                total_chars,
+                next_offset: None,
+            })?);
+        }
+
+        let window: String = content.chars().skip(offset).take(MAX_READ_CHARS).collect();
+        let end = offset + window.chars().count();
+        let truncated = end < total_chars;
+
+        let content = if truncated {
+            format!(
+                "{window}\n\n[... file truncated: showing characters {offset}-{end} of {total_chars}; \
+                 call again with offset={end} to read on ...]"
             )
         } else {
-            (content, false)
+            window
         };
 
-        Ok(serde_json::to_value(ReadFileOut { content, truncated })?)
+        Ok(serde_json::to_value(ReadFileOut { content, truncated, total_chars, next_offset: truncated.then_some(end) })?)
     }
 }

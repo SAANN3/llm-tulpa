@@ -4,7 +4,8 @@ import { allowScope } from '../api/agent/allow_scope'
 import { canUseTool } from '../api/agent/can_use_tool'
 import { chat as sendChatMessage } from '../api/agent/chat'
 import { continueChat } from '../api/agent/continue_chat'
-import type { AgentScopeGrant, AgentToolCall, ChatOut as AgentChatOut, ThinkChoice, UseToolOut } from '../api/agent/types'
+import { jobNotices } from '../api/agent/job_notices'
+import type { AgentScopeGrant, AgentToolCall, ChatOut as AgentChatOut, NoticeOut, ThinkChoice, UseToolOut } from '../api/agent/types'
 import { useTool as runNextTool } from '../api/agent/use_tool'
 import { getMessages } from '../api/chats/messages'
 import type { MessageOut } from '../api/chats/types'
@@ -35,6 +36,8 @@ export type DisplayMessage =
       file_ids?: number[]
     }
   | { role: 'tool'; content: unknown; tool_name: string | null; created_at: string; arguments: Record<string, unknown> }
+  /** The backend telling the chat something happened (a background job ended) — not something anyone in it said. */
+  | { role: 'notice'; content: string; created_at: string }
 
 /**
  * Maps one fetched page of `MessageOut`s (already in chronological order) to
@@ -64,6 +67,9 @@ function toDisplayMessages(page: MessageOut[]): DisplayMessage[] {
         arguments: queuedArgs.shift() ?? {},
       }
     }
+    if (m.role === 'notice') {
+      return { role: 'notice', content: m.content, created_at: m.created_at }
+    }
     return {
       role: m.role as 'user' | 'assistant',
       content: m.content,
@@ -89,6 +95,17 @@ function assistantMessage(reply: AgentChatOut): DisplayMessage {
     thought_duration_ms: reply.thought_duration_ms,
     file_ids: reply.file_ids,
   }
+}
+
+function noticeMessage(notice: NoticeOut): DisplayMessage {
+  return { role: 'notice', content: notice.content, created_at: notice.created_at }
+}
+
+/** Appends a reply the way it was stored: any job notices persisted just before it first,
+ * then the reply itself — the order they'd come back in after a reload. */
+function appendReply(reply: AgentChatOut, onMessage: (message: DisplayMessage) => void) {
+  reply.notices.forEach((notice) => onMessage(noticeMessage(notice)))
+  onMessage(assistantMessage(reply))
 }
 
 function toolMessage(result: UseToolOut, args: Record<string, unknown>): DisplayMessage {
@@ -254,7 +271,7 @@ async function resolveToolCallsAndContinue(
   }
 
   const reply = await continueChat(chatId, think)
-  onMessage(assistantMessage(reply))
+  appendReply(reply, onMessage)
 
   return driveTurn(chatId, think, reply, onMessage)
 }
@@ -500,7 +517,7 @@ export function useMessages(chatId: number, onAppended?: () => void) {
     setSendingChatId(requestChatId)
     try {
       const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
-      guardedAppend(assistantMessage(reply))
+      appendReply(reply, guardedAppend)
       return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
     } finally {
       clearSending(requestChatId)
@@ -532,5 +549,28 @@ export function useMessages(chatId: number, onAppended?: () => void) {
     }
   }
 
-  return { messages, loadOlder, send, resume, sending, canContinue }
+  // For a background job finishing while this chat has no turn running: asks the backend
+  // to report it to the model, which replies (and may call tools) exactly like any other
+  // turn — driven through the same `driveTurn`/`finishOrPause` path as `send`, so
+  // confirmations and auto-confirm behave identically. `null` when the backend had
+  // nothing to report (a stale hint — see `jobNotices`), in which case nothing changed.
+  const runJobNotices = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
+    const requestChatId = chatId
+    const guardedAppend = (message: DisplayMessage) => {
+      if (chatIdRef.current === requestChatId) appendMessage(message)
+    }
+
+    setSendingChatId(requestChatId)
+    try {
+      const reply = await jobNotices(chatId, think)
+      if (!reply) return null
+
+      appendReply(reply, guardedAppend)
+      return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
+    } finally {
+      clearSending(requestChatId)
+    }
+  }
+
+  return { messages, loadOlder, send, resume, runJobNotices, sending, canContinue }
 }

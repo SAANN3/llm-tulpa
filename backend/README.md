@@ -19,10 +19,12 @@ Or run the whole project (frontend included) via Docker — see the repo root's 
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Where to reach Ollama. |
 | `OLLAMA_MODEL_NAME` | `local-llm` | The model tag to call. |
-| `OLLAMA_CONTEXT_LENGTH` | `32768` | Must match whatever you set Ollama's own context window to (see `llm/`'s README) — drives the `num_predict` cap and the history-compaction thresholds. |
+| `OLLAMA_CONTEXT_LENGTH` | `32768` | Must match whatever you set Ollama's own context window to (see `llm/`'s README) — drives the per-request `num_predict` cap (sized from what's left of the window after the prompt) and the history-compaction thresholds. |
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432` | Postgres connection string, without a database name. |
 | `DATABASE_NAME` | `llm_tulpa` | Database name — created automatically if it doesn't exist. |
 | `AGENT_HISTORY_LEN` | `200` | How many of a chat's most recent messages get pulled into a single turn. |
+| `JOBS_DIR` | `~/.llm-tulpa/jobs` | Where `os.start_job`'s background jobs write their log files. |
+| `JOB_LOG_RETENTION_DAYS` | `7` | How many days a *finished* job's log is kept. The sweep runs once at startup and deletes older logs (the job's row stays, marked as cleaned up); `0` keeps every log. |
 | `SEARXNG_URL` | `http://localhost:8090` | Where to reach the SearXNG instance `web.search_query` calls (the rate-limiting sidecar in front of it, not searxng's own port) — see the repo root's `searxng/`. |
 | `BIND_ADDR` | `127.0.0.1:3000` | What the HTTP server binds to. Loopback-only by default; Docker overrides this to `0.0.0.0:3000` since a container's own loopback isn't reachable from outside it. |
 | `RUST_LOG` | `info,sqlx::query=warn` | Standard `tracing-subscriber` filter syntax. |

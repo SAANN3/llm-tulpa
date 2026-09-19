@@ -18,7 +18,8 @@ This codebase has a strong, established live-verification habit — don't skip i
 Several real, non-obvious bugs in this project were only ever caught this way, not by review.
 
 ## Docs map — keep these in sync with what you change
-- [`backend/TOOLS.md`](./backend/TOOLS.md) — every tool, the permission model, how to add one. Update it when adding/changing a tool.
+- [`backend/TOOLS.md`](./backend/TOOLS.md) — every tool, the permission model, background jobs and the server-event stream, how to add a tool. Update it when adding/changing a tool.
+- [`extensions/launcher/README.md`](./extensions/launcher/README.md) — the desktop quick-launcher (a separate crate, built and run on its own, not part of the Docker stack).
 - [`backend/PLUGINS.md`](./backend/PLUGINS.md) — the plugin system (Telegram/Discord/VK today). Update it when touching plugin behavior.
 - [`frontend/THEMING.md`](./frontend/THEMING.md) — how theme variants/colors work.
 - [`llm/README.md`](./llm/README.md) — swapping models, context window, KV-cache quantization tradeoff.

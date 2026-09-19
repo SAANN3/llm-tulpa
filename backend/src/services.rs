@@ -1,8 +1,11 @@
 pub mod chat_store;
 pub mod error;
+pub mod event_bus;
 pub mod file_store;
+pub mod job_store;
 pub mod llm;
 pub mod permission_store;
 pub mod plugin_settings_store;
+pub mod process;
 pub mod settings_store;
 pub mod tools;

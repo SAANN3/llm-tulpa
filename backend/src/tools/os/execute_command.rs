@@ -1,28 +1,35 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::shell::{check_command_permission, effective_command, running_in_docker, truncate_output};
+use crate::services::process;
 use crate::tools::base::{
-    PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError,
-    ToolParams, ToolPermission, ToolSerializationError,
+    PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError, ToolParams,
+    ToolPermission, ToolSerializationError,
 };
 use crate::tools::storage::normalize;
 
-/// `description()` is compile-time-fixed text, but whether this container is actually
-/// scoped away from the host or not depends on how the backend was launched, not on
-/// anything decided at compile time — the same binary can run either way. Detecting it
-/// once at runtime (Docker always creates `/.dockerenv`) and picking the matching text
-/// keeps the model's own understanding of what this tool can reach accurate either way,
-/// instead of baking in whichever answer happened to be true when this was written.
-fn running_in_docker() -> bool {
-    std::path::Path::new("/.dockerenv").exists()
-}
+/// Appended to both variants of the description — what the model can rely on when a
+/// command starts something long-running.
+const BACKGROUND_AND_TIMEOUT_NOTE: &str = "For anything that keeps running or takes a long time — a \
+    dev server, a watcher, a big build or install — use os.start_job instead of putting it in the \
+    background here: it gives the job an id and a log you can read with os.job_output, and you're \
+    notified in the chat when it finishes. A command can still be started with `&` here — this \
+    returns as soon as the shell itself exits, without waiting for it — but the background process's \
+    output isn't captured anywhere you can get back to. A command still running in the foreground \
+    after 10 minutes is killed along with everything it started, and whatever it printed by then is \
+    returned.";
 
 fn description_text() -> &'static str {
     static TEXT: OnceLock<String> = OnceLock::new();
     TEXT.get_or_init(|| {
-        if running_in_docker() {
+        let base = if running_in_docker() {
             "Executes a shell command and returns stdout, stderr, and exit code — each capped \
              independently at 40,000 characters (see `stdout_truncated`/`stderr_truncated`); a \
              command whose real output is bigger than that gets cut off, not silently sent in \
@@ -86,7 +93,8 @@ fn description_text() -> &'static str {
              any `python ...` call for the rest of the chat, with any arguments; `git` still \
              needs its own separate approval)."
                 .to_string()
-        }
+        };
+        format!("{base}\n\n{BACKGROUND_AND_TIMEOUT_NOTE}")
     })
 }
 
@@ -100,35 +108,53 @@ struct ExecuteCommandArgs {
 
 pub struct ExecuteCommandTool;
 
-/// Same cap and truncation-marker convention as `storage.read_file`'s
-/// `MAX_READ_CHARS` — this tool had none at all until a real incident: `grep -r`
-/// across a directory containing a few minified/single-line files (VS Code
-/// extension bundles) matched a handful of megabytes-long lines; `| head -20`
-/// still let all of them through (it caps *lines*, not bytes), producing an
-/// 8MB+ tool result that got stored as a real chat message. On the next turn,
-/// sending that message as history blew ~30x past the model's context window;
-/// Ollama silently truncated it down to fit (no error anywhere in the pipeline
-/// — this shipped with zero logging for that path), and what survived excluded
-/// nearly the entire actual conversation, so the model's very next reply looked
-/// like it had genuinely forgotten everything — confirmed via Postgres directly
-/// (`prompt_eval_count` cratered from ~43,000 to ~6,800 between consecutive
-/// calls in the same chat, no compaction summary ever involved). Capping stdout
-/// and stderr independently here is the actual fix — matches `storage.read_file`
-/// so a single command can never again silently blow the whole context budget.
-const MAX_OUTPUT_CHARS: usize = 40_000;
+/// How long a command may keep the shell running before it's killed. Only a backstop
+/// against a foreground command that never exits (a server started without `&`,
+/// `tail -f`, a prompt waiting on input that will never come) wedging the whole chat —
+/// generous enough for a real build or install, which can take several minutes. Anything
+/// legitimately longer belongs in the background (`cmd > log 2>&1 &`) with the log polled.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-fn truncate_output(content: String) -> (String, bool) {
-    let total_chars = content.chars().count();
-    if total_chars <= MAX_OUTPUT_CHARS {
-        return (content, false);
+/// Scratch file a command's stdout or stderr is redirected into, instead of a pipe.
+/// With a pipe, reading the output means waiting for EOF, and EOF only comes once
+/// *every* process holding the write end has exited — including a daemon the command
+/// backgrounded with `&`, which inherits it. A file has no EOF to wait for: the shell's
+/// own exit is the only thing waited on, and a backgrounded process keeps writing to its
+/// (by then deleted) file undisturbed — unlike a closed pipe, which would kill it with
+/// a broken-pipe error the next time it logged anything.
+struct OutputFile {
+    path: PathBuf,
+}
+
+impl OutputFile {
+    fn create(stream: &str) -> std::io::Result<(Self, std::fs::File)> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "llm-tulpa-cmd-{}-{nanos}-{}.{stream}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+
+        let file = options.open(&path)?;
+        Ok((Self { path }, file))
     }
-    let cropped: String = content.chars().take(MAX_OUTPUT_CHARS).collect();
-    (
-        format!(
-            "{cropped}\n\n[... output truncated: showing the first {MAX_OUTPUT_CHARS} of {total_chars} characters ...]"
-        ),
-        true,
-    )
+
+    async fn read(&self) -> String {
+        let bytes = tokio::fs::read(&self.path).await.unwrap_or_default();
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+}
+
+impl Drop for OutputFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 #[derive(Serialize)]
@@ -143,69 +169,62 @@ struct CommandOutput {
     stderr_truncated: bool,
 }
 
-fn parse_command_for_scope(cmd: &str) -> Option<String> {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    for part in parts.iter() {
-        if part.starts_with('/') || part.starts_with('.') || part.starts_with('~') {
-            return Some(part.to_string());
+/// Runs `effective_command` under `sh -c` and collects its output — see `OutputFile` for
+/// why that's files rather than pipes, and `COMMAND_TIMEOUT` for what `timeout` is a
+/// backstop against. Takes the timeout as a parameter only so it's exercisable without
+/// waiting out the real one.
+async fn run_shell(
+    command_line: &str,
+    workdir: Option<&str>,
+    timeout: Duration,
+) -> Result<CommandOutput, ToolError> {
+    let scratch_error = |e: std::io::Error| ToolError::FailedUnknown(format!("couldn't set up command output: {e}"));
+    let (stdout_file, stdout_handle) = OutputFile::create("out").map_err(scratch_error)?;
+    let (stderr_file, stderr_handle) = OutputFile::create("err").map_err(scratch_error)?;
+
+    let mut command = process::shell_command(command_line, workdir.map(|dir| normalize(std::path::Path::new(dir))));
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_handle))
+        .stderr(Stdio::from(stderr_handle));
+    process::detach(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| ToolError::FailedUnknown(format!("couldn't execute command: {e}")))?;
+    drop(command);
+
+    let wait_error = |e: std::io::Error| ToolError::FailedUnknown(format!("couldn't wait for command: {e}"));
+    let (status, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => (status.map_err(wait_error)?, false),
+        Err(_) => {
+            if let Some(pid) = child.id() {
+                process::kill_process_tree(pid).await;
+            }
+            let _ = child.kill().await;
+            (child.wait().await.map_err(wait_error)?, true)
         }
+    };
+
+    let (stdout, stdout_truncated) = truncate_output(stdout_file.read().await);
+    let (mut stderr, stderr_truncated) = truncate_output(stderr_file.read().await);
+    if timed_out {
+        stderr.push_str(&format!(
+            "\n[command killed: still running after {}s. Output above is whatever it \
+             produced by then. Run anything this long in the background instead \
+             (`cmd > /tmp/log 2>&1 &`) and check the log.]",
+            timeout.as_secs()
+        ));
     }
-    None
-}
 
-/// The executable/command word a command starts with (e.g. `"python"` out of `"python
-/// -c '1+1'"`) — what an approval actually covers. Deliberately just the first
-/// whitespace-separated token, verbatim: doesn't strip a path prefix, doesn't look past
-/// a `&&`/`;`/`|` at a second command chained after it, and two different ways of
-/// spelling the same binary (`python` vs `/usr/bin/python3`) are two different grants.
-/// Narrower than a human might expect in the chained-command case, which is the
-/// direction to err in for a tool that runs arbitrary shell — the destructive-pattern
-/// check above still applies regardless of what's approved here.
-fn base_command(cmd: &str) -> Option<&str> {
-    cmd.split_whitespace().next()
+    Ok(CommandOutput {
+        stdout,
+        stderr,
+        exit_code: status.code().unwrap_or(-1),
+        stdout_truncated,
+        stderr_truncated,
+    })
 }
-
-/// Each shell statement's own first word — a rough, not-a-real-parser stand-in for
-/// "what command is actually about to run here," used only to keep the
-/// destructive-pattern check below from matching a command name that merely appears
-/// as ordinary text elsewhere in the line. Splitting on `;`/`&&`/`||`/`|`/newline
-/// isn't a real shell grammar (doesn't handle quoting, subshells, ...) but is enough
-/// to tell "`dd` is the command being run" apart from "`dd` is a word that happens to
-/// sit between two other words" (e.g. a tool-name list like `sed dd od hexdump`,
-/// which is exactly what triggered this: the old check was a raw substring search for
-/// `"dd "`, which that list contains without a `dd` invocation anywhere in it).
-fn statement_commands(cmd: &str) -> impl Iterator<Item = &str> {
-    cmd.split(['\n', ';', '|'])
-        .flat_map(|s| s.split("&&"))
-        .filter_map(|stmt| stmt.split_whitespace().next())
-}
-
-/// Shell preamble (see `call_untyped`) that makes `apt-get`/`apt`/`dpkg` resolve to a
-/// sudo'd invocation of themselves wherever they're actually called in the command
-/// that follows — not just when one happens to be the very first word. Aliases (not
-/// shell functions — this container's `/bin/sh` is dash, whose POSIX-strict function-
-/// name grammar rejects the hyphen in `apt-get`, making `apt-get() { ...; }` a flat
-/// syntax error there, breaking the *entire* script it's prepended to; `alias`, unlike
-/// a function name, isn't restricted to identifier syntax) take part in normal command
-/// lookup the same as a real binary would, so this transparently covers every position
-/// a naive "is the command's first word one of these" check would miss: chained with
-/// `&&`/`;`, inside a loop, after a pipe, however many times — confirmed live in dash
-/// across all of those. (An earlier version spliced `sudo -n` into just the command's
-/// leading word instead — that left a case like `apt-get update && apt-get install x`
-/// with only the first `apt-get` elevated, so the second still hit dpkg's lock file
-/// with a real "Permission denied.") The container's own non-root user is granted a
-/// scoped, passwordless `sudo` covering exactly these three binaries (see the
-/// Dockerfile's `pkg-mgmt` sudoers rule) — this exists so the model doesn't need to
-/// already know this particular container requires `sudo` just to install a package.
-/// Doesn't touch approval: `base_command`/`is_dangerous` still see `"apt-get"` etc. as
-/// the command word being approved, same as any other — this only changes how it's
-/// actually invoked once permitted. Defining these unconditionally rather than only
-/// when the command appears to need them is harmless (an unused alias costs nothing)
-/// and is exactly what avoids re-implementing shell parsing to detect every position
-/// one might be called from.
-const PACKAGE_MANAGER_SUDO_PREAMBLE: &str = "alias apt-get='sudo -n /usr/bin/apt-get'; \
-     alias apt='sudo -n /usr/bin/apt'; \
-     alias dpkg='sudo -n /usr/bin/dpkg';\n";
 
 #[async_trait]
 impl Tool for ExecuteCommandTool {
@@ -221,22 +240,16 @@ impl Tool for ExecuteCommandTool {
         ExecuteCommandArgs::tool_properties()
     }
 
+    fn shared_buckets(&self) -> &'static [SharedBucket] {
+        &[SharedBucket::ShellCommands]
+    }
+
     fn is_dangerous(
         &self,
         data: Value,
         scope: ResolvedScope,
     ) -> Result<ToolPermission, ToolSerializationError> {
         let args: ExecuteCommandArgs = serde_json::from_value(data)?;
-
-        let cmd_lower = args.command.to_lowercase();
-        let has_destructive_command = statement_commands(&cmd_lower)
-            .any(|word| word == "dd" || word == "mkfs" || word.starts_with("mkfs."));
-        if cmd_lower.contains("rm -rf /") || cmd_lower.contains("> /dev/sd") || has_destructive_command {
-            return Ok(ToolPermission::Denied {
-                reason: "Blocked obviously destructive command pattern".to_string(),
-                escalation: None,
-            });
-        }
 
         // Temporary, explicit opt-in for one unsupervised overnight run (2026-08-30) —
         // NOT a standing exception. Both env vars must be set AND match exactly
@@ -246,93 +259,27 @@ impl Tool for ExecuteCommandTool {
         // container) once the unattended stretch is over.
         let auto_cmd = std::env::var("EXECUTE_COMMAND_AUTO_APPROVE_CMD").ok();
         let auto_workdir = std::env::var("EXECUTE_COMMAND_AUTO_APPROVE_WORKDIR").ok();
-        if let (Some(auto_cmd), Some(auto_workdir)) = (&auto_cmd, &auto_workdir) {
-            if args.command.trim() == auto_cmd.trim()
-                && args.workdir.as_deref().map(str::trim) == Some(auto_workdir.trim())
-            {
-                return Ok(ToolPermission::Allowed);
+        let auto_approved = match (&auto_cmd, &auto_workdir) {
+            (Some(auto_cmd), Some(auto_workdir)) => {
+                args.command.trim() == auto_cmd.trim()
+                    && args.workdir.as_deref().map(str::trim) == Some(auto_workdir.trim())
             }
-        }
-
-        let Some(base) = base_command(&args.command) else {
-            return Ok(ToolPermission::Denied {
-                reason: "couldn't find a command to run in an empty string".to_string(),
-                escalation: None,
-            });
+            _ => false,
         };
 
-        let approved = scope
-            .own
-            .as_ref()
-            .and_then(|s| s.get("approved_commands"))
-            .and_then(|c| c.as_object())
-            .is_some_and(|c| c.contains_key(base));
-
-        if approved {
-            return Ok(ToolPermission::Allowed);
-        }
-
-        let path = args.workdir.clone().or_else(|| parse_command_for_scope(&args.command));
-        let reason = match &path {
-            Some(path) => format!("Execute command requires approval (path context: {path})"),
-            None => "Execute command requires approval".to_string(),
-        };
-
-        Ok(ToolPermission::Denied {
-            reason,
-            escalation: Some(ScopeGrant {
-                scope: ResolvedScope {
-                    own: Some(serde_json::json!({ "approved_commands": { base: true } })),
-                    shared: std::collections::HashMap::new(),
-                },
-                ui_message: format!(
-                    "Allow running `{base}` (with any arguments) for the rest of this chat? \
-                     Only this one command, exactly as typed — not general shell access."
-                ),
-            }),
-        })
+        Ok(check_command_permission(
+            &args.command,
+            args.workdir.as_deref(),
+            scope.shared.get(&SharedBucket::ShellCommands),
+            auto_approved,
+        ))
     }
 
     async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: ExecuteCommandArgs = serde_json::from_value(data)?;
 
-        // Prepends shell functions that redirect apt-get/apt/dpkg through a scoped
-        // `sudo -n` (see `PACKAGE_MANAGER_SUDO_PREAMBLE`) rather than wrapping the
-        // whole line in `sudo -n sh -c "..."` — the sudoers rule (see the Dockerfile)
-        // only grants those three binaries directly, not `sh`, and it has to stay
-        // that way: passwordless `sudo sh -c <anything>` would just be unrestricted
-        // root, defeating the entire point of scoping this. Everything else in the
-        // command (redirects, `;`, `&&`, non-package-manager commands) still runs as
-        // this container's own unprivileged user, exactly as typed — only the
-        // specific apt-get/apt/dpkg invocations resolve differently. `-n` (never
-        // prompt) means if the sudoers rule somehow doesn't cover this, it fails
-        // loudly with a clear stderr message instead of hanging on an unanswerable
-        // password prompt.
-        let effective_command = if running_in_docker() {
-            format!("{PACKAGE_MANAGER_SUDO_PREAMBLE}{}", args.command)
-        } else {
-            args.command.clone()
-        };
-        let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg(&effective_command);
-        if let Some(workdir) = &args.workdir {
-            command.current_dir(normalize(std::path::Path::new(workdir)));
-        }
-
-        let output = command
-            .output()
-            .await
-            .map_err(|e| ToolError::FailedUnknown(format!("couldn't execute command: {e}")))?;
-
-        let (stdout, stdout_truncated) = truncate_output(String::from_utf8_lossy(&output.stdout).to_string());
-        let (stderr, stderr_truncated) = truncate_output(String::from_utf8_lossy(&output.stderr).to_string());
-
-        Ok(serde_json::to_value(CommandOutput {
-            stdout,
-            stderr,
-            exit_code: output.status.code().unwrap_or(-1),
-            stdout_truncated,
-            stderr_truncated,
-        })?)
+        Ok(serde_json::to_value(
+            run_shell(&effective_command(&args.command), args.workdir.as_deref(), COMMAND_TIMEOUT).await?,
+        )?)
     }
 }

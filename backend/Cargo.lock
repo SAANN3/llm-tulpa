@@ -403,6 +403,7 @@ dependencies = [
  "sysinfo",
  "teloxide-core",
  "tokio",
+ "tokio-stream",
  "tool_derive",
  "tower",
  "tower-http 0.7.0",
@@ -4376,6 +4377,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

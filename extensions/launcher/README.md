@@ -58,5 +58,7 @@ cargo build --release
 - Opens centered on screen, always on top, undecorated.
 - Fixed at ~620 × 56 px; not resizable.
 - Pressing **Enter** with text launches `xdg-open` pointing at `http://localhost:5173/?prompt=<encoded_input>`.
+- Everything but `A–Z a–z 0–9 - . _ ~` is percent-encoded, so the prompt reaches the frontend exactly as typed — including `%`, `+`, `&`, `#` and non-ASCII text.
+- The frontend's home page reads `?prompt=`, creates a chat, and sends the prompt once; it swaps its own history entry for the chat, so Back from there doesn't send it again.
 - Pressing **Escape** clears the input and keeps the launcher open.
 - The app exits immediately after opening the browser (single-shot launcher).

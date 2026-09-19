@@ -11,8 +11,10 @@ use utoipa::ToSchema;
 use crate::services::{
     chat_store::{ChatStore, ChatFacts, Message, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
+    event_bus::EventBus,
     file_store::FileStore,
-    llm::{OllamaChatMessage, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
+    job_store::{JobRecord, JobStatus, JobStore},
+    llm::{OllamaChatMessage, OllamaChatResponse, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
     tools::ToolService,
 };
@@ -157,6 +159,11 @@ const SYSTEM_PROMPT: &[&str] = &[
      This applies every time, including partway through a long chain of tool calls in the \
      same turn — someone reading the conversation should be able to follow what you're doing \
      and why without reading your thinking.",
+    "A background job (os.start_job) tells you when it finishes: a message appears in the chat \
+     saying how it ended, and you get a turn to respond to it. So after starting one there's no \
+     need to wait or poll — either carry on with other work, or end your turn saying what's \
+     running and what you'll do once it's done. If you're unsure whether a job finished, \
+     os.list_jobs says.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -211,6 +218,74 @@ fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
     )
 }
 
+/// Why a model reply was thrown away and asked for again instead of being stored.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplyProblem {
+    /// The model wrote a tool call out as text (in its reasoning or its answer) instead
+    /// of actually calling the tool, so nothing ran and the turn would just end there.
+    ToolCallAsText,
+    /// No answer, no tool call, and it wasn't cut off — nothing to show or act on.
+    Empty,
+}
+
+impl ReplyProblem {
+    fn describe(self) -> &'static str {
+        match self {
+            ReplyProblem::ToolCallAsText => "tool call written out as text instead of being called",
+            ReplyProblem::Empty => "empty reply (no answer, no tool call)",
+        }
+    }
+}
+
+/// How many times `advance` regenerates one reply before keeping whatever it got. A
+/// malformed tool call is a sampling accident — asking again almost always fixes it —
+/// so it gets two more tries. An empty reply can just as well be the right answer (the
+/// user asked it to say nothing), which asking again will only repeat, so it gets one:
+/// enough to catch a stall, cheap enough when it wasn't one.
+#[derive(Default)]
+struct Regenerations {
+    tool_call_as_text: u8,
+    empty: u8,
+}
+
+impl Regenerations {
+    fn allow(&mut self, problem: ReplyProblem) -> bool {
+        let (used, max) = match problem {
+            ReplyProblem::ToolCallAsText => (&mut self.tool_call_as_text, 2),
+            ReplyProblem::Empty => (&mut self.empty, 1),
+        };
+        if *used >= max {
+            return false;
+        }
+        *used += 1;
+        true
+    }
+}
+
+/// The text of the `notice` message written when a background job ends — what the model
+/// is told, and what the chat shows. Bracketed like the other backend-written notes
+/// (`with_attached_files_note`), and names the job by id and command so it's
+/// recognisable without the model having to remember which job that was.
+fn job_notice_text(job: &JobRecord) -> String {
+    const MAX_COMMAND_CHARS: usize = 120;
+    let command: String = job.command.chars().take(MAX_COMMAND_CHARS).collect();
+    let ellipsis = if job.command.chars().count() > MAX_COMMAND_CHARS { "..." } else { "" };
+
+    let outcome = match (job.status, job.exit_code) {
+        (JobStatus::Exited, Some(0)) => "finished successfully (exit code 0)".to_string(),
+        (JobStatus::Exited, Some(code)) => format!("exited with code {code}"),
+        (JobStatus::Lost, _) => "was lost — the backend restarted while it was running, so how it \
+                                 ended, or whether it's still running, is unknown"
+            .to_string(),
+        _ => "ended".to_string(),
+    };
+
+    format!(
+        "[Background job {} (`{command}{ellipsis}`) {outcome}. Read its output with os.job_output.]",
+        job.id
+    )
+}
+
 /// Facade over `OllamaService`, `ChatStore`, and `ToolService` — where the actual
 /// "fetch history, call Ollama, persist the result, run tool calls" sequencing lives,
 /// rather than in route handlers or inside any one of the services it composes. Holds
@@ -224,6 +299,9 @@ pub struct Agent {
     /// context — its own `chat_id` is unused/meaningless (never itself handed to a
     /// tool). See `ToolContext`'s own doc comment for why it isn't `AppState`.
     tool_context: ToolContext,
+    /// Where finished background jobs are looked up when a chat's next turn starts — see
+    /// `flush_job_notices`. Also reachable to tools through `tool_context`.
+    job_store: Arc<JobStore>,
     /// Per-chat tool-permission grants — what scope each tool has already been given
     /// within a given chat, if any. Consulted by `to_agent_tool_call`/`use_tool` to
     /// decide whether a call is `Allowed` outright or needs the caller to confirm.
@@ -243,11 +321,16 @@ pub struct Agent {
 }
 
 impl Agent {
+    // One parameter per service the agent depends on — it's a wiring point, so it grows
+    // with the services rather than with anything that would be clearer grouped.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ollama: Arc<OllamaService>,
         chat_store: Arc<ChatStore>,
         tools: Arc<ToolService>,
         file_store: Arc<FileStore>,
+        job_store: Arc<JobStore>,
+        events: Arc<EventBus>,
         permission_store: Arc<PermissionStore>,
         history_len: u64,
         context_length: u64,
@@ -256,12 +339,14 @@ impl Agent {
         // `copy_with_chat_id` before a tool actually sees this context. `ollama` is
         // cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
         // holds its own copy below.
-        let tool_context = ToolContext { file_store, ollama: ollama.clone(), chat_id: 0 };
+        let tool_context =
+            ToolContext { file_store, ollama: ollama.clone(), job_store: job_store.clone(), events, chat_id: 0 };
         Self {
             ollama,
             chat_store,
             tools,
             tool_context,
+            job_store,
             permission_store,
             history_len,
             compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
@@ -312,15 +397,20 @@ impl Agent {
             })
             .await?;
 
-        let ollama_content = with_attached_files_note(prompt, &file_ids);
+        let notices = self.flush_job_notices(chat_id).await?;
 
-        self.advance(
-            chat_id,
-            messages,
-            Some(OllamaService::user_message_with_images(ollama_content, images)),
-            think,
-        )
-        .await
+        // Everything newer than `messages`, oldest first: the user's prompt, then any
+        // job notices flushed just above (persisted after it, so this is also their
+        // order in the chat). The last of them is what `advance` sends as the newest
+        // message; the rest go in front of it as ordinary history.
+        let ollama_content = with_attached_files_note(prompt, &file_ids);
+        let mut tail = vec![OllamaService::user_message_with_images(ollama_content, images)];
+        tail.extend(notices.iter().map(|notice| OllamaService::user_message(notice.content.clone())));
+        let new_message = tail.pop();
+        let mut messages = messages;
+        messages.extend(tail);
+
+        self.advance(chat_id, messages, new_message, think, notices).await
     }
 
     /// Sends a chat's existing history to Ollama as-is and persists whatever it replies
@@ -331,8 +421,84 @@ impl Agent {
     /// tool failing is a valid reason to continue too, and forcing the caller through the
     /// rest of an in-flight batch first would just be busywork).
     pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
+        let notices = self.flush_job_notices(chat_id).await?;
         let messages = self.ollama_history(chat_id).await?;
-        self.advance(chat_id, messages, None, think).await
+        self.advance(chat_id, messages, None, think, notices).await
+    }
+
+    /// Starts a turn only if a background job has finished since the model was last
+    /// told about one — `None` if there's nothing to report (or the chat is mid-turn, see
+    /// below), so a caller acting on a stale hint (`ServerEvent::JobFinished` for a job an in-progress turn already
+    /// reported) gets a harmless no-op instead of an unprompted extra model call. The
+    /// decision is made here, not by the caller, because only here is claiming the
+    /// finished jobs atomic. Otherwise identical to `continue_chat`: the notices are
+    /// persisted as the newest messages and the model replies to them.
+    pub async fn run_pending_notices(
+        &self,
+        chat_id: i64,
+        think: Option<ThinkChoice>,
+    ) -> Result<Option<ChatOut>, ErrorService> {
+        // A notice has to come after every tool result already in the chat, never in the
+        // middle of an unfinished batch — so while calls are still waiting to be run
+        // (mid-turn, or paused on a confirmation) this does nothing, and the notice goes
+        // out with the `continue_chat` that follows once they have.
+        if !self.pending_tool_calls(chat_id).await?.is_empty() {
+            return Ok(None);
+        }
+
+        let notices = self.flush_job_notices(chat_id).await?;
+        if notices.is_empty() {
+            return Ok(None);
+        }
+
+        let messages = self.ollama_history(chat_id).await?;
+        Ok(Some(self.advance(chat_id, messages, None, think, notices).await?))
+    }
+
+    /// Turns every background job of `chat_id` that has finished but not been reported
+    /// into a persisted `notice` message, oldest first, and returns them. Called at the
+    /// one point in every turn where appending is always safe — after the newest
+    /// message already stored, before the model's own reply — so a notice can never
+    /// land between an assistant message's tool calls and their results. Persisted (not
+    /// just added to the prompt) so the model keeps seeing it on later turns, the chat
+    /// reads the same after a reload as it did live, and the reply that follows makes
+    /// sense next to it. Each job is claimed before its notice is written, so
+    /// concurrent callers can't report it twice; a job whose notice fails to save is
+    /// handed back so the next turn tries again.
+    async fn flush_job_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
+        let jobs = self.job_store.claim_unnotified(chat_id).await?;
+
+        let mut notices = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            let stored = self
+                .chat_store
+                .new_message(NewMessage {
+                    chat_id,
+                    role: "notice".to_string(),
+                    content: job_notice_text(&job),
+                    tool_name: None,
+                    thinking: None,
+                    thought_duration_ms: None,
+                    tool_success: None,
+                    tool_denied: false,
+                    tool_calls: vec![],
+                    images: vec![],
+                    file_ids: vec![],
+                })
+                .await;
+
+            match stored {
+                Ok(message) => notices.push(NoticeOut { content: message.content, created_at: message.created_at }),
+                Err(e) => {
+                    if let Err(undo) = self.job_store.unclaim(job.id).await {
+                        tracing::error!(job_id = job.id, "couldn't hand a job back after its notice failed to save: {undo}");
+                    }
+                    return Err(e.into());
+                }
+            }
+        }
+
+        Ok(notices)
     }
 
     /// Sends `messages` (plus `new_message`, if any) to Ollama, prefixed with
@@ -343,13 +509,18 @@ impl Agent {
     /// there, not here). `SYSTEM_PROMPT` is prepended fresh on every call rather than
     /// stored in `chat_store`, so it can be changed without touching existing chats'
     /// history. `thought_duration_ms` times the whole Ollama call, not just the
-    /// `<think>` portion — see its doc comment on `NewMessage` for why.
+    /// `<think>` portion — see its doc comment on `NewMessage` for why — and includes any
+    /// regenerations (`unusable_reply`), since that's how long the reply really took. `notices` are
+    /// job notices the caller already persisted just before this call (see
+    /// `flush_job_notices`), carried through into the returned `ChatOut` so a client can
+    /// show them ahead of the reply.
     async fn advance(
         &self,
         chat_id: i64,
         mut messages: Vec<OllamaChatMessage>,
         new_message: Option<OllamaChatMessage>,
         think: Option<ThinkChoice>,
+        notices: Vec<NoticeOut>,
     ) -> Result<ChatOut, ErrorService> {
         let tools: Vec<&dyn Tool> = self.tools.get_tools().map(|tool| tool.as_ref()).collect();
 
@@ -408,7 +579,33 @@ impl Agent {
         };
 
         let started_at = Instant::now();
-        let response = self.ollama.chat(messages_with_system, new_message, &tools, think).await?;
+        let mut regenerations = Regenerations::default();
+        let response = loop {
+            let response = self
+                .ollama
+                .chat(messages_with_system.clone(), new_message.clone(), &tools, think.clone())
+                .await?;
+
+            let Some(problem) = self.unusable_reply(&response).await else { break response };
+            if !regenerations.allow(problem) {
+                tracing::warn!(chat_id, problem = problem.describe(), "model reply unusable, keeping it anyway");
+                break response;
+            }
+
+            let thinking_tail: String = response
+                .message
+                .thinking
+                .as_deref()
+                .unwrap_or_default()
+                .chars()
+                .rev()
+                .take(160)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            tracing::warn!(chat_id, problem = problem.describe(), %thinking_tail, "model reply unusable, regenerating");
+        };
         let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
         let prompt_eval_count = response.prompt_eval_count();
 
@@ -462,11 +659,45 @@ impl Agent {
             thinking,
             thought_duration_ms,
             file_ids: stored.file_ids,
+            notices,
         };
 
         self.maybe_compact(chat_id, prompt_eval_count).await;
 
         Ok(out)
+    }
+
+    /// Whether a model reply is unusable — see `ReplyProblem` — and so should be asked for
+    /// again rather than stored. A reply that carries a real tool call is always usable,
+    /// and so is one that was cut off by the token limit: asking again would just run
+    /// into the same wall (`num_predict` already leaves all the room there is).
+    ///
+    /// Tool-call-as-text is recognized by the model's own wrapper tags (`<tool_call>` /
+    /// `</tool_call>` for Qwen, whatever another model's template says — see
+    /// `OllamaService::tool_call_markers`) turning up in its reasoning or answer with no
+    /// call actually parsed. Emptiness alone deliberately doesn't count as that: it can be
+    /// a legitimate reply, so it's its own, more cautious, problem.
+    async fn unusable_reply(&self, response: &OllamaChatResponse) -> Option<ReplyProblem> {
+        let message = &response.message;
+        if message.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty()) {
+            return None;
+        }
+        if response.done_reason.as_deref() == Some("length") {
+            return None;
+        }
+
+        // The wrapper tags always contain "tool_call"/"function_call" (that's how
+        // they're found), so text without either can't contain one — which keeps the
+        // template lookup off the path of every ordinary reply.
+        let texts = [message.thinking.as_deref().unwrap_or_default(), message.content.as_str()];
+        if texts.iter().any(|text| text.contains("tool_call") || text.contains("function_call")) {
+            let markers = self.ollama.tool_call_markers().await;
+            if texts.iter().any(|text| markers.iter().any(|marker| text.contains(marker.as_str()))) {
+                return Some(ReplyProblem::ToolCallAsText);
+            }
+        }
+
+        message.content.trim().is_empty().then_some(ReplyProblem::Empty)
     }
 
     /// A chat's message history mapped into Ollama's wire format, oldest first. Once a
@@ -1186,7 +1417,10 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             .collect();
 
         OllamaChatMessage {
-            role: message.role,
+            // A `notice` is the backend telling the model something (a job finished) —
+            // chat templates only know system/user/assistant/tool, and it reads as
+            // something said to the model, so it goes out as a `user` message.
+            role: if message.role == "notice" { "user".to_string() } else { message.role },
             content: with_attached_files_note(message.content, &message.file_ids),
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_name: message.tool_name,
@@ -1353,6 +1587,18 @@ pub struct ChatOut {
     /// chat was reloaded from `GET /chats/messages`, which is the only other place
     /// `file_ids` comes from.
     pub file_ids: Vec<i64>,
+    /// Background-job notices persisted just before this reply, oldest first — messages
+    /// the client should show in the chat ahead of `content`, in this order. Empty
+    /// unless a job finished since the previous turn.
+    pub notices: Vec<NoticeOut>,
+}
+
+/// One `notice` message: the backend telling the chat a background job ended.
+#[derive(Serialize, ToSchema)]
+pub struct NoticeOut {
+    pub content: String,
+    #[schema(value_type = String, format = "date-time")]
+    pub created_at: DateTimeUtc,
 }
 
 #[derive(Serialize, ToSchema)]

@@ -7,7 +7,9 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
+use crate::services::event_bus::EventBus;
 use crate::services::file_store::FileStore;
+use crate::services::job_store::JobStore;
 use crate::services::llm::OllamaService;
 
 
@@ -130,6 +132,15 @@ pub struct ToolContext {
     /// about tools or turns at all, so a tool calling through this can't loop back
     /// into anything.
     pub ollama: Arc<OllamaService>,
+    /// Background jobs — what the `os.*_job` tools start, read and stop. Every job is
+    /// tied to the chat that started it, so a tool reaching for this always pairs it
+    /// with `chat_id` below rather than taking one as a model-facing argument.
+    pub job_store: Arc<JobStore>,
+    /// For a tool that needs to tell connected frontends something outside the request
+    /// it's answering — publish a `ServerEvent` here, see `services::event_bus`. No tool
+    /// does yet; it's wired now so the first one that needs to is only a variant away.
+    #[allow(dead_code)]
+    pub events: Arc<EventBus>,
     /// The chat this call is happening within — every `FileStore` row needs one, so
     /// anything that calls `file_store.*` reaches for this rather than taking a
     /// `chat_id` as one of its own model-facing arguments (the model has no reason to
@@ -159,6 +170,10 @@ pub enum SharedBucket {
     StorageRead,
     StorageWrite,
     StorageDelete,
+    /// Which shell commands (by leading word) have been approved to run — shared by
+    /// every tool that runs a command line (`os.execute_command`, `os.start_job`), so
+    /// approving `python` once covers `python ...` whichever of them runs it.
+    ShellCommands,
 }
 
 impl SharedBucket {
@@ -173,16 +188,19 @@ impl SharedBucket {
             SharedBucket::StorageRead => "GLOBAL.STORAGE_READ",
             SharedBucket::StorageWrite => "GLOBAL.STORAGE_WRITE",
             SharedBucket::StorageDelete => "GLOBAL.STORAGE_DELETE",
+            SharedBucket::ShellCommands => "GLOBAL.SHELL_COMMANDS",
         }
     }
 
     /// The JSON key this bucket's grant is stored under within its own row (a map of
-    /// granted folders — see `tools::storage::check_scope`). Named once here, on the
+    /// what's been granted — folders for the storage buckets, see
+    /// `tools::storage::check_scope`; command words for `ShellCommands`). Named once here, on the
     /// enum itself, so every storage-domain bucket sharing this shape (they all do
     /// today) stays in sync automatically, and a future rename touches only this match.
     pub fn json_key(self) -> &'static str {
         match self {
             SharedBucket::StorageRead | SharedBucket::StorageWrite | SharedBucket::StorageDelete => "folders",
+            SharedBucket::ShellCommands => "approved_commands",
         }
     }
 }

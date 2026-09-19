@@ -7,6 +7,7 @@ import { ChatMessage } from '../components/ChatMessage'
 import { DateSeparator } from '../components/DateSeparator'
 import type { LazyListHandle } from '../components/LazyList'
 import { LazyList } from '../components/LazyList'
+import { NoticeMessage } from '../components/NoticeMessage'
 import { PendingAssistantMessage } from '../components/PendingAssistantMessage'
 import { Button, Div, Label } from '../components/primitives'
 import { Sidebar } from '../components/Sidebar'
@@ -16,6 +17,7 @@ import { UserInput } from '../components/UserInput'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import type { Decisions, PendingConfirmations, TurnResult } from '../hooks/useMessages'
 import { ToolAllowance, useMessages } from '../hooks/useMessages'
+import { useServerEvent } from '../hooks/useServerEvents'
 import { getAutoConfirm } from '../utils/autoConfirm'
 import { consumePendingPrompt, peekPendingPrompt } from '../utils/pendingPrompt'
 import { isSameDay } from '../utils/dates'
@@ -56,7 +58,7 @@ function Chat() {
 
 function ChatView({ chatId }: { chatId: number }) {
   const lazyListRef = useRef<LazyListHandle>(null)
-  const { messages, loadOlder, send, resume, sending, canContinue } = useMessages(chatId, () =>
+  const { messages, loadOlder, send, resume, runJobNotices, sending, canContinue } = useMessages(chatId, () =>
     lazyListRef.current?.jumpToBottom(),
   )
 
@@ -146,8 +148,13 @@ function ChatView({ chatId }: { chatId: number }) {
       if (chatIdRef.current === forChatId) setTurnError("Something went wrong continuing that turn — try again.")
     }
   }
+  // What the composer last asked for — reused for a turn the backend starts on its own
+  // (a finished background job), which has no composer interaction of its own to read
+  // it from.
+  const lastThinkRef = useRef<ThinkChoice>(true)
   const handleSend = async (prompt: string, think?: ThinkChoice, images?: string[], fileIds?: number[]) => {
     const forChatId = chatId
+    lastThinkRef.current = think ?? true
     setTurnError(null)
     try {
       handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
@@ -163,6 +170,10 @@ function ChatView({ chatId }: { chatId: number }) {
   sendRef.current = handleSend
   const resumeRef = useRef(resume)
   resumeRef.current = resume
+  const runJobNoticesRef = useRef(runJobNotices)
+  runJobNoticesRef.current = runJobNotices
+  const handleTurnResultRef = useRef(handleTurnResult)
+  handleTurnResultRef.current = handleTurnResult
 
   // Seeded synchronously (not in the effect below) so the composer's "Thinking" toggle
   // already shows the right value on first render — the effect that actually consumes
@@ -188,6 +199,32 @@ function ChatView({ chatId }: { chatId: number }) {
     const pending = consumePendingPrompt(chatId)
     if (pending) sendRef.current(pending.prompt, pending.think, pending.images, pending.fileIds)
   }, [chatId])
+
+  // A background job finished. The event is only a hint (see `useServerEvents`), and it
+  // can arrive at any moment — mid-turn, while a confirmation is showing, or with
+  // nothing going on — so it's recorded here and acted on by the effect below only
+  // once the chat is actually idle. An event that lands mid-turn is therefore deferred,
+  // never dropped: if the turn itself doesn't already carry the notice along (its next
+  // model call does, when there is one), the effect asks for it once the turn ends.
+  const [noticesWaiting, setNoticesWaiting] = useState(false)
+  useServerEvent('job_finished', (event) => {
+    if (event.chat_id === chatIdRef.current) setNoticesWaiting(true)
+  })
+
+  useEffect(() => {
+    if (!noticesWaiting || sending || pausedTurn) return
+    setNoticesWaiting(false)
+    const forChatId = chatId
+
+    runJobNoticesRef
+      .current(lastThinkRef.current)
+      .then((result) => {
+        if (result) handleTurnResultRef.current(forChatId, result)
+      })
+      .catch(() => {
+        if (chatIdRef.current === forChatId) setTurnError('Something went wrong reacting to a finished job — try again.')
+      })
+  }, [noticesWaiting, sending, pausedTurn, chatId])
 
   // `canContinue` is fetched by `useMessages` as soon as the chat opens — reopening a
   // chat that was left mid-turn (tab closed/navigated away before a confirmation was
@@ -222,7 +259,9 @@ function ChatView({ chatId }: { chatId: number }) {
             return (
               <Fragment key={i}>
                 {showDate ? <DateSeparator date={new Date(m.created_at)} /> : null}
-                {m.role === 'tool' ? (
+                {m.role === 'notice' ? (
+                  <NoticeMessage content={m.content} />
+                ) : m.role === 'tool' ? (
                   <ToolMessage
                     tool_name={m.tool_name ?? m.role}
                     content={m.content}

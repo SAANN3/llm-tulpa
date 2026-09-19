@@ -28,6 +28,9 @@ serenity = { version = "0.12.5", default-features = false, features = ["client",
 sysinfo = "0.39.6"
 teloxide-core = { version = "0.13.0", default-features = false, features = ["rustls"] }
 tokio = { version = "1.53.1", features = ["full"] }
+# `BroadcastStream` (the `sync` feature) adapts `EventBus`'s broadcast channel into the
+# stream `GET /api/events` hands to axum's SSE response.
+tokio-stream = { version = "0.1", features = ["sync"] }
 tool_derive = { path = "tool_derive" }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["cors"] }

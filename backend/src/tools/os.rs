@@ -8,6 +8,12 @@ pub mod get_hardware;
 pub mod get_network_info;
 pub mod get_process_list;
 pub mod get_user_info;
+pub mod job_kill;
+pub mod job_output;
+mod jobs;
+pub mod list_jobs;
+pub mod shell;
+pub mod start_job;
 
 use super::base::Tool;
 
@@ -20,6 +26,10 @@ pub fn collect() -> Vec<Box<dyn Tool>> {
         Box::new(get_process_list::GetProcessListTool),
         Box::new(get_network_info::GetNetworkInfoTool),
         Box::new(execute_command::ExecuteCommandTool),
+        Box::new(start_job::StartJobTool),
+        Box::new(job_output::JobOutputTool),
+        Box::new(job_kill::JobKillTool),
+        Box::new(list_jobs::ListJobsTool),
         Box::new(cpu_usage::CpuUsageTool),
         Box::new(get_user_info::GetUserInfoTool),
         Box::new(env_read::EnvReadTool),

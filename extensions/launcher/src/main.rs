@@ -74,7 +74,9 @@ impl LauncherApp {
         let mut result = String::new();
         for ch in s.chars() {
             match ch {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' | '_' | '~' | '/' | ':' | '@' | '!' | '$' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' | '?' => {
+                // Unreserved characters only — anything else, including `+` (which the
+                // frontend reads as a space) and `%`, must be percent-encoded to arrive intact.
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' | '_' | '~' => {
                     result.push(ch);
                 }
                 ' ' => result.push_str("%20"),

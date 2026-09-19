@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod chats;
+pub mod events;
 pub mod files;
 pub mod llm;
 pub mod plugins;

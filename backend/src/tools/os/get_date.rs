@@ -30,7 +30,7 @@ impl Tool for GetDateTool {
 
     fn description(&self) -> &str {
         "Returns the actual current date and time (UTC, plus this backend's own local clock). \
-         The current date is already given to you directly at the top of every conversation, so \
+         The current date is already appended, in brackets, to the newest message in every conversation, so \
          you shouldn't need this for the basic 'what year is it' case — reach for this instead \
          when you specifically need a precise, freshly-computed timestamp: an exact machine-\
          readable ISO 8601 string, this backend's local time and UTC offset rather than UTC \

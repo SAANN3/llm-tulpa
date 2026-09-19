@@ -23,8 +23,9 @@ use plugins::messaging::telegram::TelegramProvider;
 use plugins::messaging::vk::VkProvider;
 use plugins::registry::PluginRegistry;
 use services::{
-    chat_store::ChatStore, file_store::FileStore, llm::OllamaService, permission_store::PermissionStore,
-    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
+    chat_store::ChatStore, event_bus::EventBus, file_store::FileStore, job_store::JobStore, llm::OllamaService,
+    permission_store::PermissionStore, plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore,
+    tools::ToolService,
 };
 use state::AppState;
 use tools::base::Tool;
@@ -63,6 +64,22 @@ async fn main() {
             .unwrap_or_else(|| panic!("could not determine home directory; set FILES_DIR to override"))
             .join(".llm-tulpa/files"),
     };
+
+    // Where `JobStore` keeps each background job's log — same default-and-override
+    // shape (and same `/home` passthrough reasoning) as `FILES_DIR` above.
+    let jobs_dir = match std::env::var("JOBS_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::home_dir()
+            .unwrap_or_else(|| panic!("could not determine home directory; set JOBS_DIR to override"))
+            .join(".llm-tulpa/jobs"),
+    };
+
+    // How long a finished background job's log is kept before the sweep at startup
+    // deletes it; 0 keeps every log.
+    let job_log_retention_days: u64 = std::env::var("JOB_LOG_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
 
     let agent_history_len: u64 = std::env::var("AGENT_HISTORY_LEN")
         .ok()
@@ -108,11 +125,18 @@ async fn main() {
     // key on `chats`.
     let file_store = Arc::new(FileStore::new(&database_url, &database_name, files_dir).await);
 
+    // Same ordering constraint as `file_store` — `jobs` also has a foreign key on
+    // `chats`.
+    let events = Arc::new(EventBus::new());
+    let job_store = Arc::new(JobStore::new(&database_url, &database_name, jobs_dir, job_log_retention_days, events.clone()).await);
+
     let agent = Agent::new(
         ollama.clone(),
         chat_store.clone(),
         tools.clone(),
         file_store.clone(),
+        job_store.clone(),
+        events.clone(),
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,
@@ -131,6 +155,8 @@ async fn main() {
         chat_store.clone(),
         Arc::new(ToolService::new(vec![])),
         file_store.clone(),
+        job_store.clone(),
+        events.clone(),
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,
@@ -152,6 +178,7 @@ async fn main() {
         tools,
         settings_store,
         file_store,
+        events,
         agent,
         prompt,
         user_cache,

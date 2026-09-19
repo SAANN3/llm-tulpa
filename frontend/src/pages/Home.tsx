@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import type { ThinkChoice } from '../api/agent/types'
@@ -23,27 +23,38 @@ function Home() {
   const [placeholder, setPlaceholder] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // Seed the input from a ?prompt= query param (set by the launcher) and auto-send.
-  const launchPrompt = searchParams.get('prompt')
+  // A prompt handed over by the launcher (`extensions/launcher`), as `/?prompt=...`.
+  // `searchParams.get` has already percent-decoded it — decoding it again throws
+  // "URI malformed" on a literal `%` in the text (which crashes the whole page), and
+  // would mangle text that merely looks encoded.
+  const launchPrompt = searchParams.get('prompt')?.trim() || null
 
-  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[]) => {
+  // `replace` swaps this page's history entry for the chat instead of adding one after
+  // it — for a launcher prompt, so Back from the chat can't land on `/?prompt=...`
+  // again and send it a second time.
+  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[], replace = false) => {
     setCreating(true)
     try {
       const name = await chatName(prompt, images)
       const chat = await createChat(name)
       setPendingPrompt(chat.id, prompt, think, images, fileIds)
-      navigate(`/chat?id=${chat.id}`)
+      navigate(`/chat?id=${chat.id}`, { replace })
     } finally {
       setCreating(false)
     }
   }
 
+  // Sent once, as soon as this mounts with a prompt in the URL. `launchedRef` (not the
+  // effect's dependencies) is what makes it once: React's dev-mode double mount would
+  // otherwise send it twice, and `onSend` is a fresh closure every render.
+  const onSendRef = useRef(onSend)
+  onSendRef.current = onSend
+  const launchedRef = useRef(false)
   useEffect(() => {
-    if (launchPrompt && !creating) {
-      const decoded = decodeURIComponent(launchPrompt)
-      void onSend(decoded, true, [], [])
-    }
-  }, [])
+    if (!launchPrompt || launchedRef.current) return
+    launchedRef.current = true
+    void onSendRef.current(launchPrompt, true, [], [], true)
+  }, [launchPrompt])
 
   // Both `greet` and `inputExample` can take many seconds on a cache miss. Without
   // aborting on unmount, navigating away mid-request (and back, repeatedly) leaves the
