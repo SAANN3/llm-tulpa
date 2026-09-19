@@ -55,9 +55,11 @@ export const Sidebar = () => {
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
                 <ChatEntry label="Settings" selected={false} onClicked={() => navigate('/settings')}/>
-                <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')}/>
                 {user?.role === 'owner' ? (
-                    <ChatEntry label="Users" selected={false} onClicked={() => navigate('/users')}/>
+                    <>
+                        <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')}/>
+                        <ChatEntry label="Users" selected={false} onClicked={() => navigate('/users')}/>
+                    </>
                 ) : null}
                 <ChatEntry label="Log out" selected={false} onClicked={logout}/>
             </Div>

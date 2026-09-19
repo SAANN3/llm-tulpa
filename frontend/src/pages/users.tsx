@@ -21,6 +21,7 @@ const Users = () => {
     const [password, setPassword] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
+    const [confirmingId, setConfirmingId] = useState<number | null>(null)
 
     const refresh = () => listUsers().then(setUsers).catch(() => setError('Could not load users.'))
 
@@ -49,6 +50,7 @@ const Users = () => {
 
     const onDelete = async (id: number) => {
         setError(null)
+        setConfirmingId(null)
         try {
             await deleteUser(id)
             await refresh()
@@ -70,8 +72,14 @@ const Users = () => {
                                 <Label variant="secondary" className="users__role" text={u.role}/>
                                 {u.id === currentUser?.id ? (
                                     <Label variant="secondary" className="users__you" text="(you)"/>
+                                ) : confirmingId === u.id ? (
+                                    <>
+                                        <Label variant="secondary" className="users__you" text={`Delete ${u.username} and their chats?`}/>
+                                        <Button text="Delete" onClicked={() => onDelete(u.id)}/>
+                                        <Button variant="secondary" text="Cancel" onClicked={() => setConfirmingId(null)}/>
+                                    </>
                                 ) : (
-                                    <Button variant="secondary" text="Delete" onClicked={() => onDelete(u.id)}/>
+                                    <Button variant="secondary" text="Delete" onClicked={() => setConfirmingId(u.id)}/>
                                 )}
                             </Div>
                         ))}

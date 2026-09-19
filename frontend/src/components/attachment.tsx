@@ -1,8 +1,9 @@
 import {useEffect, useState} from 'react'
 import {Close, File as FileIcon} from 'pixelarticons/react'
-import {getFileDownloadUrl} from '../api/files/download'
+import {saveFile} from '../api/files/download'
 import {getFile} from '../api/files/get'
 import type {FileOut} from '../api/files/types'
+import {useFileBlobUrl} from '../hooks/use-file-blob-url.ts'
 import {getFileExtension} from '../utils/file-extension.ts'
 import {AttachmentPreview} from './attachment-preview.tsx'
 import {Button, Div, Label} from './primitives'
@@ -72,10 +73,14 @@ export const Attachment = (props: AttachmentProps) => {
 
     const download = () => {
         if (props.kind === 'image') triggerDownload(toDataUrl(props.image), 'image.png')
-        else if (file) triggerDownload(getFileDownloadUrl(file.id), file.file_name)
+        else if (file) void saveFile(file.id, file.file_name)
     }
 
     const mediaKind = props.kind === 'file' && file ? getMediaKind(getFileExtension(file.file_name)) : null
+    // The thumbnail's bytes come through axios (the Bearer token can't ride on a bare `src`).
+    // Images only: a video would have to be downloaded whole just to draw a chip, so it gets the
+    // generic file chip and loads when its preview is opened.
+    const {url: mediaUrl} = useFileBlobUrl(mediaKind === 'image' && file ? file.id : null)
     const thumbnailStyle = {
         width: '100%',
         height: '100%',
@@ -91,17 +96,9 @@ export const Attachment = (props: AttachmentProps) => {
                 {props.kind === 'image' ? (
                     <img src={toDataUrl(props.image)} alt="" onClick={() => setPreviewOpen(true)}
                          style={thumbnailStyle}/>
-                ) : mediaKind === 'image' && file ? (
-                    <img src={getFileDownloadUrl(file.id)} alt={file.file_name} onClick={() => setPreviewOpen(true)}
+                ) : mediaKind === 'image' && file && mediaUrl ? (
+                    <img src={mediaUrl} alt={file.file_name} onClick={() => setPreviewOpen(true)}
                          style={thumbnailStyle}/>
-                ) : mediaKind === 'video' && file ? (
-                    <video
-                        src={getFileDownloadUrl(file.id)}
-                        muted
-                        preload="metadata"
-                        onClick={() => setPreviewOpen(true)}
-                        style={{...thumbnailStyle, cursor: 'pointer', background: 'black'}}
-                    />
                 ) : (
                     <Div
                         className="vbox center"

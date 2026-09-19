@@ -1,11 +1,10 @@
-import {useState} from 'react'
-import {getFileDownloadUrl} from '../../api/files/download'
+import {useFileBlobUrl} from '../../hooks/use-file-blob-url.ts'
 import {Div, Label} from '../primitives'
 import type {PreviewerProps} from './types'
 
-/** A plain img pointed at the download URL, keeping aspect ratio as the popup resizes */
+/** An img fed from the file's blob, keeping aspect ratio as the popup resizes */
 const ImagePreview = ({file}: PreviewerProps) => {
-    const [failed, setFailed] = useState(false)
+    const {url, failed} = useFileBlobUrl(file.id)
 
     if (failed) {
         return (
@@ -15,11 +14,18 @@ const ImagePreview = ({file}: PreviewerProps) => {
         )
     }
 
+    if (!url) {
+        return (
+            <Div style={{padding: 20}}>
+                <Label variant="secondary" text="Loading…"/>
+            </Div>
+        )
+    }
+
     return (
         <img
-            src={getFileDownloadUrl(file.id)}
+            src={url}
             alt={file.file_name}
-            onError={() => setFailed(true)}
             style={{width: '100%', height: '100%', objectFit: 'contain', display: 'block'}}
         />
     )

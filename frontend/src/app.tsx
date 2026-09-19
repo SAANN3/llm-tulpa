@@ -10,7 +10,7 @@ import Home from './pages/home.tsx'
 import Login from './pages/login.tsx'
 import Plugins from './pages/plugins.tsx'
 import Settings from './pages/settings.tsx'
-import Setup from './pages/setup.tsx'
+import Setup from './pages/setup/setup.tsx'
 import Users from './pages/users.tsx'
 
 const RequireAuth = () => {
@@ -41,8 +41,8 @@ const App = () => (
                                 <Route path="/" element={<Home/>}/>
                                 <Route path="/chat" element={<Chat/>}/>
                                 <Route path="/settings" element={<Settings/>}/>
-                                <Route path="/plugins" element={<Plugins/>}/>
                                 <Route element={<RequireOwner/>}>
+                                    <Route path="/plugins" element={<Plugins/>}/>
                                     <Route path="/users" element={<Users/>}/>
                                 </Route>
                             </Route>
