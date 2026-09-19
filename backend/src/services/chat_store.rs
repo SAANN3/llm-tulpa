@@ -6,12 +6,13 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use entities::{chats, message_files, message_images, messages, plugin_chats, tool_calls};
 use sea_orm::{
-    prelude::*, sea_query::Expr, ActiveValue::Set, DatabaseConnection, DbBackend, PaginatorTrait,
-    QueryOrder, QuerySelect, Statement, TransactionError, TransactionTrait,
+    prelude::*, sea_query::Expr, ActiveValue::Set, DatabaseConnection, PaginatorTrait,
+    QueryOrder, QuerySelect, TransactionError, TransactionTrait,
 };
 
 use crate::services::error::ErrorService;
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
+use crate::services::user_store::{UserStore, UserStoreErrors};
 
 /// Owns chat/message persistence, scoped per user. SeaORM entities are private to this
 /// module — callers only ever see the plain structs (`Chat`, `Message`, ...). Attached
@@ -21,12 +22,15 @@ use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
 pub struct ChatStore {
     db: DatabaseConnection,
     models: Arc<ModelStore>,
+    /// Only for `owner_id`: plugin chats belong to the owner, and the `users` table is
+    /// `UserStore`'s, not this store's.
+    users: Arc<UserStore>,
 }
 
 impl ChatStore {
     /// Holds an already-connected, already-migrated connection (see `services::bootstrap`).
-    pub fn new(db: DatabaseConnection, models: Arc<ModelStore>) -> Self {
-        Self { db, models }
+    pub fn new(db: DatabaseConnection, models: Arc<ModelStore>, users: Arc<UserStore>) -> Self {
+        Self { db, models, users }
     }
 
     /// A chat by id — the one place that decides whether a chat is usable (exists and
@@ -221,6 +225,13 @@ impl ChatStore {
             .collect())
     }
 
+    /// Every tool call for a batch of messages in one query, grouped by `message_id` and
+    /// ordered by `id` within each group — insertion order is the order the model requested
+    /// them in, which callers need to resolve "which of these calls is next" without a separate
+    /// ordering column. A single `LEFT JOIN` (or `find_with_related`) doesn't compose with the
+    /// `LIMIT`/`OFFSET` `messages` applies to the message side: the join would cap joined
+    /// (message, tool_call) *pairs*, not distinct messages. Two queries plus grouping in Rust
+    /// sidesteps that at negligible cost.
     async fn tool_calls_by_messages(
         &self,
         message_ids: Vec<i64>,
@@ -301,15 +312,7 @@ impl ChatStore {
     /// The owner user's id — plugin chats belong to the owner. Errs `NotFound` if no owner
     /// exists yet (setup hasn't run).
     async fn owner_id(&self) -> Result<i64, ChatStoreErrors> {
-        self.db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Postgres,
-                "SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1",
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "id"))
-            .transpose()?
-            .ok_or(ChatStoreErrors::NotFound)
+        self.users.owner_id().await?.ok_or(ChatStoreErrors::NotFound)
     }
 
     /// Creates a chat owned by one plugin instance (belonging to the owner user), mapped
@@ -414,7 +417,8 @@ impl ChatStore {
         Ok(())
     }
 
-    /// Soft-deletes the chat.
+    /// Soft-deletes the chat: it's marked `is_deleted` rather than removed with its messages,
+    /// so `chat`/`chats` just stop returning it.
     pub async fn delete_chat(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
         chats::ActiveModel { id: Set(chat_id), is_deleted: Set(true), ..Default::default() }
@@ -423,8 +427,14 @@ impl ChatStore {
         Ok(())
     }
 
-    /// Deletes every message of a chat (children cascade) and clears its summary, leaving
-    /// the chat row itself intact.
+    /// Deletes every message of a chat (children cascade) and clears its summary, leaving the
+    /// chat row itself intact — its id, name and, for a plugin chat, its external mapping — so
+    /// the same conversation keeps working with a clean slate.
+    ///
+    /// Deliberately not built on `delete_chat`'s soft delete: a plugin chat's
+    /// `(plugin_name, plugin_subname, plugin_chat_id)` is uniquely constrained across *all*
+    /// rows regardless of `is_deleted`, so soft-deleting one would block that external chat
+    /// from ever being linked again.
     pub async fn clear_messages(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
 
@@ -622,6 +632,13 @@ pub enum ChatStoreErrors {
     QueryFailed(DbErr),
     NotFound,
     Model(ModelStoreErrors),
+    User(UserStoreErrors),
+}
+
+impl From<UserStoreErrors> for ChatStoreErrors {
+    fn from(err: UserStoreErrors) -> Self {
+        ChatStoreErrors::User(err)
+    }
 }
 
 impl From<DbErr> for ChatStoreErrors {
@@ -644,6 +661,7 @@ impl From<ChatStoreErrors> for ErrorService {
                 ErrorService::internal("database query failed")
             }
             ChatStoreErrors::Model(e) => e.into(),
+            ChatStoreErrors::User(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
         }
     }

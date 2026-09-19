@@ -9,9 +9,16 @@ pub struct Model {
     pub role: String,
     pub content: String,
     pub tool_name: Option<String>,
+    /// The model's reasoning trace, when it produced one. Only on `assistant` rows.
     pub thinking: Option<String>,
+    /// How long the Ollama call that produced this message took, end to end — not isolated to
+    /// the thinking part, since non-streaming responses don't report the two separately.
     pub thought_duration_ms: Option<i64>,
+    /// `tool` rows only: whether the tool succeeded, so a historical message renders like a live
+    /// one without parsing `content`.
     pub tool_success: Option<bool>,
+    /// `tool` rows with `tool_success: Some(false)` only: the call never ran because it wasn't
+    /// permitted, as opposed to running and failing.
     pub tool_denied: bool,
     pub created_at: DateTimeUtc,
     // Attached images/files are normalized into `message_images`/`message_files` (3NF);

@@ -2,16 +2,18 @@ mod entities;
 
 use axum::http::StatusCode;
 use entities::users;
-use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbBackend, QueryOrder, Statement};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, QueryOrder, SqlErr};
 
+use crate::services::auth::{AuthErrors, AuthService};
 use crate::services::error::ErrorService;
 
 pub const ROLE_OWNER: &str = "owner";
 pub const ROLE_USER: &str = "user";
 
-/// Owns the `users` table and password hashing/verification (bcrypt). Also seeds the 1:1
-/// `user_settings` row on user creation so per-user settings always have a home. The
-/// `users` SeaORM entity is private to this module; callers only ever see the plain
+/// The partial unique index (see `services::migrate`) that lets the table hold at most one owner.
+const OWNER_UNIQUE_INDEX: &str = "users_one_owner";
+
+/// Owns the `users` table. Password hashing lives in `AuthService`. The `users` SeaORM entity is private to this module; callers only ever see the plain
 /// `User` struct below (which never carries the password hash).
 pub struct UserStore {
     db: DatabaseConnection,
@@ -29,19 +31,12 @@ impl UserStore {
         Ok(users::Entity::find().count(&self.db).await?)
     }
 
-    /// Creates a user with a bcrypt-hashed password and seeds its empty settings row.
-    /// Errs `AlreadyExists` on a duplicate username.
+    /// Creates a user with a bcrypt-hashed password. Uniqueness is enforced by the database
+    /// (unique username, and at most one owner), not by a look-before-you-insert check, so two
+    /// simultaneous requests can't both win: the loser gets `AlreadyExists` / `OwnerExists`.
+    /// The user's `user_settings` row is created lazily by `SettingsStore` on first use.
     pub async fn create_user(&self, username: &str, password: &str, role: &str) -> Result<User, UserStoreErrors> {
-        if users::Entity::find()
-            .filter(users::Column::Username.eq(username))
-            .one(&self.db)
-            .await?
-            .is_some()
-        {
-            return Err(UserStoreErrors::AlreadyExists);
-        }
-
-        let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
+        let hash = AuthService::hash_password(password).await?;
 
         let model = users::ActiveModel {
             username: Set(username.to_string()),
@@ -50,35 +45,43 @@ impl UserStore {
             ..Default::default()
         }
         .insert(&self.db)
-        .await?;
-
-        self.db
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO user_settings (user_id) VALUES ($1)",
-                [model.id.into()],
-            ))
-            .await?;
+        .await
+        .map_err(|e| match e.sql_err() {
+            Some(SqlErr::UniqueConstraintViolation(detail)) if detail.contains(OWNER_UNIQUE_INDEX) => {
+                UserStoreErrors::OwnerExists
+            }
+            Some(SqlErr::UniqueConstraintViolation(_)) => UserStoreErrors::AlreadyExists,
+            _ => UserStoreErrors::QueryFailed(e),
+        })?;
 
         Ok(Self::to_user(model))
     }
 
     /// Verifies a username/password pair, returning the user on success and `None` on any
-    /// mismatch (unknown username or wrong password — deliberately indistinguishable).
+    /// mismatch (unknown username or wrong password — deliberately indistinguishable, timing
+    /// included: an unknown username still pays for one bcrypt verification).
     pub async fn verify_login(&self, username: &str, password: &str) -> Result<Option<User>, UserStoreErrors> {
-        let Some(model) = users::Entity::find()
+        let found = users::Entity::find()
             .filter(users::Column::Username.eq(username))
             .one(&self.db)
-            .await?
-        else {
-            return Ok(None);
-        };
+            .await?;
 
-        if bcrypt::verify(password, &model.password_hash)? {
-            Ok(Some(Self::to_user(model)))
-        } else {
-            Ok(None)
-        }
+        let hash = match &found {
+            Some(model) => model.password_hash.clone(),
+            None => AuthService::dummy_hash().to_string(),
+        };
+        let matches = AuthService::verify_password(password, hash).await?;
+
+        Ok(found.filter(|_| matches).map(Self::to_user))
+    }
+
+    /// The owner's id, if the owner account exists yet.
+    pub async fn owner_id(&self) -> Result<Option<i64>, UserStoreErrors> {
+        Ok(users::Entity::find()
+            .filter(users::Column::Role.eq(ROLE_OWNER))
+            .one(&self.db)
+            .await?
+            .map(|owner| owner.id))
     }
 
     /// A user by id — `None` if it doesn't exist (e.g. a token for a since-deleted user).
@@ -115,19 +118,21 @@ impl UserStore {
 }
 
 /// The user shape the rest of the app sees — no password hash.
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, utoipa::ToSchema, Clone)]
 pub struct User {
     pub id: i64,
     pub username: String,
     pub role: String,
+    #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
 }
 
 #[derive(Debug)]
 pub enum UserStoreErrors {
     QueryFailed(DbErr),
-    Hash(bcrypt::BcryptError),
+    Auth(AuthErrors),
     AlreadyExists,
+    OwnerExists,
 }
 
 impl From<DbErr> for UserStoreErrors {
@@ -136,9 +141,9 @@ impl From<DbErr> for UserStoreErrors {
     }
 }
 
-impl From<bcrypt::BcryptError> for UserStoreErrors {
-    fn from(err: bcrypt::BcryptError) -> Self {
-        UserStoreErrors::Hash(err)
+impl From<AuthErrors> for UserStoreErrors {
+    fn from(err: AuthErrors) -> Self {
+        UserStoreErrors::Auth(err)
     }
 }
 
@@ -149,9 +154,9 @@ impl From<UserStoreErrors> for ErrorService {
                 tracing::error!("user store query failed: {e}");
                 ErrorService::internal("database query failed")
             }
-            UserStoreErrors::Hash(e) => {
-                tracing::error!("password hashing failed: {e}");
-                ErrorService::internal("password hashing failed")
+            UserStoreErrors::Auth(e) => e.into(),
+            UserStoreErrors::OwnerExists => {
+                ErrorService::new(StatusCode::CONFLICT, "an owner account already exists")
             }
             UserStoreErrors::AlreadyExists => {
                 ErrorService::new(StatusCode::CONFLICT, "a user with that name already exists")

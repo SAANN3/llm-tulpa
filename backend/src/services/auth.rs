@@ -49,10 +49,55 @@ impl AuthService {
         })
     }
 
+    /// Hashes a password with bcrypt. bcrypt is deliberately slow (tens of milliseconds); run
+    /// inline it would stall every other request on the async worker thread for that long, so
+    /// it goes to the blocking pool.
+    pub async fn hash_password(password: &str) -> Result<String, AuthErrors> {
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || bcrypt::hash(password, bcrypt::DEFAULT_COST))
+            .await
+            .map_err(|_| AuthErrors::Join)?
+            .map_err(AuthErrors::Hash)
+    }
+
+    /// Whether `password` matches a hash from `hash_password`, on the blocking pool for the same
+    /// reason.
+    pub async fn verify_password(password: &str, hash: String) -> Result<bool, AuthErrors> {
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || bcrypt::verify(password, &hash))
+            .await
+            .map_err(|_| AuthErrors::Join)?
+            .map_err(AuthErrors::Hash)
+    }
+
+    /// A well-formed hash nobody's password matches, verified against when a login names an
+    /// unknown user so that case takes as long as a wrong password does.
+    pub fn dummy_hash() -> &'static str {
+        static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        HASH.get_or_init(|| bcrypt::hash("no such user", bcrypt::DEFAULT_COST).expect("bcrypt hashing a constant"))
+    }
+
     /// Verifies a token and returns its claims, or a 401 if it's missing/expired/invalid.
     pub fn verify(&self, token: &str) -> Result<Claims, ErrorService> {
         decode::<Claims>(token, &self.decoding, &Validation::default())
             .map(|data| data.claims)
             .map_err(|_| ErrorService::new(StatusCode::UNAUTHORIZED, "invalid or expired token"))
+    }
+}
+
+#[derive(Debug)]
+pub enum AuthErrors {
+    Hash(bcrypt::BcryptError),
+    /// The blocking-pool task running bcrypt panicked or was cancelled.
+    Join,
+}
+
+impl From<AuthErrors> for ErrorService {
+    fn from(err: AuthErrors) -> Self {
+        match err {
+            AuthErrors::Hash(e) => tracing::error!("password hashing failed: {e}"),
+            AuthErrors::Join => tracing::error!("password hashing task failed"),
+        }
+        ErrorService::internal("password hashing failed")
     }
 }

@@ -1,9 +1,12 @@
 mod entities;
 
 use entities::plugin_settings;
-use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbBackend, Statement};
+use std::sync::Arc;
+
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection};
 
 use crate::services::error::ErrorService;
+use crate::services::user_store::{UserStore, UserStoreErrors};
 
 /// What's persisted for one plugin instance — settings plus whether it was enabled.
 pub struct PersistedPlugin {
@@ -16,24 +19,18 @@ pub struct PersistedPlugin {
 /// thread a `user_id` — a deliberate simplification while per-user plugins are deferred.
 pub struct PluginSettingsStore {
     db: DatabaseConnection,
+    /// Only for `owner_id`: the `users` table is `UserStore`'s, not this store's.
+    users: Arc<UserStore>,
 }
 
 impl PluginSettingsStore {
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+    pub fn new(db: DatabaseConnection, users: Arc<UserStore>) -> Self {
+        Self { db, users }
     }
 
     /// The owner user's id, or `None` if setup hasn't created one yet.
     async fn owner_id(&self) -> Result<Option<i64>, PluginSettingsStoreErrors> {
-        Ok(self
-            .db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Postgres,
-                "SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1",
-            ))
-            .await?
-            .map(|r| r.try_get::<i64>("", "id"))
-            .transpose()?)
+        Ok(self.users.owner_id().await?)
     }
 
     /// `None` if nothing's persisted for this plugin (or there's no owner yet).
@@ -92,7 +89,14 @@ impl PluginSettingsStore {
 #[derive(Debug)]
 pub enum PluginSettingsStoreErrors {
     QueryFailed(DbErr),
+    User(UserStoreErrors),
     NoOwner,
+}
+
+impl From<UserStoreErrors> for PluginSettingsStoreErrors {
+    fn from(err: UserStoreErrors) -> Self {
+        PluginSettingsStoreErrors::User(err)
+    }
 }
 
 impl From<DbErr> for PluginSettingsStoreErrors {
@@ -108,6 +112,7 @@ impl From<PluginSettingsStoreErrors> for ErrorService {
                 tracing::error!("plugin settings store query failed: {e}");
                 ErrorService::internal("database query failed")
             }
+            PluginSettingsStoreErrors::User(e) => e.into(),
             PluginSettingsStoreErrors::NoOwner => {
                 ErrorService::internal("no owner user configured yet")
             }

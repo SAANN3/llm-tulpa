@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use entities::settings;
-use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, SqlErr};
 
 use crate::services::error::ErrorService;
 use crate::services::model_store::{ModelStore, ModelStoreErrors};
@@ -12,11 +12,9 @@ use crate::services::model_store::{ModelStore, ModelStoreErrors};
 /// The provider reported for a user who hasn't picked a model yet.
 const DEFAULT_PROVIDER: &str = "ollama";
 
-/// Owns per-user settings (the `user_settings` table, 1:1 with `users`). The row is
-/// created empty alongside its user (see `UserStore::create_user`) and filled in over the
-/// setup wizard, so every operation here is an update of an existing row keyed by
-/// `user_id`, never an insert. The active model lives in the `llm_models` table and is
-/// referenced by id — its name and provider are resolved through `ModelStore`.
+/// Owns per-user settings (the `user_settings` table, 1:1 with `users`). A user's row is
+/// created empty the first time it's needed (see `row`) and filled in over the setup wizard. The active model lives in the `llm_models` table and
+/// is referenced by id — its name and provider are resolved through `ModelStore`.
 pub struct SettingsStore {
     db: DatabaseConnection,
     models: Arc<ModelStore>,
@@ -27,13 +25,36 @@ impl SettingsStore {
         Self { db, models }
     }
 
-    /// A user's settings. Errs `NotFound` only if the user (hence its settings row) is
-    /// gone — a fresh user's row exists but with mostly-null fields.
-    pub async fn settings(&self, user_id: i64) -> Result<Settings, SettingsStoreErrors> {
-        let row = settings::Entity::find_by_id(user_id)
+    /// The user's settings row, created empty on first use — `UserStore` never touches this
+    /// table, so a fresh user simply has no row until something here asks for it. Errs
+    /// `NotFound` if the user doesn't exist (the foreign key refuses the insert).
+    async fn row(&self, user_id: i64) -> Result<settings::Model, SettingsStoreErrors> {
+        if let Some(row) = settings::Entity::find_by_id(user_id).one(&self.db).await? {
+            return Ok(row);
+        }
+
+        settings::Entity::insert(settings::ActiveModel {
+            user_id: Set(user_id),
+            ..Default::default()
+        })
+        .on_conflict_do_nothing()
+        .exec_without_returning(&self.db)
+        .await
+        .map_err(|e| match e.sql_err() {
+            Some(SqlErr::ForeignKeyConstraintViolation(_)) => SettingsStoreErrors::NotFound,
+            _ => SettingsStoreErrors::QueryFailed(e),
+        })?;
+
+        settings::Entity::find_by_id(user_id)
             .one(&self.db)
             .await?
-            .ok_or(SettingsStoreErrors::NotFound)?;
+            .ok_or(SettingsStoreErrors::NotFound)
+    }
+
+    /// A user's settings — mostly-null fields for a user who hasn't set any yet. Errs
+    /// `NotFound` only if the user is gone.
+    pub async fn settings(&self, user_id: i64) -> Result<Settings, SettingsStoreErrors> {
+        let row = self.row(user_id).await?;
 
         let active = match row.active_model_id {
             Some(id) => self.models.get_many(&[id]).await?.remove(&id),
@@ -64,8 +85,8 @@ impl SettingsStore {
     /// Whether the user has completed the minimum settings the app needs (a name and a
     /// timezone) — used to gate the "settings configured" frontend check.
     pub async fn is_configured(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
-        let row = settings::Entity::find_by_id(user_id).one(&self.db).await?;
-        Ok(row.is_some_and(|r| r.name.is_some() && r.timezone.is_some()))
+        let row = self.row(user_id).await?;
+        Ok(row.name.is_some() && row.timezone.is_some())
     }
 
     /// Applies a partial update — only the `Some` fields are written, the rest left as-is.
@@ -80,10 +101,7 @@ impl SettingsStore {
             }
         }
 
-        let existing = settings::Entity::find_by_id(user_id)
-            .one(&self.db)
-            .await?
-            .ok_or(SettingsStoreErrors::NotFound)?;
+        let existing = self.row(user_id).await?;
 
         let mut active_model_id = None;
         match (&update.active_model, &update.llm_provider) {

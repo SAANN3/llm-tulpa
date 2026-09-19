@@ -1,18 +1,18 @@
+mod entities;
+
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, QueryResult, Statement};
+use entities::{active_model, llm_models, llm_providers};
+use sea_orm::{
+    prelude::*, sea_query::OnConflict, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder,
+};
 
 use crate::services::error::ErrorService;
 
-const SELECT_MODEL: &str = "SELECT m.id AS id, p.name AS provider, m.name AS name
-    FROM llm_models m JOIN llm_providers p ON p.id = m.provider_id";
-
 /// Owns the `llm_providers`/`llm_models` tables — which backends exist and which models
 /// the app knows about. Chats and user settings reference a model by id; anything that
-/// needs a model's name (to send to the provider) resolves it through here. Plain raw SQL
-/// rather than SeaORM entities since it's a small join-heavy lookup shared by the chat and
-/// settings stores.
+/// needs a model's name (to send to the provider) resolves it through here.
 pub struct ModelStore {
     db: DatabaseConnection,
 }
@@ -30,55 +30,58 @@ impl ModelStore {
         Self { db }
     }
 
-    fn to_ref(row: &QueryResult) -> Result<ModelRef, DbErr> {
-        Ok(ModelRef {
-            id: row.try_get("", "id")?,
-            provider: row.try_get("", "provider")?,
-            name: row.try_get("", "name")?,
-        })
+    fn to_ref(model: llm_models::Model, provider: llm_providers::Model) -> ModelRef {
+        ModelRef { id: model.id, provider: provider.name, name: model.name }
     }
 
     /// The names of every provider the app supports.
     pub async fn providers(&self) -> Result<Vec<String>, ModelStoreErrors> {
-        let rows = self
-            .db
-            .query_all_raw(Statement::from_string(
-                DbBackend::Postgres,
-                "SELECT name FROM llm_providers ORDER BY id",
-            ))
-            .await?;
-        Ok(rows.iter().map(|r| r.try_get("", "name")).collect::<Result<_, _>>()?)
+        Ok(llm_providers::Entity::find()
+            .order_by_asc(llm_providers::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|p| p.name)
+            .collect())
+    }
+
+    /// Whether `name` is already registered under `provider` — i.e. some user has picked or
+    /// pulled it before.
+    pub async fn is_registered(&self, provider: &str, name: &str) -> Result<bool, ModelStoreErrors> {
+        Ok(llm_models::Entity::find()
+            .find_also_related(llm_providers::Entity)
+            .filter(llm_providers::Column::Name.eq(provider))
+            .filter(llm_models::Column::Name.eq(name))
+            .one(&self.db)
+            .await?
+            .is_some())
     }
 
     /// Registers `name` under `provider` if it isn't known yet, and returns it either way.
     /// Errs `UnknownProvider` for a provider the app doesn't support.
     pub async fn ensure(&self, provider: &str, name: &str) -> Result<ModelRef, ModelStoreErrors> {
-        let provider_id: i64 = self
-            .db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT id FROM llm_providers WHERE name = $1",
-                [provider.into()],
-            ))
+        let provider = llm_providers::Entity::find()
+            .filter(llm_providers::Column::Name.eq(provider))
+            .one(&self.db)
             .await?
-            .map(|r| r.try_get("", "id"))
-            .transpose()?
             .ok_or_else(|| ModelStoreErrors::UnknownProvider(provider.to_string()))?;
 
-        let id: i64 = self
-            .db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO llm_models (provider_id, name) VALUES ($1, $2)
-                 ON CONFLICT (provider_id, name) DO UPDATE SET name = EXCLUDED.name
-                 RETURNING id",
-                [provider_id.into(), name.into()],
-            ))
-            .await?
-            .ok_or_else(|| DbErr::RecordNotFound("llm_models insert returned no row".to_string()))?
-            .try_get("", "id")?;
+        // The no-op update makes `RETURNING` yield the existing row on a conflict too, which
+        // `DO NOTHING` wouldn't.
+        let model = llm_models::Entity::insert(llm_models::ActiveModel {
+            provider_id: Set(provider.id),
+            name: Set(name.to_string()),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::columns([llm_models::Column::ProviderId, llm_models::Column::Name])
+                .update_column(llm_models::Column::Name)
+                .to_owned(),
+        )
+        .exec_with_returning(&self.db)
+        .await?;
 
-        Ok(ModelRef { id, provider: provider.to_string(), name: name.to_string() })
+        Ok(Self::to_ref(model, provider))
     }
 
     /// The given models by id, in one query. Ids that don't exist are simply absent.
@@ -86,20 +89,17 @@ impl ModelStore {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        // Ids are i64s we formatted ourselves, so inlining them can't inject anything.
-        let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-        let rows = self
-            .db
-            .query_all_raw(Statement::from_string(
-                DbBackend::Postgres,
-                format!("{SELECT_MODEL} WHERE m.id IN ({list})"),
-            ))
-            .await?;
 
-        let mut out = HashMap::with_capacity(rows.len());
-        for row in &rows {
-            let model = Self::to_ref(row)?;
-            out.insert(model.id, model);
+        let mut out = HashMap::with_capacity(ids.len());
+        for (model, provider) in llm_models::Entity::find()
+            .filter(llm_models::Column::Id.is_in(ids.iter().copied()))
+            .find_also_related(llm_providers::Entity)
+            .all(&self.db)
+            .await?
+        {
+            if let Some(provider) = provider {
+                out.insert(model.id, Self::to_ref(model, provider));
+            }
         }
         Ok(out)
     }
@@ -107,28 +107,23 @@ impl ModelStore {
     /// The model a user's new chats and one-shot prompts use: their chosen active model,
     /// else the oldest registered model, else `None` (nothing has been picked yet).
     pub async fn default_for_user(&self, user_id: i64) -> Result<Option<ModelRef>, ModelStoreErrors> {
-        let active = self
-            .db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                format!(
-                    "{SELECT_MODEL} JOIN user_settings s ON s.active_model_id = m.id WHERE s.user_id = $1"
-                ),
-                [user_id.into()],
-            ))
-            .await?;
-        if let Some(row) = active {
-            return Ok(Some(Self::to_ref(&row)?));
+        let active_id = active_model::Entity::find_by_id(user_id)
+            .one(&self.db)
+            .await?
+            .and_then(|settings| settings.active_model_id);
+
+        if let Some(id) = active_id {
+            if let Some(model) = self.get_many(&[id]).await?.remove(&id) {
+                return Ok(Some(model));
+            }
         }
 
-        let first = self
-            .db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Postgres,
-                format!("{SELECT_MODEL} ORDER BY m.id LIMIT 1"),
-            ))
-            .await?;
-        Ok(first.map(|row| Self::to_ref(&row)).transpose()?)
+        Ok(llm_models::Entity::find()
+            .find_also_related(llm_providers::Entity)
+            .order_by_asc(llm_models::Column::Id)
+            .one(&self.db)
+            .await?
+            .and_then(|(model, provider)| provider.map(|p| Self::to_ref(model, p))))
     }
 
     /// `default_for_user`, erroring `NoModel` when nothing has been picked yet.
