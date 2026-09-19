@@ -36,13 +36,14 @@ pub async fn reset_plugin_chat(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ResetPluginChatBody>,
 ) -> Result<StatusCode, ErrorService> {
-    let chat = state
+    let services = state.services().await?;
+    let chat = services
         .chat_store
         .find_by_plugin_mapped_id(&body.plugin_name, &body.plugin_subname, &body.plugin_chat_id)
         .await?
         .ok_or_else(|| ErrorService::new(StatusCode::NOT_FOUND, "no chat mapped to this plugin chat id"))?;
 
-    state.chat_store.clear_messages(chat.id).await?;
+    services.chat_store.clear_messages(chat.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

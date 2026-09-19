@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AllowScopeRequest {
@@ -35,9 +35,12 @@ pub(crate) struct AllowScopeOut {}
 )]
 pub async fn allow_scope(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Json(body): Json<AllowScopeRequest>,
 ) -> Result<Json<AllowScopeOut>, ErrorService> {
-    state.agent.allow_scope(body.chat_id, body.tool_name, body.scope).await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    services.agent.allow_scope(body.chat_id, body.tool_name, body.scope).await?;
 
     Ok(Json(AllowScopeOut {}))
 }

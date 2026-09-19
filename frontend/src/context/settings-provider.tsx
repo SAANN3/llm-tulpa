@@ -1,23 +1,37 @@
 import {useEffect, useState, type ReactNode} from 'react'
 import {SettingsContext} from './settings-context.ts'
+import {useAuth} from './use-auth.ts'
 import {getSettings} from '../api/settings/get'
 import {setSettings as setSettingsApi} from '../api/settings/set'
-import type {Settings} from '../api/settings/types'
+import type {Settings, SettingsUpdate} from '../api/settings/types'
 
 export const SettingsProvider = ({children}: { children: ReactNode }) => {
+    const {token} = useAuth()
     const [settings, setSettingsState] = useState<Settings | null>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        getSettings()
-            .then(setSettingsState)
-            .catch(() => setSettingsState(null))
-            .finally(() => setLoading(false))
-    }, [])
+        if (!token) {
+            setSettingsState(null)
+            setLoading(false)
+            return
+        }
 
-    const setSettings = async (next: Settings) => {
-        await setSettingsApi(next)
-        setSettingsState(next)
+        let cancelled = false
+        setLoading(true)
+        getSettings()
+            .then((s) => !cancelled && setSettingsState(s))
+            .catch(() => !cancelled && setSettingsState(null))
+            .finally(() => !cancelled && setLoading(false))
+
+        return () => {
+            cancelled = true
+        }
+    }, [token])
+
+    const setSettings = async (update: SettingsUpdate) => {
+        await setSettingsApi(update)
+        setSettingsState((prev) => (prev ? {...prev, ...update} : prev))
     }
 
     return (

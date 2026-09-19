@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{extract::Multipart, extract::State, http::StatusCode, Json};
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 use super::get::FileOut;
 
@@ -42,6 +42,7 @@ pub(crate) struct UploadFileRequest {
 )]
 pub async fn upload_file(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     mut multipart: Multipart,
 ) -> Result<Json<FileOut>, ErrorService> {
     let mut chat_id: Option<i64> = None;
@@ -97,7 +98,11 @@ pub async fn upload_file(
     let file_name = file_name.ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "missing 'file' field"))?;
     let bytes = file_bytes.ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "missing 'file' field"))?;
 
-    let record = state.file_store.store_bytes(chat_id, &file_name, &bytes, read_only).await?;
+    let services = state.services().await?;
+    if let Some(chat_id) = chat_id {
+        services.chat_store.owned_chat(auth.id, chat_id).await?;
+    }
+    let record = services.file_store.store_bytes(auth.id, chat_id, &file_name, &bytes, read_only).await?;
 
     Ok(Json(record.into()))
 }

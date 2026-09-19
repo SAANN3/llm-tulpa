@@ -1,0 +1,71 @@
+@use 'tokens' as *;
+
+.model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  width: 100%;
+}
+
+.model-picker__search {
+  width: 100%;
+}
+
+.model-picker__error {
+  color: var(--color-danger, #c33);
+  font-size: 12px;
+}
+
+.model-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.model-picker__section {
+  margin-top: $space-2;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.model-picker__row {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.model-picker__row--active {
+  background: var(--color-surface-accent, rgba(127, 127, 127, 0.12));
+}
+
+.model-picker__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-picker__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__meta {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__active-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}

@@ -66,7 +66,6 @@ services:
       # point this at :11435 instead) — see that file's own comment and project
       # memory for the fuller writeup, including where MTP *did* win.
       - OLLAMA_URL=http://localhost:11434
-      - OLLAMA_MODEL_NAME=${OLLAMA_MODEL_NAME:-local-llm}
       # Reached the same way ollama/postgres are under host networking — port
       # 8090 is the searxng-nginx rate-limiting sidecar in front of the real
       # searxng service (which binds 8080 directly, see searxng/compose.yaml and
@@ -74,8 +73,11 @@ services:
       # internet access (a bridged searxng container couldn't reach google/bing/
       # duckduckgo at all — didn't go through the host's VPN routing).
       - SEARXNG_URL=http://localhost:8090
-      - DATABASE_URL=postgres://postgres:postgres@localhost:5432
-      - DATABASE_NAME=${DATABASE_NAME:-llm_tulpa}
+      # No database settings here on purpose: the backend reads its connection only from its
+      # JSON config file (`data/settings.json` next to the binary, persisted in the
+      # `backend-data` volume below), which the first-run setup wizard writes. Postgres
+      # is reached at `localhost:5432` (host networking), user/password as in
+      # postgres/compose.yaml.
       - AGENT_HISTORY_LEN=${AGENT_HISTORY_LEN:-200}
       # Same variable name/default as llm/compose.yaml's OLLAMA_CONTEXT_LENGTH — set
       # it once (e.g. in a root .env file) and both Ollama's real context and this
@@ -102,6 +104,10 @@ services:
       # expects it — only the socket directory itself (below) was actually missing.
       - DISPLAY=${DISPLAY:-:0}
     volumes:
+      # The backend's config file (`data/settings.json` next to the binary — database
+      # connection and JWT secret). A named volume so it survives rebuilds/recreation;
+      # it inherits the ownership the Dockerfile gives that directory.
+      - backend-data:/usr/local/bin/data
       # Passthrough so the storage.* tools can read/write real files at the same
       # absolute paths as a native run. Docker won't let a bind mount target `/`
       # itself, so this covers every user's home directory instead — everything
@@ -140,6 +146,9 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  backend-data:
 
 networks:
   app-net:

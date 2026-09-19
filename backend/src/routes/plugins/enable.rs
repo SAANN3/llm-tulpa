@@ -33,6 +33,8 @@ pub async fn set_plugin_enabled(
     Json(body): Json<SetPluginEnabledBody>,
 ) -> Result<StatusCode, ErrorService> {
     state
+        .services()
+        .await?
         .plugin_registry
         .set_enabled(&body.plugin_name, &body.plugin_subname, body.enabled)
         .await?;

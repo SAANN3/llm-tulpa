@@ -1,10 +1,8 @@
 mod entities;
-mod migrate;
 
 use axum::http::StatusCode;
 use entities::tool_permissions;
-use migrate::migrate;
-use sea_orm::{prelude::*, ActiveValue::Set, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection};
 
 use crate::services::error::ErrorService;
 
@@ -19,49 +17,8 @@ pub struct PermissionStore {
 }
 
 impl PermissionStore {
-    /// Same create-database-if-missing-then-migrate bootstrap as `ChatStore::new`. Note
-    /// `tool_permissions` has a foreign key on `chats (id)` — this must be constructed
-    /// after `ChatStore` (so the `chats` table already exists) for a fresh database's
-    /// migration to succeed.
-    pub async fn new(base_url: &str, db_name: &str) -> Self {
-        let admin_url = format!("{base_url}/postgres");
-
-        let admin_db = Database::connect(&admin_url).await.unwrap_or_else(|e| {
-            panic!("failed to connect to postgres to check/create database '{db_name}': {e}")
-        });
-
-        let exists = admin_db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM pg_database WHERE datname = $1",
-                [db_name.into()],
-            ))
-            .await
-            .unwrap_or_else(|e| panic!("failed to check whether database '{db_name}' exists: {e}"))
-            .is_some();
-
-        if !exists {
-            admin_db
-                .execute_unprepared(&format!("CREATE DATABASE \"{db_name}\""))
-                .await
-                .unwrap_or_else(|e| panic!("failed to create database '{db_name}': {e}"));
-        }
-
-        admin_db
-            .close()
-            .await
-            .unwrap_or_else(|e| panic!("failed to close bootstrap connection: {e}"));
-
-        let target_url = format!("{base_url}/{db_name}");
-
-        let db = Database::connect(&target_url)
-            .await
-            .unwrap_or_else(|e| panic!("failed to connect to database '{db_name}': {e}"));
-
-        migrate(&db)
-            .await
-            .unwrap_or_else(|e| panic!("failed to run migrations: {e}"));
-
+    /// Holds an already-connected, already-migrated connection (see `services::bootstrap`).
+    pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
 

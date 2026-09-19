@@ -1,6 +1,8 @@
 export interface ChatOut {
     id: number
     name: string
+    model: string
+    provider: string
     created_at: string
     updated_at: string
 }

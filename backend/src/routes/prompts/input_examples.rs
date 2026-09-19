@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct InputExampleOut {
@@ -26,8 +26,8 @@ pub(crate) struct InputExampleOut {
         (status = 502, description = "Ollama returned a non-success status", body = crate::services::error::ErrorBody),
     ),
 )]
-pub async fn input_examples(State(state): State<Arc<AppState>>) -> Result<Json<InputExampleOut>, ErrorService> {
-    let text = state.user_cache.clone().input_examples().await?;
+pub async fn input_examples(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<InputExampleOut>, ErrorService> {
+    let text = state.services().await?.user_cache.input_examples(auth.id).await?;
 
     Ok(Json(InputExampleOut { text }))
 }

@@ -13,7 +13,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
    cd llm-tulpa
    HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose up -d
    ```
-3. Open `http://localhost:5173`.
+3. Open `http://localhost:5173`. On first run a setup wizard walks you through it — timezone, an **owner account** (username + password), the model to chat with (pick an installed one or pull one from the catalog), a theme, and notifications. Under Docker the database is already configured, so that step is skipped. After setup you sign in with the owner account; the owner can add more users from the in-app Users page (there's no open self-registration), and each user's chats and settings are their own.
 
 ## Features
 - Persistent chat history — every conversation, resumable across restarts.
@@ -23,6 +23,8 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Automatic history compaction, so a long or tool-heavy conversation doesn't blow the model's context window.
 - Vision — attach images to a message from the composer, send a photo through a messaging plugin, or have the model look at an image it found itself via a file path, when running a vision-capable model — see [`llm/README.md`](./llm/README.md).
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
+- Multi-user with an owner account — each user's chats and settings are their own; the owner manages the rest.
+- Switch the model per chat from the chat header, or pull a new one from the Ollama catalog without leaving the app.
 - Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
 - A few themes to pick from (Slate / Paper / Matcha) — will expand in the future!
 

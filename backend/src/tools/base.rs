@@ -135,6 +135,11 @@ pub struct ToolContext {
     /// `chat_id` as one of its own model-facing arguments (the model has no reason to
     /// know or repeat back which chat it's already in).
     pub chat_id: i64,
+    /// The user who owns this chat — files a tool creates belong to them.
+    pub user_id: i64,
+    /// The model this chat is bound to — what a tool that makes its own model call
+    /// (`llm.read_image`) should run against.
+    pub model: String,
 }
 
 impl ToolContext {
@@ -144,8 +149,8 @@ impl ToolContext {
     /// rather than in whatever calls it, so a new service field added to `ToolContext`
     /// later needs updating in exactly one place, not at every call site that builds a
     /// per-call context.
-    pub fn copy_with_chat_id(&self, chat_id: i64) -> Self {
-        Self { chat_id, ..self.clone() }
+    pub fn copy_with_chat_id(&self, chat_id: i64, user_id: i64, model: String) -> Self {
+        Self { chat_id, user_id, model, ..self.clone() }
     }
 }
 

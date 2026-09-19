@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use axum::{extract::State, Json};
 
-use crate::{services::{error::ErrorService, settings_store::Settings}, state::AppState};
+use crate::{
+    routes::auth::AuthUser,
+    services::{error::ErrorService, settings_store::Settings},
+    state::AppState,
+};
 
-/// Reads the currently persisted user settings.
+/// Reads the authenticated user's settings.
 #[utoipa::path(
     get,
     path = "/api/settings",
@@ -15,8 +19,8 @@ use crate::{services::{error::ErrorService, settings_store::Settings}, state::Ap
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
 )]
-pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Settings>, ErrorService> {
-    let settings = state.settings_store.settings().await?;
+pub async fn get_settings(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<Settings>, ErrorService> {
+    let settings = state.services().await?.settings_store.settings(auth.id).await?;
 
     Ok(Json(settings))
 }

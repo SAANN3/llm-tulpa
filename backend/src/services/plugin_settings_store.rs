@@ -1,83 +1,49 @@
 mod entities;
-mod migrate;
 
 use entities::plugin_settings;
-use migrate::migrate;
-use sea_orm::{
-    ActiveValue::Set, Database, DatabaseConnection, DbBackend, Statement, prelude::*,
-};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbBackend, Statement};
 
 use crate::services::error::ErrorService;
 
-/// What's persisted for one plugin instance — settings plus whether it was enabled,
-/// so a restart doesn't silently come back with a plugin the user turned on now
-/// looking off. `None` (not this struct) is how "never configured yet" is expressed —
-/// see `get` below.
+/// What's persisted for one plugin instance — settings plus whether it was enabled.
 pub struct PersistedPlugin {
     pub settings: serde_json::Value,
     pub enabled: bool,
 }
 
-/// Owns persistence for plugin settings — the durable counterpart to
-/// `PluginRegistry`'s in-memory `PluginEntry` (see `plugins/registry.rs`), which holds
-/// the live instance but forgets everything on restart. Keyed by `(plugin_name,
-/// plugin_subname)`, same as the registry itself. Single responsibility, kept separate
-/// from `SettingsStore` (one global user-settings row, not per-plugin) and
-/// `ChatStore`/`PermissionStore` (chat content and per-chat tool grants, not plugin
-/// config) — same isolated-SeaORM-entity shape as the other stores.
+/// Owns persistence for plugin settings (table `user_plugins`). Plugins are owned by the
+/// owner user, resolved internally so callers (the registry, plugin routes) don't have to
+/// thread a `user_id` — a deliberate simplification while per-user plugins are deferred.
 pub struct PluginSettingsStore {
     db: DatabaseConnection,
 }
 
 impl PluginSettingsStore {
-    /// Same create-database-if-missing-then-migrate bootstrap as the other stores.
-    pub async fn new(base_url: &str, db_name: &str) -> Self {
-        let admin_url = format!("{base_url}/postgres");
-
-        let admin_db = Database::connect(&admin_url).await.unwrap_or_else(|e| {
-            panic!("failed to connect to postgres to check/create database '{db_name}': {e}")
-        });
-
-        let exists = admin_db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM pg_database WHERE datname = $1",
-                [db_name.into()],
-            ))
-            .await
-            .unwrap_or_else(|e| panic!("failed to check whether database '{db_name}' exists: {e}"))
-            .is_some();
-
-        if !exists {
-            admin_db
-                .execute_unprepared(&format!("CREATE DATABASE \"{db_name}\""))
-                .await
-                .unwrap_or_else(|e| panic!("failed to create database '{db_name}': {e}"));
-        }
-
-        admin_db
-            .close()
-            .await
-            .unwrap_or_else(|e| panic!("failed to close bootstrap connection: {e}"));
-
-        let target_url = format!("{base_url}/{db_name}");
-
-        let db = Database::connect(&target_url)
-            .await
-            .unwrap_or_else(|e| panic!("failed to connect to database '{db_name}': {e}"));
-
-        migrate(&db)
-            .await
-            .unwrap_or_else(|e| panic!("failed to run migrations: {e}"));
-
+    pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
 
-    /// `None` if nothing's ever been persisted for this plugin — a normal state for a
-    /// freshly-registered plugin (or one that's never had settings entered), not an
-    /// error.
+    /// The owner user's id, or `None` if setup hasn't created one yet.
+    async fn owner_id(&self) -> Result<Option<i64>, PluginSettingsStoreErrors> {
+        Ok(self
+            .db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1",
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "id"))
+            .transpose()?)
+    }
+
+    /// `None` if nothing's persisted for this plugin (or there's no owner yet).
     pub async fn get(&self, plugin_name: &str, plugin_subname: &str) -> Result<Option<PersistedPlugin>, PluginSettingsStoreErrors> {
+        let Some(owner) = self.owner_id().await? else {
+            return Ok(None);
+        };
+
         let row = plugin_settings::Entity::find()
+            .filter(plugin_settings::Column::UserId.eq(owner))
             .filter(plugin_settings::Column::PluginName.eq(plugin_name))
             .filter(plugin_settings::Column::PluginSubname.eq(plugin_subname))
             .one(&self.db)
@@ -86,11 +52,8 @@ impl PluginSettingsStore {
         Ok(row.map(|row| PersistedPlugin { settings: row.settings, enabled: row.enabled }))
     }
 
-    /// Inserts or replaces the persisted settings/enabled state for this plugin —
-    /// `ON CONFLICT` on the `(plugin_name, plugin_subname)` unique constraint from
-    /// `migrate`. Settings and `enabled` are always written together rather than as
-    /// separate calls: an `enabled` flag with no corresponding settings wouldn't mean
-    /// anything (same invariant `PluginRegistry::set_enabled` enforces in memory).
+    /// Inserts or replaces the persisted settings/enabled state for this plugin under the
+    /// owner user. Errs if there's no owner yet.
     pub async fn set(
         &self,
         plugin_name: &str,
@@ -98,7 +61,10 @@ impl PluginSettingsStore {
         settings: serde_json::Value,
         enabled: bool,
     ) -> Result<(), PluginSettingsStoreErrors> {
+        let owner = self.owner_id().await?.ok_or(PluginSettingsStoreErrors::NoOwner)?;
+
         let existing = plugin_settings::Entity::find()
+            .filter(plugin_settings::Column::UserId.eq(owner))
             .filter(plugin_settings::Column::PluginName.eq(plugin_name))
             .filter(plugin_settings::Column::PluginSubname.eq(plugin_subname))
             .one(&self.db)
@@ -106,6 +72,7 @@ impl PluginSettingsStore {
 
         let model = plugin_settings::ActiveModel {
             id: existing.as_ref().map_or(sea_orm::ActiveValue::NotSet, |row| Set(row.id)),
+            user_id: Set(owner),
             plugin_name: Set(plugin_name.to_string()),
             plugin_subname: Set(plugin_subname.to_string()),
             settings: Set(settings),
@@ -122,12 +89,10 @@ impl PluginSettingsStore {
     }
 }
 
-/// Mirrors `PermissionStoreErrors`'s shape, minus `NotFound` — "nothing persisted yet"
-/// is expressed as `Ok(None)` from `get` instead, since it's an expected state, not a
-/// failure.
 #[derive(Debug)]
 pub enum PluginSettingsStoreErrors {
     QueryFailed(DbErr),
+    NoOwner,
 }
 
 impl From<DbErr> for PluginSettingsStoreErrors {
@@ -142,6 +107,9 @@ impl From<PluginSettingsStoreErrors> for ErrorService {
             PluginSettingsStoreErrors::QueryFailed(e) => {
                 tracing::error!("plugin settings store query failed: {e}");
                 ErrorService::internal("database query failed")
+            }
+            PluginSettingsStoreErrors::NoOwner => {
+                ErrorService::internal("no owner user configured yet")
             }
         }
     }

@@ -8,7 +8,7 @@ use sea_orm::prelude::DateTimeUtc;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct GetMessagesQuery {
@@ -73,15 +73,15 @@ pub(crate) struct MessagesResponse {
 )]
 pub async fn get_messages(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Query(query): Query<GetMessagesQuery>,
 ) -> Result<Json<MessagesResponse>, ErrorService> {
     let limit = query.limit.unwrap_or(50);
     let skip = query.skip.unwrap_or(0);
 
-    let (messages, total) = state
-        .chat_store
-        .messages(query.chat_id, limit, skip)
-        .await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, query.chat_id).await?;
+    let (messages, total) = services.chat_store.messages(query.chat_id, limit, skip).await?;
 
     let messages = messages
         .into_iter()

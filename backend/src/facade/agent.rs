@@ -196,6 +196,7 @@ fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
 /// rather than in route handlers or inside any one of the services it composes. Holds
 /// its own `Arc` clones of each rather than borrowing from `AppState`, so it can be
 /// used independently of any particular request's `State` extraction.
+#[derive(Clone)]
 pub struct Agent {
     ollama: Arc<OllamaService>,
     chat_store: Arc<ChatStore>,
@@ -236,7 +237,8 @@ impl Agent {
         // `copy_with_chat_id` before a tool actually sees this context. `ollama` is
         // cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
         // holds its own copy below.
-        let tool_context = ToolContext { file_store, ollama: ollama.clone(), chat_id: 0 };
+        let tool_context =
+            ToolContext { file_store, ollama: ollama.clone(), chat_id: 0, user_id: 0, model: String::new() };
         Self {
             ollama,
             chat_store,
@@ -365,8 +367,13 @@ impl Agent {
         let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
         messages_with_system.extend(messages);
 
+        let model = self.chat_store.chat(chat_id).await?.model;
+
         let started_at = Instant::now();
-        let response = self.ollama.chat(messages_with_system, new_message, &tools, think).await?;
+        let response = self
+            .ollama
+            .chat(messages_with_system, new_message, &tools, think, &model)
+            .await?;
         let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
         let prompt_eval_count = response.prompt_eval_count();
 
@@ -522,7 +529,7 @@ impl Agent {
             "calling summarize for chat_id {chat_id}"
         );
 
-        let summary = self.summarize(chat.summary, to_fold).await?;
+        let summary = self.summarize(chat.summary, to_fold, &chat.model).await?;
         self.chat_store.set_summary(chat_id, summary, new_boundary_id).await?;
 
         tracing::info!(chat_id, new_boundary_id, "compaction finished for chat_id {chat_id}");
@@ -534,7 +541,12 @@ impl Agent {
     /// message in `to_fold`, via a plain (no tools) Ollama call — not part of the
     /// visible conversation, so it doesn't go through `advance`/get persisted as a chat
     /// message itself.
-    async fn summarize(&self, existing_summary: Option<String>, to_fold: &[Message]) -> Result<String, ErrorService> {
+    async fn summarize(
+        &self,
+        existing_summary: Option<String>,
+        to_fold: &[Message],
+        model: &str,
+    ) -> Result<String, ErrorService> {
         // The image data itself never goes into the transcript (it's not text, and this
         // call carries no vision guarantee) — but a message that had one needs to say
         // so, or folding it away loses any trace it ever happened, silently.
@@ -596,7 +608,10 @@ impl Agent {
         // struct/field names and per-tool specifics, which is exactly what the system
         // prompt above asks it to preserve. Reasoning first turned out to hurt the
         // thing it was meant to help here, not just cost more.
-        let response = self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await?;
+        let response = self
+            .ollama
+            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model)
+            .await?;
         Ok(response.message.content)
     }
 
@@ -663,7 +678,8 @@ impl Agent {
 
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
-                let ctx = self.tool_context.copy_with_chat_id(chat_id);
+                let chat = self.chat_store.chat(chat_id).await?;
+                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.model);
                 match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
                     Ok(value) => (true, false, None, value),
                     Err(e) => {

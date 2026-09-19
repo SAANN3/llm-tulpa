@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct RenameChatRequest {
@@ -26,9 +26,12 @@ pub(crate) struct RenameChatRequest {
 )]
 pub async fn rename_chat(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Json(body): Json<RenameChatRequest>,
 ) -> Result<StatusCode, ErrorService> {
-    state.chat_store.rename_chat(body.chat_id, body.name).await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    services.chat_store.rename_chat(body.chat_id, body.name).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -1,0 +1,24 @@
+@use 'tokens' as *;
+
+.login {
+  gap: $space-5;
+}
+
+.login__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.login__panel {
+  width: 380px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.login__body {
+  gap: $space-5;
+}
+
+.login__error {
+  color: var(--color-danger, #c33);
+  font-size: 12px;
+}

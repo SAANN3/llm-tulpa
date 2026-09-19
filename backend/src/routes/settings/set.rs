@@ -2,17 +2,20 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, Json};
 
-use crate::{services::{error::ErrorService, settings_store::Settings}, state::AppState};
+use crate::{
+    routes::auth::AuthUser,
+    services::{error::ErrorService, settings_store::SettingsUpdate},
+    state::AppState,
+};
 
-/// Persists user settings and (re)starts the background user-cache refresh loop with the
-/// new values — the loop can't run without a timezone, so writing settings for the first
-/// time is what actually turns caching on. Any previously cached content is invalidated,
-/// not kept, so a stale greeting generated under old settings never lingers.
+/// Applies a partial update to the authenticated user's settings — only the provided
+/// fields are written. Used both by the settings page (a full save) and the setup
+/// wizard's incremental per-step saves.
 #[utoipa::path(
     post,
     path = "/api/settings",
     tag = "settings",
-    request_body = Settings,
+    request_body = SettingsUpdate,
     responses(
         (status = 204, description = "Settings saved"),
         (status = 400, description = "Timezone offset out of range", body = crate::services::error::ErrorBody),
@@ -21,10 +24,10 @@ use crate::{services::{error::ErrorService, settings_store::Settings}, state::Ap
 )]
 pub async fn set_settings(
     State(state): State<Arc<AppState>>,
-    Json(body): Json<Settings>,
+    auth: AuthUser,
+    Json(body): Json<SettingsUpdate>,
 ) -> Result<StatusCode, ErrorService> {
-    state.settings_store.set_settings(body).await?;
-    state.user_cache.clone().start_loop().await?;
+    state.services().await?.settings_store.update(auth.id, body).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

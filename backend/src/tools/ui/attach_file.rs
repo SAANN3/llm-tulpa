@@ -79,7 +79,7 @@ impl Tool for AttachFileTool {
 
         let record = ctx
             .file_store
-            .store_bytes(Some(ctx.chat_id), &file_name, &bytes, Some(true))
+            .store_bytes(ctx.user_id, Some(ctx.chat_id), &file_name, &bytes, Some(true))
             .await
             .map_err(|e| {
                 ToolError::FailedUnknown(format!("couldn't store a copy of '{}' to attach: {e:?}", path.display()))

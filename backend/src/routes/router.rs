@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use axum::{http::StatusCode, Router};
+use axum::{http::StatusCode, routing::get, Router};
 use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, chats, files, llm, plugins, prompts, settings};
+use super::{agent, auth, chats, files, llm, plugins, prompts, settings, users};
 
 /// The `/plugins` domain isn't nested here — unlike everything below, its route *set*
 /// depends on runtime data (which plugins are registered), not just compile-time
@@ -21,6 +21,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/files", files::router::router())
         .nest("/prompts", prompts::router::router())
         .nest("/settings", settings::router::router())
+        .route("/auth/me", get(auth::me))
+        .route("/users", get(users::list_users).post(users::create_user).delete(users::delete_user))
         .fallback(not_found)
 }
 

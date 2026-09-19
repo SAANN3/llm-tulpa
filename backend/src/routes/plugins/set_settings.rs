@@ -38,6 +38,8 @@ pub async fn set_plugin_settings(
     Json(body): Json<SetPluginSettingsBody>,
 ) -> Result<StatusCode, ErrorService> {
     state
+        .services()
+        .await?
         .plugin_registry
         .update_settings(&body.plugin_name, &body.plugin_subname, body.settings)
         .await?;

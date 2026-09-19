@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod auth;
 pub mod chats;
 pub mod files;
 pub mod llm;
@@ -6,3 +7,5 @@ pub mod plugins;
 pub mod prompts;
 pub mod router;
 pub mod settings;
+pub mod setup;
+pub mod users;

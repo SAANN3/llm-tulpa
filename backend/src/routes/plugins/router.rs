@@ -6,6 +6,7 @@ use axum::{
 };
 use utoipa::OpenApi;
 
+use crate::plugins::registry::PluginRegistry;
 use crate::state::AppState;
 
 use super::{enable::*, get_help::*, list::*, reset_chat::*, set_settings::*, settings_schema::*};
@@ -30,8 +31,8 @@ use super::{enable::*, get_help::*, list::*, reset_chat::*, set_settings::*, set
 /// path is a stable proxy that looks up its live instance fresh per request (see
 /// `PluginRegistry::proxy_for`), so a settings change or enable/disable later doesn't
 /// require touching this router again.
-pub async fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
-    let plugin_routes: Router = state.plugin_registry.router().await;
+pub async fn router(registry: &Arc<PluginRegistry>) -> Router<Arc<AppState>> {
+    let plugin_routes: Router = registry.router().await;
 
     // `.fallback_service`, not `.nest`/`.nest_service` at `"/"` — axum 0.8 rejects
     // nesting a router at the literal root ("Nesting at the root is no longer

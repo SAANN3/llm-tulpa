@@ -55,3 +55,8 @@
 .field__help--wide {
   max-width: 40ch;
 }
+
+.field__model-picker {
+  width: 440px;
+  max-width: calc(100vw - 24px);
+}

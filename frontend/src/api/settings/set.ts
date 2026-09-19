@@ -1,8 +1,8 @@
 import axios from 'axios'
 import {BACKEND_URL} from '../../config'
-import type {Settings} from './types'
+import type {SettingsUpdate} from './types'
 
-/** Persists user settings */
-export const setSettings = async (settings: Settings): Promise<void> => {
-    await axios.post(`${BACKEND_URL}/api/settings`, settings)
+/** Applies a partial update to the user's settings */
+export const setSettings = async (update: SettingsUpdate): Promise<void> => {
+    await axios.post(`${BACKEND_URL}/api/settings`, update)
 };

@@ -1,16 +1,21 @@
 use sea_orm::entity::prelude::*;
 
+/// Per-user settings, 1:1 with `users` (replaces the old single global row). The primary
+/// key is the owning `user_id`.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "settings")]
+#[sea_orm(table_name = "user_settings")]
 pub struct Model {
-    /// Always `1` — this table only ever holds a single row (see `migrate`'s `CHECK`
-    /// constraint), so the id exists only to give the singleton row an address.
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: i16,
-    pub name: String,
+    pub user_id: i64,
+    pub name: Option<String>,
     /// UTC offset in whole hours (e.g. `-5`, `9`), not an IANA timezone name.
-    pub timezone: i16,
+    pub timezone: Option<i16>,
     pub notifications_enabled: bool,
+    pub theme: Option<String>,
+    pub language: String,
+    /// The model this user's new chats default to (`llm_models.id`). The provider is
+    /// reached through the model, not stored here.
+    pub active_model_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

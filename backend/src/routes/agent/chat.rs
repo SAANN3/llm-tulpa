@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{facade::agent::ChatOut, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
+use crate::{facade::agent::ChatOut, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ChatRequest {
@@ -43,9 +43,12 @@ pub(crate) struct ChatRequest {
 )]
 pub async fn chat(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Json(body): Json<ChatRequest>,
 ) -> Result<Json<ChatOut>, ErrorService> {
-    let result = state
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    let result = services
         .agent
         .chat(
             body.chat_id,

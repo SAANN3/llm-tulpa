@@ -7,11 +7,12 @@ export const Input = ({
     text,
     onChanged,
     placeholder,
+    type = 'text',
     onHovered,
     onKeyDown
 }: ThemedProps<InputProps>) => (
     <input
-        type="text"
+        type={type}
         style={style}
         className={className}
         data-variant={variant}

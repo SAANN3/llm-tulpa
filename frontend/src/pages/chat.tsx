@@ -1,8 +1,9 @@
-﻿import {Fragment, useEffect, useRef, useState} from 'react'
+import {Fragment, useEffect, useRef, useState} from 'react'
 import {Navigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
 import type {ThinkChoice} from '../api/agent/types'
 import {getChats} from '../api/chats/get'
+import {ChatHeader} from '../components/chat-header.tsx'
 import {ChatMessage} from '../components/chat-message.tsx'
 import {DateSeparator} from '../components/date-separator.tsx'
 import type {LazyListHandle} from '../components/lazy-list.tsx'
@@ -55,15 +56,22 @@ const ChatView = ({chatId}: { chatId: number }) => {
     )
 
     const [chatName, setChatName] = useState<string | null>(null)
+    const [chatModel, setChatModel] = useState<string | null>(null)
+    const [chatProvider, setChatProvider] = useState('ollama')
     useDocumentTitle(chatName ?? 'Chat')
 
     useEffect(() => {
         setChatName(null)
+        setChatModel(null)
         let cancelled = false
 
         getChats({id: chatId}).then((result) => {
             if (cancelled) return
-            if (!('chats' in result)) setChatName(result.name)
+            if (!('chats' in result)) {
+                setChatName(result.name)
+                setChatModel(result.model)
+                setChatProvider(result.provider)
+            }
         })
 
         return () => {
@@ -151,6 +159,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         <Div className="page">
             <Sidebar/>
             <Div className="chat">
+                <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider} onModelChanged={setChatModel}/>
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {
@@ -197,6 +206,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     inputDisabled={false}
                     initialThink={initialThink}
                     chatId={chatId}
+                    model={chatModel}
                 />
             </Div>
         </Div>

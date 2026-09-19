@@ -19,6 +19,8 @@ export interface UserInputProps {
     inputDisabled?: boolean
     initialThink?: boolean
     chatId?: number
+    /** The chat's bound model — only a change signal, so the thinking options are re-read after a switch */
+    model?: string | null
 }
 
 const DEFAULT_PLACEHOLDER = 'Message...'
@@ -48,6 +50,7 @@ export const UserInput = ({
     inputDisabled,
     initialThink = true,
     chatId,
+    model,
 }: UserInputProps) => {
     const [value, setValue] = useState(text ?? '')
     const [think, setThink] = useState(initialThink)
@@ -71,7 +74,7 @@ export const UserInput = ({
 
     useEffect(() => {
         let cancelled = false
-        getThinkingCapability().then(
+        getThinkingCapability(chatId).then(
             (capability) => {
                 if (cancelled) return
                 if (capability.kind === 'graduated') {
@@ -88,7 +91,7 @@ export const UserInput = ({
         return () => {
             cancelled = true
         }
-    }, [])
+    }, [chatId, model])
 
     const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
 

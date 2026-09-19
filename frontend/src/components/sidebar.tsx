@@ -6,6 +6,7 @@ import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
 import {Button, Div, Label} from './primitives'
 import type {ChatOut} from '../api/chats/types'
+import {useAuth} from '../context/use-auth.ts'
 import {useChats} from '../hooks/use-chats.ts'
 import {daysBefore} from '../utils/dates'
 
@@ -36,6 +37,7 @@ const groupByRecency = (chats: ChatOut[]): [RecencyGroup, ChatOut[]][] => {
 export const Sidebar = () => {
     const navigate = useNavigate()
     const location = useLocation()
+    const {user, logout} = useAuth()
     const [searchParams] = useSearchParams()
     const idParam = searchParams.get('id')
     const selectedChatId = idParam == null ? null : Number(idParam)
@@ -54,6 +56,10 @@ export const Sidebar = () => {
             <Div className="vbox">
                 <ChatEntry label="Settings" selected={false} onClicked={() => navigate('/settings')}/>
                 <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')}/>
+                {user?.role === 'owner' ? (
+                    <ChatEntry label="Users" selected={false} onClicked={() => navigate('/users')}/>
+                ) : null}
+                <ChatEntry label="Log out" selected={false} onClicked={logout}/>
             </Div>
             <Label className="section-heading" text="Chats"/>
             <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">

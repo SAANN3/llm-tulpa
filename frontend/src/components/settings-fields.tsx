@@ -1,5 +1,8 @@
-﻿import '../styles/settings-fields.scss'
-import {Div, Input, Label, ToggleSwitch} from './primitives'
+﻿import {useState} from 'react'
+import '../styles/settings-fields.scss'
+import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
+import {ModelPicker} from './model-picker.tsx'
+import {Popup} from './popup.tsx'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
 /** A field label in the small-caps style used above every input in this panel */
@@ -38,6 +41,39 @@ export const NameTimezoneFields = ({name, onNameChanged, timezoneText, onTimezon
                 </Div>
                 <FieldHelp text={tz.message} accent={!tz.valid}/>
             </Div>
+        </Div>
+    )
+};
+
+export interface ActiveModelFieldProps {
+    provider: string
+    model: string | null
+    onChosen: (provider: string, model: string) => void
+}
+
+/** The model new chats start with — an existing chat keeps the model it's bound to */
+export const ActiveModelField = ({provider, model, onChosen}: ActiveModelFieldProps) => {
+    const [open, setOpen] = useState(false)
+
+    return (
+        <Div className="field">
+            <FieldLabel text="Default model"/>
+            <Div className="field__control">
+                <Label text={model ?? 'none selected'}/>
+                <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
+            </Div>
+            <FieldHelp text="New chats start with this model. Each chat can be switched from its own header."/>
+            <Popup open={open} onClose={() => setOpen(false)} centered>
+                <Div className="dos-frame field__model-picker">
+                    <span className="dos-frame__title">Choose model</span>
+                    <Div className="dos-frame__body">
+                        <ModelPicker selected={model} onSelect={(chosen) => {
+                            onChosen(provider, chosen)
+                            setOpen(false)
+                        }}/>
+                    </Div>
+                </Div>
+            </Popup>
         </Div>
     )
 };

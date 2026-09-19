@@ -31,6 +31,8 @@ pub struct GetHelpQuery {
 )]
 pub async fn plugin_help(State(state): State<Arc<AppState>>, Query(query): Query<GetHelpQuery>) -> Result<Json<String>, ErrorService> {
     let builder = state
+        .services()
+        .await?
         .plugin_registry
         .builder(&query.plugin_name, &query.plugin_subname)
         .await

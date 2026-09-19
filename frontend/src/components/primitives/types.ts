@@ -36,6 +36,7 @@ export interface InputProps {
   text: string
   onChanged: (text: string) => void
   placeholder?: string
+  type?: 'text' | 'password'
   onHovered?: (hovering: boolean) => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
 }

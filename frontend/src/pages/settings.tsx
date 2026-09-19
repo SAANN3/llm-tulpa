@@ -2,7 +2,12 @@
 import {useNavigate} from 'react-router-dom'
 import '../styles/settings.scss'
 import {Button, Div} from '../components/primitives'
-import {AutoConfirmField, NameTimezoneFields, NotificationsField} from '../components/settings-fields.tsx'
+import {
+    ActiveModelField,
+    AutoConfirmField,
+    NameTimezoneFields,
+    NotificationsField,
+} from '../components/settings-fields.tsx'
 import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
@@ -59,6 +64,11 @@ const Settings = () => {
                     <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText}
                                         onTimezoneChanged={setTimezoneText}/>
                     <ThemePreview/>
+                    <ActiveModelField
+                        provider={settings?.llm_provider ?? 'ollama'}
+                        model={settings?.active_model ?? null}
+                        onChosen={(llm_provider, active_model) => setSettings({llm_provider, active_model})}
+                    />
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>
                     <AutoConfirmField enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm}/>
                     <Div className="settings__actions">

@@ -35,6 +35,8 @@ pub async fn plugin_settings_schema(
     Query(query): Query<SettingsSchemaQuery>,
 ) -> Result<Json<Vec<PropertyInfo>>, ErrorService> {
     let builder = state
+        .services()
+        .await?
         .plugin_registry
         .builder(&query.plugin_name, &query.plugin_subname)
         .await

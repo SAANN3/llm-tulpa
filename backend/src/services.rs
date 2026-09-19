@@ -1,8 +1,13 @@
+pub mod auth;
+pub mod bootstrap;
 pub mod chat_store;
 pub mod error;
 pub mod file_store;
 pub mod llm;
+pub mod migrate;
+pub mod model_store;
 pub mod permission_store;
 pub mod plugin_settings_store;
 pub mod settings_store;
 pub mod tools;
+pub mod user_store;
