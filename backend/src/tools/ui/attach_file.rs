@@ -43,7 +43,10 @@ impl Tool for AttachFileTool {
          The file shows up together with your next real written reply, not this tool call \
          itself, so don't wait for it, mention it, or read/summarize/relay this result back \
          to the user yourself — just keep answering normally and it'll appear alongside what \
-         you say."
+         you say. This is how you share files with the user: if they need a file \
+         (a script, document, image, anything), attach it here rather than telling them \
+         you can't 'create a link' or 'upload to a file host'. You can only attach files \
+         you can already read."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {

@@ -26,7 +26,8 @@ export const ThemePreview = () => {
     const {themeName, setThemeName, themeNames} = useTheme()
 
     return (
-        <div className="theme-picker" style={{'--theme-count': themeNames.length} as CSSProperties}>
+        <div className="theme-picker">
+            <div className="theme-picker__list" style={{'--theme-count': themeNames.length} as CSSProperties}>
             {themeNames.map((theme) => (
                 <Div key={theme} className="theme-picker__card" onClick={() => setThemeName(theme)}>
                     <ThemeMiniature theme={theme}/>
@@ -37,6 +38,7 @@ export const ThemePreview = () => {
                     </Div>
                 </Div>
             ))}
+            </div>
         </div>
     )
 };

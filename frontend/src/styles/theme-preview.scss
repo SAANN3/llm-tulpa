@@ -1,9 +1,15 @@
 @use 'tokens' as *;
 
 .theme-picker {
+  overflow-x: hidden;
+  min-height: 160px;
+}
+
+.theme-picker__list {
   display: grid;
-  grid-template-columns: repeat(var(--theme-count, 3), 1fr);
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
   gap: $space-3;
+  min-width: 354px;
 }
 
 .theme-picker__card {
@@ -12,6 +18,7 @@
   gap: $space-2;
   align-items: center;
   cursor: pointer;
+  min-width: 0;
 }
 
 .theme-picker__miniature {
@@ -81,4 +88,26 @@
 
 .theme-picker__name {
   font-size: 13px;
+}
+
+.theme-picker__list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-tertiary) var(--color-secondary);
+}
+
+.theme-picker__list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.theme-picker__list::-webkit-scrollbar-track {
+  background: var(--color-secondary);
+}
+
+.theme-picker__list::-webkit-scrollbar-thumb {
+  background: var(--color-tertiary);
+  border-radius: 0;
+}
+
+.theme-picker__list::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
 }

@@ -164,6 +164,21 @@ const SYSTEM_PROMPT: &[&str] = &[
      need to wait or poll — either carry on with other work, or end your turn saying what's \
      running and what you'll do once it's done. If you're unsure whether a job finished, \
      os.list_jobs says.",
+    "Before attaching images, if you have capability, verify, that images shows exactly what you \
+     wanted to show to the user. After making changes in code verify that they are actually \
+     compiles and work as expected, if not asked otherwise",
+    "Same applies to verification, not just changes: treat your first conclusion as a \
+     hypothesis, not as verification. When you are about to make a factual claim about \
+     something you can directly inspect, use the appropriate tool or source to verify it \
+     first whenever one is available. If you're writing code and whether it works matters, \
+     compile or run it; if you're analyzing an image, actually inspect the image; if you're \
+     describing a file, read the file; if you're checking some external or mutable state, \
+     query its current state. Do not substitute what you expect, remember, or infer for a \
+     check that you can actually perform. Only say something was compiled, tested, run, \
+     inspected, read, or otherwise verified after the relevant tool or source actually \
+     established it. If verification is ambiguous, incomplete, or contradicts your initial \
+     assumption, investigate further or state the uncertainty instead of confidently \
+     presenting the assumption as fact.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is

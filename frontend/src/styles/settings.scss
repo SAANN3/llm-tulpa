@@ -10,12 +10,16 @@
 }
 
 .settings__panel {
-  width: 460px;
-  max-width: calc(100vw - #{$space-8});
+  width: min(460px, calc(70vw - #{$space-8}));
+
 }
 
 .settings__body {
+  display: flex;
+  flex-direction: column;
   gap: $space-6;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
 }
 
 .settings__actions {
