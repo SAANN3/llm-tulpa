@@ -312,12 +312,29 @@ async fn table_exists(txn: &DatabaseTransaction, qualified: &str) -> Result<bool
     }
 }
 
+/// Whether `schema.table` has a column called `column`.
+async fn column_exists(txn: &DatabaseTransaction, schema: &str, table: &str, column: &str) -> Result<bool, DbErr> {
+    let row = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_schema = $1 AND table_name = $2 AND column_name = $3) AS present",
+            [schema.into(), table.into(), column.into()],
+        ))
+        .await?;
+    match row {
+        Some(row) => row.try_get("", "present"),
+        None => Ok(false),
+    }
+}
+
 /// Copies the data a single-user install left in the `legacy` schema into the current schema,
 /// as belonging to `owner_id`, then renames that schema to `legacy_adopted_<unix time>` (kept
 /// as a backup — drop it once you're satisfied). Returns whether there was anything to adopt.
 ///
 /// Ids are preserved, so files already on disk and every reference between rows stay valid;
-/// the id sequences are moved past the copied rows afterwards. Those installs had no notion of
+/// the id sequences are moved past the copied rows afterwards. A development database's extras
+/// (`chats.key_facts`, the `jobs` table) come over too when they exist. Those installs had no notion of
 /// a per-chat model, so every chat is bound to `default_model` (registered under Ollama if it
 /// isn't yet, and set as the owner's default) — that's the one model such an install ever ran.
 /// All or nothing: it's one transaction.
@@ -354,7 +371,7 @@ pub async fn adopt_legacy_data(db: &DatabaseConnection, owner_id: i64, default_m
 
     // (legacy table it reads, statement). A table an older install never created is skipped.
     // Order matters: parents before the rows that reference them.
-    let steps: [(&str, String); 11] = [
+    let steps: [(&str, String); 12] = [
         (
             "settings",
             "UPDATE user_settings u SET name = s.name, timezone = s.timezone, notifications_enabled = s.notifications_enabled
@@ -421,6 +438,16 @@ pub async fn adopt_legacy_data(db: &DatabaseConnection, owner_id: i64, default_m
                 .to_string(),
         ),
         (
+            // Only a development database from before accounts has this table. The rows come over
+            // as they are: a job still marked `running` is one whose process died with the old
+            // backend, and `JobStore` marks those `lost` on startup like any other.
+            "jobs",
+            "INSERT INTO jobs (id, chat_id, command, workdir, log_path, pid, status, exit_code, started_at, finished_at, notified)
+             SELECT id, chat_id, command, workdir, log_path, pid, status, exit_code, started_at, finished_at, notified
+             FROM legacy.jobs"
+                .to_string(),
+        ),
+        (
             "plugin_settings",
             "INSERT INTO user_plugins (user_id, plugin_name, plugin_subname, settings, enabled)
              SELECT $1, plugin_name, plugin_subname, settings, enabled FROM legacy.plugin_settings"
@@ -434,7 +461,8 @@ pub async fn adopt_legacy_data(db: &DatabaseConnection, owner_id: i64, default_m
                     setval(pg_get_serial_sequence('messages', 'id'), COALESCE((SELECT MAX(id) FROM messages), 0) + 1, false),
                     setval(pg_get_serial_sequence('files', 'id'), COALESCE((SELECT MAX(id) FROM files), 0) + 1, false),
                     setval(pg_get_serial_sequence('tool_calls', 'id'), COALESCE((SELECT MAX(id) FROM tool_calls), 0) + 1, false),
-                    setval(pg_get_serial_sequence('tool_permissions', 'id'), COALESCE((SELECT MAX(id) FROM tool_permissions), 0) + 1, false)
+                    setval(pg_get_serial_sequence('tool_permissions', 'id'), COALESCE((SELECT MAX(id) FROM tool_permissions), 0) + 1, false),
+                    setval(pg_get_serial_sequence('jobs', 'id'), COALESCE((SELECT MAX(id) FROM jobs), 0) + 1, false)
              WHERE $1 IS NOT NULL"
                 .to_string(),
         ),
@@ -452,6 +480,15 @@ pub async fn adopt_legacy_data(db: &DatabaseConnection, owner_id: i64, default_m
             vec![owner[0].clone()]
         };
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres, sql, values)).await?;
+    }
+
+    // The compaction key facts exist only on chats from a development database (the released
+    // single-user schema has no such column), so the copy depends on the column being there.
+    if column_exists(&txn, LEGACY_SCHEMA, "chats", "key_facts").await? {
+        txn.execute_unprepared(
+            "UPDATE chats c SET key_facts = l.key_facts FROM legacy.chats l WHERE c.id = l.id AND l.key_facts IS NOT NULL",
+        )
+        .await?;
     }
 
     // Kept as a backup; a timestamp suffix so a second adoption (a re-created legacy schema)
