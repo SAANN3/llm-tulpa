@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+### Changed
+- The system prompt now includes explicit guidance to verify images before attaching them and to treat initial conclusions as hypotheses rather than facts — using available tools to actually inspect, compile, or query state instead of inferring.
+- `ui.attach_file` tool description clarifies that files should be attached directly to replies rather than suggesting external links or file hosts.
+- Theme picker layout refined: nested list container, responsive grid with min-width constraints, scrollbar styling, and a scrollable settings panel body.
+
 ### Fixed
 - Reopening a chat whose last tool call was cut short — the backend restarted while a command was running, or the page closed during it — re-ran that command automatically. A command that never exits (a dev server started in the foreground) then held the chat on "Thinking…" for the full ten-minute limit, every time it was opened. A call that the chat's permissions already allow and that was left unfinished is now recorded as interrupted, with a note to the model that it may have run only partly and was not repeated; a call waiting for the user's confirmation still waits. A second tool call for a chat that already has one running is refused, so a reload can't start the same command twice.
 
