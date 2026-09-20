@@ -27,6 +27,18 @@ pub enum ServerEvent {
     JobFinished { chat_id: i64, job_id: i64 },
 }
 
+impl ServerEvent {
+    /// The chat this event is about. The bus is shared by every connected user, so the event
+    /// stream (`routes/events/stream.rs`) delivers an event only to the owner of this chat —
+    /// a new variant has to say which chat (and so which user) it concerns, or the stream has no
+    /// way to keep it from everyone else.
+    pub fn chat_id(&self) -> i64 {
+        match self {
+            ServerEvent::JobFinished { chat_id, .. } => *chat_id,
+        }
+    }
+}
+
 /// One-to-many fan-out of `ServerEvent`s to whoever is connected right now. Nothing is
 /// buffered for a client that isn't connected — an event with no subscribers is simply
 /// dropped, which is fine because every event is only a hint (see `ServerEvent`) and
