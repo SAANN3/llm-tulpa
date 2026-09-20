@@ -3,7 +3,15 @@ import {allowScope} from '../api/agent/allow-scope.ts'
 import {canUseTool} from '../api/agent/can-use-tool.ts'
 import {chat as sendChatMessage} from '../api/agent/chat'
 import {continueChat} from '../api/agent/continue-chat.ts'
-import type {AgentScopeGrant, AgentToolCall, ChatOut as AgentChatOut, ThinkChoice, UseToolOut} from '../api/agent/types'
+import {jobNotices} from '../api/agent/job-notices.ts'
+import type {
+    AgentScopeGrant,
+    AgentToolCall,
+    ChatOut as AgentChatOut,
+    NoticeOut,
+    ThinkChoice,
+    UseToolOut
+} from '../api/agent/types'
 import {useTool as runNextTool} from '../api/agent/use-tool.ts'
 import {getMessages} from '../api/chats/messages'
 import type {MessageOut} from '../api/chats/types'
@@ -31,6 +39,7 @@ export type DisplayMessage =
     created_at: string;
     arguments: Record<string, unknown>
 }
+    | { role: 'notice'; content: string; created_at: string }
 
 /** Maps a fetched page of messages to display form, pairing each tool message with its call arguments */
 const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
@@ -48,6 +57,9 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
                 created_at: m.created_at,
                 arguments: queuedArgs.shift() ?? {},
             }
+        }
+        if (m.role === 'notice') {
+            return {role: 'notice', content: m.content, created_at: m.created_at}
         }
         return {
             role: m.role as 'user' | 'assistant',
@@ -77,6 +89,18 @@ const assistantMessage = (reply: AgentChatOut): DisplayMessage => ({
     thought_duration_ms: reply.thought_duration_ms,
     file_ids: reply.file_ids,
 });
+
+const noticeMessage = (notice: NoticeOut): DisplayMessage => ({
+    role: 'notice',
+    content: notice.content,
+    created_at: notice.created_at,
+});
+
+/** Appends a reply as it was stored: the job notices persisted just before it, then the reply itself */
+const appendReply = (reply: AgentChatOut, onMessage: (message: DisplayMessage) => void) => {
+    reply.notices.forEach((notice) => onMessage(noticeMessage(notice)))
+    onMessage(assistantMessage(reply))
+};
 
 const toolMessage = (result: UseToolOut, args: Record<string, unknown>): DisplayMessage => ({
     role: 'tool',
@@ -163,7 +187,7 @@ const resolveToolCallsAndContinue = async (
     }
 
     const reply = await continueChat(chatId, think)
-    onMessage(assistantMessage(reply))
+    appendReply(reply, onMessage)
 
     return driveTurn(chatId, think, reply, onMessage)
 };
@@ -314,7 +338,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         setSendingChatId(requestChatId)
         try {
             const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
-            guardedAppend(assistantMessage(reply))
+            appendReply(reply, guardedAppend)
             return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
         } finally {
             clearSending(requestChatId)
@@ -339,5 +363,24 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    return {messages, loadOlder, send, resume, sending, canContinue}
+    /** Asks the backend to report finished background jobs to the model and drives its reply like any turn; null when there was nothing to report */
+    const runJobNotices = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
+        const requestChatId = chatId
+        const guardedAppend = (message: DisplayMessage) => {
+            if (chatIdRef.current === requestChatId) appendMessage(message)
+        }
+
+        setSendingChatId(requestChatId)
+        try {
+            const reply = await jobNotices(chatId, think)
+            if (!reply) return null
+
+            appendReply(reply, guardedAppend)
+            return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
+        } finally {
+            clearSending(requestChatId)
+        }
+    }
+
+    return {messages, loadOlder, send, resume, runJobNotices, sending, canContinue}
 };

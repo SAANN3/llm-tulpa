@@ -107,6 +107,13 @@ pub struct AppConfig {
     /// Where uploaded files are stored. Defaults to `~/.llm-tulpa/files`.
     #[serde(default)]
     pub files_dir: Option<PathBuf>,
+    /// Where background jobs (`os.start_job`) write their log files. Defaults to `~/.llm-tulpa/jobs`.
+    #[serde(default)]
+    pub jobs_dir: Option<PathBuf>,
+    /// How many days a finished job's log is kept; the sweep runs once at startup. `0` keeps
+    /// every log.
+    #[serde(default = "default_job_log_retention_days")]
+    pub job_log_retention_days: u64,
     /// The SearXNG instance `web.search_query` calls — the rate-limiting sidecar in front of
     /// it (see the repo's `searxng/`), not SearXNG's own port.
     #[serde(default = "default_searxng_url")]
@@ -129,6 +136,10 @@ fn default_agent_history_len() -> u64 {
     200
 }
 
+fn default_job_log_retention_days() -> u64 {
+    7
+}
+
 fn default_searxng_url() -> String {
     "http://localhost:8090".to_string()
 }
@@ -142,6 +153,8 @@ impl AppConfig {
             ollama: OllamaConfig::default(),
             agent_history_len: default_agent_history_len(),
             files_dir: None,
+            jobs_dir: None,
+            job_log_retention_days: default_job_log_retention_days(),
             searxng_url: default_searxng_url(),
             host_root: None,
             model_dir: None,
@@ -155,6 +168,16 @@ impl AppConfig {
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `files_dir` in settings.json"))
                 .join(".llm-tulpa/files")
+        })
+    }
+
+    /// `jobs_dir` if set, else `~/.llm-tulpa/jobs`. Panics without a home directory, like
+    /// `resolved_files_dir`.
+    pub fn resolved_jobs_dir(&self) -> PathBuf {
+        self.jobs_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `jobs_dir` in settings.json"))
+                .join(".llm-tulpa/jobs")
         })
     }
 }

@@ -1,0 +1,21 @@
+@use 'tokens' as *;
+
+.notice-message {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.notice-message__box {
+  max-width: 70ch;
+  padding: 6px $space-3;
+  border-radius: 0;
+  background: var(--color-surface);
+  border: $line-border solid var(--color-border);
+}
+
+.notice-message__text {
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.75;
+}

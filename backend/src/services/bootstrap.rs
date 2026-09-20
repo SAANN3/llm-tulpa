@@ -13,7 +13,8 @@ use crate::plugins::messaging::telegram::TelegramProvider;
 use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::services::{
-    chat_store::ChatStore, error::ErrorService, file_store::FileStore, llm::OllamaService, migrate::run_migrations,
+    chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore, job_store::JobStore,
+    llm::OllamaService, migrate::run_migrations,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
     plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
     user_store::UserStore,
@@ -133,8 +134,11 @@ pub async fn bootstrap(
     db_base_url: &str,
     db_name: &str,
     files_dir: PathBuf,
+    jobs_dir: PathBuf,
+    job_log_retention_days: u64,
     ollama: Arc<OllamaService>,
     tools: Arc<ToolService>,
+    events: Arc<EventBus>,
     agent_history_len: u64,
     ollama_context_length: u64,
 ) -> Result<AppServices, BootstrapError> {
@@ -176,6 +180,7 @@ pub async fn bootstrap(
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
+    let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
     let agent = Agent::new(
@@ -183,6 +188,8 @@ pub async fn bootstrap(
         chat_store.clone(),
         tools.clone(),
         file_store.clone(),
+        job_store.clone(),
+        events.clone(),
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,
@@ -197,6 +204,8 @@ pub async fn bootstrap(
         chat_store.clone(),
         Arc::new(ToolService::new(vec![])),
         file_store.clone(),
+        job_store.clone(),
+        events,
         permission_store.clone(),
         agent_history_len,
         ollama_context_length,

@@ -1,137 +1,109 @@
 import axios from 'axios'
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import {useEffect, useRef, useState} from 'react'
+import {useNavigate, useSearchParams} from 'react-router-dom'
+import '../styles/home.scss'
+import type {ThinkChoice} from '../api/agent/types'
+import {Mark} from '../components/mark.tsx'
+import {Div, Label} from '../components/primitives'
+import {Sidebar} from '../components/sidebar.tsx'
+import {UserInput} from '../components/user-input.tsx'
+import {useChats} from '../hooks/use-chats.ts'
+import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {usePrompts} from '../hooks/use-prompts.ts'
+import {setPendingPrompt} from '../utils/pending-prompt.ts'
 
-import type { ThinkChoice } from '../api/agent/types'
-import { Div, Label } from '../components/primitives'
-import { Mark } from '../components/Mark'
-import { Sidebar } from '../components/Sidebar'
-import { UserInput } from '../components/UserInput'
-import { useChats } from '../hooks/useChats'
-import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { usePrompts } from '../hooks/usePrompts'
-import { setPendingPrompt } from '../utils/pendingPrompt'
+const Home = () => {
+    useDocumentTitle('Llm-tulpa')
+    const navigate = useNavigate()
+    const [searchParams] = useSearchParams()
+    const {greet, inputExample, chatName} = usePrompts()
+    const {createChat} = useChats()
+    const [greeting, setGreeting] = useState('')
+    const [greetingLoading, setGreetingLoading] = useState(true)
+    const [placeholder, setPlaceholder] = useState('')
+    const [creating, setCreating] = useState(false)
 
-function Home() {
-  useDocumentTitle('Llm-tulpa')
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const { greet, inputExample, chatName } = usePrompts()
-  const { createChat } = useChats()
-  const [greeting, setGreeting] = useState('')
-  const [greetingLoading, setGreetingLoading] = useState(true)
-  const [placeholder, setPlaceholder] = useState('')
-  const [creating, setCreating] = useState(false)
+    // A prompt handed over by the launcher (extensions/launcher) as /?prompt=..., already percent-decoded
+    const launchPrompt = searchParams.get('prompt')?.trim() || null
 
-  // A prompt handed over by the launcher (`extensions/launcher`), as `/?prompt=...`.
-  // `searchParams.get` has already percent-decoded it — decoding it again throws
-  // "URI malformed" on a literal `%` in the text (which crashes the whole page), and
-  // would mangle text that merely looks encoded.
-  const launchPrompt = searchParams.get('prompt')?.trim() || null
-
-  // `replace` swaps this page's history entry for the chat instead of adding one after
-  // it — for a launcher prompt, so Back from the chat can't land on `/?prompt=...`
-  // again and send it a second time.
-  const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[], replace = false) => {
-    setCreating(true)
-    try {
-      const name = await chatName(prompt, images)
-      const chat = await createChat(name)
-      setPendingPrompt(chat.id, prompt, think, images, fileIds)
-      navigate(`/chat?id=${chat.id}`, { replace })
-    } finally {
-      setCreating(false)
+    // replace swaps this history entry for the chat, so Back can't land on /?prompt=... and send it twice
+    const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[], replace = false) => {
+        setCreating(true)
+        try {
+            const name = await chatName(prompt, images)
+            const chat = await createChat(name)
+            setPendingPrompt(chat.id, prompt, think, images, fileIds)
+            navigate(`/chat?id=${chat.id}`, {replace})
+        } finally {
+            setCreating(false)
+        }
     }
-  }
 
-  // Sent once, as soon as this mounts with a prompt in the URL. `launchedRef` (not the
-  // effect's dependencies) is what makes it once: React's dev-mode double mount would
-  // otherwise send it twice, and `onSend` is a fresh closure every render.
-  const onSendRef = useRef(onSend)
-  onSendRef.current = onSend
-  const launchedRef = useRef(false)
-  useEffect(() => {
-    if (!launchPrompt || launchedRef.current) return
-    launchedRef.current = true
-    void onSendRef.current(launchPrompt, true, [], [], true)
-  }, [launchPrompt])
+    // Sent once on mount; the ref rather than the effect's dependencies is what makes it once,
+    // since dev-mode double mounting would otherwise send it twice
+    const onSendRef = useRef(onSend)
+    onSendRef.current = onSend
+    const launchedRef = useRef(false)
+    useEffect(() => {
+        if (!launchPrompt || launchedRef.current) return
+        launchedRef.current = true
+        void onSendRef.current(launchPrompt, true, [], [], true)
+    }, [launchPrompt])
 
-  // Both `greet` and `inputExample` can take many seconds on a cache miss. Without
-  // aborting on unmount, navigating away mid-request (and back, repeatedly) leaves the
-  // old requests running in the browser — each one holding a connection slot against the
-  // backend's origin. Browsers cap those per-origin (6 for HTTP/1.1, which this app uses
-  // — plain http://, no TLS/h2), so stacking up enough orphaned slow requests can leave
-  // no slot free for a fresh page's own `/api/chats` fetch until an old one finally
-  // finishes, which reads as "the chat list is empty" for however long that takes.
-  useEffect(() => {
-    const controller = new AbortController()
+    // Aborted on unmount so orphaned slow requests don't hold connection slots against the backend
+    useEffect(() => {
+        const controller = new AbortController()
 
-    greet(controller.signal)
-      .then((text) => {
-        setGreeting(text)
-        setGreetingLoading(false)
-      })
-      .catch((err) => {
-        if (!axios.isCancel(err)) throw err
-      })
+        greet(controller.signal)
+            .then((text) => {
+                setGreeting(text)
+                setGreetingLoading(false)
+            })
+            .catch((err) => {
+                if (!axios.isCancel(err)) throw err
+            })
 
-    return () => controller.abort()
-  }, [greet])
+        return () => controller.abort()
+    }, [greet])
 
-  useEffect(() => {
-    const controller = new AbortController()
+    useEffect(() => {
+        const controller = new AbortController()
 
-    inputExample(controller.signal)
-      .then(setPlaceholder)
-      .catch((err) => {
-        if (!axios.isCancel(err)) throw err
-      })
+        inputExample(controller.signal)
+            .then(setPlaceholder)
+            .catch((err) => {
+                if (!axios.isCancel(err)) throw err
+            })
 
-    return () => controller.abort()
-  }, [inputExample])
+        return () => controller.abort()
+    }, [inputExample])
 
-  const loading = greetingLoading || creating
+    const loading = greetingLoading || creating
 
-  return (
-    <Div className="page">
-      <Sidebar />
-      <Div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '8px 24px 64px',
-        }}
-      >
-        <Div className="center vbox" style={{ flex: 1, minHeight: 0, gap: 26 }}>
-          <Mark spinning={loading} />
-          {loading ? (
-            <Label
-              className="status-line"
-              variant="secondary"
-              text={creating ? 'Starting a chat' : 'Thinking'}
-              style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em' }}
-            />
-          ) : null}
-          {!greetingLoading && greeting ? (
-            <Label
-              className="greeting"
-              text={greeting}
-              style={{ fontSize: 26, lineHeight: 1.4, textAlign: 'center', maxWidth: '24ch', textWrap: 'pretty' }}
-            />
-          ) : null}
-          <UserInput
-            blocked={creating}
-            onSended={onSend}
-            placeholder={placeholder || undefined}
-            clearOnSend={false}
-            style={{ width: 520, maxWidth: '100%' }}
-          />
+    return (
+        <Div className="page">
+            <Sidebar/>
+            <Div className="home">
+                <Div className="center vbox home__stage">
+                    <Mark spinning={loading}/>
+                    {loading ? (
+                        <Label className="status-line home__status" variant="secondary"
+                               text={creating ? 'Starting a chat' : 'Thinking'}/>
+                    ) : null}
+                    {!greetingLoading && greeting ? (
+                        <Label className="greeting home__greeting" text={greeting}/>
+                    ) : null}
+                    <UserInput
+                        className="home__composer"
+                        blocked={creating}
+                        onSended={onSend}
+                        placeholder={placeholder || undefined}
+                        clearOnSend={false}
+                    />
+                </Div>
+            </Div>
         </Div>
-      </Div>
-    </Div>
-  )
-}
+    )
+};
 
 export default Home

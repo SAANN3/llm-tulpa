@@ -1,5 +1,4 @@
 mod entities;
-mod migrate;
 
 use std::fmt;
 use std::io::SeekFrom;
@@ -10,10 +9,7 @@ use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
 use entities::jobs;
-use migrate::migrate;
-use sea_orm::{
-    prelude::*, ActiveValue::Set, Database, DatabaseConnection, DbBackend, FromQueryResult, QueryOrder, Statement,
-};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbBackend, FromQueryResult, QueryOrder, Statement};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::services::error::ErrorService;
@@ -108,9 +104,8 @@ impl From<jobs::Model> for JobRecord {
 }
 
 impl JobStore {
-    /// Same create-database-if-missing-then-migrate bootstrap as the other stores, plus
-    /// ensuring `jobs_dir` exists on disk. `jobs` has a foreign key on `chats (id)`, so
-    /// this must be constructed after `ChatStore`, same constraint as `FileStore`.
+    /// Holds an already-connected, already-migrated connection (see `services::bootstrap`),
+    /// and ensures `jobs_dir` exists on disk.
     /// Any row still marked `running` belongs to a previous backend process — nothing
     /// is watching it anymore — so it's marked `lost` here rather than left claiming
     /// to be running forever. The log of every finished job older than
@@ -118,50 +113,11 @@ impl JobStore {
     /// outlive the job by long enough for the model or the user to read it, so this is
     /// the one place they're cleaned up, not the moment a job ends.
     pub async fn new(
-        base_url: &str,
-        db_name: &str,
+        db: DatabaseConnection,
         jobs_dir: PathBuf,
         log_retention_days: u64,
         events: Arc<EventBus>,
     ) -> Self {
-        let admin_url = format!("{base_url}/postgres");
-
-        let admin_db = Database::connect(&admin_url).await.unwrap_or_else(|e| {
-            panic!("failed to connect to postgres to check/create database '{db_name}': {e}")
-        });
-
-        let exists = admin_db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM pg_database WHERE datname = $1",
-                [db_name.into()],
-            ))
-            .await
-            .unwrap_or_else(|e| panic!("failed to check whether database '{db_name}' exists: {e}"))
-            .is_some();
-
-        if !exists {
-            admin_db
-                .execute_unprepared(&format!("CREATE DATABASE \"{db_name}\""))
-                .await
-                .unwrap_or_else(|e| panic!("failed to create database '{db_name}': {e}"));
-        }
-
-        admin_db
-            .close()
-            .await
-            .unwrap_or_else(|e| panic!("failed to close bootstrap connection: {e}"));
-
-        let target_url = format!("{base_url}/{db_name}");
-
-        let db = Database::connect(&target_url)
-            .await
-            .unwrap_or_else(|e| panic!("failed to connect to database '{db_name}': {e}"));
-
-        migrate(&db)
-            .await
-            .unwrap_or_else(|e| panic!("failed to run migrations: {e}"));
-
         tokio::fs::create_dir_all(&jobs_dir)
             .await
             .unwrap_or_else(|e| panic!("failed to create jobs directory '{}': {e}", jobs_dir.display()));

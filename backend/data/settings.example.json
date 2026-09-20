@@ -7,5 +7,7 @@
   "agent_history_len": 200,
   "searxng_url": "http://localhost:8090",
   "files_dir": null,
+  "jobs_dir": null,
+  "job_log_retention_days": 7,
   "model_dir": null
 }
