@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::http::StatusCode;
@@ -153,12 +153,12 @@ const SYSTEM_PROMPT: &[&str] = &[
      install anything else) would just do it faster and more reliably. If you've already shown \
      a capability works earlier in this same conversation, remember and reuse it rather than \
      defaulting back to manual work out of habit.",
-    "Before each tool call, briefly say (1-2 sentences, not a wall of reasoning) what you're \
-     about to do, why, and what you expect the result to tell you. After the result comes \
-     back, briefly note whether it matched that expectation before deciding the next step. \
-     This applies every time, including partway through a long chain of tool calls in the \
-     same turn — someone reading the conversation should be able to follow what you're doing \
-     and why without reading your thinking.",
+    // "Before each tool call, briefly say (1-2 sentences, not a wall of reasoning) what you're \
+    //  about to do, why, and what you expect the result to tell you. After the result comes \
+    //  back, briefly note whether it matched that expectation before deciding the next step. \
+    //  This applies every time, including partway through a long chain of tool calls in the \
+    //  same turn — someone reading the conversation should be able to follow what you're doing \
+    //  and why without reading your thinking.",
     "A background job (os.start_job) tells you when it finishes: a message appears in the chat \
      saying how it ended, and you get a turn to respond to it. So after starting one there's no \
      need to wait or poll — either carry on with other work, or end your turn saying what's \
@@ -319,6 +319,32 @@ pub struct Agent {
     compaction_trigger_tokens: u64,
     /// See `KEEP_CHARS_PER_TOKEN` — `context_length * KEEP_CHARS_PER_TOKEN`.
     compaction_keep_chars: usize,
+    /// Chats with a tool call executing right now. See `RunningToolGuard`.
+    running_tools: Arc<Mutex<HashSet<i64>>>,
+}
+
+/// What the model is told about a tool call that was cut short — worded to make it check what
+/// state the call left instead of assuming either outcome, and to steer a command that never
+/// exits toward `os.start_job`.
+const INTERRUPTED_TOOL_MESSAGE: &str = "Interrupted — the backend stopped (or the connection dropped) before \
+    this call finished, so it may have run only partly or not at all, and it was not run again \
+    automatically. Check what state it left before repeating it. Anything that never exits on its own \
+    (a dev server, a watcher) belongs in os.start_job, not a foreground command.";
+
+/// Marks a chat as having a tool call executing, for as long as it lives. Dropping it — on
+/// completion, on an error, or because the request was cancelled (a client that disconnects drops
+/// the handler's future) — clears the mark. Without it a chat with an *allowed* call in flight is
+/// indistinguishable from one whose call was cut short by a restart: both look like "allowed and
+/// still unresolved".
+struct RunningToolGuard {
+    running: Arc<Mutex<HashSet<i64>>>,
+    chat_id: i64,
+}
+
+impl Drop for RunningToolGuard {
+    fn drop(&mut self) {
+        self.running.lock().unwrap().remove(&self.chat_id);
+    }
 }
 
 impl Agent {
@@ -360,7 +386,61 @@ impl Agent {
             history_len,
             compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
             compaction_keep_chars: (context_length as f64 * KEEP_CHARS_PER_TOKEN) as usize,
+            running_tools: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// Claims the chat's single tool-execution slot. Two calls running at once for one chat (a
+    /// second tab opened, or a reload, while a long command is still going) would run the same
+    /// pending call twice.
+    fn mark_running(&self, chat_id: i64) -> Result<RunningToolGuard, ErrorService> {
+        if !self.running_tools.lock().unwrap().insert(chat_id) {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "a tool call is already running for this chat"));
+        }
+        Ok(RunningToolGuard { running: self.running_tools.clone(), chat_id })
+    }
+
+    fn is_running(&self, chat_id: i64) -> bool {
+        self.running_tools.lock().unwrap().contains(&chat_id)
+    }
+
+    /// Records the tool calls that were cut short as interrupted, instead of leaving them to be
+    /// run again. Opening a chat is where this is discovered: a call the chat's grants already
+    /// allow is executed the moment the model asks for it, never left waiting for a person — so
+    /// one that is *still* unresolved while nothing is executing was interrupted (the backend
+    /// restarted, or the client went away mid-run), and re-running it could repeat something that
+    /// already happened, or block again on a command that never exits. A call waiting for the
+    /// user's confirmation is different and stays as it is; so does everything queued after it,
+    /// since results are recorded in the order the model asked.
+    async fn settle_interrupted(&self, chat_id: i64) -> Result<(), ErrorService> {
+        if self.is_running(chat_id) {
+            return Ok(());
+        }
+
+        for call in self.pending_tool_calls(chat_id).await? {
+            let name = call.tool_name.clone();
+            let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
+            if !matches!(view.permission, AgentToolPermission::Allowed) {
+                break;
+            }
+
+            self.chat_store
+                .new_message(NewMessage {
+                    chat_id,
+                    role: "tool".to_string(),
+                    content: Value::String(INTERRUPTED_TOOL_MESSAGE.to_string()).to_string(),
+                    tool_name: Some(name),
+                    thinking: None,
+                    thought_duration_ms: None,
+                    tool_success: Some(false),
+                    tool_denied: false,
+                    tool_calls: vec![],
+                    images: vec![],
+                    file_ids: vec![],
+                })
+                .await?;
+        }
+        Ok(())
     }
 
     /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix —
@@ -1114,7 +1194,16 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// The tool calls the model has asked for that haven't been run yet, without
     /// actually running them — lets a caller check each one's `permission` (and warn
     /// about a `Denied` one) before committing to `use_tool`.
+    ///
+    /// Also settles calls that were cut short (see `settle_interrupted`): they're recorded as
+    /// interrupted rather than reported as pending, so opening a chat never re-runs them. While a
+    /// call is executing, nothing is reported as pending — whoever is running it owns it.
     pub async fn can_use_tool(&self, chat_id: i64) -> Result<CanUseTool, ErrorService> {
+        if self.is_running(chat_id) {
+            return Ok(CanUseTool { can_use: false, tools: vec![] });
+        }
+        self.settle_interrupted(chat_id).await?;
+
         let pending = self.pending_tool_calls(chat_id).await?;
 
         let mut tools = Vec::with_capacity(pending.len());
@@ -1149,6 +1238,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// same as `can_use_tool` would, so a caller can tell whether to run another `use_tool`
     /// or move on without a separate round trip.
     pub async fn use_tool(&self, chat_id: i64, scope: Option<Value>) -> Result<UseToolOut, ErrorService> {
+        let _running = self.mark_running(chat_id)?;
         let mut pending = self.pending_tool_calls(chat_id).await?.into_iter();
         let next = pending
             .next()
