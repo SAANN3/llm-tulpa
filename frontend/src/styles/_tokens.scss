@@ -1,0 +1,15 @@
+// SCSS build-time tokens — spacing, TUI frame metrics, and the font stack
+
+$space-1: 4px;
+$space-2: 8px;
+$space-3: 12px;
+$space-4: 16px;
+$space-5: 20px;
+$space-6: 24px;
+$space-8: 32px;
+
+$frame-border: 3px;
+$line-border: 1px;
+$shadow-offset: 4px;
+
+$font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;

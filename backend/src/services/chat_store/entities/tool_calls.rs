@@ -8,6 +8,8 @@ pub struct Model {
     pub message_id: i64,
     pub tool_name: String,
     pub arguments: Json,
+    /// The model's requested order for this call within its message.
+    pub position: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

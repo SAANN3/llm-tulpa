@@ -1,0 +1,71 @@
+@use 'tokens' as *;
+
+.plugins {
+  gap: $space-5;
+}
+
+.plugins__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.plugins__panel {
+  width: 460px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.plugins__body {
+  gap: $space-5;
+}
+
+.plugins__list {
+  gap: 2px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.plugins__item {
+  gap: $space-1;
+}
+
+.plugins__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: default;
+}
+
+.plugins__row-main {
+  gap: 2px;
+}
+
+.plugins__name {
+  font-size: 15px;
+}
+
+.plugins__subname {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.plugins__controls {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.plugins__gear {
+  cursor: pointer;
+  display: flex;
+  opacity: 0.7;
+}
+
+.plugins__notice {
+  font-size: 12.5px;
+  padding: 0 $space-2;
+  color: var(--color-tertiary);
+}
+
+.plugins__missing {
+  gap: $space-4;
+}

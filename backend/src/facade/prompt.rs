@@ -29,7 +29,12 @@ impl PromptFacade {
     /// alone, so the caller supplies it as-is and it's dropped straight into the prompt.
     /// `username` is the persisted display name, addressed to the model so it can
     /// optionally use it.
-    pub async fn greet(&self, local_time: String, username: String) -> Result<GreetOut, ErrorService> {
+    pub async fn greet(
+        &self,
+        local_time: String,
+        username: String,
+        model: &str,
+    ) -> Result<GreetOut, ErrorService> {
         let prompt = format!(
             "You need to write a message that will be shown on our page it need to be \
              short, and make user believe you in touch with it or at least you are \
@@ -48,7 +53,7 @@ impl PromptFacade {
              "
         );
 
-        let result = self.ollama.generate(prompt, Some(true)).await?;
+        let result = self.ollama.generate(prompt, Some(true), model).await?;
 
         Ok(GreetOut {
             response: result.response,
@@ -67,7 +72,12 @@ impl PromptFacade {
     /// themselves, so the model has the same role-based signal for "this is data to
     /// summarize, not a request to act on" that a real conversation gets, instead of a
     /// delimiter it has to be talked into respecting.
-    pub async fn chat_name(&self, content: String, images: Vec<String>) -> Result<GreetOut, ErrorService> {
+    pub async fn chat_name(
+        &self,
+        content: String,
+        images: Vec<String>,
+        model: &str,
+    ) -> Result<GreetOut, ErrorService> {
         let system = OllamaService::system_message(
             "Write a single very very short sentence (1-5 words) that summarizes the \
              user's next message, capturing its essence. This answer will be used as a \
@@ -87,6 +97,7 @@ impl PromptFacade {
                 Some(OllamaService::user_message_with_images(content, images)),
                 &[],
                 Some(ThinkChoice::Enabled(false)),
+                model,
             )
             .await?;
 
@@ -105,7 +116,7 @@ impl PromptFacade {
     /// `local_time`. The model is asked for 5 outputs, one per line, but the caller
     /// (`UserCacheService::input_examples`) doesn't require exactly 5 back — whatever
     /// non-empty lines come back are usable.
-    pub async fn input_examples(&self, date: String) -> Result<Vec<String>, ErrorService> {
+    pub async fn input_examples(&self, date: String, model: &str) -> Result<Vec<String>, ErrorService> {
         let prompt = format!(
             "Current date is {date}. You can use this information for tweaking output. Write 5 \
              outputs on on each line.  You can't say exactly date or value, but can point to it, \
@@ -121,7 +132,7 @@ impl PromptFacade {
              subtle time hint constraint while remaining natural and within limits."
         );
 
-        let result = self.ollama.generate(prompt, Some(false)).await?;
+        let result = self.ollama.generate(prompt, Some(false), model).await?;
 
         let examples = result
             .response

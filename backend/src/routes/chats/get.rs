@@ -8,7 +8,7 @@ use sea_orm::prelude::DateTimeUtc;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct GetChatsQuery {
@@ -23,6 +23,9 @@ pub(crate) struct GetChatsQuery {
 pub(crate) struct ChatOut {
     pub(crate) id: i64,
     pub(crate) name: String,
+    /// The model this chat is bound to, and the provider it belongs to.
+    pub(crate) model: String,
+    pub(crate) provider: String,
     #[schema(value_type = String, format = "date-time")]
     pub(crate) created_at: DateTimeUtc,
     #[schema(value_type = String, format = "date-time")]
@@ -60,14 +63,19 @@ pub(crate) enum GetChatsResponse {
 )]
 pub async fn get_chats(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Query(query): Query<GetChatsQuery>,
 ) -> Result<Json<GetChatsResponse>, ErrorService> {
+    let services = state.services().await?;
+
     if let Some(id) = query.id {
-        let chat = state.chat_store.chat(id).await?;
+        let chat = services.chat_store.owned_chat(auth.id, id).await?;
 
         return Ok(Json(GetChatsResponse::Single(ChatOut {
             id: chat.id,
             name: chat.name,
+            model: chat.model,
+            provider: chat.provider,
             created_at: chat.created_at,
             updated_at: chat.updated_at,
         })));
@@ -76,13 +84,15 @@ pub async fn get_chats(
     let limit = query.limit.unwrap_or(50);
     let skip = query.skip.unwrap_or(0);
 
-    let (chats, total) = state.chat_store.chats(limit, skip).await?;
+    let (chats, total) = services.chat_store.chats(auth.id, limit, skip).await?;
 
     let chats = chats
         .into_iter()
         .map(|chat| ChatOut {
             id: chat.id,
             name: chat.name,
+            model: chat.model,
+            provider: chat.provider,
             created_at: chat.created_at,
             updated_at: chat.updated_at,
         })

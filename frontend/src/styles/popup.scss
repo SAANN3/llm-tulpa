@@ -1,0 +1,10 @@
+@use 'mixins' as *;
+
+.popup {
+  position: fixed;
+  z-index: 1000;
+  border: 1px solid currentColor;
+  border-radius: 0;
+  overflow: hidden;
+  @include dos-shadow(var(--color-shadow));
+}

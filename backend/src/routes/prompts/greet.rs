@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{extract::State, Json};
 
-use crate::{facade::prompt::GreetOut, services::error::ErrorService, state::AppState};
+use crate::{facade::prompt::GreetOut, routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 /// A short, lively greeting for the "no chat open yet" landing page — never a
 /// predefined string, and nudged to reference the time of day rather than state it
@@ -20,8 +20,8 @@ use crate::{facade::prompt::GreetOut, services::error::ErrorService, state::AppS
         (status = 502, description = "Ollama returned a non-success status", body = crate::services::error::ErrorBody),
     ),
 )]
-pub async fn greet(State(state): State<Arc<AppState>>) -> Result<Json<GreetOut>, ErrorService> {
-    let result = state.user_cache.clone().greet().await?;
+pub async fn greet(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<GreetOut>, ErrorService> {
+    let result = state.services().await?.user_cache.greet(auth.id).await?;
 
     Ok(Json(result))
 }

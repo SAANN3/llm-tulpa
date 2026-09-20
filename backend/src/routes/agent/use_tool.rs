@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::{facade::agent::UseToolOut, services::error::ErrorService, state::AppState};
+use crate::{facade::agent::UseToolOut, routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UseToolRequest {
@@ -36,9 +36,12 @@ pub(crate) struct UseToolRequest {
 )]
 pub async fn use_tool(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Json(body): Json<UseToolRequest>,
 ) -> Result<Json<UseToolOut>, ErrorService> {
-    let result = state.agent.use_tool(body.chat_id, body.scope).await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    let result = services.agent.use_tool(body.chat_id, body.scope).await?;
 
     Ok(Json(result))
 }

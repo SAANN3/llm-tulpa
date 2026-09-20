@@ -1,3 +1,5 @@
+mod transfer;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -5,6 +7,8 @@ use axum::http::StatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
+
+pub use transfer::ImportProgress;
 
 use crate::services::error::ErrorService;
 use crate::tools::base::Tool;
@@ -61,19 +65,23 @@ fn request_timeout(max_predict_tokens: i32) -> Duration {
 pub struct OllamaService {
     client: reqwest::Client,
     base_url: String,
-    model_name: String,
+    /// The model's context window (`ollama.context_length` in `settings.json`) — the ceiling
+    /// each request's `num_predict` cap is computed under (see `compute_num_predict_base`).
+    /// Ollama defaults `num_predict` to unlimited when it's omitted, so without a cap a model
+    /// that never emits a stop token keeps generating indefinitely.
     max_predict_tokens: i32,
 }
 
 impl OllamaService {
-    pub fn new(base_url: impl Into<String>, model_name: impl Into<String>, max_predict_tokens: i32) -> Self {
+    /// No model is held here — every call names the one it runs against (a chat's bound
+    /// model, or the user's active one), resolved from the database by the caller.
+    pub fn new(base_url: impl Into<String>, max_predict_tokens: i32) -> Self {
         Self {
             client: reqwest::Client::builder()
                 .timeout(request_timeout(max_predict_tokens))
                 .build()
                 .expect("failed to build ollama http client"),
             base_url: base_url.into(),
-            model_name: model_name.into(),
             max_predict_tokens,
         }
     }
@@ -156,11 +164,16 @@ impl OllamaService {
     /// `thinking` response field isn't populated for this model, so the reasoning
     /// trace comes back embedded in `response` instead and has to be pulled back out
     /// on our end.
-    pub async fn generate(&self, prompt: String, think: Option<bool>) -> Result<OllamaGenerateResponse, OllamaErrors> {
+    pub async fn generate(
+        &self,
+        prompt: String,
+        think: Option<bool>,
+        model: &str,
+    ) -> Result<OllamaGenerateResponse, OllamaErrors> {
         let url = format!("{}/api/generate", self.base_url);
         let num_predict = self.compute_num_predict_generate(&prompt);
         let body = OllamaGenerateRequest {
-            model: self.model_name.clone(),
+            model: model.to_string(),
             prompt,
             stream: false,
             think: Value::Bool(think.unwrap_or(true)),
@@ -211,6 +224,7 @@ impl OllamaService {
         new_message: Option<OllamaChatMessage>,
         tools: &[&dyn Tool],
         think: Option<ThinkChoice>,
+        model: &str,
     ) -> Result<OllamaChatResponse, OllamaErrors> {
         let url = format!("{}/api/chat", self.base_url);
 
@@ -239,7 +253,7 @@ impl OllamaService {
 
         let num_predict = self.compute_num_predict_chat(&messages, tool_overhead_tokens);
         let body = OllamaChatRequest {
-            model: self.model_name.clone(),
+            model: model.to_string(),
             messages,
             stream: false,
             think: think_param(think),
@@ -275,7 +289,7 @@ impl OllamaService {
         Ok(result)
     }
 
-    /// What the *currently active* model actually supports for `think`, discovered
+    /// What the given `model` actually supports for `think`, discovered
     /// live from its own chat template rather than hardcoded for one specific model —
     /// deliberately not cached/persisted anywhere: this calls out fresh every time a
     /// caller asks (cheap — Ollama's `/api/show` reads stored model metadata, no load
@@ -288,28 +302,28 @@ impl OllamaService {
     /// `OLLAMA_GO_TEMPLATE` appearing in its own startup config. This is also exactly
     /// why `mtp-proxy` implements its own `/api/show` (translating from `/props`) —
     /// this method works unchanged against either backend.
-    pub async fn thinking_capability(&self) -> Result<ThinkingCapability, OllamaErrors> {
-        Ok(parse_thinking_capability(&self.chat_template().await?))
+    pub async fn thinking_capability(&self, model: &str) -> Result<ThinkingCapability, OllamaErrors> {
+        Ok(parse_thinking_capability(&self.chat_template(model).await?))
     }
 
-    /// The tags the active model's own chat template wraps a tool call in (e.g.
+    /// The tags the given `model`'s own chat template wraps a tool call in (e.g.
     /// `<tool_call>` and `</tool_call>`), discovered live the same way as
     /// `thinking_capability` — see `extract_tool_call_markers`. Empty if the template
     /// has none or can't be read, in which case nothing that looks for them can
     /// trigger: a failure to look is never treated as a finding.
-    pub async fn tool_call_markers(&self) -> Vec<String> {
-        match self.chat_template().await {
+    pub async fn tool_call_markers(&self, model: &str) -> Vec<String> {
+        match self.chat_template(model).await {
             Ok(template) => extract_tool_call_markers(&template),
             Err(_) => vec![],
         }
     }
 
-    /// The active model's raw Jinja chat template, straight from Ollama's `/api/show`
+    /// The given `model`'s raw Jinja chat template, straight from Ollama's `/api/show`
     /// — see `thinking_capability` for why that's the real template and why it's read
     /// fresh every time.
-    async fn chat_template(&self) -> Result<String, OllamaErrors> {
+    async fn chat_template(&self, model: &str) -> Result<String, OllamaErrors> {
         let url = format!("{}/api/show", self.base_url);
-        let body = serde_json::json!({ "model": self.model_name });
+        let body = serde_json::json!({ "model": model });
 
         let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
             tracing::error!(error = %e, "ollama /api/show request failed");
@@ -330,6 +344,57 @@ impl OllamaService {
         }
         let parsed: ShowResponse = decode_response(res).await?;
         Ok(parsed.template)
+    }
+
+    /// The models actually installed in this Ollama instance, from `/api/tags` — the
+    /// authoritative "what can I switch to right now without pulling" list. Ollama's own
+    /// fields (`details.parameter_size`/`quantization_level`) are passed straight through
+    /// so the client can show/estimate requirements without a second round trip.
+    pub async fn list_local_models(&self) -> Result<Vec<LocalModel>, OllamaErrors> {
+        let url = format!("{}/api/tags", self.base_url);
+
+        let res = self.client.get(&url).send().await.map_err(|e| {
+            tracing::error!(error = %e, "ollama /api/tags request failed");
+            OllamaErrors::RequestFailed(e.to_string())
+        })?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama /api/tags returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status));
+        }
+
+        #[derive(Deserialize, Default)]
+        struct TagsResponse {
+            #[serde(default)]
+            models: Vec<LocalModel>,
+        }
+        let parsed: TagsResponse = decode_response(res).await?;
+        Ok(parsed.models)
+    }
+
+    /// Fetches ollama.com's public model library page. There is no API behind it, so
+    /// `ModelLibrary` parses the returned HTML into a structured catalog.
+    pub async fn fetch_catalog(&self) -> Result<String, OllamaErrors> {
+        let res = self
+            .client
+            .get("https://ollama.com/library")
+            .header("Accept", "text/html")
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "ollama.com/library request failed");
+                OllamaErrors::RequestFailed(e.to_string())
+            })?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            tracing::error!(%status, "ollama.com/library returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status));
+        }
+
+        res.text().await.map_err(|e| OllamaErrors::DecodeFailed(e.to_string()))
     }
 
     /// Builds a `user`-role message from plain text, so callers can hand `chat` a
@@ -576,6 +641,30 @@ fn extract_reasoning_effort_levels(template: &str) -> Option<Vec<String>> {
     (!levels.is_empty()).then_some(levels)
 }
 
+/// One installed model as `/api/tags` reports it, passed straight out over our own API
+/// (hence `Serialize`/`ToSchema`, unlike the request/response mirror types) — the client
+/// reads `details.parameter_size`/`quantization_level` to show and estimate a model's
+/// requirements. Only the fields the UI actually uses are kept; Ollama sends more.
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct LocalModel {
+    /// The pullable tag, e.g. `qwen2.5:0.5b` — what a chat's `model` gets set to.
+    pub name: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub details: Option<LocalModelDetails>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct LocalModelDetails {
+    #[serde(default)]
+    pub family: Option<String>,
+    #[serde(default)]
+    pub parameter_size: Option<String>,
+    #[serde(default)]
+    pub quantization_level: Option<String>,
+}
+
 #[derive(Serialize)]
 struct OllamaGenerateRequest {
     model: String,
@@ -770,6 +859,12 @@ pub enum OllamaErrors {
     RequestFailed(String),
     UnexpectedStatus(StatusCode),
     DecodeFailed(String),
+    /// Ollama refused a model-management request and said why (a bad model name, a corrupt
+    /// file, ...) — the text is meant to be shown to the person who asked.
+    Rejected(StatusCode, String),
+    /// A model-management operation failed for a reason of its own (an unreadable file, a pull
+    /// that ended without success).
+    Failed(String),
 }
 
 impl From<OllamaErrors> for ErrorService {
@@ -786,6 +881,10 @@ impl From<OllamaErrors> for ErrorService {
                 StatusCode::BAD_GATEWAY,
                 format!("ollama returned status {code}"),
             ),
+            OllamaErrors::Rejected(code, msg) => {
+                ErrorService::new(if code.is_client_error() { StatusCode::BAD_REQUEST } else { StatusCode::BAD_GATEWAY }, msg)
+            }
+            OllamaErrors::Failed(msg) => ErrorService::new(StatusCode::BAD_GATEWAY, msg),
             OllamaErrors::DecodeFailed(msg) => {
                 // The precise cause (including the raw body Ollama sent) is already
                 // logged at the source in `decode_response` — this only has the

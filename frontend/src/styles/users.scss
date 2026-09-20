@@ -1,0 +1,61 @@
+@use 'tokens' as *;
+
+.users {
+  gap: $space-5;
+}
+
+.users__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.users__panel {
+  width: 460px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.users__body {
+  gap: $space-5;
+}
+
+.users__list {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.users__row {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.users__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.users__role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.users__you {
+  font-size: 12px;
+}
+
+.users__error {
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.users__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: $space-2;
+}

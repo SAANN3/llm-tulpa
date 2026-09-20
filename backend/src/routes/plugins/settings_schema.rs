@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::{services::error::ErrorService, state::AppState, tools::base::PropertyInfo};
+use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState, tools::base::PropertyInfo};
 
 #[derive(Deserialize, IntoParams)]
 pub struct SettingsSchemaQuery {
@@ -32,9 +32,12 @@ pub struct SettingsSchemaQuery {
 )]
 pub async fn plugin_settings_schema(
     State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
     Query(query): Query<SettingsSchemaQuery>,
 ) -> Result<Json<Vec<PropertyInfo>>, ErrorService> {
     let builder = state
+        .services()
+        .await?
         .plugin_registry
         .builder(&query.plugin_name, &query.plugin_subname)
         .await

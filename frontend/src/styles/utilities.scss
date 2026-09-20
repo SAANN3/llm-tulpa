@@ -1,0 +1,83 @@
+@use 'tokens' as *;
+@use 'mixins' as *;
+
+.page {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vbox {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  border: $line-border solid currentColor;
+  border-radius: 0;
+  padding: $space-6;
+}
+
+.bordered-right {
+  border-right: $line-border solid currentColor;
+}
+
+.section-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+
+.list-row {
+  cursor: pointer;
+  border-radius: 0;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.list-row:not([data-variant]):hover {
+  background-color: var(--color-surface-strong);
+}
+
+.mono {
+  font-family: $font-mono;
+}
+
+.dos-frame {
+  @include dos-frame;
+  @include dos-shadow;
+  position: relative;
+}
+
+.dos-frame--accent {
+  @include dos-frame(var(--color-tertiary));
+}
+
+.dos-frame__title {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 $space-3;
+  background: var(--color-secondary);
+  color: var(--color-primary);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dos-frame__body {
+  display: flex;
+  flex-direction: column;
+  padding: $space-6;
+}

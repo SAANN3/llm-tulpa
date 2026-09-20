@@ -84,13 +84,14 @@ impl Tool for ReadImageTool {
         // relaying the answer back. `think: Some(false)`: nothing here needs a
         // reasoning trace, just a direct answer.
         let message = OllamaService::user_message_with_images(prompt, vec![STANDARD.encode(&bytes)]);
-        let response = ctx.ollama.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false))).await.map_err(|e| {
+        let response = ctx.ollama.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model).await.map_err(|e| {
             let reason = match e {
                 crate::services::llm::OllamaErrors::RequestFailed(msg) => msg,
                 crate::services::llm::OllamaErrors::UnexpectedStatus(status) => {
                     format!("ollama returned status {status}")
                 }
                 crate::services::llm::OllamaErrors::DecodeFailed(msg) => msg,
+                crate::services::llm::OllamaErrors::Rejected(_, msg) | crate::services::llm::OllamaErrors::Failed(msg) => msg,
             };
             ToolError::FailedUnknown(format!("couldn't read the image: {reason}"))
         })?;

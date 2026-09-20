@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub struct SetPluginEnabledBody {
@@ -30,9 +30,12 @@ pub struct SetPluginEnabledBody {
 )]
 pub async fn set_plugin_enabled(
     State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
     Json(body): Json<SetPluginEnabledBody>,
 ) -> Result<StatusCode, ErrorService> {
     state
+        .services()
+        .await?
         .plugin_registry
         .set_enabled(&body.plugin_name, &body.plugin_subname, body.enabled)
         .await?;

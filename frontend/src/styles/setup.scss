@@ -1,0 +1,97 @@
+@use 'tokens' as *;
+
+.setup {
+  gap: $space-5;
+}
+
+.setup__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.setup__panel {
+  width: 460px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.setup__body {
+  gap: $space-6;
+}
+
+.setup__viewport {
+  overflow: clip;
+  width: 100%;
+}
+
+.setup__track {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
+  transform: translateX(calc(-1 * var(--step, 0) * 100%));
+  transition: transform 200ms ease;
+  align-items: flex-start;
+}
+
+.setup__slide {
+  flex: 0 0 100%;
+  width: 100%;
+}
+
+.setup__step {
+  display: flex;
+  flex-direction: column;
+  gap: $space-5;
+}
+
+.setup__lead {
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+.setup__select {
+  width: 100%;
+}
+
+.setup__db-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: $space-3;
+}
+
+.setup__error {
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.setup__strength {
+  height: 6px;
+  border: $line-border solid var(--color-border);
+  background: transparent;
+}
+
+.setup__strength-bar {
+  height: 100%;
+  width: calc(var(--score, 0) / 4 * 100%);
+  background: currentColor;
+  transition: width 150ms ease;
+}
+
+.setup__nav {
+  gap: $space-2;
+}
+
+.setup__dots {
+  gap: $space-2;
+}
+
+.setup__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  border: $line-border solid var(--color-border);
+  background: transparent;
+}
+
+.setup__dot--active {
+  background: currentColor;
+}

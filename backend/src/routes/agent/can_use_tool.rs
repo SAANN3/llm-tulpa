@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{facade::agent::CanUseTool, services::error::ErrorService, state::AppState};
+use crate::{facade::agent::CanUseTool, routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CanUseToolRequest {
@@ -26,9 +26,12 @@ pub(crate) struct CanUseToolRequest {
 )]
 pub async fn can_use_tool(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Json(body): Json<CanUseToolRequest>,
 ) -> Result<Json<CanUseTool>, ErrorService> {
-    let result = state.agent.can_use_tool(body.chat_id).await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    let result = services.agent.can_use_tool(body.chat_id).await?;
 
     Ok(Json(result))
 }

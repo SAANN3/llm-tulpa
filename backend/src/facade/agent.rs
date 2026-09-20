@@ -291,6 +291,7 @@ fn job_notice_text(job: &JobRecord) -> String {
 /// rather than in route handlers or inside any one of the services it composes. Holds
 /// its own `Arc` clones of each rather than borrowing from `AppState`, so it can be
 /// used independently of any particular request's `State` extraction.
+#[derive(Clone)]
 pub struct Agent {
     ollama: Arc<OllamaService>,
     chat_store: Arc<ChatStore>,
@@ -340,7 +341,15 @@ impl Agent {
         // cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
         // holds its own copy below.
         let tool_context =
-            ToolContext { file_store, ollama: ollama.clone(), job_store: job_store.clone(), events, chat_id: 0 };
+            ToolContext {
+                file_store,
+                ollama: ollama.clone(),
+                job_store: job_store.clone(),
+                events,
+                chat_id: 0,
+                user_id: 0,
+                model: String::new(),
+            };
         Self {
             ollama,
             chat_store,
@@ -578,15 +587,18 @@ impl Agent {
             }
         };
 
+        // The model this chat is bound to, read fresh so a switch takes effect on this very turn.
+        let model = self.chat_store.chat(chat_id).await?.model;
+
         let started_at = Instant::now();
         let mut regenerations = Regenerations::default();
         let response = loop {
             let response = self
                 .ollama
-                .chat(messages_with_system.clone(), new_message.clone(), &tools, think.clone())
+                .chat(messages_with_system.clone(), new_message.clone(), &tools, think.clone(), &model)
                 .await?;
 
-            let Some(problem) = self.unusable_reply(&response).await else { break response };
+            let Some(problem) = self.unusable_reply(&response, &model).await else { break response };
             if !regenerations.allow(problem) {
                 tracing::warn!(chat_id, problem = problem.describe(), "model reply unusable, keeping it anyway");
                 break response;
@@ -677,7 +689,7 @@ impl Agent {
     /// `OllamaService::tool_call_markers`) turning up in its reasoning or answer with no
     /// call actually parsed. Emptiness alone deliberately doesn't count as that: it can be
     /// a legitimate reply, so it's its own, more cautious, problem.
-    async fn unusable_reply(&self, response: &OllamaChatResponse) -> Option<ReplyProblem> {
+    async fn unusable_reply(&self, response: &OllamaChatResponse, model: &str) -> Option<ReplyProblem> {
         let message = &response.message;
         if message.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty()) {
             return None;
@@ -691,7 +703,7 @@ impl Agent {
         // template lookup off the path of every ordinary reply.
         let texts = [message.thinking.as_deref().unwrap_or_default(), message.content.as_str()];
         if texts.iter().any(|text| text.contains("tool_call") || text.contains("function_call")) {
-            let markers = self.ollama.tool_call_markers().await;
+            let markers = self.ollama.tool_call_markers(model).await;
             if texts.iter().any(|text| markers.iter().any(|marker| text.contains(marker.as_str()))) {
                 return Some(ReplyProblem::ToolCallAsText);
             }
@@ -813,8 +825,8 @@ impl Agent {
             "calling summarize for chat_id {chat_id}"
         );
 
-        let summary = self.summarize(chat.summary.clone(), to_fold).await?;
-        let facts = self.extract_facts(to_fold, chat.key_facts.clone()).await;
+        let summary = self.summarize(chat.summary.clone(), to_fold, &chat.model).await?;
+        let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.model).await;
         let existing_facts_count = chat.key_facts.as_ref().map_or(0, |f| f.facts.len());
         let merged = Self::merge_facts(chat.key_facts.clone().unwrap_or_default(), facts.goal, facts.facts);
         // `merge_facts` only ever appends, so this can't underflow in practice — saturating
@@ -834,7 +846,12 @@ impl Agent {
     /// message in `to_fold`, via a plain (no tools) Ollama call — not part of the
     /// visible conversation, so it doesn't go through `advance`/get persisted as a chat
     /// message itself.
-    async fn summarize(&self, existing_summary: Option<String>, to_fold: &[Message]) -> Result<String, ErrorService> {
+    async fn summarize(
+        &self,
+        existing_summary: Option<String>,
+        to_fold: &[Message],
+        model: &str,
+    ) -> Result<String, ErrorService> {
         // The image data itself never goes into the transcript (it's not text, and this
         // call carries no vision guarantee) — but a message that had one needs to say
         // so, or folding it away loses any trace it ever happened, silently.
@@ -899,7 +916,10 @@ impl Agent {
         // struct/field names and per-tool specifics, which is exactly what the system
         // prompt above asks it to preserve. Reasoning first turned out to hurt the
         // thing it was meant to help here, not just cost more.
-        let response = self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await?;
+        let response = self
+            .ollama
+            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model)
+            .await?;
         Ok(response.message.content)
     }
 
@@ -937,6 +957,7 @@ impl Agent {
         &self,
         to_fold: &[Message],
         existing_key_facts: Option<ChatFacts>,
+        model: &str,
     ) -> ChatFacts {
         let existing = existing_key_facts.as_ref();
         let existing_goal = existing.and_then(|f| f.goal.clone());
@@ -998,7 +1019,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             existing_goal.as_deref().unwrap_or("(none)"),
         ));
 
-        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false))).await {
+        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model).await {
             Err(err) => {
                 let es: ErrorService = err.into();
                 tracing::warn!(
@@ -1153,7 +1174,8 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
 
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
-                let ctx = self.tool_context.copy_with_chat_id(chat_id);
+                let chat = self.chat_store.chat(chat_id).await?;
+                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.model);
                 match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
                     Ok(value) => (true, false, None, value),
                     Err(e) => {

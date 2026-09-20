@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct DeleteChatQuery {
@@ -29,9 +29,12 @@ pub(crate) struct DeleteChatQuery {
 )]
 pub async fn delete_chat(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Query(query): Query<DeleteChatQuery>,
 ) -> Result<StatusCode, ErrorService> {
-    state.chat_store.delete_chat(query.id).await?;
+    let services = state.services().await?;
+    services.chat_store.owned_chat(auth.id, query.id).await?;
+    services.chat_store.delete_chat(query.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

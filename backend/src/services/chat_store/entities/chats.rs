@@ -5,7 +5,11 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
+    /// The owning user. Every chat belongs to exactly one user (multi-user isolation).
+    pub user_id: i64,
     pub name: String,
+    /// The model this chat is bound to (`llm_models.id`) — never null.
+    pub model_id: i64,
     pub is_deleted: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
@@ -17,14 +21,6 @@ pub struct Model {
     /// field still round-trips through SeaORM without error; the chat_store layer
     /// serializes/deserializes the flat `ChatFacts` struct around it.
     pub key_facts: Option<serde_json::Value>,
-    /// All three null (an ordinary chat) or all three filled (a plugin-owned one) —
-    /// see `chat_store::migrate` for the constraint that enforces this. Deliberately
-    /// not on the public `Chat` struct — nothing outside `ChatStore` needs to know a
-    /// chat came from a plugin, only `ChatStore` itself (`chats`/`chats_by_plugin`,
-    /// `create_chat`/`create_plugin_chat`) ever filters or sets these.
-    pub plugin_name: Option<String>,
-    pub plugin_subname: Option<String>,
-    pub plugin_chat_id: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

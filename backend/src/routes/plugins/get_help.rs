@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::{services::error::ErrorService, state::AppState};
+use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub struct GetHelpQuery {
@@ -29,8 +29,14 @@ pub struct GetHelpQuery {
         (status = 404, description = "No such plugin", body = crate::services::error::ErrorBody),
     ),
 )]
-pub async fn plugin_help(State(state): State<Arc<AppState>>, Query(query): Query<GetHelpQuery>) -> Result<Json<String>, ErrorService> {
+pub async fn plugin_help(
+    State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
+    Query(query): Query<GetHelpQuery>,
+) -> Result<Json<String>, ErrorService> {
     let builder = state
+        .services()
+        .await?
         .plugin_registry
         .builder(&query.plugin_name, &query.plugin_subname)
         .await

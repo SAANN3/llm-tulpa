@@ -1,1 +1,7 @@
 target/
+.env
+# IDE metadata
+.idea/
+
+# Local configuration (holds the JWT secret and database password); the *.example.json files beside it are tracked
+data/settings.json

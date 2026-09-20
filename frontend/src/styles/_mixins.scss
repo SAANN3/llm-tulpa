@@ -1,0 +1,11 @@
+@use 'tokens' as *;
+
+@mixin dos-frame($color: var(--color-primary)) {
+  border: $frame-border double $color;
+  border-radius: 0;
+  background: var(--color-secondary);
+}
+
+@mixin dos-shadow($color: var(--color-border), $offset: $shadow-offset) {
+  box-shadow: $offset $offset 0 0 $color;
+}

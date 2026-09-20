@@ -1,12 +1,27 @@
-import { BACKEND_URL } from '../../config'
+import axios from 'axios'
+import {BACKEND_URL} from '../../config'
 
 /**
- * The URL a file's raw bytes are served from — navigating to it (an `<a href>`, an
- * `<img src>`, `window.open`, ...) downloads/renders the file directly, with
- * `Content-Disposition: attachment` and its UI-facing name set by the backend. Not an
- * API call itself (nothing here fetches anything): the browser is meant to load this
- * URL on its own. Mirrors `GET /api/files/download` on the backend.
+ * URL that serves a file's raw bytes. The route needs the Bearer token, which a browser
+ * doesn't attach to an `<img src>`, `<video src>` or `<a href>` — so never hand this straight to
+ * one of those. Load it through `fetchFileBlob` (or `useFileBlobUrl` for a media element).
  */
-export function getFileDownloadUrl(id: number): string {
-  return `${BACKEND_URL}/api/files/download?id=${id}`
-}
+export const getFileDownloadUrl = (id: number): string => `${BACKEND_URL}/api/files/download?id=${id}`;
+
+/** Fetches a file's bytes through axios, which attaches the Bearer token */
+export const fetchFileBlob = async (id: number): Promise<Blob> => {
+    const {data} = await axios.get<Blob>(getFileDownloadUrl(id), {responseType: 'blob'})
+    return data
+};
+
+/** Saves a file to disk under `fileName`, via a blob so the authenticated request is what downloads it */
+export const saveFile = async (id: number, fileName: string): Promise<void> => {
+    const url = URL.createObjectURL(await fetchFileBlob(id))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+};

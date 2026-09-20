@@ -1,0 +1,100 @@
+@use 'tokens' as *;
+
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  width: 100%;
+  box-sizing: border-box;
+  border: $line-border solid var(--color-border);
+  border-radius: 0;
+  background: var(--color-surface);
+  padding: $space-2;
+}
+
+.composer--dragging {
+  border-style: dashed;
+  border-color: var(--color-primary);
+}
+
+.composer__overlay {
+  position: absolute;
+  inset: 4px;
+  background: var(--color-surface);
+  opacity: 0.92;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.composer__overlay-text {
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.composer__attachments {
+  display: flex;
+  gap: $space-2;
+  flex-wrap: wrap;
+}
+
+.composer__input {
+  width: 100%;
+  resize: none;
+  min-height: 44px;
+  max-height: calc(4 * 1.4em + 1em);
+  overflow-y: auto;
+  border: none;
+  padding: 11px 12px;
+}
+
+.composer__footer {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.composer__hint {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.composer__spacer {
+  flex: 1;
+}
+
+.composer__think-label {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.composer__mode {
+  font-size: 12px;
+}
+
+.composer__mode--disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.composer__footer {
+  .composer__icon-button,
+  .composer__send {
+    height: 34px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .composer__icon-button {
+    width: 34px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .composer__send {
+    padding: 0 18px;
+  }
+}

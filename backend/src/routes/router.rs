@@ -5,24 +5,32 @@ use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, chats, events, files, llm, plugins, prompts, settings};
+use super::{agent, auth, chats, events, files, llm, plugins, prompts, settings, setup, users};
 
-/// The `/plugins` domain isn't nested here — unlike everything below, its route *set*
-/// depends on runtime data (which plugins are registered), not just compile-time
-/// structure, so building it needs an `.await` on the registry. Rather than infect this
-/// otherwise-uniform, synchronous composition (and every domain's `router()` signature
-/// it calls) with that one exception, `main.rs` mounts `routes::plugins::router::router`
-/// as its own separate step, the same way it already handles other one-off async setup.
+/// Every route that needs a signed-in user — `main.rs` puts `require_auth` in front of the
+/// whole thing. Owner-only routes (users, plugins) are gated per handler by the `OwnerUser`
+/// extractor, so they sit alongside the rest.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .nest("/auth", auth::router::router())
         .nest("/llm", llm::router::router())
         .nest("/agent", agent::router::router())
         .nest("/chats", chats::router::router())
         .nest("/events", events::router::router())
         .nest("/files", files::router::router())
+        .nest("/plugins", plugins::router::router())
         .nest("/prompts", prompts::router::router())
         .nest("/settings", settings::router::router())
+        .nest("/users", users::router::router())
         .fallback(not_found)
+}
+
+/// The few routes that can't require a token: signing in, and first-run setup (which exists
+/// for the state where there's no database, so no accounts to sign in with).
+pub fn public_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .nest("/auth", auth::router::public_router())
+        .nest("/setup", setup::router::public_router())
 }
 
 async fn not_found() -> ErrorService {
@@ -31,17 +39,17 @@ async fn not_found() -> ErrorService {
 
 /// The whole app's OpenAPI document — each route domain builds its own `ApiDoc` from
 /// handlers only it can see (route handler modules are private to their domain; only
-/// `router` is public), so this just merges the three together. `plugins` is included
-/// here even though its `router()` is mounted separately (see that function's own doc
-/// comment) — this function only merges static schema definitions, which has no
-/// dependency on how/when the router itself gets built.
+/// `router` is public), so this just merges them together.
 pub fn openapi() -> utoipa::openapi::OpenApi {
     llm::router::ApiDoc::openapi()
         .merge_from(agent::router::ApiDoc::openapi())
+        .merge_from(auth::router::ApiDoc::openapi())
         .merge_from(chats::router::ApiDoc::openapi())
         .merge_from(events::router::ApiDoc::openapi())
         .merge_from(files::router::ApiDoc::openapi())
+        .merge_from(plugins::router::ApiDoc::openapi())
         .merge_from(prompts::router::ApiDoc::openapi())
         .merge_from(settings::router::ApiDoc::openapi())
-        .merge_from(plugins::router::ApiDoc::openapi())
+        .merge_from(setup::router::ApiDoc::openapi())
+        .merge_from(users::router::ApiDoc::openapi())
 }

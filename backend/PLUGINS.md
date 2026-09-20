@@ -27,7 +27,7 @@ trait PluginBuilder: Send + Sync {
 
 `settings_schema`/`help_message` reuse the same `PropertyInfo` schema tool-calling args use (see [TOOLS.md](./TOOLS.md)) — one generic frontend form renderer for both, instead of hand-built UI per plugin.
 
-`PluginRegistry` ([`src/plugins/registry.rs`](./src/plugins/registry.rs)) holds every registered plugin keyed by `(plugin_name, plugin_subname)`, persists settings/enabled state to Postgres, and mounts each plugin's own `api_router()` under a stable proxy path that looks up the live instance fresh per request — so a settings change or enable/disable never requires touching axum's route tree.
+`PluginRegistry` ([`src/plugins/registry.rs`](./src/plugins/registry.rs)) holds every registered plugin keyed by `(plugin_name, plugin_subname)`, persists settings/enabled state to Postgres, and serves each plugin's own `api_router()` through one catch-all proxy route (`routes/plugins/proxy.rs`) that looks up the live instance in the registry on every request — so a settings change or enable/disable never requires touching axum's route tree, and the routes exist even when the backend started before a database was configured. Plugins run under the **owner's** account (their settings are the owner's, their chats belong to the owner), so every `/api/plugins/*` route — management and proxied alike — is owner-only. A plugin whose stored settings its builder now rejects is logged and left unconfigured instead of failing startup.
 
 ## Messaging plugin type
 `messaging` is the one plugin type that exists today — chat platforms as interchangeable subplugins. A concrete provider only ever implements `MessagingProvider` ([`src/plugins/messaging/provider.rs`](./src/plugins/messaging/provider.rs)):
@@ -55,7 +55,7 @@ Every provider shares `allowed_chat_ids`, `think` (whether a reply thinks before
 
 ## Adding a provider
 1. Add a `Settings` struct (`#[derive(ToolParams)]`, same pattern as a tool's args struct — see [TOOLS.md](./TOOLS.md)) and implement `MessagingProvider` for it.
-2. Register it in [`main.rs`](./src/main.rs): add `Arc::new(MessagingProviderBuilder::<YourProvider>::new(plugin_agent.clone(), chat_store.clone()))` to the `plugin_builders` list.
+2. Register it in [`services/bootstrap.rs`](./src/services/bootstrap.rs): add `Arc::new(MessagingProviderBuilder::<YourProvider>::new(plugin_agent.clone(), chat_store.clone()))` to the `plugin_builders` list.
 
 That's it — HTTP routes, settings persistence, and the frontend settings form are all generic over `MessagingProvider`.
 

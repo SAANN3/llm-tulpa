@@ -1,4 +1,4 @@
-import './variants.css'
+import '../styles/variants.scss'
 
 import './dark.css'
 import './white.css'
@@ -16,12 +16,11 @@ export const themeNames = ['dark', 'white', 'matcha-dark', 'ember', 'twilight', 
 
 export type ThemeName = (typeof themeNames)[number]
 
-/** Human-facing name for each theme, shown on its picker card. */
 export const themeDisplayNames: Record<ThemeName, string> = {
   'matcha-dark': 'Matcha',
   white: 'Paper',
   dark: 'Slate',
   ember: 'Ember',
   twilight: 'Twilight',
-  cinder: 'Cinder',
+  cinder: 'Cinder'
 }

@@ -1,13 +1,11 @@
 mod entities;
-mod migrate;
 
 use std::path::{Path, PathBuf};
 
 use axum::http::StatusCode;
 use chrono::Utc;
 use entities::files;
-use migrate::migrate;
-use sea_orm::{prelude::*, ActiveValue::Set, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection};
 
 use crate::services::error::ErrorService;
 
@@ -28,6 +26,8 @@ pub struct FileStore {
 /// pattern as `ChatStore`'s `Message`.
 pub struct FileRecord {
     pub id: i64,
+    /// The owning user.
+    pub user_id: i64,
     /// `None` for a file uploaded before a chat existed to attach it to yet — see
     /// `FileStore::attach_to_chat`.
     pub chat_id: Option<i64>,
@@ -50,6 +50,7 @@ impl From<files::Model> for FileRecord {
     fn from(model: files::Model) -> Self {
         Self {
             id: model.id,
+            user_id: model.user_id,
             chat_id: model.chat_id,
             full_path: model.full_path,
             file_name: model.file_name,
@@ -59,50 +60,9 @@ impl From<files::Model> for FileRecord {
 }
 
 impl FileStore {
-    /// Same create-database-if-missing-then-migrate bootstrap as the other stores,
-    /// plus ensuring `storage_dir` itself exists on disk — every other method assumes
-    /// it already does. `files` has a foreign key on `chats (id)`, so this must be
-    /// constructed after `ChatStore` for a fresh database's migration to succeed, same
-    /// constraint as `PermissionStore`.
-    pub async fn new(base_url: &str, db_name: &str, storage_dir: PathBuf) -> Self {
-        let admin_url = format!("{base_url}/postgres");
-
-        let admin_db = Database::connect(&admin_url).await.unwrap_or_else(|e| {
-            panic!("failed to connect to postgres to check/create database '{db_name}': {e}")
-        });
-
-        let exists = admin_db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM pg_database WHERE datname = $1",
-                [db_name.into()],
-            ))
-            .await
-            .unwrap_or_else(|e| panic!("failed to check whether database '{db_name}' exists: {e}"))
-            .is_some();
-
-        if !exists {
-            admin_db
-                .execute_unprepared(&format!("CREATE DATABASE \"{db_name}\""))
-                .await
-                .unwrap_or_else(|e| panic!("failed to create database '{db_name}': {e}"));
-        }
-
-        admin_db
-            .close()
-            .await
-            .unwrap_or_else(|e| panic!("failed to close bootstrap connection: {e}"));
-
-        let target_url = format!("{base_url}/{db_name}");
-
-        let db = Database::connect(&target_url)
-            .await
-            .unwrap_or_else(|e| panic!("failed to connect to database '{db_name}': {e}"));
-
-        migrate(&db)
-            .await
-            .unwrap_or_else(|e| panic!("failed to run migrations: {e}"));
-
+    /// Holds an already-connected, already-migrated connection (see `services::bootstrap`),
+    /// and ensures `storage_dir` exists on disk — every other method assumes it does.
+    pub async fn new(db: DatabaseConnection, storage_dir: PathBuf) -> Self {
         tokio::fs::create_dir_all(&storage_dir).await.unwrap_or_else(|e| {
             panic!("failed to create file storage directory '{}': {e}", storage_dir.display())
         });
@@ -118,6 +78,7 @@ impl FileStore {
     /// yet (the home page's case) — see `attach_to_chat`.
     pub async fn store_bytes(
         &self,
+        user_id: i64,
         chat_id: Option<i64>,
         file_name: &str,
         bytes: &[u8],
@@ -129,7 +90,7 @@ impl FileStore {
             .await
             .map_err(|e| FileStoreErrors::Io(format!("couldn't write '{}': {e}", full_path.display())))?;
 
-        self.create(chat_id, full_path.to_string_lossy().to_string(), file_name.to_string(), read_only)
+        self.create(user_id, chat_id, full_path.to_string_lossy().to_string(), file_name.to_string(), read_only)
             .await
     }
 
@@ -150,6 +111,7 @@ impl FileStore {
         })?;
 
         self.create(
+            original.user_id,
             original.chat_id,
             new_path.to_string_lossy().to_string(),
             original.file_name,
@@ -180,12 +142,14 @@ impl FileStore {
     /// other way that just needs to be registered). Doesn't touch the filesystem.
     pub async fn create(
         &self,
+        user_id: i64,
         chat_id: Option<i64>,
         full_path: String,
         file_name: String,
         read_only: Option<bool>,
     ) -> Result<FileRecord, FileStoreErrors> {
         let model = files::ActiveModel {
+            user_id: Set(user_id),
             chat_id: Set(chat_id),
             full_path: Set(full_path),
             file_name: Set(file_name),

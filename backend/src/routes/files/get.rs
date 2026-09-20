@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{services::error::ErrorService, services::file_store::FileRecord, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::file_store::FileRecord, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct GetFileQuery {
@@ -74,10 +74,16 @@ pub(crate) enum GetFileResponse {
 )]
 pub async fn get_file(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Query(query): Query<GetFileQuery>,
 ) -> Result<Json<GetFileResponse>, ErrorService> {
+    let services = state.services().await?;
+
     if let Some(id) = query.id {
-        let record = state.file_store.get(id).await?;
+        let record = services.file_store.get(id).await?;
+        if record.user_id != auth.id {
+            return Err(ErrorService::new(StatusCode::NOT_FOUND, "no such file"));
+        }
         return Ok(Json(GetFileResponse::Single(record.into())));
     }
 
@@ -85,7 +91,8 @@ pub async fn get_file(
         .chat_id
         .ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "either 'id' or 'chat_id' is required"))?;
 
-    let records = state.file_store.list_by_chat(chat_id).await?;
+    services.chat_store.owned_chat(auth.id, chat_id).await?;
+    let records = services.file_store.list_by_chat(chat_id).await?;
     let files = records.into_iter().map(FileOut::from).collect();
 
     Ok(Json(GetFileResponse::List(FileListOut { files })))

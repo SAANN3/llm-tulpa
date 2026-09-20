@@ -1,24 +1,19 @@
 import axios from 'axios'
-
-import { BACKEND_URL } from '../../config'
+import {BACKEND_URL} from '../../config'
 
 export interface GreetOut {
-  response: string
-  model: string
-  created_at: string
-  thinking: string | null
+    response: string
+    model: string
+    created_at: string
+    thinking: string | null
 }
 
 /**
- * A short, lively greeting for the "no chat open yet" landing page. Served from the
- * backend's background-refreshed cache — no request body needed, the backend already
- * knows the persisted timezone/display name. Mirrors `POST /api/prompts/greet`. `signal`
- * lets a caller actually cancel the request (not just ignore its result) — useful since
- * this can take many seconds on a cache miss, and a caller that's since navigated away
- * shouldn't leave it tying up a browser connection slot in the background.
+ * Generates a greeting for the empty chat landing page. `signal` lets a caller cancel the
+ * request outright (not just ignore its result): a cache miss can take many seconds, and a
+ * caller that has navigated away shouldn't leave it holding a browser connection slot.
  */
-export async function greet(signal?: AbortSignal): Promise<GreetOut> {
-  const { data } = await axios.post<GreetOut>(`${BACKEND_URL}/api/prompts/greet`, undefined, { signal })
-
-  return data
-}
+export const greet = async (signal?: AbortSignal): Promise<GreetOut> => {
+    const {data} = await axios.post<GreetOut>(`${BACKEND_URL}/api/prompts/greet`, undefined, {signal})
+    return data
+};

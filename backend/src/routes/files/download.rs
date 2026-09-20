@@ -8,7 +8,9 @@ use axum::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::{services::error::ErrorService, state::AppState};
+use axum::http::StatusCode;
+
+use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct DownloadFileQuery {
@@ -33,9 +35,13 @@ pub(crate) struct DownloadFileQuery {
 )]
 pub async fn download_file(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     Query(query): Query<DownloadFileQuery>,
 ) -> Result<impl IntoResponse, ErrorService> {
-    let record = state.file_store.get(query.id).await?;
+    let record = state.services().await?.file_store.get(query.id).await?;
+    if record.user_id != auth.id {
+        return Err(ErrorService::new(StatusCode::NOT_FOUND, "no such file"));
+    }
 
     let bytes = tokio::fs::read(&record.full_path)
         .await

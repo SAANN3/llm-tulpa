@@ -141,4 +141,6 @@ RUN (groupadd -g "${HOST_GID}" appuser 2>/dev/null || true) \
 
 COPY --from=builder /app/target/release/backend /usr/local/bin/backend
 
+RUN mkdir /usr/local/bin/data && chown "${HOST_UID}:${HOST_GID}" /usr/local/bin/data
+
 ENTRYPOINT ["/usr/local/bin/backend"]

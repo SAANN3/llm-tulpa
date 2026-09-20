@@ -1,0 +1,35 @@
+@use 'tokens' as *;
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: $space-2;
+  gap: $space-2;
+}
+
+.chat__list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: $space-4 $space-2;
+}
+
+.chat__error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: $space-2 $space-3;
+  border-radius: 0;
+  border: $line-border solid var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+}
+
+.chat__error-text {
+  font-size: 13px;
+  color: var(--color-danger);
+  flex: 1;
+}

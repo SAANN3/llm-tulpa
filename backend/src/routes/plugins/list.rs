@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use axum::{extract::State, Json};
 
-use crate::{plugins::registry::PluginInfo, state::AppState};
+use crate::{
+    plugins::registry::PluginInfo, routes::auth::OwnerUser, services::error::ErrorService, state::AppState,
+};
 
 /// Every registered plugin, enabled and disabled alike — what the frontend's plugin
-/// list page renders. A plugin appears here as soon as its builder is registered at
+/// list page renders. Owner-only: plugins run under the owner's account, and each entry
+/// carries its settings (bot tokens included). A plugin appears here as soon as its builder is registered at
 /// startup, even before it's ever been configured (see `PluginInfo::settings`).
 #[utoipa::path(
     get,
@@ -15,6 +18,9 @@ use crate::{plugins::registry::PluginInfo, state::AppState};
         (status = 200, description = "Every registered plugin", body = Vec<PluginInfo>),
     ),
 )]
-pub async fn list_plugins(State(state): State<Arc<AppState>>) -> Json<Vec<PluginInfo>> {
-    Json(state.plugin_registry.list().await)
+pub async fn list_plugins(
+    State(state): State<Arc<AppState>>,
+    _owner: OwnerUser,
+) -> Result<Json<Vec<PluginInfo>>, ErrorService> {
+    Ok(Json(state.services().await?.plugin_registry.list().await))
 }
