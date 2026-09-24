@@ -763,20 +763,41 @@ impl Agent {
                     })
                     .await?;
 
-                if let Some(pt) = prompt_eval_count {
-                    let total = pt + eval_count.unwrap_or(0);
+                let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
+                if let Some(total) = total_tokens {
                     if let Err(e) = self.chat_store.set_last_prompt_tokens(chat_id, Some(total as i64)).await {
                         tracing::warn!(chat_id, "failed to update last_prompt_tokens: {e:?}");
                     }
                 }
 
-                self.maybe_compact(chat_id, prompt_eval_count).await;
+                // Check compaction against total tokens (prompt + generated thoughts), not just prompt_eval_count,
+                // so compaction frees headroom BEFORE the recursive continuation turn if context is full.
+                self.maybe_compact(chat_id, total_tokens).await;
 
-                let continuation_prompt = OllamaService::user_message(
-                    "[System note: Token limit reached during thinking. Based on your thoughts above, output your next response or tool call now.]".to_string(),
-                );
+                // Persist the continuation prompt into the chat store as a user message so the
+                // database message sequence is strictly alternating (assistant -> user -> assistant),
+                // preventing Ollama's "Cannot have 2 or more assistant messages at the end" error.
+                let continuation_text = "[System note: Token limit reached during thinking. Based on your thoughts above, output your next response or tool call now.]".to_string();
+                self.chat_store
+                    .new_message(NewMessage {
+                        chat_id,
+                        role: "user".to_string(),
+                        content: continuation_text,
+                        tool_name: None,
+                        thinking: None,
+                        thought_duration_ms: None,
+                        tool_success: None,
+                        tool_denied: false,
+                        tool_calls: vec![],
+                        images: vec![],
+                        file_ids: vec![],
+                        prompt_tokens: None,
+                        eval_tokens: None,
+                    })
+                    .await?;
+
                 let fresh_messages = self.ollama_history(chat_id).await?;
-                return Box::pin(self.advance(chat_id, fresh_messages, Some(continuation_prompt), think, notices, false)).await;
+                return Box::pin(self.advance(chat_id, fresh_messages, None, think, notices, false)).await;
             }
 
             if !regenerations.allow(problem) {
@@ -866,7 +887,8 @@ impl Agent {
             notices,
         };
 
-        self.maybe_compact(chat_id, prompt_eval_count).await;
+        let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
+        self.maybe_compact(chat_id, total_tokens).await;
 
         Ok(out)
     }
