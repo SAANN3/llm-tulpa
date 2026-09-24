@@ -152,6 +152,7 @@ impl ChatStore {
             summary: row.summary,
             summary_up_to_message_id: row.summary_up_to_message_id,
             key_facts: row.key_facts.and_then(|v| serde_json::from_value(v).ok()),
+            last_prompt_tokens: row.last_prompt_tokens,
         }
     }
 
@@ -223,6 +224,8 @@ impl ChatStore {
                 tool_calls: tool_calls.remove(&message.id).unwrap_or_default(),
                 images: images.remove(&message.id).unwrap_or_default(),
                 file_ids: file_ids.remove(&message.id).unwrap_or_default(),
+                prompt_tokens: message.prompt_tokens,
+                eval_tokens: message.eval_tokens,
             })
             .collect())
     }
@@ -419,11 +422,24 @@ impl ChatStore {
             summary: Set(Some(summary)),
             summary_up_to_message_id: Set(Some(up_to_message_id)),
             key_facts: Set(key_facts_json),
+            last_prompt_tokens: Set(None),
             ..Default::default()
         }
         .update(&self.db)
         .await?;
 
+        Ok(())
+    }
+
+    /// Sets the ground-truth evaluated prompt token count for this chat.
+    pub async fn set_last_prompt_tokens(&self, chat_id: i64, tokens: Option<i64>) -> Result<(), ChatStoreErrors> {
+        chats::ActiveModel {
+            id: Set(chat_id),
+            last_prompt_tokens: Set(tokens),
+            ..Default::default()
+        }
+        .update(&self.db)
+        .await?;
         Ok(())
     }
 
@@ -501,6 +517,8 @@ impl ChatStore {
             tool_calls,
             images,
             file_ids,
+            prompt_tokens,
+            eval_tokens,
         } = new_message;
 
         let tool_calls_out: Vec<ToolCallOut> = tool_calls
@@ -523,6 +541,8 @@ impl ChatStore {
                         thought_duration_ms: Set(thought_duration_ms),
                         tool_success: Set(tool_success),
                         tool_denied: Set(tool_denied),
+                        prompt_tokens: Set(prompt_tokens),
+                        eval_tokens: Set(eval_tokens),
                         ..Default::default()
                     }
                     .insert(txn)
@@ -589,6 +609,8 @@ impl ChatStore {
             tool_calls: tool_calls_out,
             images: images_ret,
             file_ids: file_ids_ret,
+            prompt_tokens: message.prompt_tokens,
+            eval_tokens: message.eval_tokens,
         })
     }
 }
@@ -608,6 +630,8 @@ pub struct Chat {
     /// Key facts (structured, append-only) for this chat. NULL until the first fold
     /// — same convention as `summary`. See `Agent::compact` and the `ChatFacts` struct.
     pub key_facts: Option<ChatFacts>,
+    /// Ground-truth prompt token count from Ollama's last evaluated turn; NULL after compaction fold.
+    pub last_prompt_tokens: Option<i64>,
 }
 
 pub struct Message {
@@ -624,6 +648,8 @@ pub struct Message {
     pub tool_calls: Vec<ToolCallOut>,
     pub images: Vec<String>,
     pub file_ids: Vec<i64>,
+    pub prompt_tokens: Option<i64>,
+    pub eval_tokens: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -649,6 +675,8 @@ pub struct NewMessage {
     pub tool_calls: Vec<NewToolCall>,
     pub images: Vec<String>,
     pub file_ids: Vec<i64>,
+    pub prompt_tokens: Option<i64>,
+    pub eval_tokens: Option<i64>,
 }
 
 /// Structured, append-only key facts for a chat — exact facts extracted from
@@ -680,6 +708,7 @@ impl ChatFacts {
 /// so unlike `OllamaErrors` this doesn't need multiple variants for that case. `NotFound`
 /// is separate since it maps to a different HTTP status (404, not 500) and isn't a
 /// failure at all from the database's point of view.
+#[derive(Debug)]
 pub enum ChatStoreErrors {
     QueryFailed(DbErr),
     NotFound,

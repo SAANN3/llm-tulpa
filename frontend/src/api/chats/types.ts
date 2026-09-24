@@ -31,6 +31,8 @@ export interface MessageOut {
     tool_calls: MessageToolCallOut[]
     images: string[]
     file_ids: number[]
+    prompt_tokens?: number | null
+    eval_tokens?: number | null
 }
 
 export interface MessagesResponse {

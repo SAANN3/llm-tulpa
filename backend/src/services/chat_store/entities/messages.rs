@@ -21,6 +21,8 @@ pub struct Model {
     /// permitted, as opposed to running and failing.
     pub tool_denied: bool,
     pub created_at: DateTimeUtc,
+    pub prompt_tokens: Option<i64>,
+    pub eval_tokens: Option<i64>,
     // Attached images/files are normalized into `message_images`/`message_files` (3NF);
     // `ChatStore` reassembles them onto the public `Message` struct.
 }

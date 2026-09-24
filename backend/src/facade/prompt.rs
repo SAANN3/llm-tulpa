@@ -98,6 +98,7 @@ impl PromptFacade {
                 &[],
                 Some(ThinkChoice::Enabled(false)),
                 model,
+                None,
             )
             .await?;
 

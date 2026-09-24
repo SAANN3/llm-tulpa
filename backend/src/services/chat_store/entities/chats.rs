@@ -21,6 +21,8 @@ pub struct Model {
     /// field still round-trips through SeaORM without error; the chat_store layer
     /// serializes/deserializes the flat `ChatFacts` struct around it.
     pub key_facts: Option<serde_json::Value>,
+    /// Ground-truth prompt token count from Ollama's last evaluated turn; NULL after compaction fold.
+    pub last_prompt_tokens: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

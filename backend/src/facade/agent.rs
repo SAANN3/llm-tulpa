@@ -45,7 +45,7 @@ use crate::tools::ui::attach_file::AttachFileTool;
 /// (folding somewhat more than strictly necessary) has no correctness risk — it only
 /// costs a bit of verbatim detail that the summary/facts channel already exists to
 /// preserve.
-const TRIGGER_FRACTION: f64 = 0.75;
+const TRIGGER_FRACTION: f64 = 0.70;
 const KEEP_CHARS_PER_TOKEN: f64 = 1.2;
 
 /// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
@@ -241,6 +241,9 @@ enum ReplyProblem {
     ToolCallAsText,
     /// No answer, no tool call, and it wasn't cut off — nothing to show or act on.
     Empty,
+    /// The model was cut off by the token limit strictly while still in its reasoning trace
+    /// (empty content and no tool calls), leaving an incomplete and stalled reply.
+    CutOffInThinking,
 }
 
 impl ReplyProblem {
@@ -248,6 +251,7 @@ impl ReplyProblem {
         match self {
             ReplyProblem::ToolCallAsText => "tool call written out as text instead of being called",
             ReplyProblem::Empty => "empty reply (no answer, no tool call)",
+            ReplyProblem::CutOffInThinking => "reply cut off by token limit while still in thinking",
         }
     }
 }
@@ -256,11 +260,13 @@ impl ReplyProblem {
 /// malformed tool call is a sampling accident — asking again almost always fixes it —
 /// so it gets two more tries. An empty reply can just as well be the right answer (the
 /// user asked it to say nothing), which asking again will only repeat, so it gets one:
-/// enough to catch a stall, cheap enough when it wasn't one.
+/// enough to catch a stall, cheap enough when it wasn't one. Cut off in thinking gets one retry
+/// after emergency compaction so the model can reason to completion with fresh headroom.
 #[derive(Default)]
 struct Regenerations {
     tool_call_as_text: u8,
     empty: u8,
+    cut_off_in_thinking: u8,
 }
 
 impl Regenerations {
@@ -268,6 +274,7 @@ impl Regenerations {
         let (used, max) = match problem {
             ReplyProblem::ToolCallAsText => (&mut self.tool_call_as_text, 2),
             ReplyProblem::Empty => (&mut self.empty, 1),
+            ReplyProblem::CutOffInThinking => (&mut self.cut_off_in_thinking, 1),
         };
         if *used >= max {
             return false;
@@ -452,6 +459,8 @@ impl Agent {
                     tool_calls: vec![],
                     images: vec![],
                     file_ids: vec![],
+                    prompt_tokens: None,
+                    eval_tokens: None,
                 })
                 .await?;
         }
@@ -479,6 +488,8 @@ impl Agent {
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
+        let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
+        self.maybe_compact(chat_id, last_prompt_tokens).await;
         let messages = self.ollama_history(chat_id).await?;
 
         for &file_id in &file_ids {
@@ -498,6 +509,8 @@ impl Agent {
                 tool_calls: vec![],
                 images: images.clone(),
                 file_ids: file_ids.clone(),
+                prompt_tokens: None,
+                eval_tokens: None,
             })
             .await?;
 
@@ -514,7 +527,7 @@ impl Agent {
         let mut messages = messages;
         messages.extend(tail);
 
-        self.advance(chat_id, messages, new_message, think, notices).await
+        self.advance(chat_id, messages, new_message, think, notices, true).await
     }
 
     /// Sends a chat's existing history to Ollama as-is and persists whatever it replies
@@ -525,9 +538,11 @@ impl Agent {
     /// tool failing is a valid reason to continue too, and forcing the caller through the
     /// rest of an in-flight batch first would just be busywork).
     pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
+        let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
+        self.maybe_compact(chat_id, last_prompt_tokens).await;
         let notices = self.flush_job_notices(chat_id).await?;
         let messages = self.ollama_history(chat_id).await?;
-        self.advance(chat_id, messages, None, think, notices).await
+        self.advance(chat_id, messages, None, think, notices, true).await
     }
 
     /// Starts a turn only if a background job has finished since the model was last
@@ -555,8 +570,10 @@ impl Agent {
             return Ok(None);
         }
 
+        let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
+        self.maybe_compact(chat_id, last_prompt_tokens).await;
         let messages = self.ollama_history(chat_id).await?;
-        Ok(Some(self.advance(chat_id, messages, None, think, notices).await?))
+        Ok(Some(self.advance(chat_id, messages, None, think, notices, true).await?))
     }
 
     /// Turns every background job of `chat_id` that has finished but not been reported
@@ -588,6 +605,8 @@ impl Agent {
                     tool_calls: vec![],
                     images: vec![],
                     file_ids: vec![],
+                    prompt_tokens: None,
+                    eval_tokens: None,
                 })
                 .await;
 
@@ -625,8 +644,15 @@ impl Agent {
         new_message: Option<OllamaChatMessage>,
         think: Option<ThinkChoice>,
         notices: Vec<NoticeOut>,
+        can_auto_continue: bool,
     ) -> Result<ChatOut, ErrorService> {
         let tools: Vec<&dyn Tool> = self.tools.get_tools().map(|tool| tool.as_ref()).collect();
+
+        // The chat metadata, read fresh so a model switch takes effect on this very turn
+        // and last_prompt_tokens is available for accurate budget calculation.
+        let chat = self.chat_store.chat(chat_id).await?;
+        let model = chat.model;
+        let known_prompt_tokens = chat.last_prompt_tokens.map(|t| t as u64);
 
         // `ollama_history` leads with its own system message (the compaction summary)
         // once a chat has one — folded into this same system message rather than sent
@@ -682,18 +708,77 @@ impl Agent {
             }
         };
 
-        // The model this chat is bound to, read fresh so a switch takes effect on this very turn.
-        let model = self.chat_store.chat(chat_id).await?.model;
-
         let started_at = Instant::now();
         let mut regenerations = Regenerations::default();
         let response = loop {
             let response = self
                 .ollama
-                .chat(messages_with_system.clone(), new_message.clone(), &tools, think.clone(), &model)
+                .chat(
+                    messages_with_system.clone(),
+                    new_message.clone(),
+                    &tools,
+                    think.clone(),
+                    &model,
+                    known_prompt_tokens,
+                )
                 .await?;
 
             let Some(problem) = self.unusable_reply(&response, &model).await else { break response };
+
+            if problem == ReplyProblem::CutOffInThinking && can_auto_continue {
+                let thought_trace = response
+                    .message
+                    .thinking
+                    .as_deref()
+                    .unwrap_or(&response.message.content)
+                    .trim()
+                    .to_string();
+                let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
+                let prompt_eval_count = response.prompt_eval_count();
+                let eval_count = response.eval_count();
+
+                tracing::warn!(
+                    chat_id,
+                    "model cut off in thinking; storing thought process as message and triggering automatic continuation"
+                );
+
+                // Store cut thoughts as message content (not as thinking) so they are replayed
+                // back to the model on the continuation turn (`to_ollama_message` only sends `content`).
+                let content = format!("[My thought process before being interrupted by token limit]:\n{thought_trace}");
+                self.chat_store
+                    .new_message(NewMessage {
+                        chat_id,
+                        role: "assistant".to_string(),
+                        content,
+                        tool_name: None,
+                        thinking: None,
+                        thought_duration_ms: Some(thought_duration_ms),
+                        tool_success: None,
+                        tool_denied: false,
+                        tool_calls: vec![],
+                        images: vec![],
+                        file_ids: vec![],
+                        prompt_tokens: prompt_eval_count.map(|c| c as i64),
+                        eval_tokens: eval_count.map(|c| c as i64),
+                    })
+                    .await?;
+
+                if let Some(pt) = prompt_eval_count {
+                    let total = pt + eval_count.unwrap_or(0);
+                    if let Err(e) = self.chat_store.set_last_prompt_tokens(chat_id, Some(total as i64)).await {
+                        tracing::warn!(chat_id, "failed to update last_prompt_tokens: {e:?}");
+                    }
+                }
+
+                self.maybe_compact(chat_id, prompt_eval_count).await;
+
+                let continuation_prompt = OllamaService::user_message(
+                    "[System note: Token limit reached during thinking. Based on your thoughts above, output your next response or tool call now.]".to_string(),
+                );
+                let fresh_messages = self.ollama_history(chat_id).await?;
+                return Box::pin(self.advance(chat_id, fresh_messages, Some(continuation_prompt), think, notices, false)).await;
+            }
+
             if !regenerations.allow(problem) {
                 tracing::warn!(chat_id, problem = problem.describe(), "model reply unusable, keeping it anyway");
                 break response;
@@ -715,6 +800,9 @@ impl Agent {
         };
         let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
         let prompt_eval_count = response.prompt_eval_count();
+        let eval_count = response.eval_count();
+        let prompt_tokens = prompt_eval_count.map(|c| c as i64);
+        let eval_tokens = eval_count.map(|c| c as i64);
 
         let thinking = response.message.thinking.clone();
 
@@ -747,8 +835,17 @@ impl Agent {
                 tool_calls: new_tool_calls,
                 images: vec![],
                 file_ids,
+                prompt_tokens,
+                eval_tokens,
             })
             .await?;
+
+        if let Some(pt) = prompt_eval_count {
+            let total = pt + eval_count.unwrap_or(0);
+            if let Err(e) = self.chat_store.set_last_prompt_tokens(chat_id, Some(total as i64)).await {
+                tracing::warn!(chat_id, "failed to update last_prompt_tokens: {e:?}");
+            }
+        }
 
         let mut tool_calls = Vec::with_capacity(requested_tool_calls.len());
         for call in requested_tool_calls {
@@ -790,6 +887,9 @@ impl Agent {
             return None;
         }
         if response.done_reason.as_deref() == Some("length") {
+            if message.content.trim().is_empty() {
+                return Some(ReplyProblem::CutOffInThinking);
+            }
             return None;
         }
 
@@ -854,7 +954,7 @@ impl Agent {
         }
     }
 
-    /// Checks whether the turn that just finished pushed prompt usage over
+    /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over
     /// `compaction_trigger_tokens` and, if so, compacts older history into
     /// `Chat::summary` before returning — so the *next* request (a fresh turn, or
     /// another `continue_chat` later in the same tool-calling round) builds a smaller
@@ -1013,7 +1113,7 @@ impl Agent {
         // thing it was meant to help here, not just cost more.
         let response = self
             .ollama
-            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model)
+            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None)
             .await?;
         Ok(response.message.content)
     }
@@ -1114,7 +1214,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             existing_goal.as_deref().unwrap_or("(none)"),
         ));
 
-        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model).await {
+        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None).await {
             Err(err) => {
                 let es: ErrorService = err.into();
                 tracing::warn!(
@@ -1330,6 +1430,8 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
                 tool_calls: vec![],
                 images: vec![],
                 file_ids: vec![],
+                prompt_tokens: None,
+                eval_tokens: None,
             })
             .await?;
 

@@ -48,6 +48,8 @@ pub(crate) struct MessageOut {
     /// Ids of already-uploaded files (see `POST /files/upload`) attached to this
     /// message, if any. Empty for every role but `user`.
     file_ids: Vec<i64>,
+    prompt_tokens: Option<i64>,
+    eval_tokens: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -106,6 +108,8 @@ pub async fn get_messages(
                 .collect(),
             images: message.images,
             file_ids: message.file_ids,
+            prompt_tokens: message.prompt_tokens,
+            eval_tokens: message.eval_tokens,
         })
         .collect();
 

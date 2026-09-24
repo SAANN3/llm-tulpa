@@ -36,16 +36,15 @@ const PROMPT_PROCESSING_BUFFER: Duration = Duration::from_secs(10 * 60);
 /// larger than the room actually left and is hard-truncated by llama.cpp mid-output —
 /// including mid-tool-call-JSON, which fails the whole turn. Too low overcounts, which
 /// is worse in practice: the estimate exceeds the whole window on an ordinary
-/// mid-size prompt, `num_predict` collapses to its floor, and every reply gets cut off
-/// (thinking alone can consume a small budget) on every turn, not just near the ceiling.
-const PROMPT_CHARS_PER_TOKEN: f64 = 2.5;
+/// Fallback character-to-token ratio used when ground-truth token count is unavailable
+/// (e.g. brand-new chats, pre-migration chats, or right after compaction resets the baseline).
+/// Modern BPE tokenizers on English prose and code average ~3.0–3.5 chars/token.
+const PROMPT_CHARS_PER_TOKEN: f64 = 3.2;
 
-/// Lowest `num_predict` the per-request calculation will ever return. Has to be big
-/// enough for a reply with thinking enabled to actually finish — a budget in the low
-/// hundreds is spent entirely inside the reasoning trace, leaving an empty reply. If
-/// the real room left is smaller than this the request is near the context ceiling
-/// regardless, and compaction (not this cap) is what's meant to prevent that.
-const MIN_NUM_PREDICT: u64 = 2048;
+/// Lowest `num_predict` the per-request calculation will ever return. Sized to allow
+/// reasoning models with extensive chains of thought (e.g. Qwen 3.8) to finish thinking
+/// and produce an answer/tool call.
+const MIN_NUM_PREDICT: u64 = 4096;
 
 /// A flat token overhead added to the prompt-size estimate for content that character
 /// count alone can't capture — tool definition JSON schemas, chat template special
@@ -130,12 +129,30 @@ impl OllamaService {
         self.compute_num_predict_base(prompt.len(), 0)
     }
 
-    /// Computes a per-request `num_predict` cap for the `chat` path. `tool_overhead_tokens`
-    /// is the real token count of the serialized tool-definition JSON actually being sent
-    /// (computed at the call site, not guessed) — see `compute_num_predict_base`.
-    fn compute_num_predict_chat(&self, messages: &[OllamaChatMessage], tool_overhead_tokens: u64) -> i32 {
-        let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
-        self.compute_num_predict_base(total_chars, tool_overhead_tokens)
+    /// Computes a per-request `num_predict` cap for the `chat` path.
+    /// When `known_prompt_tokens` is provided (ground-truth from the previous turn in the DB),
+    /// only the newest message and tool definitions need to be accounted for, leaving the
+    /// real, true context headroom. When `None`, falls back to `PROMPT_CHARS_PER_TOKEN`.
+    fn compute_num_predict_chat(
+        &self,
+        messages: &[OllamaChatMessage],
+        tool_overhead_tokens: u64,
+        known_prompt_tokens: Option<u64>,
+    ) -> i32 {
+        let reserved = match known_prompt_tokens {
+            Some(known) => {
+                let newest_chars = messages.last().map_or(0, |m| m.content.len());
+                let newest_tokens = (newest_chars as f64 / PROMPT_CHARS_PER_TOKEN).ceil() as u64;
+                known + newest_tokens + PROMPT_TOKEN_SAFETY_MARGIN + tool_overhead_tokens
+            }
+            None => {
+                let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+                let estimated_tokens = (total_chars as f64 / PROMPT_CHARS_PER_TOKEN) as u64;
+                estimated_tokens + PROMPT_TOKEN_SAFETY_MARGIN + tool_overhead_tokens
+            }
+        };
+        let remaining = (self.max_predict_tokens as u64).saturating_sub(reserved);
+        remaining.max(MIN_NUM_PREDICT) as i32
     }
 
     /// Shared calculation: `max_predict_tokens - (char_count / PROMPT_CHARS_PER_TOKEN) -
@@ -225,6 +242,7 @@ impl OllamaService {
         tools: &[&dyn Tool],
         think: Option<ThinkChoice>,
         model: &str,
+        known_prompt_tokens: Option<u64>,
     ) -> Result<OllamaChatResponse, OllamaErrors> {
         let url = format!("{}/api/chat", self.base_url);
 
@@ -251,7 +269,7 @@ impl OllamaService {
             messages.push(new_message);
         }
 
-        let num_predict = self.compute_num_predict_chat(&messages, tool_overhead_tokens);
+        let num_predict = self.compute_num_predict_chat(&messages, tool_overhead_tokens, known_prompt_tokens);
         let body = OllamaChatRequest {
             model: model.to_string(),
             messages,
@@ -770,6 +788,11 @@ impl OllamaChatResponse {
     pub fn prompt_eval_count(&self) -> Option<u64> {
         self.metrics.prompt_eval_count
     }
+
+    /// How many tokens Ollama generated in the response, if reported.
+    pub fn eval_count(&self) -> Option<u64> {
+        self.metrics.eval_count
+    }
 }
 
 /// Timing/count fields Ollama includes on every non-streamed `/api/generate` and
@@ -894,3 +917,57 @@ impl From<OllamaErrors> for ErrorService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_num_predict_chat_known_tokens() {
+        let service = OllamaService::new("http://localhost:11434", 98304);
+
+        let messages = vec![
+            OllamaService::user_message("Hello there, please write a long function.".to_string()),
+        ];
+
+        // Case 1: Ground-truth prompt tokens known from prior turn = 67,139 tokens
+        let num_predict = service.compute_num_predict_chat(&messages, 500, Some(67139));
+        // newest_chars = 42 chars -> ceil(42 / 3.2) = 14 tokens
+        // reserved = 67139 + 14 + 1024 (PROMPT_TOKEN_SAFETY_MARGIN) + 500 = 68677
+        // remaining = 98304 - 68677 = 29627
+        assert_eq!(num_predict, 29627);
+
+        // Case 2: Fallback when known_prompt_tokens is None
+        // total_chars = 42 -> 42 / 3.2 = 13 tokens
+        // reserved = 13 + 1024 + 500 = 1537
+        // remaining = 98304 - 1537 = 96767
+        let num_predict_fallback = service.compute_num_predict_chat(&messages, 500, None);
+        assert_eq!(num_predict_fallback, 96767);
+
+        // Case 3: Respects MIN_NUM_PREDICT floor when prompt is near context window limit
+        let num_predict_clamped = service.compute_num_predict_chat(&messages, 500, Some(97000));
+        assert_eq!(num_predict_clamped, MIN_NUM_PREDICT as i32);
+    }
+
+    #[test]
+    fn test_ollama_chat_response_deserialization() {
+        let json_data = r#"{
+            "model": "qwen2.5:32b",
+            "created_at": "2026-09-24T00:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": "Done."
+            },
+            "done": true,
+            "done_reason": "stop",
+            "prompt_eval_count": 67139,
+            "eval_count": 254
+        }"#;
+
+        let resp: OllamaChatResponse = serde_json::from_str(json_data).unwrap();
+        assert_eq!(resp.prompt_eval_count(), Some(67139));
+        assert_eq!(resp.eval_count(), Some(254));
+        assert_eq!(resp.done_reason.as_deref(), Some("stop"));
+    }
+}
+
