@@ -774,14 +774,17 @@ impl Agent {
                 // so compaction frees headroom BEFORE the recursive continuation turn if context is full.
                 self.maybe_compact(chat_id, total_tokens).await;
 
-                // Persist the continuation prompt into the chat store as a user message so the
-                // database message sequence is strictly alternating (assistant -> user -> assistant),
+                // Persist the continuation prompt into the chat store so the database message
+                // sequence is strictly alternating (assistant -> notice -> assistant),
                 // preventing Ollama's "Cannot have 2 or more assistant messages at the end" error.
+                // `notice` (not `user`) so this renders as the same muted, backend-written marker a
+                // finished-job notice does, not a fake chat bubble the user never actually typed —
+                // `to_ollama_message` already sends any `notice` to Ollama as a `user` turn either way.
                 let continuation_text = "[System note: Token limit reached during thinking. Based on your thoughts above, output your next response or tool call now.]".to_string();
                 self.chat_store
                     .new_message(NewMessage {
                         chat_id,
-                        role: "user".to_string(),
+                        role: "notice".to_string(),
                         content: continuation_text,
                         tool_name: None,
                         thinking: None,
