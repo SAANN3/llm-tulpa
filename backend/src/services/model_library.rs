@@ -464,7 +464,7 @@ fn describe(err: &crate::services::llm::OllamaErrors) -> String {
     use crate::services::llm::OllamaErrors::*;
     match err {
         RequestFailed(msg) => format!("could not reach Ollama: {msg}"),
-        UnexpectedStatus(code) => format!("Ollama returned status {code}"),
+        UnexpectedStatus(code, body) => format!("Ollama returned status {code}: {body}"),
         DecodeFailed(msg) | Failed(msg) => msg.clone(),
         Rejected(_, msg) => msg.clone(),
     }

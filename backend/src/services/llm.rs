@@ -211,7 +211,7 @@ impl OllamaService {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/generate returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
         }
 
         // `/api/generate` never populates `thinking` for this model (see the doc comment
@@ -289,7 +289,7 @@ impl OllamaService {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/chat returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
         }
 
         // `/api/chat` usually populates `message.thinking` correctly on its own (unlike
@@ -352,7 +352,7 @@ impl OllamaService {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/show returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
         }
 
         #[derive(Deserialize, Default)]
@@ -380,7 +380,7 @@ impl OllamaService {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/tags returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
         }
 
         #[derive(Deserialize, Default)]
@@ -408,8 +408,9 @@ impl OllamaService {
 
         if !res.status().is_success() {
             let status = res.status();
-            tracing::error!(%status, "ollama.com/library returned a non-success status");
-            return Err(OllamaErrors::UnexpectedStatus(status));
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama.com/library returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
         }
 
         res.text().await.map_err(|e| OllamaErrors::DecodeFailed(e.to_string()))
@@ -880,7 +881,12 @@ pub struct OllamaToolCallFunction {
 /// collapsing everything to a generic 500.
 pub enum OllamaErrors {
     RequestFailed(String),
-    UnexpectedStatus(StatusCode),
+    /// A non-2xx response Ollama didn't explain via its own error JSON (that's
+    /// `Rejected`) — the raw response body, whatever it was, so a caller like
+    /// `llm.read_image`'s tool error can actually say why instead of just the
+    /// status code (e.g. llama.cpp/Ollama's own "image input is not supported -
+    /// hint: if this is unexpected, you may need to provide the mmproj").
+    UnexpectedStatus(StatusCode, String),
     DecodeFailed(String),
     /// Ollama refused a model-management request and said why (a bad model name, a corrupt
     /// file, ...) — the text is meant to be shown to the person who asked.
@@ -900,9 +906,9 @@ impl From<OllamaErrors> for ErrorService {
                 tracing::error!("failed to reach ollama: {msg}");
                 ErrorService::internal(format!("failed to reach ollama: {msg}"))
             }
-            OllamaErrors::UnexpectedStatus(code) => ErrorService::new(
+            OllamaErrors::UnexpectedStatus(code, body) => ErrorService::new(
                 StatusCode::BAD_GATEWAY,
-                format!("ollama returned status {code}"),
+                format!("ollama returned status {code}: {body}"),
             ),
             OllamaErrors::Rejected(code, msg) => {
                 ErrorService::new(if code.is_client_error() { StatusCode::BAD_REQUEST } else { StatusCode::BAD_GATEWAY }, msg)

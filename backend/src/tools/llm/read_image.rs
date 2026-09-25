@@ -87,8 +87,8 @@ impl Tool for ReadImageTool {
         let response = ctx.ollama.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None).await.map_err(|e| {
             let reason = match e {
                 crate::services::llm::OllamaErrors::RequestFailed(msg) => msg,
-                crate::services::llm::OllamaErrors::UnexpectedStatus(status) => {
-                    format!("ollama returned status {status}")
+                crate::services::llm::OllamaErrors::UnexpectedStatus(status, body) => {
+                    format!("ollama returned status {status}: {body}")
                 }
                 crate::services::llm::OllamaErrors::DecodeFailed(msg) => msg,
                 crate::services::llm::OllamaErrors::Rejected(_, msg) | crate::services::llm::OllamaErrors::Failed(msg) => msg,
