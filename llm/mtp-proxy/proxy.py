@@ -262,6 +262,35 @@ def handle_generate(body: dict) -> dict:
     return result
 
 
+def handle_tags() -> dict:
+    """Translates Ollama's `GET /api/tags` (the list of installed models —
+    `backend/src/services/llm.rs`'s `list_local_models`, which feeds the model
+    picker/switcher) to llama-server's `/props`, same source `handle_show` reads.
+    llama-server only ever serves the one model it was started with — no real
+    registry to list — so this reports exactly that one, under the same tag
+    Ollama itself uses for a `.env`-configured `MODEL_FILE` (`llm/start.sh`
+    always registers it as `local-llm`, regardless of the actual filename), so a
+    chat already bound to that tag keeps showing as installed under either
+    backend. `quantization_level` is parsed from `model_ftype` (e.g.
+    `"IQ3_S - 3.4375 bpw"` -> `"IQ3_S"`, confirmed against this project's own
+    GGUFs); `size`/`family`/`parameter_size` are left out rather than guessed —
+    all optional on the Rust side (`LocalModel`/`LocalModelDetails`)."""
+    r = urllib.request.Request(f"{UPSTREAM}/props", method="GET")
+    with urllib.request.urlopen(r, timeout=30) as resp:
+        props = json.loads(resp.read())
+
+    quant = (props.get("model_ftype") or "").split(" - ")[0].strip() or None
+
+    return {
+        "models": [
+            {
+                "name": "local-llm:latest",
+                "details": {"quantization_level": quant},
+            }
+        ]
+    }
+
+
 def handle_show(_body: dict) -> dict:
     """Translates Ollama's `POST /api/show` to llama-server's `GET /props` — this
     project's own backend uses `/api/show` specifically to read a model's raw Jinja
@@ -316,8 +345,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
-        else:
-            self._send_json(404, {"error": "not found"})
+            return
+
+        try:
+            if self.path == "/api/tags":
+                self._send_json(200, handle_tags())
+            else:
+                self._send_json(404, {"error": "not found"})
+        except urllib.error.HTTPError as e:
+            upstream_body = e.read().decode(errors="replace")
+            sys.stderr.write(f"upstream error {e.code}: {upstream_body}\n")
+            self._send_json(502, {"error": f"upstream returned {e.code}", "body": upstream_body})
+        except Exception as e:  # this request's own error boundary
+            sys.stderr.write(f"proxy error: {e!r}\n")
+            self._send_json(500, {"error": str(e)})
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
