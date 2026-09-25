@@ -49,6 +49,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -322,7 +323,33 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+def warmup_upstream() -> None:
+    time.sleep(1)
+    for _ in range(60):
+        try:
+            req = urllib.request.Request(f"{UPSTREAM}/health")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:
+            time.sleep(1)
+    try:
+        sys.stderr.write(f"warming up upstream llama-server at {UPSTREAM}...\n")
+        warmup_payload = json.dumps({"prompt": "Hi", "n_predict": 1}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{UPSTREAM}/completion",
+            data=warmup_payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            pass
+        sys.stderr.write("upstream llama-server warmed up successfully.\n")
+    except Exception as e:
+        sys.stderr.write(f"warmup notice: {e}\n")
+
+
 if __name__ == "__main__":
+    threading.Thread(target=warmup_upstream, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     print(f"mtp-proxy listening on :{LISTEN_PORT}, upstream={UPSTREAM}", flush=True)
     server.serve_forever()

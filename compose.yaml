@@ -105,9 +105,18 @@ services:
       # the whole screen), not just whatever it launches itself.
       - "/tmp/.X11-unix:/tmp/.X11-unix"
     depends_on:
-      - postgres
-      - ollama
-      - searxng
+      postgres:
+        condition: service_started
+        required: true
+      searxng:
+        condition: service_started
+        required: true
+      ollama:
+        condition: service_started
+        required: false
+      mtp-proxy:
+        condition: service_started
+        required: false
     restart: unless-stopped
 
   frontend:

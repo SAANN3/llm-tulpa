@@ -105,13 +105,23 @@ services:
   # — see project memory).
   llama-mtp:
     profiles: ["mtp"]
-    image: "havenoammo/llama:rocm-server"
+    image: "ollama/ollama:rocm"
     devices:
       - "/dev/kfd:/dev/kfd"
       - "/dev/dri:/dev/dri"
     ulimits:
       memlock: -1
+    environment:
+      - GGML_BACKEND_PATH=/usr/lib/ollama/rocm_v7_2/libggml-hip.so
+      - LD_LIBRARY_PATH=/usr/lib/ollama:/usr/lib/ollama/rocm_v7_2
+      - ROCR_VISIBLE_DEVICES=0
+      - MODEL_FILE=${MODEL_FILE:-Qwen3.6-35B-A3B-UD-IQ3_XXS-MTP.gguf}
+      - MMPROJ_FILE=${MMPROJ_FILE:-}
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-48000}
+      - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-q4_0}
+      - LLAMA_MTP_SPEC_DRAFT_N_MAX=${LLAMA_MTP_SPEC_DRAFT_N_MAX:-3}
     volumes:
+      - ".:/root"
       - "${MODEL_DIR:-.}:/models:ro"
     ports:
       - "127.0.0.1:8081:8080"
@@ -120,75 +130,20 @@ services:
     group_add:
       - "987"
       - "983"
-    # Same KV-cache quantization + flash-attn + context length this machine already
-    # runs Ollama with (see OLLAMA_KV_CACHE_TYPE/OLLAMA_FLASH_ATTENTION/
-    # OLLAMA_CONTEXT_LENGTH above), so a comparison against the Ollama baseline isn't
-    # also comparing different settings by accident. `-np 1` (single parallel slot)
-    # is required with MTP, not just a default choice. `--mmproj` mirrors Ollama's
-    # Modelfile pairing exactly (same MMPROJ_FILE var, same models dir) — confirmed
-    # working via a real image through this exact flag before adding it here. `-n`
-    # is a server-side fallback cap (deliberately finite — unlike Ollama's own
-    # now-fixed unlimited-generation bug, this raw llama-server has no cap by
-    # default) — `mtp-proxy` (see that service) always sends a real per-request
-    # `max_tokens` anyway, mirroring the backend's own OLLAMA_CONTEXT_LENGTH-derived
-    # cap exactly, so this only matters for a request that somehow omits it.
-    # havenoammo's own docs show `--spec-type mtp`, but this build's actual accepted
-    # enum value (confirmed via its own usage/error output) is `draft-mtp`, not bare
-    # `mtp` — using the real value here.
-    # List form, not a plain shell-style command string — this model dir's real
-    # mmproj filename has literal parentheses in it (`...F16(1).gguf`), which
-    # breaks Compose's shell-word-tokenizer for the string form (confirmed: same
-    # error reproduced in isolation with just that one substitution). The list
-    # form skips shell tokenization entirely, so it's unaffected by that.
-    # `--mmproj` is unconditional here (unlike Ollama's Modelfile templating,
-    # which only adds it when MMPROJ_FILE is set) since this deployment always
-    # sets it — drop the `--mmproj`/path pair below if that ever stops being true.
-    command:
-      - -m
-      - /models/${LLAMA_MTP_MODEL_FILE:-Qwen3.8-27B-UD-IQ3_S.gguf}
-      - --mmproj
-      - /models/${MMPROJ_FILE}
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8080"
-      - -ngl
-      - "-1"
-      - --flash-attn
-      - "on"
-      - --cache-type-k
-      - q8_0
-      - --cache-type-v
-      - q8_0
-      - --ctx-size
-      - ${OLLAMA_CONTEXT_LENGTH:-65000}
-      - --spec-type
-      - draft-mtp
-      - --spec-draft-n-max
-      - ${LLAMA_MTP_SPEC_DRAFT_N_MAX:-4}
-      - -np
-      - "1"
-      - -n
-      - ${OLLAMA_CONTEXT_LENGTH:-65000}
-      - --jinja
-      - --metrics
+    entrypoint: ["/bin/sh", "/root/start-mtp.sh"]
 
   # Translates Ollama's `/api/chat`/`/api/generate` wire format to llama-mtp's
   # OpenAI-compatible one, so `backend/src/services/llm.rs`'s `OllamaService`
   # (Ollama-specific request/response structs) can talk to `llama-mtp` with zero
-  # changes to that module — the translation lives entirely in this small,
-  # independently testable sidecar instead. See `mtp-proxy/proxy.py`'s own
-  # docstring for the exact field-by-field contract, each point confirmed against
-  # a real `llama-mtp` instance before writing it (tool-call argument
-  # string<->object conversion, `max_tokens` field name, image content-array
-  # shape, nanosecond duration units, ...), not assumed from docs. Reaches
-  # `llama-mtp` over `app-net`'s internal Docker DNS (same network, no need to
-  # go through its published host port); publishes its own translated endpoint
-  # to the host loopback the same way `ollama`/`searxng-nginx` do, since the
-  # backend reaches every LLM-ish service that way under `network_mode: host`.
+  # changes to that module. Its own port (11435), distinct from `ollama`'s
+  # (11434) — `ollama` isn't behind a profile and always starts, so the two
+  # never fight over the same port even if both happen to be up at once;
+  # switching which one the backend actually talks to is still the one
+  # `ollama.url` edit in `backend/data/settings.json` described above.
   mtp-proxy:
     profiles: ["mtp"]
     build: ./mtp-proxy
+    image: llm-tulpa-mtp-proxy:latest
     environment:
       - LLAMA_SERVER_URL=http://llama-mtp:8080
     ports:
