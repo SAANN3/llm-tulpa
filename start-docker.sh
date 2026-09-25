@@ -19,6 +19,22 @@ fi
 # stopped) instead of just left to collide with it.
 ACTIVE_PROFILE=$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
 
+# Points settings.json's ollama.url at whichever backend ACTIVE_PROFILE picked, so
+# switching really is the one COMPOSE_PROFILES edit — but only between the two
+# addresses this script itself manages (11434 ollama, 11435 mtp-proxy); a URL
+# already pointed somewhere else (a remote Ollama, a non-default port) is left
+# alone rather than silently overwritten. The backend only reads this at process
+# startup (main.rs, no hot reload), so an already-running backend needs an
+# explicit restart to actually pick up a change here — done below, and only when
+# the URL actually changed, so an unrelated rerun doesn't interrupt a live chat.
+BEFORE_URL=$(grep -o '"url": "[^"]*"' backend/data/settings.json)
+if [ "$ACTIVE_PROFILE" = "mtp" ]; then
+  sed -i 's|"url": "http://localhost:11434"|"url": "http://localhost:11435"|' backend/data/settings.json
+else
+  sed -i 's|"url": "http://localhost:11435"|"url": "http://localhost:11434"|' backend/data/settings.json
+fi
+AFTER_URL=$(grep -o '"url": "[^"]*"' backend/data/settings.json)
+
 # --build is cheap when nothing changed — Docker's layer cache skips every step
 # whose inputs haven't changed, so this only actually rebuilds what you edited.
 if [ "$ACTIVE_PROFILE" = "mtp" ]; then
@@ -26,4 +42,8 @@ if [ "$ACTIVE_PROFILE" = "mtp" ]; then
 else
   docker stop llm-tulpa-llama-mtp-1 llm-tulpa-mtp-proxy-1 2>/dev/null || true
   HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose up -d --build --remove-orphans
+fi
+
+if [ "$BEFORE_URL" != "$AFTER_URL" ]; then
+  docker compose restart backend
 fi
