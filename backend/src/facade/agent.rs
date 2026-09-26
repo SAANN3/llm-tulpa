@@ -168,6 +168,21 @@ const SYSTEM_PROMPT: &[&str] = &[
     "Before attaching images, if you have capability, verify, that images shows exactly what you \
      wanted to show to the user. After making changes in code verify that they are actually \
      compiles and work as expected, if not asked otherwise",
+    "When you're unsure of an exact API signature, method name, or type definition, \
+     the fastest and most reliable way to find out is to write your best-guess code and \
+     run the project's native build, compiler, type-checker, or test tool — not to search \
+     for or read third-party dependency source code. Build and compiler diagnostics provide \
+     complete, precise error messages and suggested fixes in seconds. Treat an uncertain API \
+     call as a testable claim: write it, run the project's checker, and let the diagnostic \
+     output guide you instead of trying to achieve certainty by reading library internals.",
+    "Dependency source code and package manager caches are rarely what you need to read or \
+     modify. Rely on public API interfaces, documentation, and the project's own diagnostics \
+     first. Avoid broad, unbounded recursive directory searches looking for library source files.",
+    "Exploring a codebase before making changes has a natural end: once you can name the \
+     specific file(s) to change and roughly what the new code should say, that's the signal \
+     to stop reading and make the edit. A design worked out in your thinking does not exist \
+     until written; write the change, then let the project's build and verification tools \
+     tell you what actually needs adjusting, if anything.",
 ];
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -295,6 +310,53 @@ fn job_notice_text(job: &JobRecord) -> String {
         "[Background job {} (`{command}{ellipsis}`) {outcome}. Read its output with os.job_output.]",
         job.id
     )
+}
+
+/// Threshold of consecutive read-only tool calls without editing or writing files
+/// before injecting a dynamic circuit-breaker notice into the prompt.
+const READ_ONLY_STREAK_THRESHOLD: usize = 5;
+
+fn read_only_streak_notice(messages: &[OllamaChatMessage]) -> Option<String> {
+    let mut streak = 0;
+    for msg in messages.iter().rev() {
+        if msg.role == "user" {
+            break;
+        }
+        if let Some(ref name) = msg.tool_name {
+            match name.as_str() {
+                "storage.write_file" | "storage.replace_str" | "storage.delete_file" => break,
+                "storage.read_file" | "storage.list_directory" | "storage.detect_file_type" => {
+                    streak += 1;
+                }
+                _ => {}
+            }
+        } else if let Some(ref calls) = msg.tool_calls {
+            let has_write = calls.iter().any(|c| {
+                matches!(
+                    c.function.name.as_str(),
+                    "storage.write_file" | "storage.replace_str" | "storage.delete_file"
+                )
+            });
+            if has_write {
+                break;
+            }
+        }
+    }
+
+    if streak >= READ_ONLY_STREAK_THRESHOLD {
+        tracing::info!(streak, "read-only tool streak threshold reached, injecting circuit breaker notice");
+        Some(format!(
+            "\n\n[Notice: You have made {streak} consecutive read-only tool calls without editing \
+             or writing any files. If you already know which file(s) to change and what the code \
+             should do, stop reading and make the edit now. If you're trying to verify an API \
+             signature or external interface before writing code, write your best-guess implementation \
+             and run the project's native build, compiler, type-checker, or test tool to verify it. \
+             If there is a genuinely essential piece of information you still need, state it \
+             specifically before your next tool call.]"
+        ))
+    } else {
+        None
+    }
 }
 
 /// Facade over `OllamaService`, `ChatStore`, and `ToolService` — where the actual
@@ -663,6 +725,7 @@ impl Agent {
         // survives the `extend` below. Only actually used once we know this response
         // has no further tool calls of its own — see the `stored` message below.
         let attached_files = Self::pending_attached_files(&messages);
+        let streak_note = read_only_streak_notice(&messages);
 
         let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
         messages_with_system.extend(messages);
@@ -687,11 +750,17 @@ impl Agent {
         let new_message = match new_message {
             Some(mut msg) => {
                 msg.content.push_str(&now_note);
+                if let Some(ref note) = streak_note {
+                    msg.content.push_str(note);
+                }
                 Some(msg)
             }
             None => {
                 if let Some(last) = messages_with_system.last_mut() {
                     last.content.push_str(&now_note);
+                    if let Some(ref note) = streak_note {
+                        last.content.push_str(note);
+                    }
                 }
                 None
             }

@@ -113,7 +113,7 @@ pub struct ExecuteCommandTool;
 /// `tail -f`, a prompt waiting on input that will never come) wedging the whole chat —
 /// generous enough for a real build or install, which can take several minutes. Anything
 /// legitimately longer belongs in the background (`cmd > log 2>&1 &`) with the log polled.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Scratch file a command's stdout or stderr is redirected into, instead of a pipe.
 /// With a pipe, reading the output means waiting for EOF, and EOF only comes once
@@ -210,9 +210,10 @@ async fn run_shell(
     let (mut stderr, stderr_truncated) = truncate_output(stderr_file.read().await);
     if timed_out {
         stderr.push_str(&format!(
-            "\n[command killed: still running after {}s. Output above is whatever it \
-             produced by then. Run anything this long in the background instead \
-             (`cmd > /tmp/log 2>&1 &`) and check the log.]",
+            "\n[command killed: timed out after {}s. Output above is whatever it \
+             produced before timing out. If you legitimately need to run a long-running command, \
+             use os.start_job to run it as a background job — but verify that you actually \
+             need a long-running process and that this is not an accidental runaway command.]",
             timeout.as_secs()
         ));
     }
