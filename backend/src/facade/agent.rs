@@ -153,12 +153,13 @@ const SYSTEM_PROMPT: &[&str] = &[
      install anything else) would just do it faster and more reliably. If you've already shown \
      a capability works earlier in this same conversation, remember and reuse it rather than \
      defaulting back to manual work out of habit.",
-    // "Before each tool call, briefly say (1-2 sentences, not a wall of reasoning) what you're \
-    //  about to do, why, and what you expect the result to tell you. After the result comes \
-    //  back, briefly note whether it matched that expectation before deciding the next step. \
-    //  This applies every time, including partway through a long chain of tool calls in the \
-    //  same turn — someone reading the conversation should be able to follow what you're doing \
-    //  and why without reading your thinking.",
+    "Before calling any tool, briefly state your working state in visible text (this is your only \
+     persistent memory across turns — internal thinking is discarded after each turn): \
+     - The concrete deduction or question that forced this specific tool call. \
+     - The exact detail or evidence you need from the result. \
+     - Your immediate next action once the result arrives (e.g. 'If X is missing, edit Y; if present, run tests'). \
+     Never use vague filler like 'reading to understand' or 'checking the codebase' — state the exact \
+     technical hypothesis you are testing.",
     "A background job (os.start_job) tells you when it finishes: a message appears in the chat \
      saying how it ended, and you get a turn to respond to it. So after starting one there's no \
      need to wait or poll — either carry on with other work, or end your turn saying what's \
@@ -1098,31 +1099,25 @@ impl Agent {
             .unwrap_or_default();
 
         let system = OllamaService::system_message(
-            "Summarize the conversation excerpt that follows into short but complete notes \
-             for continuing the conversation later — what was asked, what was done, what was \
-             learned, and any specific details (file paths, decisions, exact names) later \
-             turns might still need. If a prior summary is included, fold it in rather than \
-             dropping it. Pay special attention to detail that's easy to accidentally \
-             paraphrase away but matters a lot if lost: a tool result marked truncated (a \
-             later turn needs to know it only saw part of something, not the whole thing), \
-             exact code/text snippets that a future edit might need to reproduce verbatim \
-             — summarize the surrounding narrative, but don't rewrite exact text like that \
-             into your own words — and a message marked as having image(s) attached (the \
-             images themselves aren't in this excerpt, only that mark — keep noting that \
-             one was there, since a later turn may still need to know an image was part of \
-             what was asked). Write plain notes, not a reply — this output \
-             replaces the excerpt in the conversation's history, nobody sees it directly. \
-             Record only what's actually stated or shown in the excerpt — never add your own \
-             suggested next steps, recommendations, or assumptions about what should happen \
-             next; a later turn will decide that itself from the real conversation, and an \
-             invented 'next step' can send it chasing something nobody actually needs. If \
-             something in the excerpt looks contradictory or doesn't add up (e.g. a filename \
-             or detail that doesn't match elsewhere), note the discrepancy plainly rather \
-             than inventing an explanation that resolves it — a guessed resolution that's \
-             wrong is worse than an acknowledged gap.\n\n\
-             Exact facts (paths, names+versions, confirmed API idioms, decisions, constraints, \
-             config, open items) are tracked in a separate structured list; don't reproduce \
-             them exhaustively in the summary — focus on what was asked, done, and learned."
+            "Summarize the conversation excerpt that follows into concise continuity notes. \
+             Structure the summary using these three clear sections:\n\
+             1. ESTABLISHED FACTS & FINDINGS: Confirmed discoveries, codebase structure, and \
+             verified decisions from the excerpt.\n\
+             2. COMPLETED CHANGES: Code edited, files created/deleted, commands executed, \
+             and their concrete outcomes.\n\
+             3. CURRENT UNSOLVED OBJECTIVE: The high-level user goal or remaining blocker that \
+             is still incomplete or failing.\n\n\
+             CRITICAL INVARIANT: NEVER record transient intentions, unexecuted plans, or what the \
+             assistant or user was 'about to do' or 'planning to read'. Fleeting intentions from \
+             folded turns are obsolete; recording them creates repetitive action loops. Record only \
+             what was ACTUALLY COMPLETED, what was DEFINITIVELY LEARNED, and what TARGET remains \
+             unsolved.\n\n\
+             If a prior summary is included, fold it in while maintaining these same three sections. \
+             Pay special attention to details that matter if lost: a tool result marked truncated \
+             (a later turn needs to know it only saw part of something), exact code/text snippets \
+             a future edit might need to reproduce verbatim, and messages marked with attached \
+             images. If something in the excerpt looks contradictory, note the discrepancy plainly \
+             rather than inventing an explanation. Write plain notes, not a reply."
                 .to_string(),
         );
         let user = OllamaService::user_message(format!(
@@ -1220,7 +1215,6 @@ impl Agent {
              - Design decisions and constraints ('key_facts is JSONB, nullable, persisted \
              via set_summary')\n\
              - Configuration, feature flags, environment variables\n\
-             - Open or unresolved items that a later turn might need to know about\n\
              \n\
              What is NOT a fact:\n\
              - Narrative descriptions of what happened\n\
