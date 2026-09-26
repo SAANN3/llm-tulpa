@@ -237,6 +237,45 @@ fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
     )
 }
 
+/// Maximum number of characters of reasoning (`message.thinking`) preserved when
+/// replaying an assistant message back to the model in `to_ollama_message`.
+///
+/// Qwen 3.8 and similar models produce rich reasoning traces that are critical for
+/// avoiding amnesia and repetitive exploration loops across turns. However, an
+/// anomalous run-away reasoning turn could single-handedly consume the uncompacted
+/// history budget (`compaction_keep_chars`). Capping at 10,000 characters (~2,500–3,000
+/// tokens) preserves several turns of deep reasoning while preventing pathological
+/// budget exhaustion.
+const MAX_REPLAYED_THINKING_CHARS: usize = 10_000;
+
+/// Truncates reasoning trace to at most `MAX_REPLAYED_THINKING_CHARS`, keeping the
+/// *tail* (most recent reasoning) rather than the head: final conclusions, plan
+/// adjustments, and next-step decisions are reached toward the end of a thought block.
+///
+/// Ensures strict UTF-8 char boundary safety, aligns to a newline boundary where
+/// reasonable to avoid splitting mid-word, and prepends a clear truncation notice so
+/// the model understands it is viewing the tail of its previous thoughts.
+fn cap_replayed_thinking(thinking: &str) -> String {
+    if thinking.len() <= MAX_REPLAYED_THINKING_CHARS {
+        return thinking.to_string();
+    }
+
+    let mut start = thinking.len() - MAX_REPLAYED_THINKING_CHARS;
+    while start < thinking.len() && !thinking.is_char_boundary(start) {
+        start += 1;
+    }
+
+    // If there is a newline within the first 500 characters after the raw cut,
+    // advance past it to start on a clean line of reasoning rather than mid-sentence.
+    let clean_start = thinking[start..]
+        .find('\n')
+        .map(|idx| start + idx + 1)
+        .filter(|&idx| idx - start <= 500 && idx < thinking.len())
+        .unwrap_or(start);
+
+    format!("... [earlier thinking truncated] ...\n{}", &thinking[clean_start..])
+}
+
 /// Why a model reply was thrown away and asked for again instead of being stored.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplyProblem {
@@ -800,8 +839,8 @@ impl Agent {
                     "model cut off in thinking; storing thought process as message and triggering automatic continuation"
                 );
 
-                // Store cut thoughts as message content (not as thinking) so they are replayed
-                // back to the model on the continuation turn (`to_ollama_message` only sends `content`).
+                // Store cut thoughts as message content (not as thinking) with an explicit continuation
+                // marker so the model on the continuation turn knows it was interrupted mid-thought.
                 let content = format!("[My thought process before being interrupted by token limit]:\n{thought_trace}");
                 self.chat_store
                     .new_message(NewMessage {
@@ -1090,6 +1129,12 @@ impl Agent {
         let split_at = pick_compaction_boundary(&sizes, self.compaction_keep_chars);
 
         if split_at == 0 {
+            tracing::info!(
+                chat_id,
+                total_messages = messages.len(),
+                keep_chars = self.compaction_keep_chars,
+                "compaction skipped: recent history already fits within compaction_keep_chars"
+            );
             return Ok(());
         }
 
@@ -1099,6 +1144,7 @@ impl Agent {
         tracing::info!(
             chat_id,
             messages_folded = to_fold.len(),
+            messages_retained = messages.len() - to_fold.len(),
             had_prior_summary = chat.summary.is_some(),
             "calling summarize for chat_id {chat_id}"
         );
@@ -1706,6 +1752,21 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// original per-call id (only `function.name`/`arguments`, which is all replaying
     /// history needs), and it's not yet confirmed whether Ollama expects/uses `id` at
     /// all on the *outgoing* (request) side versus just returning it in responses.
+    ///
+    /// Preserving reasoning context across turns:
+    /// For each message with non-empty `thinking`, the reasoning trace is prepended to
+    /// `content` wrapped in `<think>\n{thinking}\n</think>\n\n{content}`. The wrapping
+    /// happens AFTER `with_attached_files_note` so any file annotations remain inside
+    /// `content` under the `<think>` block.
+    ///
+    /// We deliberately keep `OllamaChatMessage::thinking` as `None` rather than passing a
+    /// separate field: upstream chat templates and API proxies (such as OpenAI-compatible
+    /// endpoints like `llama-mtp`) do not consistently support or forward a separate
+    /// reasoning input field on prior turns, whereas textual concatenation inside `content` is
+    /// universally rendered by all chat templates and models.
+    ///
+    /// Replayed thinking is capped at `MAX_REPLAYED_THINKING_CHARS` (keeping the freshest tail)
+    /// to prevent an anomalous reasoning turn from consuming the uncompacted context budget.
     fn to_ollama_message(message: Message) -> OllamaChatMessage {
         let tool_calls: Vec<OllamaToolCall> = message
             .tool_calls
@@ -1721,12 +1782,18 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             })
             .collect();
 
+        let mut content = with_attached_files_note(message.content, &message.file_ids);
+        if let Some(thinking) = message.thinking.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            let capped = cap_replayed_thinking(thinking);
+            content = format!("<think>\n{capped}\n</think>\n\n{content}");
+        }
+
         OllamaChatMessage {
             // A `notice` is the backend telling the model something (a job finished) —
             // chat templates only know system/user/assistant/tool, and it reads as
             // something said to the model, so it goes out as a `user` message.
             role: if message.role == "notice" { "user".to_string() } else { message.role },
-            content: with_attached_files_note(message.content, &message.file_ids),
+            content,
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_name: message.tool_name,
             thinking: None,
@@ -1925,3 +1992,152 @@ pub struct UseToolOut {
     pub created_at: DateTimeUtc,
     pub tools: Vec<AgentToolCall>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::chat_store::{Message, ToolCallOut};
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn make_test_message(role: &str, content: &str, thinking: Option<&str>, file_ids: Vec<i64>) -> Message {
+        Message {
+            id: 1,
+            chat_id: 1,
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_name: None,
+            created_at: Utc::now(),
+            thinking: thinking.map(String::from),
+            thought_duration_ms: None,
+            tool_success: None,
+            tool_denied: false,
+            tool_calls: vec![],
+            images: vec![],
+            file_ids,
+            prompt_tokens: None,
+            eval_tokens: None,
+        }
+    }
+
+    #[test]
+    fn test_to_ollama_message_without_thinking() {
+        let msg = make_test_message("assistant", "Hello world", None, vec![]);
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert_eq!(ollama_msg.role, "assistant");
+        assert_eq!(ollama_msg.content, "Hello world");
+        assert!(ollama_msg.thinking.is_none());
+    }
+
+    #[test]
+    fn test_to_ollama_message_with_thinking() {
+        let msg = make_test_message(
+            "assistant",
+            "Here is the plan.",
+            Some("Let me reason step by step.\n1. Inspect codebase.\n2. Fix issue."),
+            vec![],
+        );
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert_eq!(ollama_msg.role, "assistant");
+        assert_eq!(
+            ollama_msg.content,
+            "<think>\nLet me reason step by step.\n1. Inspect codebase.\n2. Fix issue.\n</think>\n\nHere is the plan."
+        );
+        assert!(ollama_msg.thinking.is_none());
+    }
+
+    #[test]
+    fn test_to_ollama_message_with_thinking_and_empty_content() {
+        let mut msg = make_test_message("assistant", "", Some("Deciding which tool to call..."), vec![]);
+        msg.tool_calls.push(ToolCallOut {
+            tool_name: "storage.read_file".to_string(),
+            arguments: json!({"path": "src/main.rs"}),
+        });
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert_eq!(ollama_msg.role, "assistant");
+        assert_eq!(
+            ollama_msg.content,
+            "<think>\nDeciding which tool to call...\n</think>\n\n"
+        );
+        assert!(ollama_msg.thinking.is_none());
+        assert!(ollama_msg.tool_calls.is_some());
+    }
+
+    #[test]
+    fn test_to_ollama_message_with_attached_files_and_thinking() {
+        let msg = make_test_message(
+            "assistant",
+            "Checking attachments",
+            Some("I see the user mentioned an attachment."),
+            vec![42, 99],
+        );
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert!(ollama_msg.content.starts_with("<think>\nI see the user mentioned an attachment.\n</think>\n\n[This message has file(s) attached: id 42, id 99."));
+        assert!(ollama_msg.content.ends_with("]\nChecking attachments"));
+        assert!(ollama_msg.thinking.is_none());
+    }
+
+    #[test]
+    fn test_to_ollama_message_whitespace_thinking_ignored() {
+        let msg = make_test_message("assistant", "No real thinking here", Some("   \n\t  "), vec![]);
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert_eq!(ollama_msg.content, "No real thinking here");
+        assert!(ollama_msg.thinking.is_none());
+    }
+
+    #[test]
+    fn test_to_ollama_message_notice_role_mapped_to_user() {
+        let msg = make_test_message("notice", "Job finished: output 42", None, vec![]);
+        let ollama_msg = Agent::to_ollama_message(msg);
+        assert_eq!(ollama_msg.role, "user");
+        assert_eq!(ollama_msg.content, "Job finished: output 42");
+    }
+
+    #[test]
+    fn test_cap_replayed_thinking_short() {
+        let short = "Step 1: Check tests.\nStep 2: Done.";
+        assert_eq!(cap_replayed_thinking(short), short);
+    }
+
+    #[test]
+    fn test_cap_replayed_thinking_truncation() {
+        let line = "Thinking iteration about complex logic...\n";
+        let repeat_count = (MAX_REPLAYED_THINKING_CHARS / line.len()) + 50;
+        let mut long_thinking = String::new();
+        for i in 0..repeat_count {
+            long_thinking.push_str(&format!("{i}: {line}"));
+        }
+        long_thinking.push_str("FINAL CONCLUSION: Solution reached.");
+
+        let capped = cap_replayed_thinking(&long_thinking);
+        assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
+        assert!(capped.ends_with("FINAL CONCLUSION: Solution reached."));
+        assert!(capped.len() <= MAX_REPLAYED_THINKING_CHARS + 100);
+    }
+
+    #[test]
+    fn test_cap_replayed_thinking_utf8_safety() {
+        let cyrillic_thought = "Проверяем многобайтовые символы Юникода для безопасности границ среза.\n";
+        let repeat_count = (MAX_REPLAYED_THINKING_CHARS / cyrillic_thought.len()) + 50;
+        let mut long_thinking = String::new();
+        for _ in 0..repeat_count {
+            long_thinking.push_str(cyrillic_thought);
+        }
+        long_thinking.push_str("Финальный вывод: тест пройден успешно.");
+
+        let capped = cap_replayed_thinking(&long_thinking);
+        assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
+        assert!(capped.ends_with("Финальный вывод: тест пройден успешно."));
+    }
+
+    #[test]
+    fn test_pick_compaction_boundary_logic() {
+        let sizes = vec![1000, 2000, 3000, 4000];
+        let split = pick_compaction_boundary(&sizes, 5000);
+        assert_eq!(split, 3);
+
+        let split_all = pick_compaction_boundary(&sizes, 15000);
+        assert_eq!(split_all, 0);
+    }
+}
+
