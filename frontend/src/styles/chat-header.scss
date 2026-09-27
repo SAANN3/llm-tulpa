@@ -47,19 +47,27 @@
   width: 460px;
 }
 
-.chat-header__search {
-  width: 34px;
-  height: 34px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  flex-shrink: 0;
-}
+.chat-header {
+  // Nested (not flat) so this beats the generic `button[data-variant]` padding
+  // (an element+attribute selector — higher specificity than a single flat class),
+  // which otherwise squeezes these fixed-size icon buttons down to almost nothing —
+  // same reason `.composer__footer`'s icon button is nested the same way.
+  .chat-header__search,
+  .chat-header__search-clear {
+    width: 34px;
+    height: 34px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex-shrink: 0;
+  }
 
-.chat-header__search svg {
-  display: block;
+  .chat-header__search svg,
+  .chat-header__search-clear svg {
+    display: block;
+  }
 }
 
 .chat-header__search-box {

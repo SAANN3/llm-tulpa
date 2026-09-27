@@ -132,6 +132,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         const forChatId = chatId
         lastThinkRef.current = think ?? true
         setTurnError(null)
+        setSearchHighlight(null)
         try {
             handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
         } catch {
@@ -234,7 +235,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
             <Div className="chat">
                 <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider}
                             onModelChanged={setChatModel}
-                            onSelectSearchResult={jumpToMessage}/>
+                            onSelectSearchResult={jumpToMessage}
+                            hasActiveHighlight={searchHighlight != null}
+                            onClearHighlight={() => setSearchHighlight(null)}/>
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {

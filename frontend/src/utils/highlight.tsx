@@ -1,4 +1,4 @@
-import {Children, cloneElement, isValidElement, type ReactNode} from 'react'
+import {Children, type ReactNode} from 'react'
 
 /** Highlights occurrences of `query` within a plain string using `<mark className="search-match-target">` */
 export function highlightText(text: string, query?: string | null): ReactNode {
@@ -33,18 +33,26 @@ export function highlightText(text: string, query?: string | null): ReactNode {
     return parts
 }
 
-/** Recursively highlights occurrences of `query` in React children */
+/**
+ * Highlights occurrences of `query` among a tag's children — a plain string is
+ * scanned directly, and an array (any tag with more than one child, e.g. text
+ * running alongside an inline `<code>`/`<strong>`) is walked so a match sitting in
+ * a bare text sibling isn't skipped just because it isn't the sole child.
+ *
+ * Deliberately does *not* recurse into a child that's itself a React element (a
+ * `<code>`/`<strong>`/etc. produced by another entry in the same `components` map):
+ * every such tag is already independently re-rendered through its own wrapped
+ * component, which runs this same highlighting on its own children when React
+ * actually renders it — recursing into it here too would highlight it a second
+ * time, wrapping its already-produced `<mark>` in another `<mark>`.
+ */
 export function highlightInNode(child: ReactNode, query?: string | null): ReactNode {
     if (!query || !query.trim()) return child
+    if (Array.isArray(child)) {
+        return Children.map(child, (c) => highlightInNode(c, query))
+    }
     if (typeof child === 'string') {
         return highlightText(child, query)
-    }
-    if (isValidElement(child)) {
-        const props = child.props as {children?: ReactNode}
-        if (props && props.children) {
-            const nextChildren = Children.map(props.children, (c) => highlightInNode(c, query))
-            return cloneElement(child, {}, nextChildren)
-        }
     }
     return child
 }

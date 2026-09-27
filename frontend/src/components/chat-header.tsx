@@ -1,5 +1,5 @@
 import {useState} from 'react'
-import {Search} from 'pixelarticons/react'
+import {Close, Search} from 'pixelarticons/react'
 
 import '../styles/chat-header.scss'
 import {setChatModel} from '../api/chats/set-model'
@@ -18,11 +18,24 @@ export interface ChatHeaderProps {
     onModelChanged: (model: string) => void
     /** Scroll the chat to the message of a clicked search hit */
     onSelectSearchResult: (hit: MessageSearchOut, query: string) => void
+    /** Whether a search hit is currently highlighted in the timeline — shows the clear control */
+    hasActiveHighlight: boolean
+    /** Turns off the current search highlight */
+    onClearHighlight: () => void
 }
 
 /** The bar above a chat's messages: its name, the model it's bound to (with a switcher popup),
  * and in-chat message search */
-export const ChatHeader = ({chatId, name, model, provider, onModelChanged, onSelectSearchResult}: ChatHeaderProps) => {
+export const ChatHeader = ({
+    chatId,
+    name,
+    model,
+    provider,
+    onModelChanged,
+    onSelectSearchResult,
+    hasActiveHighlight,
+    onClearHighlight,
+}: ChatHeaderProps) => {
     const [open, setOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
 
@@ -43,6 +56,15 @@ export const ChatHeader = ({chatId, name, model, provider, onModelChanged, onSel
                     onClicked={() => setSearchOpen(true)}>
                 <Search width={20} height={20}/>
             </Button>
+            {hasActiveHighlight ? (
+                <Button
+                    className="chat-header__search-clear"
+                    variant="secondary"
+                    onClicked={onClearHighlight}
+                >
+                    <Close width={20} height={20}/>
+                </Button>
+            ) : null}
             <Popup open={open} onClose={() => setOpen(false)} centered>
                 <Div className="dos-frame chat-header__picker">
                     <span className="dos-frame__title">Choose model</span>
