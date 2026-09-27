@@ -16,6 +16,7 @@ use crate::services::{
     job_store::{JobRecord, JobStatus, JobStore},
     llm::{OllamaChatMessage, OllamaChatResponse, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
+    settings_store::SettingsStore,
     tools::ToolService,
 };
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
@@ -184,6 +185,13 @@ const SYSTEM_PROMPT: &[&str] = &[
      until written; write the change, then let the project's build and verification tools \
      tell you what actually needs adjusting, if anything.",
 ];
+
+/// The built-in system prompt, joined into the single message the model gets — what
+/// applies for a user who hasn't set their own (a user's custom one is per-user state,
+/// see `SettingsStore::system_prompt`).
+pub fn default_system_prompt() -> String {
+    SYSTEM_PROMPT.join("\n")
+}
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
 /// checkable on its own, without a live `ChatStore`/`OllamaService`. `sizes` is each
@@ -419,6 +427,9 @@ pub struct Agent {
     /// within a given chat, if any. Consulted by `to_agent_tool_call`/`use_tool` to
     /// decide whether a call is `Allowed` outright or needs the caller to confirm.
     permission_store: Arc<PermissionStore>,
+    /// Per-user settings — consulted once per turn for the user's custom system prompt
+    /// (a user without one gets the built-in default instead).
+    settings_store: Arc<SettingsStore>,
     /// How many of a chat's most recent messages to pull back for a single
     /// `chat`/`use_tool` call — both the conversation history sent to Ollama and the
     /// window `pending_tool_calls` scans backward through to find unresolved tool
@@ -471,6 +482,7 @@ impl Agent {
         job_store: Arc<JobStore>,
         events: Arc<EventBus>,
         permission_store: Arc<PermissionStore>,
+        settings_store: Arc<SettingsStore>,
         history_len: u64,
         context_length: u64,
     ) -> Self {
@@ -495,6 +507,7 @@ impl Agent {
             tool_context,
             job_store,
             permission_store,
+            settings_store,
             history_len,
             compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
             compaction_keep_chars: (context_length as f64 * KEEP_CHARS_PER_TOKEN) as usize,
@@ -757,7 +770,13 @@ impl Agent {
         // turns except when a compaction fold actually changes the summary — that's
         // what lets Ollama/llama.cpp's prompt cache match this prefix and reuse it
         // instead of reprocessing the whole history on every single turn.
-        let mut system_prompt = SYSTEM_PROMPT.join("\n");
+        // The user's own system prompt, if they set one — fetched once per turn, the same
+        // as the chat row above, so a change (or reset) takes effect from the next turn,
+        // exactly like a model switch. A user without one gets the built-in default.
+        let mut system_prompt = match self.settings_store.system_prompt(chat.user_id).await? {
+            Some(custom) => custom,
+            None => default_system_prompt(),
+        };
         if messages.first().is_some_and(|message| message.role == "system") {
             let summary_message = messages.remove(0);
             system_prompt.push_str("\n\n");

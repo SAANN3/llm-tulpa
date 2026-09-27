@@ -192,6 +192,7 @@ pub async fn bootstrap(
         job_store.clone(),
         events.clone(),
         permission_store.clone(),
+        settings_store.clone(),
         agent_history_len,
         ollama_context_length,
     );
@@ -208,6 +209,7 @@ pub async fn bootstrap(
         job_store.clone(),
         events,
         permission_store.clone(),
+        settings_store.clone(),
         agent_history_len,
         ollama_context_length,
     ));

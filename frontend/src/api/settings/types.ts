@@ -18,3 +18,15 @@ export interface SettingsUpdate {
     llm_provider?: string
     active_model?: string
 }
+
+export interface SystemPromptOut {
+    /** The user's custom system prompt — null while the built-in default applies. */
+    custom: string | null
+    /** The built-in default system prompt. */
+    default: string
+}
+
+export interface SystemPromptUpdate {
+    /** The new prompt — null resets it to the built-in default. */
+    prompt: string | null
+}

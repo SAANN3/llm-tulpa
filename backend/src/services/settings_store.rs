@@ -12,6 +12,10 @@ use crate::services::model_store::{ModelStore, ModelStoreErrors};
 /// The provider reported for a user who hasn't picked a model yet.
 const DEFAULT_PROVIDER: &str = "ollama";
 
+/// The largest custom system prompt accepted — it's sent to the model on every single turn,
+/// so its size is a recurring context cost, and an unbounded one would eat the budget whole.
+const MAX_SYSTEM_PROMPT_CHARS: usize = 100_000;
+
 /// Owns per-user settings (the `user_settings` table, 1:1 with `users`). A user's row is
 /// created empty the first time it's needed (see `row`) and filled in over the setup wizard. The active model lives in the `llm_models` table and
 /// is referenced by id — its name and provider are resolved through `ModelStore`.
@@ -143,6 +147,33 @@ impl SettingsStore {
         model.update(&self.db).await?;
         Ok(())
     }
+
+    /// The user's custom system prompt — `None` while the built-in default applies. Like the
+    /// rest of the store, creates the user's empty row on first use.
+    pub async fn system_prompt(&self, user_id: i64) -> Result<Option<String>, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.system_prompt)
+    }
+
+    /// Sets (or clears, for `None`) the user's custom system prompt. A whitespace-only
+    /// prompt is treated as no prompt at all, and one past `MAX_SYSTEM_PROMPT_CHARS` is
+    /// refused rather than stored — it's prepended to the model's prompt on every turn, so
+    /// its size is a per-turn context cost.
+    pub async fn set_system_prompt(&self, user_id: i64, prompt: Option<String>) -> Result<(), SettingsStoreErrors> {
+        let prompt = prompt
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+        if let Some(p) = &prompt {
+            if p.chars().count() > MAX_SYSTEM_PROMPT_CHARS {
+                return Err(SettingsStoreErrors::SystemPromptTooLarge(MAX_SYSTEM_PROMPT_CHARS));
+            }
+        }
+
+        let existing = self.row(user_id).await?;
+        let mut model: settings::ActiveModel = existing.into();
+        model.system_prompt = Set(prompt);
+        model.update(&self.db).await?;
+        Ok(())
+    }
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema, Clone)]
@@ -169,12 +200,30 @@ pub struct SettingsUpdate {
     pub active_model: Option<String>,
 }
 
+/// The user's custom system prompt alongside the built-in default, for the settings page's
+/// edit pane — `custom` is `None` while the default applies.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct SystemPromptOut {
+    pub custom: Option<String>,
+    pub default: String,
+}
+
+/// A custom-system-prompt update: `Some` text replaces the prompt, `None` (or a `null`
+/// body field) resets it to the built-in default. Unlike `SettingsUpdate` there is no
+/// "leave unchanged" state — the body always states the whole new value.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct SystemPromptUpdate {
+    pub prompt: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum SettingsStoreErrors {
     QueryFailed(DbErr),
     NotFound,
     InvalidTimezone(i32),
     Model(ModelStoreErrors),
+    /// A custom system prompt past `MAX_SYSTEM_PROMPT_CHARS`.
+    SystemPromptTooLarge(usize),
 }
 
 impl From<DbErr> for SettingsStoreErrors {
@@ -204,6 +253,10 @@ impl From<SettingsStoreErrors> for ErrorService {
                 format!("timezone offset {tz} is out of range (-12..=14)"),
             ),
             SettingsStoreErrors::Model(e) => e.into(),
+            SettingsStoreErrors::SystemPromptTooLarge(max) => ErrorService::new(
+                StatusCode::BAD_REQUEST,
+                format!("a custom system prompt may be at most {max} characters"),
+            ),
         }
     }
 }

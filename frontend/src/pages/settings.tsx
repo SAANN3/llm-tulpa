@@ -1,7 +1,7 @@
 import {useState} from 'react'
 import {useNavigate} from 'react-router-dom'
 import '../styles/settings.scss'
-import {Button, Div} from '../components/primitives'
+import {Button, Div, Label} from '../components/primitives'
 import {
     ActiveModelField,
     AutoConfirmField,
@@ -64,6 +64,13 @@ const Settings = () => {
                     <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText}
                                         onTimezoneChanged={setTimezoneText}/>
                     <ThemePreview/>
+                    <Div className="field">
+                        <Label className="field__label" text="System prompt"/>
+                        <Div className="field__control">
+                            <Label variant="secondary" text="How the model behaves in your chats"/>
+                            <Button variant="secondary" text="Customize" onClicked={() => navigate('/settings/system-prompt')}/>
+                        </Div>
+                    </Div>
                     <ActiveModelField
                         provider={settings?.llm_provider ?? 'ollama'}
                         model={settings?.active_model ?? null}
