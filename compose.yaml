@@ -104,6 +104,17 @@ services:
       # *other* windows on the desktop too (read contents, inject input, screenshot
       # the whole screen), not just whatever it launches itself.
       - "/tmp/.X11-unix:/tmp/.X11-unix"
+    # Deliberately NOT ollama/mtp-proxy here, `required: false` or not: Compose still
+    # eagerly starts a listed dependency (just doesn't wait/fail on it) whenever a
+    # command touches this service's chain — including `up <other-service>` for
+    # anything that in turn depends on this one (frontend does), not just a full
+    # `up -d`. Whichever of the two is actually meant to be running is a deliberate,
+    # profile-driven choice (see llm/compose.yaml, .env.example's COMPOSE_PROFILES) —
+    # a narrower command shouldn't silently start the other one alongside it and
+    # fight it for the same GPU. The backend doesn't need either up before its own
+    # startup anyway (see llm.rs's own retry/network-error tolerance for Ollama being
+    # briefly unreachable); a full `docker compose up -d` still starts `ollama` since
+    # it's unprofiled on its own, independent of this list.
     depends_on:
       postgres:
         condition: service_started
@@ -111,12 +122,6 @@ services:
       searxng:
         condition: service_started
         required: true
-      ollama:
-        condition: service_started
-        required: false
-      mtp-proxy:
-        condition: service_started
-        required: false
     restart: unless-stopped
 
   frontend:
