@@ -1,5 +1,6 @@
 import {useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
+import axios from 'axios'
 
 import {Gear} from 'pixelarticons/react'
 
@@ -13,23 +14,32 @@ import {usePlugins} from '../hooks/use-plugins.ts'
 
 const pluginKey = (plugin: PluginInfo): string => `${plugin.plugin_name}/${plugin.plugin_subname}`;
 
+/** The backend's own explanation when it gave one (`{error}`), else a generic fallback */
+const reason = (e: unknown, fallback: string): string =>
+    (axios.isAxiosError(e) && (e.response?.data as {error?: string} | undefined)?.error) || fallback
+
 const Plugins = () => {
     useDocumentTitle('Plugins')
     const navigate = useNavigate()
     const [searchParams] = useSearchParams()
     const {plugins, loading, setEnabled, setSettings, getSchema, getHelp} = usePlugins()
-    const [unconfiguredNotice, setUnconfiguredNotice] = useState<string | null>(null)
+    const [notice, setNotice] = useState<{key: string; message: string} | null>(null)
 
     const onBack = () => navigate('/')
 
-    const onToggle = (plugin: PluginInfo, enabled: boolean) => {
+    const onToggle = async (plugin: PluginInfo, enabled: boolean) => {
+        const key = pluginKey(plugin)
         if (enabled && plugin.settings == null) {
-            setUnconfiguredNotice(pluginKey(plugin))
+            setNotice({key, message: "Set up this plugin's settings before enabling it."})
             return
         }
 
-        setUnconfiguredNotice(null)
-        setEnabled(plugin.plugin_name, plugin.plugin_subname, enabled)
+        setNotice(null)
+        try {
+            await setEnabled(plugin.plugin_name, plugin.plugin_subname, enabled)
+        } catch (e) {
+            setNotice({key, message: reason(e, 'Something went wrong changing this plugin — try again.')})
+        }
     }
 
     const openSettings = (plugin: PluginInfo) =>
@@ -90,9 +100,8 @@ const Plugins = () => {
                                                     </Div>
                                                 </Div>
                                             </Div>
-                                            {unconfiguredNotice === pluginKey(plugin) ? (
-                                                <Label className="plugins__notice"
-                                                       text="Set up this plugin's settings before enabling it."/>
+                                            {notice?.key === pluginKey(plugin) ? (
+                                                <Label className="plugins__notice" text={notice.message}/>
                                             ) : null}
                                         </Div>
                                     ))}

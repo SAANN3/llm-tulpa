@@ -736,7 +736,11 @@ impl Agent {
         notices: Vec<NoticeOut>,
         can_auto_continue: bool,
     ) -> Result<ChatOut, ErrorService> {
-        let tools: Vec<&dyn Tool> = self.tools.get_tools().map(|tool| tool.as_ref()).collect();
+        // Snapshot the current tool set once per turn. Each element is an Arc<dyn Tool>
+        // that can be held past any .await without keeping the ToolService lock open,
+        // so plugin enable/disable can update the set concurrently with ongoing turns.
+        let tools_snapshot: Vec<Arc<dyn Tool>> = self.tools.snapshot_tools().await;
+        let tools: Vec<&dyn Tool> = tools_snapshot.iter().map(|t| t.as_ref()).collect();
 
         // The chat metadata, read fresh so a model switch takes effect on this very turn
         // and last_prompt_tokens is available for accurate budget calculation.
@@ -1485,8 +1489,8 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
         let effective_scope = match scope {
             Some(scope) => {
                 had_scope = true;
-                match self.tools.get_tool(&next.tool_name) {
-                    Some(tool) => resolved_scope_from_json(tool, scope),
+                match self.tools.get_tool(&next.tool_name).await {
+                    Some(tool) => resolved_scope_from_json(tool.as_ref(), scope),
                     None => ResolvedScope::default(),
                 }
             }
@@ -1497,7 +1501,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             }
         };
 
-        let permission = self.tool_permission(&next.tool_name, next.arguments.clone(), effective_scope);
+        let permission = self.tool_permission(&next.tool_name, next.arguments.clone(), effective_scope).await;
 
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
@@ -1587,14 +1591,14 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// the second would erase the first's grant. Reading fresh at the moment each one is
     /// actually persisted is what makes approving both, in sequence, correct.
     pub async fn allow_scope(&self, chat_id: i64, tool_name: String, scope: Value) -> Result<(), ErrorService> {
-        let Some(tool) = self.tools.get_tool(&tool_name) else {
+        let Some(tool) = self.tools.get_tool(&tool_name).await else {
             return Err(ErrorService::new(
                 StatusCode::BAD_REQUEST,
                 format!("no tool named '{tool_name}'"),
             ));
         };
 
-        let delta = resolved_scope_from_json(tool, scope);
+        let delta = resolved_scope_from_json(tool.as_ref(), scope);
 
         if let Some(own_delta) = delta.own {
             let existing = self.get_scope_or_none(chat_id, &tool_name).await?;
@@ -1617,7 +1621,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// `StorageRead` and `StorageWrite` would have one silently overwrite the other if
     /// they were merged into a single map instead of kept apart by bucket.
     async fn stored_scope(&self, chat_id: i64, tool_name: &str) -> Result<ResolvedScope, ErrorService> {
-        let Some(tool) = self.tools.get_tool(tool_name) else {
+        let Some(tool) = self.tools.get_tool(tool_name).await else {
             return Ok(ResolvedScope::default());
         };
 
@@ -1655,8 +1659,8 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// whoever's implementing the tool. A `Denied` from the tool itself always carries
     /// its `reason` through, whether or not it came with an `escalation` — a hard
     /// refusal still needs to reach the UI and the model, not just silently vanish.
-    fn tool_permission(&self, tool_name: &str, data: Value, scope: ResolvedScope) -> AgentToolPermission {
-        let Some(tool) = self.tools.get_tool(tool_name) else {
+    async fn tool_permission(&self, tool_name: &str, data: Value, scope: ResolvedScope) -> AgentToolPermission {
+        let Some(tool) = self.tools.get_tool(tool_name).await else {
             return AgentToolPermission::Denied {
                 reason: format!("no tool named '{tool_name}'"),
                 escalation: None,
@@ -1716,7 +1720,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
         arguments: Value,
     ) -> Result<AgentToolCall, ErrorService> {
         let scope = self.stored_scope(chat_id, &name).await?;
-        let permission = self.tool_permission(&name, arguments.clone(), scope);
+        let permission = self.tool_permission(&name, arguments.clone(), scope).await;
 
         Ok(AgentToolCall {
             permission,

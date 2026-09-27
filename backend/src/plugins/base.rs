@@ -7,7 +7,8 @@ use axum::http::StatusCode;
 use serde_json::Value;
 
 use crate::services::error::ErrorService;
-use crate::tools::base::PropertyInfo;
+use crate::services::tools::ToolServiceError;
+use crate::tools::base::{PropertyInfo, Tool};
 
 /// One running instance of a plugin — e.g. the VK provider under the "messaging"
 /// plugin type. `plugin_name` identifies the type/contract this instance shares with
@@ -44,6 +45,14 @@ pub trait Plugin: Send + Sync {
     /// Called when this plugin instance transitions to disabled — must actually stop
     /// any background work started in `on_enabled`, not just report itself as off.
     async fn on_disabled(&self) -> Result<(), PluginError>;
+
+    /// Tools this plugin contributes to the agent's tool set. Called on `on_enabled`;
+    /// the returned tools are registered in `ToolService` by name and removed again
+    /// on `on_disabled`. Defaults to an empty list — plugins that only serve API routes
+    /// or run background work don't need to override this.
+    fn tools(&self) -> Vec<Box<dyn Tool>> {
+        vec![]
+    }
 }
 
 /// Builds a `Plugin` instance from settings JSON. Kept separate from `Plugin` itself
@@ -78,13 +87,16 @@ pub trait PluginBuilder: Send + Sync {
 /// `plugin_subname`, or a request that doesn't make sense given the plugin's current
 /// state (e.g. enabling one with no settings yet) — not internal failures;
 /// `From<PluginError> for ErrorService` below needs to tell those apart from
-/// `FailedUnknown` to pick the right HTTP status.
+/// `FailedUnknown` to pick the right HTTP status. `ToolConflict` is a client mistake
+/// of a different kind: the plugin tries to register a tool whose name is already taken.
 #[derive(Debug)]
 pub enum PluginError {
     Deserialization(serde_json::Error),
     NotFound(String),
     InvalidState(String),
     FailedUnknown(String),
+    /// A tool exported by this plugin collides with an already-registered tool name.
+    ToolConflict(String),
 }
 
 impl fmt::Display for PluginError {
@@ -94,6 +106,9 @@ impl fmt::Display for PluginError {
             PluginError::NotFound(reason) => write!(f, "plugin not found: {reason}"),
             PluginError::InvalidState(reason) => write!(f, "plugin error: {reason}"),
             PluginError::FailedUnknown(reason) => write!(f, "plugin error: {reason}"),
+            PluginError::ToolConflict(name) => {
+                write!(f, "plugin tool '{name}' conflicts with an already-registered tool")
+            }
         }
     }
 }
@@ -104,6 +119,10 @@ impl From<PluginError> for ErrorService {
             PluginError::Deserialization(e) => ErrorService::new(StatusCode::BAD_REQUEST, format!("invalid plugin settings: {e}")),
             PluginError::NotFound(reason) => ErrorService::new(StatusCode::NOT_FOUND, reason),
             PluginError::InvalidState(reason) => ErrorService::new(StatusCode::BAD_REQUEST, reason),
+            PluginError::ToolConflict(name) => ErrorService::new(
+                StatusCode::CONFLICT,
+                format!("cannot enable plugin: tool '{name}' is already registered by another plugin or built-in tool"),
+            ),
             PluginError::FailedUnknown(reason) => {
                 tracing::error!("plugin error: {reason}");
                 ErrorService::internal(reason)
@@ -111,6 +130,7 @@ impl From<PluginError> for ErrorService {
         }
     }
 }
+
 
 impl From<serde_json::Error> for PluginError {
     fn from(e: serde_json::Error) -> Self {
@@ -121,5 +141,13 @@ impl From<serde_json::Error> for PluginError {
 impl From<crate::services::plugin_settings_store::PluginSettingsStoreErrors> for PluginError {
     fn from(e: crate::services::plugin_settings_store::PluginSettingsStoreErrors) -> Self {
         PluginError::FailedUnknown(format!("plugin settings store error: {e:?}"))
+    }
+}
+
+impl From<ToolServiceError> for PluginError {
+    fn from(e: ToolServiceError) -> Self {
+        match e {
+            ToolServiceError::Collision(name) => PluginError::ToolConflict(name),
+        }
     }
 }

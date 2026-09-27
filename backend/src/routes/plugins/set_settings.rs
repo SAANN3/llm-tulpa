@@ -20,7 +20,9 @@ pub struct SetPluginSettingsBody {
 /// Sets (or replaces) a plugin's settings, rebuilding its live instance from them —
 /// works both for a plugin that's never been configured yet and one that already has
 /// settings, same as `PluginRegistry::update_settings`. Doesn't change whether the
-/// plugin is enabled; use `POST /api/plugins/enable` for that.
+/// plugin is enabled; use `POST /api/plugins/enable` for that. If the plugin is
+/// currently enabled, the new instance's tools (`Plugin::tools`) replace its old ones —
+/// a 409 if any of the new set collides with another already-registered tool name.
 #[utoipa::path(
     post,
     path = "/api/plugins/settings",
@@ -30,6 +32,7 @@ pub struct SetPluginSettingsBody {
         (status = 204, description = "Settings saved and the plugin instance rebuilt"),
         (status = 400, description = "Settings didn't match this plugin's schema", body = crate::services::error::ErrorBody),
         (status = 404, description = "No such plugin", body = crate::services::error::ErrorBody),
+        (status = 409, description = "A tool the rebuilt plugin exports collides with an already-registered tool name", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
 )]

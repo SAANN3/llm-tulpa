@@ -12,6 +12,7 @@ trait Plugin: Send + Sync {
     fn api_router(&self) -> Router;
     async fn on_enabled(&self) -> Result<(), PluginError>;
     async fn on_disabled(&self) -> Result<(), PluginError>;
+    fn tools(&self) -> Vec<Box<dyn Tool>> { vec![] } // defaults to none
 }
 
 trait PluginBuilder: Send + Sync {
@@ -27,7 +28,9 @@ trait PluginBuilder: Send + Sync {
 
 `settings_schema`/`help_message` reuse the same `PropertyInfo` schema tool-calling args use (see [TOOLS.md](./TOOLS.md)) — one generic frontend form renderer for both, instead of hand-built UI per plugin.
 
-`PluginRegistry` ([`src/plugins/registry.rs`](./src/plugins/registry.rs)) holds every registered plugin keyed by `(plugin_name, plugin_subname)`, persists settings/enabled state to Postgres, and serves each plugin's own `api_router()` through one catch-all proxy route (`routes/plugins/proxy.rs`) that looks up the live instance in the registry on every request — so a settings change or enable/disable never requires touching axum's route tree, and the routes exist even when the backend started before a database was configured. Plugins run under the **owner's** account (their settings are the owner's, their chats belong to the owner), so every `/api/plugins/*` route — management and proxied alike — is owner-only. A plugin whose stored settings its builder now rejects is logged and left unconfigured instead of failing startup.
+`PluginRegistry` ([`src/plugins/registry.rs`](./src/plugins/registry.rs)) holds every registered plugin keyed by `(plugin_name, plugin_subname)`, persists settings/enabled state to Postgres, and serves each plugin's own `api_router()` through one catch-all proxy route (`routes/plugins/proxy.rs`) that looks up the live instance in the registry on every request — so a settings change or enable/disable never requires touching axum's route tree, and the routes exist even when the backend started before a database was configured. Plugins run under the **owner's** account (their settings are the owner's, their chats belong to the owner), so every `/api/plugins/*` route — management and proxied alike — is owner-only. A plugin whose stored settings its builder now rejects is logged and left unconfigured instead of failing startup. A plugin whose `settings_schema()` is empty needs no settings input at all — `register` gives it a built `{}` instance right away instead of leaving it stuck unconfigured forever.
+
+A plugin's `tools()` (default: none) are registered in the shared `ToolService` — the same set the main agent calls from — the moment it's enabled, and unregistered the moment it's disabled, live, with no restart. `ToolService` validates a plugin's whole tool batch against every already-registered name (built-in and other plugins' alike) before adding any of them, so an enable either adds all of a plugin's tools or none of them; a collision surfaces as `409` from `POST /api/plugins/enable` or `POST /api/plugins/settings` (the latter when a settings change would swap in a new instance whose tools collide) and leaves the plugin disabled.
 
 ## Messaging plugin type
 `messaging` is the one plugin type that exists today — chat platforms as interchangeable subplugins. A concrete provider only ever implements `MessagingProvider` ([`src/plugins/messaging/provider.rs`](./src/plugins/messaging/provider.rs)):

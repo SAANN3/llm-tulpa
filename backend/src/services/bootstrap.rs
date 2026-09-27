@@ -211,7 +211,7 @@ pub async fn bootstrap(
         ollama_context_length,
     ));
 
-    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store));
+    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone()));
     let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
         Arc::new(MessagingProviderBuilder::<TelegramProvider>::new(plugin_agent.clone(), chat_store.clone())),
         Arc::new(MessagingProviderBuilder::<DiscordProvider>::new(plugin_agent.clone(), chat_store.clone())),

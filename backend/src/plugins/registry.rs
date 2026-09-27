@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use super::base::{Plugin, PluginBuilder, PluginError};
 use crate::services::error::ErrorService;
 use crate::services::plugin_settings_store::PluginSettingsStore;
+use crate::services::tools::ToolService;
 
 /// Identifies one plugin instance: (plugin_name, plugin_subname) — e.g.
 /// ("messaging", "vk"). `plugin_name` groups instances that share an API shape and
@@ -59,17 +60,28 @@ struct PluginEntry {
 /// `PluginSettingsStore`); `register`/`update_settings`/`set_enabled` below all call
 /// `Plugin::on_enabled`/`on_disabled` themselves wherever a plugin's running state
 /// actually changes, so nothing outside this module ever needs to call them directly.
+/// When a plugin is enabled/disabled, its `tools()` are registered/unregistered in
+/// `ToolService` so the agent's tool set updates on the next turn without a restart.
 pub struct PluginRegistry {
     entries: RwLock<HashMap<PluginKey, PluginEntry>>,
     /// The only thing outside this module that ever talks to `PluginSettingsStore` —
     /// every read/write goes through `register`/`update_settings`/`set_enabled` below,
     /// so nothing else in the app needs to know the store exists.
     store: Arc<PluginSettingsStore>,
+    /// The shared tool service — updated whenever a plugin is enabled or disabled.
+    tools: Arc<ToolService>,
+}
+
+/// The names of a plugin's own tools, freshly read from it — used to tell `ToolService`
+/// exactly what to remove on disable, without this module needing to remember anything
+/// about it in between.
+fn tool_names(plugin: &Arc<dyn Plugin>) -> Vec<String> {
+    plugin.tools().iter().map(|t| t.function_name().to_string()).collect()
 }
 
 impl PluginRegistry {
-    pub fn new(store: Arc<PluginSettingsStore>) -> Self {
-        Self { entries: RwLock::new(HashMap::new()), store }
+    pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>) -> Self {
+        Self { entries: RwLock::new(HashMap::new()), store, tools }
     }
 
     /// Registers a plugin under the builder's own `(plugin_name, plugin_subname)`.
@@ -99,6 +111,14 @@ impl PluginRegistry {
             Some(persisted) => (Some(persisted.settings), persisted.enabled),
             None => (initial_settings, enabled),
         };
+
+        // A plugin with an empty settings schema takes no configuration at all — it
+        // would otherwise be stuck permanently unconfigured (`plugin: None`), since
+        // nothing would ever call `update_settings` for it to produce the `Some` this
+        // needs to build an instance and become enableable.
+        let initial_settings = initial_settings.or_else(|| {
+            builder.settings_schema().is_empty().then(|| Value::Object(Default::default()))
+        });
 
         if enabled && initial_settings.is_none() {
             return Err(PluginError::FailedUnknown(
@@ -130,6 +150,22 @@ impl PluginRegistry {
         if enabled {
             if let Some(plugin) = &plugin {
                 plugin.on_enabled().await?;
+                // Register this plugin's tools in the shared ToolService.
+                // If there's a collision (another plugin or built-in already owns that name),
+                // undo on_enabled and leave this plugin disabled rather than crashing.
+                if let Err(e) = self.tools.add_plugin_tools(plugin.tools()).await {
+                    tracing::warn!(
+                        "could not register tools for {plugin_name}/{plugin_subname}: {e}; disabling plugin"
+                    );
+                    let _ = plugin.on_disabled().await;
+                    let enabled = false;
+                    if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
+                        let _ = self.store.set(&plugin_name, &plugin_subname, settings, enabled).await;
+                    }
+                    let key = Self::key(&plugin_name, &plugin_subname);
+                    self.entries.write().await.insert(key, PluginEntry { builder, plugin: Some(plugin.clone()), router, enabled });
+                    return Err(PluginError::from(e));
+                }
             }
         }
 
@@ -209,19 +245,35 @@ impl PluginRegistry {
             PluginError::NotFound(format!("no such plugin {plugin_name}/{plugin_subname}"))
         })?;
 
-        if entry.enabled {
+        let was_enabled = entry.enabled;
+        let old_settings = entry.plugin.as_ref().map(|p| p.settings_value());
+
+        if was_enabled {
             if let Some(old_plugin) = &entry.plugin {
                 old_plugin.on_disabled().await?;
+                self.tools.remove_tools(&tool_names(old_plugin)).await;
+            }
+            // Reflect reality immediately, before attempting the rebuild below: the old
+            // instance is genuinely stopped and toolless right now, so a failure further
+            // down (bad settings, a tool collision) must not leave this plugin reporting
+            // `enabled: true` while actually being neither — persisting the old settings
+            // here means a failed rebuild leaves the plugin cleanly off, not stuck between.
+            entry.enabled = false;
+            if let Some(old_settings) = old_settings {
+                self.store.set(plugin_name, plugin_subname, old_settings, false).await?;
             }
         }
 
         let plugin = entry.builder.build(settings.clone()).await?;
         entry.router = Some(plugin.api_router());
+        entry.plugin = Some(plugin.clone());
 
-        if entry.enabled {
+        if was_enabled {
             plugin.on_enabled().await?;
+            // Register the freshly-built plugin's tools.
+            self.tools.add_plugin_tools(plugin.tools()).await.map_err(PluginError::from)?;
+            entry.enabled = true;
         }
-        entry.plugin = Some(plugin);
 
         self.store.set(plugin_name, plugin_subname, settings, entry.enabled).await?;
         Ok(())
@@ -292,8 +344,16 @@ impl PluginRegistry {
         if let Some(plugin) = &entry.plugin {
             if enabled {
                 plugin.on_enabled().await?;
+                // Validate + register tools atomically. On collision: undo on_enabled
+                // and surface the error — the plugin stays disabled.
+                if let Err(e) = self.tools.add_plugin_tools(plugin.tools()).await {
+                    let _ = plugin.on_disabled().await;
+                    return Err(PluginError::from(e));
+                }
             } else {
                 plugin.on_disabled().await?;
+                // Remove tools after a successful on_disabled.
+                self.tools.remove_tools(&tool_names(plugin)).await;
             }
         }
 

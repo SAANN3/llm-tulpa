@@ -15,7 +15,10 @@ pub struct SetPluginEnabledBody {
 
 /// Enables or disables a registered plugin, running its `on_enabled`/`on_disabled`
 /// hook (whichever applies) as part of the transition. `enabled: true` fails with 400
-/// if the plugin has never been given settings — see `PluginRegistry::set_enabled`.
+/// if the plugin has never been given settings, and with 409 if any tool it exports
+/// (`Plugin::tools`) collides with an already-registered tool name — neither of those
+/// tools is registered in that case, nor is the plugin left enabled — see
+/// `PluginRegistry::set_enabled`.
 #[utoipa::path(
     post,
     path = "/api/plugins/enable",
@@ -25,6 +28,7 @@ pub struct SetPluginEnabledBody {
         (status = 204, description = "Enabled state changed"),
         (status = 400, description = "Can't enable a plugin with no settings configured yet", body = crate::services::error::ErrorBody),
         (status = 404, description = "No such plugin", body = crate::services::error::ErrorBody),
+        (status = 409, description = "A tool this plugin exports collides with an already-registered tool name", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
 )]
