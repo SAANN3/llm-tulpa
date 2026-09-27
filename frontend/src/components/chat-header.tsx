@@ -1,10 +1,13 @@
 import {useState} from 'react'
+import {Search} from 'pixelarticons/react'
 
 import '../styles/chat-header.scss'
 import {setChatModel} from '../api/chats/set-model'
-import {Button, Div, Label} from './primitives'
+import type {MessageSearchOut} from '../api/chats/types'
+import {ChatSearch} from './chat-search.tsx'
 import {ModelPicker} from './model-picker.tsx'
 import {Popup} from './popup.tsx'
+import {Button, Div, Label} from './primitives'
 
 export interface ChatHeaderProps {
     chatId: number
@@ -13,11 +16,15 @@ export interface ChatHeaderProps {
     model: string | null
     provider: string
     onModelChanged: (model: string) => void
+    /** Scroll the chat to the message of a clicked search hit */
+    onSelectSearchResult: (hit: MessageSearchOut, query: string) => void
 }
 
-/** The bar above a chat's messages: its name plus the model it's bound to, with a switcher popup */
-export const ChatHeader = ({chatId, name, model, provider, onModelChanged}: ChatHeaderProps) => {
+/** The bar above a chat's messages: its name, the model it's bound to (with a switcher popup),
+ * and in-chat message search */
+export const ChatHeader = ({chatId, name, model, provider, onModelChanged, onSelectSearchResult}: ChatHeaderProps) => {
     const [open, setOpen] = useState(false)
+    const [searchOpen, setSearchOpen] = useState(false)
 
     const onSelect = async (chosen: string) => {
         await setChatModel(chatId, chosen, provider)
@@ -32,11 +39,29 @@ export const ChatHeader = ({chatId, name, model, provider, onModelChanged}: Chat
                 <span className="chat-header__model-label">model:</span>
                 <span className="chat-header__model-name">{model ?? '…'}</span>
             </Button>
+            <Button className="chat-header__search"
+                    onClicked={() => setSearchOpen(true)}>
+                <Search width={20} height={20}/>
+            </Button>
             <Popup open={open} onClose={() => setOpen(false)} centered>
                 <Div className="dos-frame chat-header__picker">
                     <span className="dos-frame__title">Choose model</span>
                     <Div className="dos-frame__body">
                         <ModelPicker selected={model} onSelect={onSelect}/>
+                    </Div>
+                </Div>
+            </Popup>
+            <Popup open={searchOpen} onClose={() => setSearchOpen(false)} centered>
+                <Div className="dos-frame chat-header__search-box">
+                    <span className="dos-frame__title">Search messages</span>
+                    <Div className="dos-frame__body">
+                        <ChatSearch
+                            chatId={chatId}
+                            onSelect={(hit, query) => {
+                                setSearchOpen(false)
+                                onSelectSearchResult(hit, query)
+                            }}
+                            onClose={() => setSearchOpen(false)}/>
                     </Div>
                 </Div>
             </Popup>

@@ -39,3 +39,22 @@ export interface MessagesResponse {
     messages: MessageOut[]
     total: number
 }
+
+export interface MessageSearchOut {
+    id: number
+    role: string
+    created_at: string
+    /** The content before the matched text, trimmed to a snippet; null when the match starts at the message's beginning */
+    before: string | null
+    /** The matched text itself, as it appears in the message */
+    matched: string
+    /** The content after the matched text, trimmed to a snippet; null when the match ends at the message's end */
+    after: string | null
+    /** Where the match was found: "content", "thinking", or "arguments" (a tool call's) */
+    matched_in: string
+}
+
+export interface MessageSearchResponse {
+    matches: MessageSearchOut[]
+    total: number
+}

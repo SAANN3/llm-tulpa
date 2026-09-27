@@ -8,6 +8,7 @@ export const Input = ({
     onChanged,
     placeholder,
     type = 'text',
+    autoFocus,
     onHovered,
     onKeyDown
 }: ThemedProps<InputProps>) => (
@@ -18,6 +19,7 @@ export const Input = ({
         data-variant={variant}
         value={text}
         placeholder={placeholder}
+        autoFocus={autoFocus}
         onChange={(e) => onChanged(e.target.value)}
         onMouseEnter={() => onHovered?.(true)}
         onMouseLeave={() => onHovered?.(false)}

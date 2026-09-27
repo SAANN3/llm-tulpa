@@ -3,6 +3,7 @@ import {Navigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
 import type {ThinkChoice} from '../api/agent/types'
 import {getChats} from '../api/chats/get'
+import type {MessageSearchOut} from '../api/chats/types'
 import {ChatHeader} from '../components/chat-header.tsx'
 import {ChatMessage} from '../components/chat-message.tsx'
 import {DateSeparator} from '../components/date-separator.tsx'
@@ -53,7 +54,7 @@ const Chat = () => {
 
 const ChatView = ({chatId}: { chatId: number }) => {
     const lazyListRef = useRef<LazyListHandle>(null)
-    const {messages, loadOlder, send, resume, runJobNotices, sending, canContinue} = useMessages(chatId, () =>
+    const {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
     )
 
@@ -82,8 +83,16 @@ const ChatView = ({chatId}: { chatId: number }) => {
     }, [chatId])
 
     const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({})
-    const toggleToolExpanded = (index: number) =>
-        setExpandedTools((prev) => ({...prev, [index]: !prev[index]}))
+    const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({})
+    const toggleToolExpanded = (id: number) =>
+        setExpandedTools((prev) => ({...prev, [id]: !prev[id]}))
+    const toggleThinkingExpanded = (id: number) =>
+        setExpandedThinking((prev) => ({...prev, [id]: !prev[id]}))
+    const [searchHighlight, setSearchHighlight] = useState<{
+        messageId: number
+        query: string
+        matchedIn: string
+    } | null>(null)
     const [pausedTurn, setPausedTurn] = useState<PausedTurn | null>(null)
     const [turnError, setTurnError] = useState<string | null>(null)
     const chatIdRef = useRef(chatId)
@@ -143,7 +152,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
     useEffect(() => {
         setPausedTurn(null)
         setExpandedTools({})
+        setExpandedThinking({})
         setTurnError(null)
+        setSearchHighlight(null)
     }, [chatId])
 
     useEffect(() => {
@@ -187,42 +198,82 @@ const ChatView = ({chatId}: { chatId: number }) => {
             })
     }, [canContinue, chatId])
 
+    // A search hit may live in a page that isn't loaded yet: load older pages until it's
+    // mounted, then scroll to it.
+    const messagesRef = useRef(messages)
+    messagesRef.current = messages
+    const totalRef = useRef(total)
+    totalRef.current = total
+    const loadOlderRef = useRef(loadOlder)
+    loadOlderRef.current = loadOlder
+
+    const jumpToMessage = async (hit: MessageSearchOut, query: string) => {
+        const keyword = query.trim() || hit.matched
+        setSearchHighlight({messageId: hit.id, query: keyword, matchedIn: hit.matched_in})
+        setExpandedTools((prev) => ({...prev, [hit.id]: true}))
+        setExpandedThinking((prev) => ({...prev, [hit.id]: true}))
+        const messageId = String(hit.id)
+        const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+        for (let attempt = 0; attempt < 500; attempt += 1) {
+            await settle()
+            if (lazyListRef.current?.scrollToMessage(messageId)) {
+                await settle()
+                lazyListRef.current?.scrollToMessage(messageId)
+                return
+            }
+            const loaded = await loadOlderRef.current()
+            if (!loaded && messagesRef.current.length >= totalRef.current) return
+            await settle()
+        }
+    }
+
     return (
         <Div className="page">
             <Sidebar/>
             <Div className="chat">
                 <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider}
-                            onModelChanged={setChatModel}/>
+                            onModelChanged={setChatModel}
+                            onSelectSearchResult={jumpToMessage}/>
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {
                         const prev = messages[i - 1]
                         const showDate = !prev || !isSameDay(new Date(m.created_at), new Date(prev.created_at))
+                        const isHit = m.id != null && searchHighlight?.messageId === m.id
+                        const highlightQuery = isHit && searchHighlight ? searchHighlight.query : null
+                        const id = m.id
                         return (
-                            <Fragment key={i}>
+                            <Fragment key={m.id ?? i}>
                                 {showDate ? <DateSeparator date={new Date(m.created_at)}/> : null}
-                                {m.role === 'notice' ? (
-                                    <NoticeMessage content={m.content}/>
-                                ) : m.role === 'tool' ? (
-                                    <ToolMessage
-                                        tool_name={m.tool_name ?? m.role}
-                                        content={m.content}
-                                        created_at={m.created_at}
-                                        arguments={m.arguments}
-                                        expanded={expandedTools[i] ?? false}
-                                        onToggle={() => toggleToolExpanded(i)}
-                                    />
-                                ) : (
-                                    <ChatMessage
-                                        role={m.role}
-                                        content={m.content}
-                                        created_at={m.created_at}
-                                        thinking={m.thinking}
-                                        thought_duration_ms={m.thought_duration_ms}
-                                        images={m.images}
-                                        file_ids={m.file_ids}
-                                    />
-                                )}
+                                <div className="chat__message" data-message-id={m.id}>
+                                    {m.role === 'notice' ? (
+                                        <NoticeMessage content={m.content}/>
+                                    ) : m.role === 'tool' ? (
+                                        <ToolMessage
+                                            tool_name={m.tool_name ?? m.role}
+                                            content={m.content}
+                                            created_at={m.created_at}
+                                            arguments={m.arguments}
+                                            expanded={id != null ? (expandedTools[id] ?? false) : false}
+                                            onToggle={() => id != null && toggleToolExpanded(id)}
+                                            highlightQuery={highlightQuery}
+                                        />
+                                    ) : (
+                                        <ChatMessage
+                                            role={m.role}
+                                            content={m.content}
+                                            created_at={m.created_at}
+                                            thinking={m.thinking}
+                                            thought_duration_ms={m.thought_duration_ms}
+                                            images={m.images}
+                                            file_ids={m.file_ids}
+                                            highlightQuery={highlightQuery}
+                                            thinkingExpanded={id != null ? (expandedThinking[id] ?? false) : false}
+                                            onToggleThinking={() => id != null && toggleThinkingExpanded(id)}
+                                        />
+                                    )}
+                                </div>
                             </Fragment>
                         )
                     })}

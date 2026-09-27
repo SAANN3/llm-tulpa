@@ -6,8 +6,10 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use entities::{chats, message_files, message_images, messages, plugin_chats, tool_calls};
 use sea_orm::{
-    prelude::*, sea_query::Expr, ActiveValue::Set, DatabaseConnection, PaginatorTrait,
-    QueryOrder, QuerySelect, TransactionError, TransactionTrait,
+    prelude::*,
+    sea_query::{ColumnName, DynIden, Expr, ExprTrait, TableName},
+    ActiveValue::Set, DatabaseConnection, PaginatorTrait, QueryOrder, QuerySelect,
+    QueryTrait, TransactionError, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
@@ -197,6 +199,134 @@ impl ChatStore {
             .await?;
 
         self.hydrate_messages(rows).await
+    }
+
+    /// Messages of a chat whose content, thinking, or a tool call's arguments contain
+    /// `query` (case-insensitive substring, like a chat search box), newest first. Each
+    /// hit carries which source matched (`matched_in`), the content around its first
+    /// match as a snippet (`before`/`after` are null at that content's own edges), and —
+    /// for a tool-arguments match — the id of the *tool result* message the arguments
+    /// belong to (they're persisted on the assistant's row, but the UI renders them on
+    /// the paired result row), so a hit's `id` always names the message a search
+    /// click should land on. Also returns the total match count for the whole chat.
+    pub async fn search_messages(
+        &self,
+        chat_id: i64,
+        query: &str,
+        limit: u64,
+        include_thinking: bool,
+        include_tools: bool,
+    ) -> Result<(Vec<MessageSearchHit>, u64), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+
+        // Escape LIKE wildcards so a searched `%` or `_` matches itself, not anything.
+        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{}%", escaped);
+
+        let mut filter = messages::Column::ChatId
+            .eq(chat_id)
+            .and(ilike(messages::Column::Content.into_expr(), &pattern));
+
+        if include_thinking {
+            let thinking_match = messages::Column::ChatId
+                .eq(chat_id)
+                .and(ilike(messages::Column::Thinking.into_expr(), &pattern));
+            filter = filter.or(thinking_match);
+        }
+
+        if include_tools {
+            let args_exists = Expr::exists(
+                tool_calls::Entity::find()
+                    .select_only()
+                    .column(tool_calls::Column::Id)
+                    .filter(
+                        tool_calls::Column::MessageId
+                            .into_expr()
+                            // Qualified so the subquery correlates to the outer
+                            // `messages` row, not `tool_calls`' own `id` column.
+                            .equals(ColumnName(
+                                Some(TableName(None, DynIden::from("messages"))),
+                                DynIden::from("id"),
+                            )),
+                    )
+                    .filter(ilike(
+                        tool_calls::Column::Arguments.into_expr().cast_as("TEXT"),
+                        &pattern,
+                    ))
+                    .as_query()
+                    .clone(),
+            );
+            let args_match = messages::Column::ChatId.eq(chat_id).and(args_exists);
+            filter = filter.or(args_match);
+        }
+
+        let base = messages::Entity::find().filter(filter);
+        let total = base.clone().count(&self.db).await?;
+
+        let rows = base
+            .order_by_desc(messages::Column::CreatedAt)
+            .limit(limit)
+            .all(&self.db)
+            .await?;
+
+        // Which source matched needs the tool calls (for arguments) and every tool
+        // result row of the chat (to re-point an arguments hit at the row that renders
+        // it) — the result rows themselves usually aren't search hits, so this is all
+        // of them, not just the matched ids.
+        let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let tool_calls = self.tool_calls_by_messages(ids.clone()).await?;
+        let tool_row_ids: Vec<i64> = messages::Entity::find()
+            .select_only()
+            .column(messages::Column::Id)
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .filter(messages::Column::Role.eq("tool"))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+
+        let mut hits = Vec::with_capacity(rows.len());
+        for row in rows {
+            let own_calls: &[ToolCallOut] = tool_calls.get(&row.id).map_or(&[], Vec::as_slice);
+            let Some(source) = find_search_source(&row, query, own_calls, include_thinking, include_tools) else {
+                continue // recalled only by the SQL's coarse `::text` form
+            };
+            let (source_text, matched_in) = match &source {
+                SearchSource::Content => (row.content.clone(), "content"),
+                SearchSource::Thinking => (row.thinking.clone().unwrap_or_default(), "thinking"),
+                SearchSource::Arguments(call_index) => (
+                    serde_json::to_string(&own_calls[*call_index].arguments).unwrap_or_default(),
+                    "arguments",
+                ),
+            };
+            let (before, matched, after) =
+                snippet_around(&source_text, query, SNIPPET_CONTEXT_CHARS).unwrap_or_default();
+            hits.push(MessageSearchHit {
+                // An arguments match renders on the tool *result* row paired with the
+                // call, not on the assistant row that owns the call — point the hit
+                // there so a search click lands on the card that shows the arguments.
+                id: match source {
+                    SearchSource::Arguments(call_index) => {
+                        Self::tool_result_row_id(&tool_row_ids, row.id, call_index).unwrap_or(row.id)
+                    }
+                    _ => row.id,
+                },
+                role: row.role,
+                created_at: row.created_at,
+                before,
+                matched,
+                after,
+                matched_in,
+            });
+        }
+
+        Ok((hits, total))
+    }
+
+    /// The k-th (0-based, in id order) tool result row stored after `assistant_id` —
+    /// the row the display pairing matches with the k-th tool call of that assistant
+    /// message — or None when there aren't that many.
+    fn tool_result_row_id(tool_row_ids: &[i64], assistant_id: i64, call_index: usize) -> Option<i64> {
+        tool_row_ids.iter().copied().filter(|id| *id > assistant_id).nth(call_index)
     }
 
     /// Attaches each row's tool calls, images and files (one batched query each) and maps
@@ -650,6 +780,115 @@ pub struct Message {
     pub file_ids: Vec<i64>,
     pub prompt_tokens: Option<i64>,
     pub eval_tokens: Option<i64>,
+}
+
+/// One search hit: the message to land on, plus a snippet around the first match.
+/// `before`/`after` are null at the matched content's own edges, so a match at
+/// position 0 renders as `matched…` rather than `…matched…`.
+pub struct MessageSearchHit {
+    pub id: i64,
+    pub role: String,
+    pub created_at: DateTimeUtc,
+    pub before: Option<String>,
+    pub matched: String,
+    pub after: Option<String>,
+    /// Which source matched: "content", "thinking", or "arguments" (a tool call's).
+    pub matched_in: &'static str,
+}
+
+/// Which source of a message `search_messages` matched in, in display priority order
+/// (content first — it's what the user sees without expanding anything).
+enum SearchSource {
+    Content,
+    Thinking,
+    /// The `position`-th tool call of the message (call order = model request order).
+    Arguments(usize),
+}
+
+/// Which source of a message's text actually contains `query`, case-insensitively,
+/// in display priority order (content first — it's what the user sees without
+/// expanding anything). None when nothing matches — only then can a row the coarse
+/// SQL `LIKE` recalled turn out to be a false positive (jsonb's `::text` spacing).
+fn find_search_source(
+    row: &messages::Model,
+    query: &str,
+    calls: &[ToolCallOut],
+    include_thinking: bool,
+    include_tools: bool,
+) -> Option<SearchSource> {
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    if row.content.to_lowercase().contains(&needle) {
+        return Some(SearchSource::Content);
+    }
+    if include_thinking
+        && row
+            .thinking
+            .as_deref()
+            .map(|t| t.to_lowercase().contains(&needle))
+            .unwrap_or(false)
+    {
+        return Some(SearchSource::Thinking);
+    }
+    if include_tools {
+        for (position, call) in calls.iter().enumerate() {
+            // The compact form is what `snippet_around` shapes below; it differs from
+            // the jsonb `::text` the SQL matched only in spacing, which a plain keyword
+            // search never depends on.
+            let compact = serde_json::to_string(&call.arguments).unwrap_or_default();
+            if compact.to_lowercase().contains(&needle) {
+                return Some(SearchSource::Arguments(position));
+            }
+        }
+    }
+    None
+}
+
+/// Case-insensitive `LIKE` — the `ilike` method lives on sea-query's Postgres extension
+/// trait, which this helper is the only place that imports it: the trait has a `contains`
+/// method (the `@>` operator) whose blanket impl shadows `str::contains` for `String`
+/// receivers anywhere the trait is in scope.
+fn ilike(expr: Expr, pattern: &String) -> Expr {
+    use sea_orm::sea_query::extension::postgres::PgExpr as _;
+    expr.ilike(pattern)
+}
+
+/// How much content each side of a search match's snippet shows (per side, not total).
+const SNIPPET_CONTEXT_CHARS: usize = 80;
+
+/// Finds the first case-insensitive occurrence of `query` in `content` and splits
+/// around it: (before, matched, after), each trimmed to at most `context_chars` of
+/// surrounding content. None when the query is absent or empty — the SQL `LIKE` does
+/// the coarse match, this just shapes the snippet.
+fn snippet_around(
+    content: &str,
+    query: &str,
+    context_chars: usize,
+) -> Option<(Option<String>, String, Option<String>)> {
+    let lower = content.to_lowercase();
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+
+    let start = lower.find(&needle)?;
+    let before_end = start;
+    let after_start = start + needle.len();
+
+    let before = if before_end == 0 {
+        None
+    } else {
+        Some(content[..before_end].chars().rev().take(context_chars).collect::<String>().chars().rev().collect())
+    };
+    let after = if after_start >= content.len() {
+        None
+    } else {
+        Some(content[after_start..].chars().take(context_chars).collect())
+    };
+
+    Some((before, content[start..after_start].to_string(), after))
 }
 
 #[derive(Clone)]

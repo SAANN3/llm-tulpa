@@ -6,6 +6,8 @@ import { Div } from './primitives'
 export interface LazyListHandle {
   jumpToTop: () => void
   jumpToBottom: () => void
+  /** Smoothly scrolls the element carrying `data-message-id` into view (centered); true when it was in the DOM */
+  scrollToMessage: (messageId: string) => boolean
 }
 
 export interface LazyListProps {
@@ -37,7 +39,7 @@ export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyL
   // runs — a render committing in that gap (the one that paints the content the jump is
   // reacting to) would otherwise run the anchor-restore effect below against the old anchor and
   // leave `scrollTop` somewhere between the two edges. Both layout effects skip while it's set.
-  const pendingJumpRef = useRef<'top' | 'bottom' | null>(null)
+  const pendingJumpRef = useRef<'top' | 'bottom' | 'message' | null>(null)
 
   useImperativeHandle(
     ref,
@@ -61,6 +63,19 @@ export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyL
           el.scrollTop = el.scrollHeight
           anchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
         })
+      },
+      scrollToMessage: (messageId: string): boolean => {
+        const el = innerRef.current
+        if (!el) return false
+        const target = el.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)
+        if (!target) return false
+        pendingJumpRef.current = 'message'
+        requestAnimationFrame(() => {
+          pendingJumpRef.current = null
+          const matchEl = target.querySelector('.search-match-target')
+          ;(matchEl ?? target).scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
+        return true
       },
     }),
     [],

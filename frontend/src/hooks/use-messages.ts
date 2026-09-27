@@ -24,6 +24,7 @@ const MESSAGES_PAGE_SIZE = 30
 
 export type DisplayMessage =
     | {
+    id?: number
     role: 'user' | 'assistant'
     content: string
     created_at: string
@@ -33,13 +34,14 @@ export type DisplayMessage =
     file_ids?: number[]
 }
     | {
+    id?: number
     role: 'tool';
     content: unknown;
     tool_name: string | null;
     created_at: string;
     arguments: Record<string, unknown>
 }
-    | { role: 'notice'; content: string; created_at: string }
+    | { id?: number; role: 'notice'; content: string; created_at: string }
 
 /** Maps a fetched page of messages to display form, pairing each tool message with its call arguments */
 const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
@@ -51,6 +53,7 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
         }
         if (m.role === 'tool') {
             return {
+                id: m.id,
                 role: 'tool',
                 content: m.content,
                 tool_name: m.tool_name,
@@ -59,9 +62,10 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
             }
         }
         if (m.role === 'notice') {
-            return {role: 'notice', content: m.content, created_at: m.created_at}
+            return {id: m.id, role: 'notice', content: m.content, created_at: m.created_at}
         }
         return {
+            id: m.id,
             role: m.role as 'user' | 'assistant',
             content: m.content,
             created_at: m.created_at,
@@ -271,8 +275,8 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }, [chatId])
 
-    const loadOlder = async () => {
-        if (loadingMore || messages.length >= total) return
+    const loadOlder = async (): Promise<boolean> => {
+        if (loadingMore || messages.length >= total) return false
 
         setLoadingMore(true)
         try {
@@ -281,6 +285,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
             const older = toDisplayMessages([...result.messages].reverse())
             setMessages((prev) => [...older, ...prev])
             setTotal(result.total)
+            return older.length > 0
         } finally {
             setLoadingMore(false)
         }
@@ -382,5 +387,5 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    return {messages, loadOlder, send, resume, runJobNotices, sending, canContinue}
+    return {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue}
 };

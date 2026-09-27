@@ -7,4 +7,12 @@
   border-radius: 0;
   overflow: hidden;
   @include dos-shadow(var(--color-shadow));
+
+  &:has(.dos-frame) {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
 }
+

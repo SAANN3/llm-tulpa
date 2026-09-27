@@ -2,6 +2,7 @@ import {ChevronDown, ChevronRight} from 'pixelarticons/react'
 
 import '../styles/tool-message.scss'
 import {Div, Label} from './primitives'
+import {highlightText} from '../utils/highlight.tsx'
 
 export interface ToolMessageProps {
     tool_name: string
@@ -12,6 +13,7 @@ export interface ToolMessageProps {
     err?: string | null
     expanded: boolean
     onToggle: () => void
+    highlightQuery?: string | null
 }
 
 const ID_KEYS = ['path', 'file', 'filename', 'dir', 'directory', 'url', 'query', 'command', 'name', 'id']
@@ -42,10 +44,10 @@ const describeResult = (content: unknown): string => {
 };
 
 /** A bounded, scrollable, labelled block of pre-formatted JSON */
-const DetailBlock = ({label, text}: { label: string; text: string }) => (
+const DetailBlock = ({label, text, highlightQuery}: { label: string; text: string; highlightQuery?: string | null }) => (
     <Div className="vbox tool-message__block">
         <Label variant="secondary" className="tool-message__block-label" text={label}/>
-        <pre className="mono tool-message__pre">{text}</pre>
+        <pre className="mono tool-message__pre">{highlightText(text, highlightQuery)}</pre>
     </Div>
 );
 
@@ -59,7 +61,8 @@ export const ToolMessage = ({
 
     err,
     expanded,
-    onToggle
+    onToggle,
+    highlightQuery
 }: ToolMessageProps) => {
     const contentText = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
     const argsText = args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null
@@ -86,8 +89,8 @@ export const ToolMessage = ({
                 </Div>
                 {expanded ? (
                     <Div className="vbox tool-message__detail">
-                        {argsText ? <DetailBlock label="ARGUMENTS" text={argsText}/> : null}
-                        <DetailBlock label="RESULT" text={contentText}/>
+                        {argsText ? <DetailBlock label="ARGUMENTS" text={argsText} highlightQuery={highlightQuery}/> : null}
+                        <DetailBlock label="RESULT" text={contentText} highlightQuery={highlightQuery}/>
                         {success === false && err ?
                             <Label variant="secondary" className="tool-message__err" text={err}/> : null}
                     </Div>

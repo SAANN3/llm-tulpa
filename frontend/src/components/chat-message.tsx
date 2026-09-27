@@ -1,11 +1,14 @@
-import {useState} from 'react'
+import {useMemo, useState} from 'react'
+import type {ElementType, ReactNode} from 'react'
 import ReactMarkdown from 'react-markdown'
+import type {Components} from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import {ChevronDown, ChevronRight} from 'pixelarticons/react'
 import '../styles/chat-message.scss'
 import {Attachment} from './attachment.tsx'
 import {Button, Div, Label} from './primitives'
+import {highlightInNode, highlightText} from '../utils/highlight.tsx'
 
 export interface ChatMessageProps {
     role: 'user' | 'assistant'
@@ -15,6 +18,9 @@ export interface ChatMessageProps {
     thought_duration_ms?: number | null
     images?: string[]
     file_ids?: number[]
+    highlightQuery?: string | null
+    thinkingExpanded?: boolean
+    onToggleThinking?: () => void
 }
 
 const formatThoughtDuration = (ms: number): string => {
@@ -34,10 +40,44 @@ export const ChatMessage = ({
     thinking,
     thought_duration_ms,
     images,
-    file_ids
+    file_ids,
+    highlightQuery,
+    thinkingExpanded,
+    onToggleThinking,
 }: ChatMessageProps) => {
     const isUser = role === 'user'
-    const [showThinking, setShowThinking] = useState(false)
+    const [localThinking, setLocalThinking] = useState(false)
+    const isThinkingOpen = thinkingExpanded !== undefined ? thinkingExpanded : localThinking
+    const handleToggleThinking = onToggleThinking ?? (() => setLocalThinking((v) => !v))
+
+    const markdownComponents = useMemo(() => {
+        if (!highlightQuery?.trim()) return undefined
+        const q = highlightQuery.trim()
+        const wrap = (tag: ElementType) => {
+            const Tag = tag
+            return ({children, node: _node, ...props}: {children?: ReactNode; node?: unknown}) => (
+                <Tag {...props}>{highlightInNode(children, q)}</Tag>
+            )
+        }
+        return {
+            p: wrap('p'),
+            li: wrap('li'),
+            h1: wrap('h1'),
+            h2: wrap('h2'),
+            h3: wrap('h3'),
+            h4: wrap('h4'),
+            h5: wrap('h5'),
+            h6: wrap('h6'),
+            blockquote: wrap('blockquote'),
+            code: wrap('code'),
+            td: wrap('td'),
+            th: wrap('th'),
+            span: wrap('span'),
+            strong: wrap('strong'),
+            em: wrap('em'),
+            a: wrap('a'),
+        } satisfies Components
+    }, [highlightQuery])
 
     return (
         <Div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}`}>
@@ -50,20 +90,29 @@ export const ChatMessage = ({
                     </Div>
                 ) : null}
                 <div className="markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+                    <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkBreaks]}
+                        components={markdownComponents}
+                    >
+                        {content}
+                    </ReactMarkdown>
                 </div>
                 {thinking ? (
                     <Div className="vbox chat-message__thinking">
                         <Button
                             className="chat-message__thinking-toggle"
                             variant="secondary"
-                            onClicked={() => setShowThinking((v) => !v)}
+                            onClicked={handleToggleThinking}
                         >
-                            {showThinking ? <ChevronDown width={13} height={13}/> :
+                            {isThinkingOpen ? <ChevronDown width={13} height={13}/> :
                                 <ChevronRight width={13} height={13}/>}
                             <span>{thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}</span>
                         </Button>
-                        {showThinking ? <Div className="chat-message__thinking-body">{thinking}</Div> : null}
+                        {isThinkingOpen ? (
+                            <Div className="chat-message__thinking-body">
+                                {highlightText(thinking, highlightQuery)}
+                            </Div>
+                        ) : null}
                     </Div>
                 ) : thought_duration_ms != null ? (
                     <Label variant="secondary" className="chat-message__thought"

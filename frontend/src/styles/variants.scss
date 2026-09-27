@@ -364,3 +364,12 @@ input[type='checkbox'][role='switch'][data-variant]:checked::before {
     opacity: 0;
   }
 }
+
+mark.search-match-target {
+  background-color: var(--color-tertiary);
+  color: var(--color-secondary);
+  padding: 0 2px;
+  font-weight: 700;
+  border-radius: 0;
+  box-shadow: 0 0 0 1px var(--color-tertiary);
+}
