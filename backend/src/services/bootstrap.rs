@@ -7,6 +7,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, S
 use crate::cache::user_cache::UserCacheService;
 use crate::facade::{agent::Agent, prompt::PromptFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
+use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
 use crate::plugins::messaging::telegram::TelegramProvider;
@@ -216,6 +217,7 @@ pub async fn bootstrap(
         Arc::new(MessagingProviderBuilder::<TelegramProvider>::new(plugin_agent.clone(), chat_store.clone())),
         Arc::new(MessagingProviderBuilder::<DiscordProvider>::new(plugin_agent.clone(), chat_store.clone())),
         Arc::new(MessagingProviderBuilder::<VkProvider>::new(plugin_agent, chat_store.clone())),
+        Arc::new(SignaturesBuilder),
     ];
     plugin_registry
         .register_many(plugin_builders)

@@ -36,7 +36,7 @@ pub fn collect() -> Vec<Box<dyn Tool>> {
 /// the filesystem or follow symlinks — the path may not exist yet (`create_directory`'s
 /// target, a new file for `write_file`), and every caller here just wants a canonical
 /// string to compare/store, not a filesystem check.
-pub(super) fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let path = expand_tilde(path);
 
     let absolute = if path.is_absolute() {
@@ -129,7 +129,7 @@ pub(super) fn check_file_scope(path: &str, bucket: SharedBucket, scope: Option<&
 /// For tools whose `path` argument names a directory itself (`list_directory`,
 /// `create_directory`, `delete_directory`, `find_files`) — scopes to that directory
 /// directly, not its parent.
-pub(super) fn check_directory_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
+pub(crate) fn check_directory_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
     check_scope(&normalize(Path::new(path)), bucket, scope)
 }
 

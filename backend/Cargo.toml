@@ -22,6 +22,12 @@ reqwest = { version = "0.13.4", features = ["json", "form", "query", "stream"] }
 sea-orm = { version = "2.0.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 regex = "1"
 sha2 = "0.10"
+# For `code_instruments.get_signatures`: `syn`/`quote` parse a dependency's own source
+# into a real AST (no macro expansion) and `prettyplease` renders individual items back
+# out as properly formatted signatures.
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+prettyplease = "0.2"
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -1,5 +1,5 @@
 # Plugins
-Optional integrations that live outside the core chat app — chat platforms today (Telegram, Discord, VK), each configured and switched on/off through its own settings.
+Optional integrations that live outside the core chat app — chat platforms (Telegram, Discord, VK) each configured and switched on/off through its own settings, and standalone tool-contributing plugins like `coding` that need no settings at all.
 
 ## How it works
 Every plugin type implements two traits ([`src/plugins/base.rs`](./src/plugins/base.rs)):
@@ -33,7 +33,7 @@ trait PluginBuilder: Send + Sync {
 A plugin's `tools()` (default: none) are registered in the shared `ToolService` — the same set the main agent calls from — the moment it's enabled, and unregistered the moment it's disabled, live, with no restart. `ToolService` validates a plugin's whole tool batch against every already-registered name (built-in and other plugins' alike) before adding any of them, so an enable either adds all of a plugin's tools or none of them; a collision surfaces as `409` from `POST /api/plugins/enable` or `POST /api/plugins/settings` (the latter when a settings change would swap in a new instance whose tools collide) and leaves the plugin disabled.
 
 ## Messaging plugin type
-`messaging` is the one plugin type that exists today — chat platforms as interchangeable subplugins. A concrete provider only ever implements `MessagingProvider` ([`src/plugins/messaging/provider.rs`](./src/plugins/messaging/provider.rs)):
+`messaging` is a shared-provider plugin type — chat platforms as interchangeable subplugins under one generic `Plugin`/`PluginBuilder` impl. A concrete provider only ever implements `MessagingProvider` ([`src/plugins/messaging/provider.rs`](./src/plugins/messaging/provider.rs)):
 
 ```rust
 trait MessagingProvider: Send + Sync + 'static {
@@ -72,6 +72,17 @@ That's it — HTTP routes, settings persistence, and the frontend settings form 
 | `vk` | `token`, `group_id` | Long-polls VK's Bots Long Poll API. The community token needs both the "Messages" and "Manage community" access rights, and the community itself needs the Bots Long Poll API — and its "Message received" event type specifically — turned on. |
 
 Each provider's own step-by-step setup instructions are available from its settings panel in the app (or `GET /api/plugins/help`), not duplicated here.
+
+### `coding` — structured insight into code, instead of raw file contents
+A different shape of plugin from `messaging`: no shared provider trait, no background
+loop, no settings — each submodule under [`plugins/coding/`](./src/plugins/coding.rs)
+implements `Plugin`/`PluginBuilder` directly and contributes its own tools. A future
+addition to this family (something other than dependency signatures) becomes its own
+sibling submodule the same way, still under `plugin_name: "coding"`.
+
+| Subname | Contributes | Notes |
+|---|---|---|
+| `signatures` | `coding.get_signatures` | Gives the model a trimmed, typed view of a dependency's public API — signatures with real types, not the full source — for rust, javascript/typescript, python, go, c/c++, java, kotlin, and csharp. No settings; enabling it needs nothing beyond the target language's own toolchain being available wherever `os.execute_command` runs. See the tool's own description (`GET /api/plugins/help?plugin_name=coding&plugin_subname=signatures`, or just ask the model) for exactly how each language resolves a dependency and what's best-effort about it — that's kept in one place (the tool description itself) rather than duplicated here and risking drift. |
 
 ## HTTP API
 Registry-level management routes, under `/api/plugins`:

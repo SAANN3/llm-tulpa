@@ -52,6 +52,7 @@ impl Tool for TemperatureTool {
 `os`, `storage`, `web`, `files`, `ui`, and `llm` are domains — a `tools/<domain>.rs` file (e.g. [`tools/storage.rs`](./src/tools/storage.rs)) next to a `tools/<domain>/` folder (e.g. [`tools/storage/`](./src/tools/storage/)) with one file per tool, each domain exposing `pub fn collect() -> Vec<Box<dyn Tool>>` (registered in `main.rs` via `tool_list.extend(tools::<domain>::collect())`). Function names are dot-namespaced: `storage.read_file`, not just `read_file`. Put a new tool in an existing domain if it shares that domain's concerns (e.g. another filesystem op belongs in `storage`, not standalone) — shared logic (like `storage`'s path-scoping helpers) lives in the domain's own `<domain>.rs`, not copy-pasted per tool.
 
 ## Current tools
+These are the built-in domains, registered directly in `main.rs`. A plugin can also contribute its own tools (registered live when the plugin is enabled, removed when disabled) — see [PLUGINS.md](./PLUGINS.md), e.g. `coding.get_signatures`.
 
 ### `get_temperature`
 Fake/hardcoded — the original proof-of-concept tool, kept around as the minimal example above. Not dangerous.
