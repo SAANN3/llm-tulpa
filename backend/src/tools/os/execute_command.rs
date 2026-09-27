@@ -23,7 +23,7 @@ const BACKGROUND_AND_TIMEOUT_NOTE: &str = "For anything that keeps running or ta
     notified in the chat when it finishes. A command can still be started with `&` here — this \
     returns as soon as the shell itself exits, without waiting for it — but the background process's \
     output isn't captured anywhere you can get back to. A command still running in the foreground \
-    after 10 minutes is killed along with everything it started, and whatever it printed by then is \
+    after 90 seconds is killed along with everything it started, and whatever it printed by then is \
     returned.";
 
 fn description_text() -> &'static str {
@@ -108,11 +108,12 @@ struct ExecuteCommandArgs {
 
 pub struct ExecuteCommandTool;
 
-/// How long a command may keep the shell running before it's killed. Only a backstop
-/// against a foreground command that never exits (a server started without `&`,
-/// `tail -f`, a prompt waiting on input that will never come) wedging the whole chat —
-/// generous enough for a real build or install, which can take several minutes. Anything
-/// legitimately longer belongs in the background (`cmd > log 2>&1 &`) with the log polled.
+/// How long a command may keep the shell running before it's killed. A backstop against
+/// a foreground command that never exits (a server started without `&`, `tail -f`, a
+/// prompt waiting on input that will never come) wedging the whole chat — kept short
+/// deliberately, so a genuinely long build or install is pushed toward `os.start_job`
+/// (which reports back when it finishes, rather than holding the turn open) instead of
+/// this tool quietly tolerating a long wait either way.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Scratch file a command's stdout or stderr is redirected into, instead of a pipe.
