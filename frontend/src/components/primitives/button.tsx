@@ -5,6 +5,7 @@ export const Button = ({
     className,
     variant = "primary",
     text,
+    title,
     onClicked,
     children,
     disabled
@@ -14,6 +15,7 @@ export const Button = ({
         style={style}
         className={className}
         data-variant={variant}
+        title={title}
         onClick={onClicked}
         disabled={disabled}
     >

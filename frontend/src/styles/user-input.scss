@@ -58,6 +58,10 @@
 .composer__hint {
   font-size: 11px;
   opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .composer__spacer {
@@ -67,10 +71,28 @@
 .composer__think-label {
   font-size: 12px;
   opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .composer__mode {
   font-size: 12px;
+  min-width: 0;
+
+  // The select fills this (narrowing) wrapper and the trigger truncates, so the
+  // footer still fits on a very narrow window
+  [data-select] {
+    display: block;
+    width: 100%;
+  }
+
+  [data-select-trigger] {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 .composer__mode--disabled {

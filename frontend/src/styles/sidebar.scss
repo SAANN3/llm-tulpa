@@ -8,6 +8,43 @@
   padding: $space-2;
   background: var(--color-surface);
   border-right: $line-border solid var(--color-border);
+
+  // Nested (not flat) so this beats the generic `button[data-variant]` padding — an
+  // element+attribute selector, higher specificity than a single flat class (see
+  // `.chat-header`'s icon buttons for the same fix).
+  .sidebar__toggle {
+    width: 34px;
+    height: 34px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex-shrink: 0;
+
+    svg {
+      display: block;
+    }
+  }
+}
+
+.sidebar__top {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.sidebar__new-chat {
+  flex: 1;
+}
+
+.sidebar--collapsed {
+  // The shrunk rail: just wide enough for the toggle, which the centered
+  // `align-items` keeps horizontally centered in the rail
+  width: 44px;
+  min-width: 44px;
+  padding: $space-2 0;
+  align-items: center;
 }
 
 .sidebar__list {

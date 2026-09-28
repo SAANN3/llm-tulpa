@@ -33,6 +33,7 @@ export interface ButtonProps {
   onClicked: () => void
   children?: ReactNode
   disabled?: boolean
+  title?: string
 }
 
 export interface InputProps {

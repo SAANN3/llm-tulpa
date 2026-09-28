@@ -1,4 +1,5 @@
-import {useRef, useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
+import {ArrowBarLeft, ArrowBarRight} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
@@ -10,6 +11,7 @@ import {Button, Div, Label} from './primitives'
 import {setChatFolder} from '../api/chats/set-folder'
 import type {ChatOut} from '../api/chats/types'
 import {useAuth} from '../context/use-auth.ts'
+import {onSidebarWindowResized, setSidebarCollapsed, useSidebarCollapsed} from '../context/sidebar-state.ts'
 import {useChats} from '../hooks/use-chats.ts'
 import {daysBefore} from '../utils/dates'
 
@@ -48,14 +50,45 @@ export const Sidebar = () => {
     const chatsListRef = useRef<LazyListHandle>(null)
     const {chats, loadOlder, rename, delete: deleteChat} = useChats(() => chatsListRef.current?.jumpToTop())
     const [assigningChat, setAssigningChat] = useState<ChatOut | null>(null)
+    const collapsed = useSidebarCollapsed()
+
+    // The only resize caller: a crossing of the threshold collapses/expands, a resize that
+    // stays on one side leaves a manual choice alone (see onSidebarWindowResized)
+    useEffect(() => {
+        const onResize = () => onSidebarWindowResized(window.innerWidth)
+        window.addEventListener('resize', onResize)
+        return () => window.removeEventListener('resize', onResize)
+    }, [])
 
     const selectChat = (id: number) => navigate(`/chat?id=${id}`)
 
     const onNewChat = () => navigate('/')
 
+    const toggle = (
+        <Button
+            className="sidebar__toggle"
+            title={collapsed ? 'Expand sidebar' : 'Shrink sidebar'}
+            onClicked={() => setSidebarCollapsed(!collapsed)}
+        >
+            {collapsed ? <ArrowBarRight width={18} height={18}/> : <ArrowBarLeft width={18} height={18}/>}
+        </Button>
+    )
+
+    // The shrunk rail: only the toggle, to expand again
+    if (collapsed) {
+        return (
+            <Div className="vbox sidebar sidebar--collapsed">
+                <Div className="sidebar__top">{toggle}</Div>
+            </Div>
+        )
+    }
+
     return (
         <Div className="vbox sidebar">
-            <Button variant="primary" text="New chat" onClicked={onNewChat}/>
+            <Div className="sidebar__top">
+                {toggle}
+                <Button variant="primary" className="sidebar__new-chat" text="New chat" onClicked={onNewChat}/>
+            </Div>
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
                 <ChatEntry label="Settings" selected={false} onClicked={() => navigate('/settings')}/>
