@@ -1,10 +1,13 @@
-import {useRef} from 'react'
+import {useRef, useState} from 'react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
+import {FolderPicker} from './folder-picker.tsx'
 import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
+import {Popup} from './popup.tsx'
 import {Button, Div, Label} from './primitives'
+import {setChatFolder} from '../api/chats/set-folder'
 import type {ChatOut} from '../api/chats/types'
 import {useAuth} from '../context/use-auth.ts'
 import {useChats} from '../hooks/use-chats.ts'
@@ -44,6 +47,7 @@ export const Sidebar = () => {
 
     const chatsListRef = useRef<LazyListHandle>(null)
     const {chats, loadOlder, rename, delete: deleteChat} = useChats(() => chatsListRef.current?.jumpToTop())
+    const [assigningChat, setAssigningChat] = useState<ChatOut | null>(null)
 
     const selectChat = (id: number) => navigate(`/chat?id=${id}`)
 
@@ -55,6 +59,7 @@ export const Sidebar = () => {
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
                 <ChatEntry label="Settings" selected={false} onClicked={() => navigate('/settings')}/>
+                <ChatEntry label="Folders" selected={false} onClicked={() => navigate('/folders')}/>
                 {user?.role === 'owner' ? (
                     <>
                         <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')}/>
@@ -81,12 +86,27 @@ export const Sidebar = () => {
                                             if (location.pathname === '/chat' && selectedChatId === c.id) navigate('/')
                                         })
                                     }}
+                                    onAssignFolder={() => setAssigningChat(c)}
                                 />
                             ))}
                         </Div>
                     ))}
                 </Div>
             </LazyList>
+            <Popup open={assigningChat != null} onClose={() => setAssigningChat(null)} centered>
+                <Div className="dos-frame sidebar__folder-picker">
+                    <span className="dos-frame__title">Assign folder</span>
+                    <Div className="dos-frame__body">
+                        <FolderPicker
+                            selected={assigningChat?.folder_id ?? null}
+                            onSelect={async (folderId) => {
+                                if (assigningChat) await setChatFolder(assigningChat.id, folderId)
+                                setAssigningChat(null)
+                            }}
+                        />
+                    </Div>
+                </Div>
+            </Popup>
         </Div>
     )
 };

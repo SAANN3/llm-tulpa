@@ -6,6 +6,8 @@ import {ThemeProvider} from './context/theme-provider.tsx'
 import {useAuth} from './context/use-auth.ts'
 import {useSetup} from './context/use-setup.ts'
 import Chat from './pages/chat.tsx'
+import Folder from './pages/folder.tsx'
+import Folders from './pages/folders.tsx'
 import Home from './pages/home.tsx'
 import Login from './pages/login.tsx'
 import Plugins from './pages/plugins.tsx'
@@ -41,6 +43,8 @@ const App = () => (
                             <Route element={<RequireAuth/>}>
                                 <Route path="/" element={<Home/>}/>
                                 <Route path="/chat" element={<Chat/>}/>
+                                <Route path="/folders" element={<Folders/>}/>
+                                <Route path="/folders/:id" element={<Folder/>}/>
                                 <Route path="/settings" element={<Settings/>}/>
                                 <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
                                 <Route element={<RequireOwner/>}>

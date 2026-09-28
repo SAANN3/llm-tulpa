@@ -4,6 +4,7 @@ pub mod chat_store;
 pub mod error;
 pub mod event_bus;
 pub mod file_store;
+pub mod folder_store;
 pub mod gguf;
 pub mod job_store;
 pub mod llm;

@@ -14,6 +14,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 
 use crate::services::error::ErrorService;
+use crate::services::folder_store::{FolderStore, FolderStoreErrors};
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
 use crate::services::user_store::{UserStore, UserStoreErrors};
 
@@ -28,12 +29,15 @@ pub struct ChatStore {
     /// Only for `owner_id`: plugin chats belong to the owner, and the `users` table is
     /// `UserStore`'s, not this store's.
     users: Arc<UserStore>,
+    /// Only for the ownership check in `set_folder` — the `folders` table is
+    /// `FolderStore`'s, not this store's.
+    folders: Arc<FolderStore>,
 }
 
 impl ChatStore {
     /// Holds an already-connected, already-migrated connection (see `services::bootstrap`).
-    pub fn new(db: DatabaseConnection, models: Arc<ModelStore>, users: Arc<UserStore>) -> Self {
-        Self { db, models, users }
+    pub fn new(db: DatabaseConnection, models: Arc<ModelStore>, users: Arc<UserStore>, folders: Arc<FolderStore>) -> Self {
+        Self { db, models, users, folders }
     }
 
     /// A chat by id — the one place that decides whether a chat is usable (exists and
@@ -60,7 +64,15 @@ impl ChatStore {
     }
 
     /// A user's non-deleted, non-plugin chats, newest-active first, plus the total count.
-    pub async fn chats(&self, user_id: i64, limit: u64, skip: u64) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
+    /// `folder_id`: `Some(Some(id))` scopes to that folder, `Some(None)` to ungrouped chats,
+    /// `None` doesn't filter by folder at all.
+    pub async fn chats(
+        &self,
+        user_id: i64,
+        folder_id: Option<Option<i64>>,
+        limit: u64,
+        skip: u64,
+    ) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
         // Plugin-owned chats are excluded by anti-joining `plugin_chats`.
         let plugin_chat_ids: Vec<i64> = plugin_chats::Entity::find()
             .select_only()
@@ -69,10 +81,17 @@ impl ChatStore {
             .all(&self.db)
             .await?;
 
-        let query = chats::Entity::find()
+        let mut query = chats::Entity::find()
             .filter(chats::Column::UserId.eq(user_id))
             .filter(chats::Column::IsDeleted.eq(false))
             .filter(chats::Column::Id.is_not_in(plugin_chat_ids));
+
+        if let Some(folder_id) = folder_id {
+            query = match folder_id {
+                Some(id) => query.filter(chats::Column::FolderId.eq(id)),
+                None => query.filter(chats::Column::FolderId.is_null()),
+            };
+        }
 
         self.paginated_chats(query, limit, skip).await
     }
@@ -155,6 +174,7 @@ impl ChatStore {
             summary_up_to_message_id: row.summary_up_to_message_id,
             key_facts: row.key_facts.and_then(|v| serde_json::from_value(v).ok()),
             last_prompt_tokens: row.last_prompt_tokens,
+            folder_id: row.folder_id,
         }
     }
 
@@ -223,9 +243,17 @@ impl ChatStore {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
         let pattern = format!("%{}%", escaped);
 
+        // A tool-result row's `content` is the tool's own output (JSON), not conversational
+        // text — it's tool data, so it's excluded from the base content match (not just the
+        // separate tool-*arguments* match below) whenever `include_tools` is off. Without this,
+        // toggling "Tools" off only hid argument matches while a tool's result content kept
+        // matching unconditionally, which looked like the toggle did nothing.
         let mut filter = messages::Column::ChatId
             .eq(chat_id)
             .and(ilike(messages::Column::Content.into_expr(), &pattern));
+        if !include_tools {
+            filter = filter.and(messages::Column::Role.ne("tool"));
+        }
 
         if include_thinking {
             let thinking_match = messages::Column::ChatId
@@ -439,6 +467,20 @@ impl ChatStore {
     pub async fn set_model(&self, chat_id: i64, model_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
         chats::ActiveModel { id: Set(chat_id), model_id: Set(model_id), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Moves a chat into a folder, or out of one (`folder_id: None`). Checks the folder is
+    /// owned by the same user as the chat before writing, rather than trusting the caller's
+    /// bare id — a chat must never end up filed under another user's folder.
+    pub async fn set_folder(&self, user_id: i64, chat_id: i64, folder_id: Option<i64>) -> Result<(), ChatStoreErrors> {
+        self.owned_chat(user_id, chat_id).await?;
+        if let Some(folder_id) = folder_id {
+            self.folders.owned_folder(user_id, folder_id).await?;
+        }
+        chats::ActiveModel { id: Set(chat_id), folder_id: Set(folder_id), ..Default::default() }
             .update(&self.db)
             .await?;
         Ok(())
@@ -762,6 +804,8 @@ pub struct Chat {
     pub key_facts: Option<ChatFacts>,
     /// Ground-truth prompt token count from Ollama's last evaluated turn; NULL after compaction fold.
     pub last_prompt_tokens: Option<i64>,
+    /// The folder this chat is grouped under, or `None` if ungrouped.
+    pub folder_id: Option<i64>,
 }
 
 pub struct Message {
@@ -953,11 +997,18 @@ pub enum ChatStoreErrors {
     NotFound,
     Model(ModelStoreErrors),
     User(UserStoreErrors),
+    Folder(FolderStoreErrors),
 }
 
 impl From<UserStoreErrors> for ChatStoreErrors {
     fn from(err: UserStoreErrors) -> Self {
         ChatStoreErrors::User(err)
+    }
+}
+
+impl From<FolderStoreErrors> for ChatStoreErrors {
+    fn from(err: FolderStoreErrors) -> Self {
+        ChatStoreErrors::Folder(err)
     }
 }
 
@@ -982,6 +1033,7 @@ impl From<ChatStoreErrors> for ErrorService {
             }
             ChatStoreErrors::Model(e) => e.into(),
             ChatStoreErrors::User(e) => e.into(),
+            ChatStoreErrors::Folder(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
         }
     }

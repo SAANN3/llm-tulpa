@@ -31,6 +31,43 @@
   opacity: 0.7;
 }
 
+.chat-header__folder-group {
+  // The assign-folder and jump-to-folder buttons read as one control, not two: a shared
+  // outer border/shadow (mimicking `button[data-variant]`'s own look, same trick as
+  // `.chat-header__context`) with each button's own border/shadow suppressed below and a
+  // divider between them instead.
+  display: inline-flex;
+  height: 34px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border: $line-border solid currentColor;
+  @include dos-shadow;
+
+  button.chat-header__folder,
+  button.chat-header__folder-jump {
+    height: 100%;
+    box-sizing: border-box;
+    border: none;
+    box-shadow: none;
+
+    &:active:not(:disabled) {
+      transform: none;
+    }
+  }
+
+  button.chat-header__folder {
+    border-right: $line-border solid var(--color-border);
+  }
+}
+
+.chat-header__folder {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .chat-header__picker,
 .chat-header__search-box {
   max-width: calc(100vw - #{$space-8} * 2);
@@ -56,7 +93,8 @@
   // which otherwise squeezes these fixed-size icon buttons down to almost nothing —
   // same reason `.composer__footer`'s icon button is nested the same way.
   .chat-header__search,
-  .chat-header__search-clear {
+  .chat-header__search-clear,
+  .chat-header__folder-jump {
     width: 34px;
     height: 34px;
     box-sizing: border-box;
@@ -68,7 +106,9 @@
   }
 
   .chat-header__search svg,
-  .chat-header__search-clear svg {
+  .chat-header__search-clear svg,
+  .chat-header__folder svg,
+  .chat-header__folder-jump svg {
     display: block;
   }
 }

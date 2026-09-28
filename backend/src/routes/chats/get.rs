@@ -15,6 +15,9 @@ pub(crate) struct GetChatsQuery {
     /// A specific chat's id. Given alone, the response is that chat's full info instead
     /// of a list.
     id: Option<i64>,
+    /// Scopes the list to one folder's chats. Omitted → every non-deleted chat regardless
+    /// of folder (each still reports its own `folder_id` for client-side grouping).
+    folder_id: Option<i64>,
     limit: Option<u64>,
     skip: Option<u64>,
 }
@@ -37,6 +40,8 @@ pub(crate) struct ChatOut {
     /// The context window the agent runs under — the ceiling `last_prompt_tokens` is
     /// budgeted against, and the "max" half of a context usage display.
     pub(crate) context_length: u64,
+    /// The folder this chat is grouped under, or `null` if ungrouped.
+    pub(crate) folder_id: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -87,13 +92,15 @@ pub async fn get_chats(
             updated_at: chat.updated_at,
             last_prompt_tokens: chat.last_prompt_tokens,
             context_length: services.context_length,
+            folder_id: chat.folder_id,
         })));
     }
 
     let limit = query.limit.unwrap_or(50);
     let skip = query.skip.unwrap_or(0);
+    let folder_id = query.folder_id.map(Some);
 
-    let (chats, total) = services.chat_store.chats(auth.id, limit, skip).await?;
+    let (chats, total) = services.chat_store.chats(auth.id, folder_id, limit, skip).await?;
 
     let chats = chats
         .into_iter()
@@ -106,6 +113,7 @@ pub async fn get_chats(
             updated_at: chat.updated_at,
             last_prompt_tokens: chat.last_prompt_tokens,
             context_length: services.context_length,
+            folder_id: chat.folder_id,
         })
         .collect();
 

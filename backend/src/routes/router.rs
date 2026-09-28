@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, auth, chats, events, files, llm, plugins, prompts, settings, setup, users};
+use super::{agent, auth, chats, events, files, folders, llm, plugins, prompts, settings, setup, users};
 
 /// Every route that needs a signed-in user — `main.rs` puts `require_auth` in front of the
 /// whole thing. Owner-only routes (users, plugins) are gated per handler by the `OwnerUser`
@@ -18,6 +18,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/chats", chats::router::router())
         .nest("/events", events::router::router())
         .nest("/files", files::router::router())
+        .nest("/folders", folders::router::router())
         .nest("/plugins", plugins::router::router())
         .nest("/prompts", prompts::router::router())
         .nest("/settings", settings::router::router())
@@ -47,6 +48,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
         .merge_from(chats::router::ApiDoc::openapi())
         .merge_from(events::router::ApiDoc::openapi())
         .merge_from(files::router::ApiDoc::openapi())
+        .merge_from(folders::router::ApiDoc::openapi())
         .merge_from(plugins::router::ApiDoc::openapi())
         .merge_from(prompts::router::ApiDoc::openapi())
         .merge_from(settings::router::ApiDoc::openapi())

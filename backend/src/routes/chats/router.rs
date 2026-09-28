@@ -14,6 +14,7 @@ use super::get::*;
 use super::messages::*;
 use super::rename::*;
 use super::search::*;
+use super::set_folder::*;
 use super::set_model::*;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -21,13 +22,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(get_chats).post(create_chat).delete(delete_chat))
         .route("/rename", post(rename_chat))
         .route("/model", post(set_model))
+        .route("/folder", post(set_folder))
         .route("/messages", get(get_messages))
         .route("/search", get(search_messages))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, set_model, get_messages, search_messages),
+    paths(get_chats, create_chat, delete_chat, rename_chat, set_model, set_folder, get_messages, search_messages),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -35,6 +37,7 @@ pub fn router() -> Router<Arc<AppState>> {
         CreateChatRequest,
         RenameChatRequest,
         SetModelRequest,
+        SetFolderRequest,
         MessageToolCallOut,
         MessageOut,
         MessagesResponse,

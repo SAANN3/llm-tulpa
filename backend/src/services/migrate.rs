@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBacken
 /// `if current < N { ... }` block to `run_migrations` that alters the existing tables in place
 /// (inside the same transaction) and bump this constant. A database *newer* than this build is
 /// refused rather than "fixed", so an older binary can't damage data a newer one wrote.
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 /// What version 3 added on top of version 2: the compaction key facts and the background jobs.
 /// Run by `create_schema` for a fresh database and by `upgrade_v2_to_v3` for an existing one,
@@ -50,6 +50,25 @@ const V5_ADDITIONS: &str = "
     ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS system_prompt TEXT;
 ";
 
+/// What version 6 added on top of version 5: chat folders.
+const V6_ADDITIONS: &str = "
+    -- A user's own grouping of chats. No soft delete: a folder holds no independent history
+    -- worth recovering, unlike chats/messages.
+    CREATE TABLE IF NOT EXISTS folders (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_folders_user ON folders (user_id);
+
+    -- A chat's folder is optional and survives its folder going away (SET NULL, not CASCADE) —
+    -- deleting a folder ungroups its chats rather than deleting them.
+    ALTER TABLE chats ADD COLUMN IF NOT EXISTS folder_id BIGINT REFERENCES folders (id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_chats_folder ON chats (folder_id);
+";
+
 /// The Postgres schema the pre-accounts (single-user) tables are moved into. See `stash_legacy`.
 const LEGACY_SCHEMA: &str = "legacy";
 
@@ -75,7 +94,7 @@ const LEGACY_TABLES: [&str; 8] = [
 ///   `user_id`) → its tables are *moved*, not dropped, into a `legacy` schema and the new schema
 ///   is created next to them. There's no user to own that data yet, so it stays there until the
 ///   owner account is created, at which point `adopt_legacy_data` copies it in.
-/// - **Version 2, 3, or 4** → upgraded in place to the current version, nothing dropped.
+/// - **Version 2, 3, 4, or 5** → upgraded in place to the current version, nothing dropped.
 /// - **Any other version** → refused with an error; nothing is touched.
 ///
 /// The whole thing runs in one transaction (Postgres DDL is transactional), so a failure leaves
@@ -100,9 +119,10 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     match current {
         Some(SCHEMA_VERSION) => return Ok(()),
-        Some(2) => return upgrade_v2_to_v5(db).await,
-        Some(3) => return upgrade_v3_to_v5(db).await,
-        Some(4) => return upgrade_v4_to_v5(db).await,
+        Some(2) => return upgrade_v2_to_v6(db).await,
+        Some(3) => return upgrade_v3_to_v6(db).await,
+        Some(4) => return upgrade_v4_to_v6(db).await,
+        Some(5) => return upgrade_v5_to_v6(db).await,
         Some(other) => {
             return Err(DbErr::Custom(format!(
                 "the database is at schema version {other}, but this build understands version {SCHEMA_VERSION}; \
@@ -127,33 +147,45 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// Version 2 → 5, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns, and
-/// `user_settings.system_prompt`. One transaction.
-async fn upgrade_v2_to_v5(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 2 → 6, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
+/// `user_settings.system_prompt`, and the `folders` table. One transaction.
+async fn upgrade_v2_to_v6(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V3_ADDITIONS).await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
+    txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 3 → 5, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
-/// `messages.eval_tokens`, and `user_settings.system_prompt`.
-async fn upgrade_v3_to_v5(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 3 → 6, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
+/// `messages.eval_tokens`, `user_settings.system_prompt`, and the `folders` table.
+async fn upgrade_v3_to_v6(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
+    txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 4 → 5, in place: adds the per-user `system_prompt` column.
-async fn upgrade_v4_to_v5(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 4 → 6, in place: adds the per-user `system_prompt` column and the `folders` table.
+async fn upgrade_v4_to_v6(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
+    txn.execute_unprepared(V6_ADDITIONS).await?;
+    txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
+        .await?;
+    txn.commit().await
+}
+
+/// Version 5 → 6, in place: adds chat folders.
+async fn upgrade_v5_to_v6(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -337,6 +369,7 @@ async fn create_schema(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_unprepared(V3_ADDITIONS).await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
+    txn.execute_unprepared(V6_ADDITIONS).await?;
     Ok(())
 }
 

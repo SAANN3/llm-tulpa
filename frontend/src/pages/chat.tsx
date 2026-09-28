@@ -63,6 +63,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [chatProvider, setChatProvider] = useState('ollama')
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
+    const [folderId, setFolderId] = useState<number | null>(null)
     useDocumentTitle(chatName ?? 'Chat')
 
     useEffect(() => {
@@ -70,6 +71,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setChatModel(null)
         setContextUsed(null)
         setContextMax(null)
+        setFolderId(null)
         let cancelled = false
 
         getChats({id: chatId}).then((result) => {
@@ -80,6 +82,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatProvider(result.provider)
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
+                setFolderId(result.folder_id)
             }
         })
 
@@ -269,6 +272,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             onModelChanged={setChatModel}
                             contextUsed={contextUsed}
                             contextMax={contextMax}
+                            folderId={folderId}
+                            onFolderChanged={setFolderId}
                             onSelectSearchResult={jumpToMessage}
                             hasActiveHighlight={searchHighlight != null}
                             onClearHighlight={() => setSearchHighlight(null)}/>

@@ -4,6 +4,8 @@ import type {GetChatsResponse} from './types'
 
 export interface GetChatsQuery {
     id?: number
+    /** Scopes the list to one folder's chats. */
+    folder_id?: number
     limit?: number
     skip?: number
 }

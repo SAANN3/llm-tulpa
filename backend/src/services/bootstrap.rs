@@ -14,7 +14,8 @@ use crate::plugins::messaging::telegram::TelegramProvider;
 use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::services::{
-    chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore, job_store::JobStore,
+    chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore,
+    folder_store::FolderStore, job_store::JobStore,
     llm::OllamaService, migrate::run_migrations,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
     plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
@@ -34,6 +35,7 @@ pub struct AppServices {
     pub model_store: Arc<ModelStore>,
     pub permission_store: Arc<PermissionStore>,
     pub file_store: Arc<FileStore>,
+    pub folder_store: Arc<FolderStore>,
     pub agent: Agent,
     pub prompt: PromptFacade,
     pub user_cache: Arc<UserCacheService>,
@@ -181,7 +183,8 @@ pub async fn bootstrap(
 
     let user_store = Arc::new(UserStore::new(db.clone()));
     let model_store = Arc::new(ModelStore::new(db.clone()));
-    let chat_store = Arc::new(ChatStore::new(db.clone(), model_store.clone(), user_store.clone()));
+    let folder_store = Arc::new(FolderStore::new(db.clone()));
+    let chat_store = Arc::new(ChatStore::new(db.clone(), model_store.clone(), user_store.clone(), folder_store.clone()));
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
@@ -238,6 +241,7 @@ pub async fn bootstrap(
         model_store,
         permission_store,
         file_store,
+        folder_store,
         agent,
         prompt,
         user_cache,

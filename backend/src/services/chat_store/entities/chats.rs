@@ -23,6 +23,8 @@ pub struct Model {
     pub key_facts: Option<serde_json::Value>,
     /// Ground-truth prompt token count from Ollama's last evaluated turn; NULL after compaction fold.
     pub last_prompt_tokens: Option<i64>,
+    /// The folder this chat is grouped under (`folders.id`), or NULL if ungrouped.
+    pub folder_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

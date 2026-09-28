@@ -6,6 +6,7 @@ use utoipa::OpenApi;
 use crate::state::AppState;
 
 use super::chat_name::*;
+use super::folder_name::*;
 use super::greet::*;
 use super::input_examples::*;
 
@@ -13,12 +14,13 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/greet", post(greet))
         .route("/chat_name", post(chat_name))
+        .route("/folder_name", post(folder_name))
         .route("/input_examples", post(input_examples))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(greet, chat_name, input_examples),
-    components(schemas(crate::facade::prompt::GreetOut, ChatNameRequest, InputExampleOut)),
+    paths(greet, chat_name, folder_name, input_examples),
+    components(schemas(crate::facade::prompt::GreetOut, ChatNameRequest, FolderNameRequest, InputExampleOut)),
 )]
 pub struct ApiDoc;

@@ -1,0 +1,54 @@
+@use 'tokens' as *;
+
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  width: 100%;
+  min-height: 0;
+}
+
+.folder-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  max-height: min(320px, calc(100vh - 280px));
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.folder-picker__row {
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  cursor: pointer;
+}
+
+.folder-picker__row--none {
+  font-style: italic;
+  border: $line-border solid currentColor;
+}
+
+.folder-picker__load-more {
+  align-self: center;
+}
+
+.folder-picker__mode {
+  display: flex;
+  gap: $space-2;
+}
+
+.folder-picker__error {
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.folder-picker__create {
+  gap: $space-2;
+}
+
+.folder-picker__create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: $space-2;
+}

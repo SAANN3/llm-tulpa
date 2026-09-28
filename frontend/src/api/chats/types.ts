@@ -9,6 +9,8 @@ export interface ChatOut {
     last_prompt_tokens: number | null
     /** The context window the agent runs under — the max for a context usage display. */
     context_length: number
+    /** The folder this chat is grouped under, or null if ungrouped. */
+    folder_id: number | null
 }
 
 export interface ChatListOut {

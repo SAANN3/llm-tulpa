@@ -3,6 +3,7 @@ pub mod auth;
 pub mod chats;
 pub mod events;
 pub mod files;
+pub mod folders;
 pub mod llm;
 pub mod plugins;
 pub mod prompts;

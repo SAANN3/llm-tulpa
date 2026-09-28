@@ -5,20 +5,19 @@ import '../styles/chat-entry.scss'
 import {Button, Div, Input, Label} from './primitives'
 import {Popup} from './popup.tsx'
 
-export interface ChatEntryProps {
+export interface FolderEntryProps {
     label: string
     selected: boolean
     onClicked: () => void
     onRename?: (name: string) => void
     onDelete?: () => void
-    /** Extra "Move to folder" menu item. Sibling of this file, `folder-entry.tsx`, is the
-     * one used for a folder's own rows — a folder can't itself be assigned to a folder, so
-     * that component has no equivalent prop rather than this one just going unused there. */
-    onAssignFolder?: () => void
 }
 
-/** One row in the chat list */
-export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAssignFolder}: ChatEntryProps) => {
+/** One row in the folder list. Deliberately its own component rather than a parameterized
+ * `ChatEntry` — a folder row has no "move to folder" concept and never will, so keeping it
+ * separate means a future chat-only addition (e.g. pinning, unread state) can't leak into or
+ * break folder rows just by being added to the shared component. */
+export const FolderEntry = ({label, selected, onClicked, onRename, onDelete}: FolderEntryProps) => {
     const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [renaming, setRenaming] = useState(false)
@@ -71,21 +70,10 @@ export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAss
             {hasMenu ? (
                 <Popup open={menuPosition != null} onClose={closeMenu} position={menuPosition ?? {x: 0, y: 0}}>
                     <Div onClick={startRename} className="popup-menu__item">
-                        <Label text="Rename chat"/>
+                        <Label text="Rename folder"/>
                     </Div>
-                    {onAssignFolder ? (
-                        <Div
-                            onClick={() => {
-                                closeMenu()
-                                onAssignFolder()
-                            }}
-                            className="popup-menu__item"
-                        >
-                            <Label text="Move to folder"/>
-                        </Div>
-                    ) : null}
                     <Div variant="primary" onClick={startDelete} className="popup-menu__item">
-                        <Label text="Delete chat"/>
+                        <Label text="Delete folder"/>
                     </Div>
                 </Popup>
             ) : null}
