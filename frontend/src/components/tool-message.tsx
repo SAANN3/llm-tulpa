@@ -1,3 +1,4 @@
+import {useRef} from 'react'
 import {ChevronDown, ChevronRight} from 'pixelarticons/react'
 
 import '../styles/tool-message.scss'
@@ -13,6 +14,9 @@ export interface ToolMessageProps {
     err?: string | null
     expanded: boolean
     onToggle: () => void
+    /** Same as `ChatMessage`'s prop of the same name — keeps the header pinned on screen
+     * when collapsing pulls its expanded detail out from under the current scroll position. */
+    preserveScrollFor?: (anchorEl: HTMLElement, mutate: () => void) => void
     highlightQuery?: string | null
 }
 
@@ -62,17 +66,24 @@ export const ToolMessage = ({
     err,
     expanded,
     onToggle,
+    preserveScrollFor,
     highlightQuery
 }: ToolMessageProps) => {
     const contentText = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
     const argsText = args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null
     const argsSummary = args ? describeArgs(args) : ''
     const resultChip = success === false ? 'error' : describeResult(content)
+    const cardRef = useRef<HTMLDivElement>(null)
+    const handleToggle = () => {
+        const anchor = cardRef.current
+        if (anchor && preserveScrollFor) preserveScrollFor(anchor, onToggle)
+        else onToggle()
+    }
 
     return (
         <Div className="tool-message">
-            <Div className="vbox tool-message__card">
-                <Div onClick={onToggle} className="list-row tool-message__header">
+            <Div ref={cardRef} className="vbox tool-message__card">
+                <Div onClick={handleToggle} className="list-row tool-message__header">
                     <span className="tool-message__dot"/>
                     <Label className="mono tool-message__name" text={tool_name}/>
                     {!expanded ? (

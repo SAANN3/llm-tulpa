@@ -1,4 +1,4 @@
-import {useMemo, useState} from 'react'
+import {useMemo, useRef, useState} from 'react'
 import type {ElementType, ReactNode} from 'react'
 import ReactMarkdown from 'react-markdown'
 import type {Components} from 'react-markdown'
@@ -9,6 +9,7 @@ import '../styles/chat-message.scss'
 import {Attachment} from './attachment.tsx'
 import {Button, Div, Label} from './primitives'
 import {highlightInNode, highlightText} from '../utils/highlight.tsx'
+import {formatTokenCount} from '../utils/format.ts'
 
 export interface ChatMessageProps {
     role: 'user' | 'assistant'
@@ -21,6 +22,16 @@ export interface ChatMessageProps {
     highlightQuery?: string | null
     thinkingExpanded?: boolean
     onToggleThinking?: () => void
+    /**
+     * Wraps the actual toggle so collapsing/expanding a thinking trace keeps the toggle
+     * button itself pinned on screen, instead of the surrounding scroll container's default
+     * "hold distance from the bottom" behavior (correct for content growing off-screen, wrong
+     * for a resize you're scrolled into the middle of — see `LazyListHandle.preserveViewportPosition`).
+     * Falls back to calling the toggle directly when absent (e.g. outside a `LazyList`).
+     */
+    preserveScrollFor?: (anchorEl: HTMLElement, mutate: () => void) => void
+    /** How many tokens generating this reply cost (Ollama `eval_count`) — shown under the bubble */
+    eval_tokens?: number | null
 }
 
 const formatThoughtDuration = (ms: number): string => {
@@ -44,11 +55,19 @@ export const ChatMessage = ({
     highlightQuery,
     thinkingExpanded,
     onToggleThinking,
+    preserveScrollFor,
+    eval_tokens,
 }: ChatMessageProps) => {
     const isUser = role === 'user'
     const [localThinking, setLocalThinking] = useState(false)
     const isThinkingOpen = thinkingExpanded !== undefined ? thinkingExpanded : localThinking
-    const handleToggleThinking = onToggleThinking ?? (() => setLocalThinking((v) => !v))
+    const thinkingRef = useRef<HTMLDivElement>(null)
+    const toggleThinking = onToggleThinking ?? (() => setLocalThinking((v) => !v))
+    const handleToggleThinking = () => {
+        const anchor = thinkingRef.current
+        if (anchor && preserveScrollFor) preserveScrollFor(anchor, toggleThinking)
+        else toggleThinking()
+    }
 
     const markdownComponents = useMemo(() => {
         if (!highlightQuery?.trim()) return undefined
@@ -98,7 +117,7 @@ export const ChatMessage = ({
                     </ReactMarkdown>
                 </div>
                 {thinking ? (
-                    <Div className="vbox chat-message__thinking">
+                    <Div ref={thinkingRef} className="vbox chat-message__thinking">
                         <Button
                             className="chat-message__thinking-toggle"
                             variant="secondary"
@@ -121,7 +140,11 @@ export const ChatMessage = ({
                 <Label
                     variant="secondary"
                     className={`chat-message__time${isUser ? ' chat-message__time--user' : ''}`}
-                    text={new Date(created_at).toLocaleTimeString()}
+                    text={
+                        !isUser && eval_tokens != null
+                            ? `${new Date(created_at).toLocaleTimeString()}, spent ${formatTokenCount(eval_tokens)} tokens`
+                            : new Date(created_at).toLocaleTimeString()
+                    }
                 />
             </Div>
         </Div>

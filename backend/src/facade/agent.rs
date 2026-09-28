@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use crate::services::{
     chat_store::{ChatStore, ChatFacts, Message, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
-    event_bus::EventBus,
+    event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
     job_store::{JobRecord, JobStatus, JobStore},
     llm::{OllamaChatMessage, OllamaChatResponse, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
@@ -843,6 +843,18 @@ impl Agent {
                 )
                 .await?;
 
+            // The live "thinking" indicator's spend hint (see `ServerEvent::TurnProgress`):
+            // model calls are non-streaming, so a token count exists only at the moment one
+            // returns — publish it there, including for regenerated (unusable) replies,
+            // since their tokens were spent too.
+            if let Some(eval_tokens) = response.eval_count() {
+                self.tool_context.events.publish(ServerEvent::TurnProgress {
+                    chat_id,
+                    eval_tokens,
+                    prompt_tokens: response.prompt_eval_count(),
+                });
+            }
+
             let Some(problem) = self.unusable_reply(&response, &model).await else { break response };
 
             if problem == ReplyProblem::CutOffInThinking && can_auto_continue {
@@ -1000,6 +1012,7 @@ impl Agent {
         }
 
         let out = ChatOut {
+            id: stored.id,
             content: stored.content,
             created_at: stored.created_at,
             can_use_tools: !tool_calls.is_empty(),
@@ -1008,6 +1021,8 @@ impl Agent {
             thought_duration_ms,
             file_ids: stored.file_ids,
             notices,
+            eval_tokens,
+            prompt_tokens,
         };
 
         let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
@@ -1586,6 +1601,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
         }
 
         Ok(UseToolOut {
+            id: stored.id,
             success,
             denied,
             tool_name: next.tool_name,
@@ -1963,6 +1979,12 @@ pub struct CanUseTool {
 
 #[derive(Serialize, ToSchema)]
 pub struct ChatOut {
+    /// The persisted assistant message's own id — lets a client that already has this
+    /// reply (from the live response, before any reload) key UI state against it (e.g.
+    /// which messages have their thinking trace expanded) the same way it would for a
+    /// message that came back from `GET /chats/messages`, instead of that state being a
+    /// no-op until the next full fetch assigns a real id.
+    pub id: i64,
     pub content: String,
     #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTimeUtc,
@@ -1986,6 +2008,13 @@ pub struct ChatOut {
     /// the client should show in the chat ahead of `content`, in this order. Empty
     /// unless a job finished since the previous turn.
     pub notices: Vec<NoticeOut>,
+    /// This reply's own Ollama `eval_count` — how many tokens generating it cost. `null`
+    /// only when Ollama didn't report one (older Ollama without `num_ctx`/metrics).
+    /// Mirrors the `eval_tokens` column persisted with the same message.
+    pub eval_tokens: Option<i64>,
+    /// The prompt size Ollama measured for this reply's call — the running context
+    /// usage right after this reply was generated. Same source as `chats.last_prompt_tokens`.
+    pub prompt_tokens: Option<i64>,
 }
 
 /// One `notice` message: the backend telling the chat a background job ended.
@@ -1998,6 +2027,10 @@ pub struct NoticeOut {
 
 #[derive(Serialize, ToSchema)]
 pub struct UseToolOut {
+    /// The persisted `tool` message's own id — same reason as `ChatOut::id`: lets a
+    /// client key UI state (whether this call's output is expanded) against a message
+    /// it only has from the live response, without waiting for a reload to assign one.
+    pub id: i64,
     pub success: bool,
     /// Set when `success` is `false` specifically because the call wasn't permitted
     /// (no/insufficient scope) — distinct from `success: false` with `denied: false`,

@@ -8,6 +8,16 @@ export interface LazyListHandle {
   jumpToBottom: () => void
   /** Smoothly scrolls the element carrying `data-message-id` into view (centered); true when it was in the DOM */
   scrollToMessage: (messageId: string) => boolean
+  /**
+   * Runs `mutate` (a state update that resizes some element inside the list, e.g. collapsing an
+   * expanded panel) and keeps `anchorEl` pinned at its current position on screen, instead of the
+   * list's default "hold distance from the bottom" behavior — which is only correct when growth
+   * happens off-screen (prepending older messages, appending a new one below the fold); a resize
+   * the viewer is already scrolled into the middle of needs the resized element itself as the
+   * fixed point, or the view jumps by the collapsed height instead of staying where you were
+   * looking.
+   */
+  preserveViewportPosition: (anchorEl: HTMLElement, mutate: () => void) => void
 }
 
 export interface LazyListProps {
@@ -39,7 +49,7 @@ export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyL
   // runs — a render committing in that gap (the one that paints the content the jump is
   // reacting to) would otherwise run the anchor-restore effect below against the old anchor and
   // leave `scrollTop` somewhere between the two edges. Both layout effects skip while it's set.
-  const pendingJumpRef = useRef<'top' | 'bottom' | 'message' | null>(null)
+  const pendingJumpRef = useRef<'top' | 'bottom' | 'message' | 'external' | null>(null)
 
   useImperativeHandle(
     ref,
@@ -76,6 +86,21 @@ export const LazyList = forwardRef<LazyListHandle, LazyListProps>(function LazyL
           ;(matchEl ?? target).scrollIntoView({ behavior: 'smooth', block: 'center' })
         })
         return true
+      },
+      preserveViewportPosition: (anchorEl, mutate) => {
+        pendingJumpRef.current = 'external'
+        const before = anchorEl.getBoundingClientRect().top
+        mutate()
+        // `mutate` triggers a state update; by the time this callback runs, React has
+        // already committed and the browser has laid the new DOM out (rAF only fires
+        // after that), so `anchorEl`'s new position is real, not stale.
+        requestAnimationFrame(() => {
+          const el = innerRef.current
+          pendingJumpRef.current = null
+          if (!el) return
+          el.scrollTop += anchorEl.getBoundingClientRect().top - before
+          anchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+        })
       },
     }),
     [],

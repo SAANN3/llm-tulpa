@@ -30,6 +30,13 @@ pub(crate) struct ChatOut {
     pub(crate) created_at: DateTimeUtc,
     #[schema(value_type = String, format = "date-time")]
     pub(crate) updated_at: DateTimeUtc,
+    /// Ollama's measured prompt size (prompt + generated tokens) at the end of this
+    /// chat's last model call — the current context usage. `null` until the chat has
+    /// had at least one turn Ollama reported metrics for.
+    pub(crate) last_prompt_tokens: Option<i64>,
+    /// The context window the agent runs under — the ceiling `last_prompt_tokens` is
+    /// budgeted against, and the "max" half of a context usage display.
+    pub(crate) context_length: u64,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -78,6 +85,8 @@ pub async fn get_chats(
             provider: chat.provider,
             created_at: chat.created_at,
             updated_at: chat.updated_at,
+            last_prompt_tokens: chat.last_prompt_tokens,
+            context_length: services.context_length,
         })));
     }
 
@@ -95,6 +104,8 @@ pub async fn get_chats(
             provider: chat.provider,
             created_at: chat.created_at,
             updated_at: chat.updated_at,
+            last_prompt_tokens: chat.last_prompt_tokens,
+            context_length: services.context_length,
         })
         .collect();
 

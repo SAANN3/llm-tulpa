@@ -2,7 +2,9 @@ import {useEffect, useRef} from 'react'
 import {BACKEND_URL} from '../config'
 import {getToken} from '../utils/auth-token'
 
-export type ServerEvent = { type: 'job_finished'; chat_id: number; job_id: number }
+export type ServerEvent =
+    | { type: 'job_finished'; chat_id: number; job_id: number }
+    | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null }
 
 type Listener = (event: ServerEvent) => void
 

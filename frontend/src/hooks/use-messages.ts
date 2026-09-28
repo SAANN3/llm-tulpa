@@ -16,6 +16,7 @@ import {useTool as runNextTool} from '../api/agent/use-tool.ts'
 import {getMessages} from '../api/chats/messages'
 import type {MessageOut} from '../api/chats/types'
 import {useSettings} from '../context/use-settings.ts'
+import {useServerEvent} from './use-server-events.ts'
 import {getAutoConfirm} from '../utils/auto-confirm.ts'
 import {notify} from '../utils/notifications'
 import {peekPendingPrompt} from '../utils/pending-prompt.ts'
@@ -32,6 +33,8 @@ export type DisplayMessage =
     thought_duration_ms?: number | null
     images?: string[]
     file_ids?: number[]
+    prompt_tokens?: number | null
+    eval_tokens?: number | null
 }
     | {
     id?: number
@@ -73,6 +76,8 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
             thought_duration_ms: m.thought_duration_ms,
             images: m.images,
             file_ids: m.file_ids,
+            prompt_tokens: m.prompt_tokens ?? null,
+            eval_tokens: m.eval_tokens ?? null,
         }
     })
 };
@@ -86,12 +91,15 @@ const userMessage = (content: string, images: string[], fileIds: number[]): Disp
 });
 
 const assistantMessage = (reply: AgentChatOut): DisplayMessage => ({
+    id: reply.id,
     role: 'assistant',
     content: reply.content,
     created_at: reply.created_at,
     thinking: reply.thinking,
     thought_duration_ms: reply.thought_duration_ms,
     file_ids: reply.file_ids,
+    prompt_tokens: reply.prompt_tokens,
+    eval_tokens: reply.eval_tokens,
 });
 
 const noticeMessage = (notice: NoticeOut): DisplayMessage => ({
@@ -107,6 +115,7 @@ const appendReply = (reply: AgentChatOut, onMessage: (message: DisplayMessage) =
 };
 
 const toolMessage = (result: UseToolOut, args: Record<string, unknown>): DisplayMessage => ({
+    id: result.id,
     role: 'tool',
     content: result.content,
     tool_name: result.tool_name,
@@ -241,6 +250,21 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
     const onAppendedRef = useRef(onAppended)
     onAppendedRef.current = onAppended
 
+    // Tokens this chat has spent on the current turn so far — the sum of `turn_progress`
+    // events for it — shown by the live "thinking" indicator. Model calls are
+    // non-streaming, so the number jumps by a chunk each time one of them returns.
+    const [turnTokens, setTurnTokens] = useState(0)
+    const turnTokensRef = useRef(0)
+    const resetTurnTokens = () => {
+        turnTokensRef.current = 0
+        setTurnTokens(0)
+    }
+    useServerEvent('turn_progress', (event) => {
+        if (event.chat_id !== chatId) return
+        turnTokensRef.current += event.eval_tokens
+        setTurnTokens(turnTokensRef.current)
+    })
+
     const chatIdRef = useRef(chatId)
     chatIdRef.current = chatId
     const liveAppendedSinceFetchRef = useRef<DisplayMessage[]>([])
@@ -340,6 +364,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
 
         guardedAppend(userMessage(prompt, images, fileIds))
+        resetTurnTokens()
         setSendingChatId(requestChatId)
         try {
             const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
@@ -360,6 +385,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         const status = await canUseTool(chatId)
         if (!status.can_use) return null
 
+        resetTurnTokens()
         setSendingChatId(requestChatId)
         try {
             return finishOrPause(requestChatId, await driveToolCalls(chatId, think, status.tools, guardedAppend))
@@ -375,6 +401,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
             if (chatIdRef.current === requestChatId) appendMessage(message)
         }
 
+        resetTurnTokens()
         setSendingChatId(requestChatId)
         try {
             const reply = await jobNotices(chatId, think)
@@ -387,5 +414,5 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    return {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue}
+    return {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens}
 };

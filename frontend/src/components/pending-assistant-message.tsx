@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import {useEffect, useRef, useState} from 'react'
 
 import '../styles/pending-assistant-message.scss'
-import { Div, Label } from './primitives'
-import { ThinkingAnimation } from './thinking-animation.tsx'
+import {Div, Label} from './primitives'
+import {ThinkingAnimation} from './thinking-animation.tsx'
+import {formatDurationShort, formatTokenCount} from '../utils/format.ts'
 
-/** Placeholder shown where the next assistant reply will land while a turn is in flight */
-export function PendingAssistantMessage() {
+/** Placeholder shown where the next assistant reply will land while a turn is in flight.
+ * `tokens` is the running sum of `turn_progress` events for this turn (0 hides the spend hint). */
+export function PendingAssistantMessage({tokens = 0}: {tokens?: number}) {
   const startedAtRef = useRef(Date.now())
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
@@ -23,10 +25,11 @@ export function PendingAssistantMessage() {
     }
   }, [])
 
+  const spent = tokens > 0 ? `, spent ${formatTokenCount(tokens)} tokens` : ''
   return (
     <Div className="vbox pending-message">
       <ThinkingAnimation isPlaying />
-      <Label className="pending-message__label" text={`Thinking... (${elapsedSeconds}s)`} />
+      <Label className="pending-message__label" text={`Thinking... (${formatDurationShort(elapsedSeconds)}${spent})`} />
     </Div>
   )
 }

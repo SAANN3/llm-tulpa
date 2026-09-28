@@ -4,6 +4,7 @@ import {Close, Search} from 'pixelarticons/react'
 import '../styles/chat-header.scss'
 import {setChatModel} from '../api/chats/set-model'
 import type {MessageSearchOut} from '../api/chats/types'
+import {formatTokenCount} from '../utils/format.ts'
 import {ChatSearch} from './chat-search.tsx'
 import {ModelPicker} from './model-picker.tsx'
 import {Popup} from './popup.tsx'
@@ -16,6 +17,10 @@ export interface ChatHeaderProps {
     model: string | null
     provider: string
     onModelChanged: (model: string) => void
+    /** How much context the chat is using (Ollama's last measured prompt size), null while unknown */
+    contextUsed: number | null
+    /** The context window the agent runs under — the gauge's max */
+    contextMax: number | null
     /** Scroll the chat to the message of a clicked search hit */
     onSelectSearchResult: (hit: MessageSearchOut, query: string) => void
     /** Whether a search hit is currently highlighted in the timeline — shows the clear control */
@@ -32,6 +37,8 @@ export const ChatHeader = ({
     model,
     provider,
     onModelChanged,
+    contextUsed,
+    contextMax,
     onSelectSearchResult,
     hasActiveHighlight,
     onClearHighlight,
@@ -52,6 +59,16 @@ export const ChatHeader = ({
                 <span className="chat-header__model-label">model:</span>
                 <span className="chat-header__model-name">{model ?? '…'}</span>
             </Button>
+            {contextMax != null ? (
+                <Div className="chat-header__context">
+                    <Label className="chat-header__context-label"
+                           text={`context ${contextUsed != null ? formatTokenCount(contextUsed) : '—'} / ${formatTokenCount(contextMax)}`}/>
+                    <Div className="chat-header__context-bar">
+                        <Div className="chat-header__context-fill"
+                             style={{width: `${contextUsed != null ? Math.min(100, (contextUsed / contextMax) * 100) : 0}%`}}/>
+                    </Div>
+                </Div>
+            ) : null}
             <Button className="chat-header__search"
                     onClicked={() => setSearchOpen(true)}>
                 <Search width={20} height={20}/>

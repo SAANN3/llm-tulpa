@@ -25,6 +25,19 @@ pub enum ServerEvent {
     /// A background job stopped on its own (exited, or was lost) and hasn't been
     /// reported to its chat's model yet — see `JobStore::claim_unnotified`.
     JobFinished { chat_id: i64, job_id: i64 },
+    /// A model call in `chat_id`'s turn just finished, generating `eval_tokens` tokens
+    /// (its Ollama `eval_count`) at a running context usage of `prompt_tokens` (its
+    /// Ollama `prompt_eval_count`, `None` when Ollama didn't report one) — a spend hint
+    /// for the live "thinking" indicator and, via `prompt_tokens`, the only way the
+    /// context-usage bar in the header can move *during* a multi-tool-call turn: a
+    /// turn's own `ChatOut` (with the same two numbers) only reaches the frontend once
+    /// the whole turn is done, but several Ollama calls can happen inside one turn (a
+    /// tool call, then another, then the final reply), each with its own numbers. The
+    /// counts arrive in model-call granularity, not per token: Ollama is called
+    /// non-streaming, so each jumps by a chunk each time a call returns. Clients sum the
+    /// `eval_tokens` deltas for the duration of one turn but take `prompt_tokens` as-is
+    /// (it's already cumulative, not a delta).
+    TurnProgress { chat_id: i64, eval_tokens: u64, prompt_tokens: Option<u64> },
 }
 
 impl ServerEvent {
@@ -35,6 +48,7 @@ impl ServerEvent {
     pub fn chat_id(&self) -> i64 {
         match self {
             ServerEvent::JobFinished { chat_id, .. } => *chat_id,
+            ServerEvent::TurnProgress { chat_id, .. } => *chat_id,
         }
     }
 }

@@ -5,6 +5,10 @@ export interface ChatOut {
     provider: string
     created_at: string
     updated_at: string
+    /** Ollama's measured prompt size (prompt + generated tokens) at the end of the chat's last model call — the current context usage. Null until the first turn with metrics. */
+    last_prompt_tokens: number | null
+    /** The context window the agent runs under — the max for a context usage display. */
+    context_length: number
 }
 
 export interface ChatListOut {

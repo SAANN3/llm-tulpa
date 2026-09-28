@@ -40,6 +40,8 @@ export interface AgentToolCall {
 
 /** Response shape shared by `chat`, `continue_chat` and `job_notices` — the model's reply for a turn. */
 export interface ChatOut {
+    /** The persisted assistant message's own id — usable for UI state right away, without waiting for a reload. */
+    id: number
     content: string
     created_at: string
     can_use_tools: boolean
@@ -52,6 +54,10 @@ export interface ChatOut {
     file_ids: number[]
     /** Background-job notices persisted just before this reply, oldest first — show them in the chat ahead of `content`, in this order. Empty unless a job finished since the previous turn. */
     notices: NoticeOut[]
+    /** How many tokens generating this reply cost (Ollama `eval_count`). Null when Ollama didn't report one. */
+    eval_tokens: number | null
+    /** The prompt size Ollama measured for this reply's call — the context usage right after this reply. Null when unreported. */
+    prompt_tokens: number | null
 }
 
 /** One `notice` message: the backend telling the chat a background job ended. */
@@ -66,6 +72,8 @@ export interface CanUseTool {
 }
 
 export interface UseToolOut {
+    /** The persisted `tool` message's own id — usable for UI state right away, without waiting for a reload. */
+    id: number
     success: boolean
     denied: boolean
     tool_name: string

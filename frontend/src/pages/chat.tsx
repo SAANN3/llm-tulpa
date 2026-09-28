@@ -54,18 +54,22 @@ const Chat = () => {
 
 const ChatView = ({chatId}: { chatId: number }) => {
     const lazyListRef = useRef<LazyListHandle>(null)
-    const {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue} = useMessages(chatId, () =>
+    const {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
     )
 
     const [chatName, setChatName] = useState<string | null>(null)
     const [chatModel, setChatModel] = useState<string | null>(null)
     const [chatProvider, setChatProvider] = useState('ollama')
+    const [contextUsed, setContextUsed] = useState<number | null>(null)
+    const [contextMax, setContextMax] = useState<number | null>(null)
     useDocumentTitle(chatName ?? 'Chat')
 
     useEffect(() => {
         setChatName(null)
         setChatModel(null)
+        setContextUsed(null)
+        setContextMax(null)
         let cancelled = false
 
         getChats({id: chatId}).then((result) => {
@@ -74,6 +78,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatName(result.name)
                 setChatModel(result.model)
                 setChatProvider(result.provider)
+                setContextUsed(result.last_prompt_tokens)
+                setContextMax(result.context_length)
             }
         })
 
@@ -98,8 +104,34 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const chatIdRef = useRef(chatId)
     chatIdRef.current = chatId
 
+    // Shared by every collapsible message (thinking traces, tool output): keeps the
+    // toggled element pinned on screen instead of `LazyList`'s default bottom-relative
+    // scroll correction. An `if`/`else`, not `?? mutate()` — `preserveViewportPosition`
+    // returns `void`, so `??` would read that as nullish and run `mutate` a second time,
+    // silently cancelling the toggle it just performed.
+    const preserveScrollFor = (anchor: HTMLElement, mutate: () => void) => {
+        if (lazyListRef.current) lazyListRef.current.preserveViewportPosition(anchor, mutate)
+        else mutate()
+    }
+
+    // Moves the context-usage bar during a turn, not just once it fully ends: a turn with
+    // tool calls makes several Ollama calls in sequence, each with its own context usage,
+    // but only the very last one reaches this component as a `TurnResult` (see
+    // `handleTurnResult` below) — `turn_progress` is the same per-call event the pending
+    // bubble already uses for its own live token count, just also carrying the running
+    // context size.
+    useServerEvent('turn_progress', (event) => {
+        if (event.chat_id !== chatId || event.prompt_tokens == null) return
+        setContextUsed(event.prompt_tokens + event.eval_tokens)
+    })
+
     const handleTurnResult = (forChatId: number, result: TurnResult) => {
         if (chatIdRef.current !== forChatId) return
+        // Each segment of a turn carries the context usage right after it — the last
+        // segment's is the current one
+        if (!result.needsConfirmation && result.reply.prompt_tokens != null) {
+            setContextUsed(result.reply.prompt_tokens + (result.reply.eval_tokens ?? 0))
+        }
         if (result.needsConfirmation && getAutoConfirm()) {
             setPausedTurn(null)
             result.confirm(autoConfirmDecisions(result.pending)).then(
@@ -235,6 +267,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
             <Div className="chat">
                 <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider}
                             onModelChanged={setChatModel}
+                            contextUsed={contextUsed}
+                            contextMax={contextMax}
                             onSelectSearchResult={jumpToMessage}
                             hasActiveHighlight={searchHighlight != null}
                             onClearHighlight={() => setSearchHighlight(null)}/>
@@ -260,6 +294,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                                             arguments={m.arguments}
                                             expanded={id != null ? (expandedTools[id] ?? false) : false}
                                             onToggle={() => id != null && toggleToolExpanded(id)}
+                                            preserveScrollFor={preserveScrollFor}
                                             highlightQuery={highlightQuery}
                                         />
                                     ) : (
@@ -271,16 +306,18 @@ const ChatView = ({chatId}: { chatId: number }) => {
                                             thought_duration_ms={m.thought_duration_ms}
                                             images={m.images}
                                             file_ids={m.file_ids}
+                                            eval_tokens={m.eval_tokens}
                                             highlightQuery={highlightQuery}
                                             thinkingExpanded={id != null ? (expandedThinking[id] ?? false) : false}
                                             onToggleThinking={() => id != null && toggleThinkingExpanded(id)}
+                                            preserveScrollFor={preserveScrollFor}
                                         />
                                     )}
                                 </div>
                             </Fragment>
                         )
                     })}
-                    {sending ? <PendingAssistantMessage/> : null}
+                    {sending ? <PendingAssistantMessage tokens={turnTokens}/> : null}
                 </LazyList>
                 {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm}/> : null}
                 {turnError ? (

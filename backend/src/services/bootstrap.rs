@@ -38,6 +38,10 @@ pub struct AppServices {
     pub prompt: PromptFacade,
     pub user_cache: Arc<UserCacheService>,
     pub plugin_registry: Arc<PluginRegistry>,
+    /// The context window the agent runs under — Ollama's configured ceiling
+    /// (`ollama.context_length`), the number `last_prompt_tokens` is budgeted against.
+    /// Exposed so a client can show a chat's context usage as `used / max`.
+    pub context_length: u64,
 }
 
 /// The model a single-user install ran — `llm/start.sh` registers the one model it serves under
@@ -238,6 +242,7 @@ pub async fn bootstrap(
         prompt,
         user_cache,
         plugin_registry,
+        context_length: ollama_context_length,
     };
 
     // A previous adoption that didn't finish (the owner exists, the legacy data is still there)
