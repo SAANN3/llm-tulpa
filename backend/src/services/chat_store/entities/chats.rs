@@ -25,6 +25,8 @@ pub struct Model {
     pub last_prompt_tokens: Option<i64>,
     /// The folder this chat is grouped under (`folders.id`), or NULL if ungrouped.
     pub folder_id: Option<i64>,
+    /// The chat that delegated to this one (`chats.id`), or NULL for an ordinary chat.
+    pub parent_chat_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -63,7 +63,7 @@ impl ChatStore {
         Ok(chat)
     }
 
-    /// A user's non-deleted, non-plugin chats, newest-active first, plus the total count.
+    /// A user's non-deleted, non-plugin, non-sub-agent chats, newest-active first, plus the total count.
     /// `folder_id`: `Some(Some(id))` scopes to that folder, `Some(None)` to ungrouped chats,
     /// `None` doesn't filter by folder at all.
     pub async fn chats(
@@ -84,6 +84,7 @@ impl ChatStore {
         let mut query = chats::Entity::find()
             .filter(chats::Column::UserId.eq(user_id))
             .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::ParentChatId.is_null())
             .filter(chats::Column::Id.is_not_in(plugin_chat_ids));
 
         if let Some(folder_id) = folder_id {
@@ -175,6 +176,7 @@ impl ChatStore {
             key_facts: row.key_facts.and_then(|v| serde_json::from_value(v).ok()),
             last_prompt_tokens: row.last_prompt_tokens,
             folder_id: row.folder_id,
+            parent_chat_id: row.parent_chat_id,
         }
     }
 
@@ -462,6 +464,25 @@ impl ChatStore {
         Ok(Self::build_chat(row, model))
     }
 
+    /// Creates the chat a sub-agent runs in: owned by the parent's user, in the parent's folder,
+    /// and bound to the parent's model (not the user's default, which may have changed since —
+    /// the sub-agent must run on the model the parent is already using), pointing back at the
+    /// parent. It never shows in `chats`; it is reached from the parent only.
+    pub async fn create_subchat(&self, parent: &Chat, name: String) -> Result<Chat, ChatStoreErrors> {
+        let row = chats::ActiveModel {
+            user_id: Set(parent.user_id),
+            name: Set(name),
+            model_id: Set(parent.model_id),
+            folder_id: Set(parent.folder_id),
+            parent_chat_id: Set(Some(parent.id)),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await?;
+
+        self.to_chat(row).await
+    }
+
     /// Rebinds a chat to another model, which takes effect from its next turn. Ownership is
     /// the caller's responsibility.
     pub async fn set_model(&self, chat_id: i64, model_id: i64) -> Result<(), ChatStoreErrors> {
@@ -625,11 +646,14 @@ impl ChatStore {
     }
 
     /// Soft-deletes the chat: it's marked `is_deleted` rather than removed with its messages,
-    /// so `chat`/`chats` just stop returning it.
+    /// so `chat`/`chats` just stop returning it. Its sub-agent chats go with it — they're
+    /// reachable only from their parent, so leaving them live would strand them.
     pub async fn delete_chat(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
-        chats::ActiveModel { id: Set(chat_id), is_deleted: Set(true), ..Default::default() }
-            .update(&self.db)
+        chats::Entity::update_many()
+            .col_expr(chats::Column::IsDeleted, Expr::value(true))
+            .filter(chats::Column::Id.eq(chat_id).or(chats::Column::ParentChatId.eq(chat_id)))
+            .exec(&self.db)
             .await?;
         Ok(())
     }
@@ -806,6 +830,8 @@ pub struct Chat {
     pub last_prompt_tokens: Option<i64>,
     /// The folder this chat is grouped under, or `None` if ungrouped.
     pub folder_id: Option<i64>,
+    /// The chat that delegated to this one, or `None` for an ordinary chat.
+    pub parent_chat_id: Option<i64>,
 }
 
 pub struct Message {
