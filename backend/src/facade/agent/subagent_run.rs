@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use serde_json::Value;
 
 use super::{Agent, AgentToolPermission};
+use crate::services::chat_store::NewMessage;
 use crate::services::error::ErrorService;
 use crate::services::job_store::AgentJobEnd;
 use crate::services::llm::{ThinkChoice, ThinkingCapability};
@@ -31,6 +32,22 @@ enum SubagentResult {
     /// It didn't reach an answer (it ran out of model calls, or stopped with nothing to say). The
     /// text says why and carries whatever it had written last, if anything.
     Incomplete(String),
+}
+
+/// A sub-agent's attempt to hand its result back that the tool refused (a missing `output`, say).
+struct FailedReturn {
+    /// What the tool said.
+    error: String,
+    /// What the sub-agent wrote alongside the call — usually the answer it meant to return.
+    attempt: String,
+}
+
+/// What running the sub-agent's pending tool calls came to.
+struct PendingRun {
+    /// The result, when `llm.return_agent` succeeded.
+    answer: Option<String>,
+    /// The error of the last `llm.return_agent` call that failed, if any did.
+    failed_return: Option<String>,
 }
 
 impl Agent {
@@ -98,16 +115,36 @@ impl Agent {
         let think = self.subagent_think(sub_chat_id).await?;
         let mut reply = self.chat(sub_chat_id, prompt, vec![], vec![], think.clone()).await?;
         let mut model_calls = 1;
+        let mut failed_return: Option<FailedReturn> = None;
+        let mut reminded = false;
         loop {
             if !reply.can_use_tools {
+                // Stopping after a refused `llm.return_agent` isn't an answer: the last message is
+                // usually just "I will call it now". It gets one reminder, then what it wrote is
+                // handed over as it stands.
+                if let Some(failed) = &failed_return {
+                    if reminded {
+                        return Ok(SubagentResult::Incomplete(unreturned_result(failed, &reply.content)));
+                    }
+                    reminded = true;
+                    self.remind_to_return(sub_chat_id, &failed.error).await?;
+                    reply = self.continue_chat(sub_chat_id, think.clone()).await?;
+                    model_calls += 1;
+                    continue;
+                }
+
                 return Ok(match reply.content.trim() {
                     "" => SubagentResult::Incomplete("the sub-agent stopped without writing an answer".to_string()),
                     answer => SubagentResult::Answer(answer.to_string()),
                 });
             }
 
-            if let Some(answer) = self.run_pending_unattended(sub_chat_id, auto_confirm).await? {
+            let run = self.run_pending_unattended(sub_chat_id, auto_confirm).await?;
+            if let Some(answer) = run.answer {
                 return Ok(SubagentResult::Answer(answer));
+            }
+            if let Some(error) = run.failed_return {
+                failed_return = Some(FailedReturn { error, attempt: reply.content.clone() });
             }
 
             if model_calls >= MAX_MODEL_CALLS {
@@ -123,6 +160,34 @@ impl Agent {
         }
     }
 
+    /// Tells the sub-agent its `llm.return_agent` call was refused and it isn't done. Stored as a
+    /// `notice` (sent to the model as a user turn, shown as a muted marker), the same way the
+    /// continuation prompt after a cut-off thought is.
+    async fn remind_to_return(&self, chat_id: i64, error: &str) -> Result<(), ErrorService> {
+        self.chat_store
+            .new_message(NewMessage {
+                chat_id,
+                role: "notice".to_string(),
+                content: format!(
+                    "[System note: {} failed ({error}). Your run is not finished until it succeeds — call it \
+                     again with your result in the `output` argument.]",
+                    ReturnAgentTool::NAME
+                ),
+                tool_name: None,
+                thinking: None,
+                thought_duration_ms: None,
+                tool_success: None,
+                tool_denied: false,
+                tool_calls: vec![],
+                images: vec![],
+                file_ids: vec![],
+                prompt_tokens: None,
+                eval_tokens: None,
+            })
+            .await?;
+        Ok(())
+    }
+
     /// The `think` setting a sub-agent's model calls use. Nobody picks one for a sub-agent, so it is
     /// the plain default (thinking on) — except for a model whose template has no thinking at all,
     /// which Ollama may refuse a `think: true` for; that one is told not to think. Not being able
@@ -136,12 +201,12 @@ impl Agent {
         })
     }
 
-    /// Runs every tool call the sub-agent's last reply asked for, in order. Returns the answer
-    /// when one of them was `llm.return_agent` — the run stops there, so calls queued behind it
-    /// never execute. With `auto_confirm`, whatever the calls' escalations offer is granted first
-    /// (all of them up front, then the calls run — the same order the frontend uses, and the reason
-    /// `allow_scope` merges deltas instead of overwriting).
-    async fn run_pending_unattended(&self, chat_id: i64, auto_confirm: bool) -> Result<Option<String>, ErrorService> {
+    /// Runs every tool call the sub-agent's last reply asked for, in order. Stops at a successful
+    /// `llm.return_agent`, which is the answer — calls queued behind it never execute. With
+    /// `auto_confirm`, whatever the calls' escalations offer is granted first (all of them up front,
+    /// then the calls run — the same order the frontend uses, and the reason `allow_scope` merges
+    /// deltas instead of overwriting).
+    async fn run_pending_unattended(&self, chat_id: i64, auto_confirm: bool) -> Result<PendingRun, ErrorService> {
         if auto_confirm {
             for call in self.pending_tool_calls(chat_id).await? {
                 let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
@@ -151,19 +216,43 @@ impl Agent {
             }
         }
 
+        let mut failed_return = None;
         loop {
             let out = self.run_next_tool(chat_id, None, true).await?;
-            if out.tool_name == ReturnAgentTool::NAME && out.success {
-                return Ok(Some(match out.content {
-                    Value::String(text) => text,
-                    other => other.to_string(),
-                }));
+            if out.tool_name == ReturnAgentTool::NAME {
+                if out.success {
+                    let answer = match out.content {
+                        Value::String(text) => text,
+                        other => other.to_string(),
+                    };
+                    return Ok(PendingRun { answer: Some(answer), failed_return: None });
+                }
+                failed_return = Some(out.err.unwrap_or_else(|| "the call was refused".to_string()));
             }
             if out.tools.is_empty() {
-                return Ok(None);
+                return Ok(PendingRun { answer: None, failed_return });
             }
         }
     }
+}
+
+/// What a sub-agent that never managed to call `llm.return_agent` successfully hands back: the
+/// message it wrote when it tried (usually the answer itself) and its last message, since neither
+/// is reliably the answer on its own.
+fn unreturned_result(failed: &FailedReturn, last_message: &str) -> String {
+    let mut text = format!(
+        "the sub-agent never managed to hand its result back — {} kept failing ({}).",
+        ReturnAgentTool::NAME,
+        failed.error
+    );
+    let (attempt, last) = (failed.attempt.trim(), last_message.trim());
+    if !attempt.is_empty() {
+        text.push_str(&format!("\nWhat it wrote when it tried:\n{attempt}"));
+    }
+    if !last.is_empty() && last != attempt {
+        text.push_str(&format!("\nIts last message:\n{last}"));
+    }
+    text
 }
 
 /// The name of a sub-agent's chat: its prompt, flattened to one line and cut short.
