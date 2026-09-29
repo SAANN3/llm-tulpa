@@ -1,19 +1,12 @@
-// Nothing starts a sub-agent through the handle yet: `llm.run_agent` is the caller, and it lands after this.
-#![allow(dead_code)]
-
 use std::sync::{Arc, OnceLock, Weak};
 
 use async_trait::async_trait;
 
 use super::base::ToolError;
+use super::llm::{return_agent::ReturnAgentTool, run_agent::RunAgentTool};
 use super::os::{
     job_kill::JobKillTool, job_output::JobOutputTool, list_jobs::ListJobsTool, start_job::StartJobTool,
 };
-
-/// The tool a chat uses to delegate work to a sub-agent.
-pub const RUN_AGENT_TOOL: &str = "llm.run_agent";
-/// The tool a sub-agent uses to hand its result back and end its run.
-pub const RETURN_AGENT_TOOL: &str = "llm.return_agent";
 
 /// Background-job tools a sub-agent doesn't get. A run ends when the sub-agent stops calling
 /// tools, and the last thing it wrote is taken as its answer — so a sub-agent that started a job
@@ -26,8 +19,8 @@ const JOB_TOOLS: [&str; 4] =
 /// a normal chat never gets `llm.return_agent`, which only means something inside a sub-agent.
 pub fn available_to(name: &str, is_subagent: bool) -> bool {
     match name {
-        RUN_AGENT_TOOL => !is_subagent,
-        RETURN_AGENT_TOOL => is_subagent,
+        RunAgentTool::NAME => !is_subagent,
+        ReturnAgentTool::NAME => is_subagent,
         _ if JOB_TOOLS.contains(&name) => !is_subagent,
         _ => true,
     }

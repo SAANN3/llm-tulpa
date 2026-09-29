@@ -1,9 +1,6 @@
 //! Running a sub-agent: the loop the frontend drives for an ordinary chat (`chat`, run the
 //! pending tools, `continue_chat`, repeat), run here in the backend for a chat nobody is watching.
 
-// Nothing starts a sub-agent yet: `llm.run_agent` is the caller, and it lands after this.
-#![allow(dead_code)]
-
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -13,8 +10,10 @@ use serde_json::Value;
 use super::{Agent, AgentToolPermission};
 use crate::services::error::ErrorService;
 use crate::services::job_store::AgentJobEnd;
+use crate::services::llm::{ThinkChoice, ThinkingCapability};
 use crate::tools::base::ToolError;
-use crate::tools::subagent::{SubagentRunner, SubagentStarted, RETURN_AGENT_TOOL};
+use crate::tools::llm::return_agent::ReturnAgentTool;
+use crate::tools::subagent::{SubagentRunner, SubagentStarted};
 
 /// Model calls a sub-agent gets before its run is cut off. A sub-agent that keeps calling tools
 /// without ever answering would otherwise run for as long as the model keeps going, holding the
@@ -96,7 +95,8 @@ impl Agent {
         auto_confirm: bool,
         prompt: String,
     ) -> Result<SubagentResult, ErrorService> {
-        let mut reply = self.chat(sub_chat_id, prompt, vec![], vec![], None).await?;
+        let think = self.subagent_think(sub_chat_id).await?;
+        let mut reply = self.chat(sub_chat_id, prompt, vec![], vec![], think.clone()).await?;
         let mut model_calls = 1;
         loop {
             if !reply.can_use_tools {
@@ -118,9 +118,22 @@ impl Agent {
                 return Ok(SubagentResult::Incomplete(message));
             }
 
-            reply = self.continue_chat(sub_chat_id, None).await?;
+            reply = self.continue_chat(sub_chat_id, think.clone()).await?;
             model_calls += 1;
         }
+    }
+
+    /// The `think` setting a sub-agent's model calls use. Nobody picks one for a sub-agent, so it is
+    /// the plain default (thinking on) — except for a model whose template has no thinking at all,
+    /// which Ollama may refuse a `think: true` for; that one is told not to think. Not being able
+    /// to tell (Ollama unreachable) is not a reason to fail the run here — the model call itself
+    /// reports that.
+    async fn subagent_think(&self, sub_chat_id: i64) -> Result<Option<ThinkChoice>, ErrorService> {
+        let model = self.chat_store.chat(sub_chat_id).await?.model;
+        Ok(match self.ollama.thinking_capability(&model).await {
+            Ok(ThinkingCapability::Unsupported) => Some(ThinkChoice::Enabled(false)),
+            _ => None,
+        })
     }
 
     /// Runs every tool call the sub-agent's last reply asked for, in order. Returns the answer
@@ -140,7 +153,7 @@ impl Agent {
 
         loop {
             let out = self.run_next_tool(chat_id, None, true).await?;
-            if out.tool_name == RETURN_AGENT_TOOL && out.success {
+            if out.tool_name == ReturnAgentTool::NAME && out.success {
                 return Ok(Some(match out.content {
                     Value::String(text) => text,
                     other => other.to_string(),

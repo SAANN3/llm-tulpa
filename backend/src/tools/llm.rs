@@ -1,4 +1,6 @@
 pub mod read_image;
+pub mod return_agent;
+pub mod run_agent;
 
 use super::base::Tool;
 
@@ -7,5 +9,9 @@ use super::base::Tool;
 /// tools, which act on the filesystem/host/network/UI and just return data. For
 /// `main.rs` to register alongside every other domain's `collect()`.
 pub fn collect() -> Vec<Box<dyn Tool>> {
-    vec![Box::new(read_image::ReadImageTool)]
+    vec![
+        Box::new(read_image::ReadImageTool),
+        Box::new(run_agent::RunAgentTool),
+        Box::new(return_agent::ReturnAgentTool),
+    ]
 }

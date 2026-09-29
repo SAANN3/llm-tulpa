@@ -154,7 +154,6 @@ pub struct ToolContext {
     pub model: String,
     /// How a tool starts a sub-agent. Not `Agent` itself, which would make `ToolContext` reentrant
     /// in exactly the way the struct's own doc comment rules out — see `SubagentHandle`.
-    #[allow(dead_code)]
     pub subagents: Arc<SubagentHandle>,
 }
 

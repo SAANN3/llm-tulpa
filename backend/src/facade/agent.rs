@@ -21,7 +21,8 @@ use crate::services::{
     tools::ToolService,
 };
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
-use crate::tools::subagent::{self, SubagentHandle, RETURN_AGENT_TOOL};
+use crate::tools::llm::return_agent::ReturnAgentTool;
+use crate::tools::subagent::{self, SubagentHandle};
 use crate::tools::ui::attach_file::AttachFileTool;
 
 mod subagent_run;
@@ -195,6 +196,33 @@ const SYSTEM_PROMPT: &[&str] = &[
 /// see `SettingsStore::system_prompt`).
 pub fn default_system_prompt() -> String {
     SYSTEM_PROMPT.join("\n")
+}
+
+/// Added after whichever system prompt applies (the built-in or the user's own) in a sub-agent's
+/// chat only. Worded as checks to run rather than facts about what the sub-agent can do, like the
+/// rules above.
+fn subagent_system_prompt() -> String {
+    let return_tool = ReturnAgentTool::NAME;
+    [
+        format!(
+            "You are a sub-agent. The task in the first message was handed to you by another assistant so \
+             that its own conversation stays small; it has seen none of your work and gets back only what \
+             you pass to {return_tool}."
+        ),
+        "Nobody is watching this conversation, so nobody can answer a question or approve a tool call. \
+         Before asking for something, check whether the task can be done on a reasonable reading of it, \
+         and do that. A tool call that is refused stays refused for this whole run: don't repeat it \
+         unchanged — use what is allowed, or say in your result what you would have needed."
+            .to_string(),
+        format!(
+            "Finish by calling {return_tool}, as the only call in its step. Before calling it, check that \
+             the result stands on its own for someone who saw none of this: the answer itself and the \
+             concrete details needed to use it (paths, names, values, how sure you are), not the search \
+             trail. Keep it short — a very long result is cut off. If the task can't be finished, still \
+             call it, saying what you found and what stopped you."
+        ),
+    ]
+    .join("\n")
 }
 
 /// Pure boundary-selection for `Agent::compact` — pulled out of it so the arithmetic is
@@ -844,6 +872,10 @@ impl Agent {
             Some(custom) => custom,
             None => default_system_prompt(),
         };
+        if is_subagent {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&subagent_system_prompt());
+        }
         if messages.first().is_some_and(|message| message.role == "system") {
             let summary_message = messages.remove(0);
             system_prompt.push_str("\n\n");
@@ -1636,8 +1668,9 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
                     _ if unattended => format!(
                         "Tool call denied — nobody can approve tool calls during a sub-agent run, and '{}' isn't \
                          permitted for these arguments ({reason}). Work within what is already allowed, or call \
-                         {RETURN_AGENT_TOOL} and say what you would have needed.",
-                        next.tool_name
+                         {} and say what you would have needed.",
+                        next.tool_name,
+                        ReturnAgentTool::NAME
                     ),
                     (_, false) => format!(
                         "Tool call blocked — '{}' can't be approved for these exact arguments ({reason}). \
