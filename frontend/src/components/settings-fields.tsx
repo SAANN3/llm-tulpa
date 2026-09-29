@@ -99,7 +99,7 @@ export interface AutoConfirmFieldProps {
     onToggle: (enabled: boolean) => void
 }
 
-/** Auto-confirm toggle — a local-to-this-browser preference, not a synced setting */
+/** Auto-confirm toggle — saved with the rest of the user's settings */
 export const AutoConfirmField = ({enabled, onToggle}: AutoConfirmFieldProps) => (
     <Div className="field">
         <Div className="field__row">

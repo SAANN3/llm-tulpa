@@ -12,7 +12,6 @@ import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
-import {getAutoConfirm, setAutoConfirm} from '../utils/auto-confirm.ts'
 import {requestNotificationPermission} from '../utils/notifications'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
@@ -25,7 +24,7 @@ const Settings = () => {
     const [name, setName] = useState(settings?.name ?? '')
     const [timezoneText, setTimezoneText] = useState(String(settings?.timezone ?? browserTimezoneOffsetHours()))
     const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications_enabled ?? false)
-    const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(getAutoConfirm)
+    const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(settings?.auto_confirm ?? false)
 
     const onToggleNotifications = async (enabled: boolean) => {
         if (!enabled) {
@@ -34,11 +33,6 @@ const Settings = () => {
         }
 
         setNotificationsEnabled(await requestNotificationPermission())
-    }
-
-    const onToggleAutoConfirm = (enabled: boolean) => {
-        setAutoConfirm(enabled)
-        setAutoConfirmEnabled(enabled)
     }
 
     const onBack = () => navigate('/')
@@ -51,7 +45,7 @@ const Settings = () => {
         if (saveDisabled) return
 
         const timezone = Number(timezoneText)
-        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled})
+        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled})
         navigate('/')
     }
 
@@ -77,7 +71,7 @@ const Settings = () => {
                         onChosen={(llm_provider, active_model) => setSettings({llm_provider, active_model})}
                     />
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>
-                    <AutoConfirmField enabled={autoConfirmEnabled} onToggle={onToggleAutoConfirm}/>
+                    <AutoConfirmField enabled={autoConfirmEnabled} onToggle={setAutoConfirmEnabled}/>
                     <Div className="settings__actions">
                         <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>
                         <Button className="settings__action" text="Save" onClicked={onSave} disabled={saveDisabled}/>

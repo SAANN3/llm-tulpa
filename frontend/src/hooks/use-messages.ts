@@ -17,7 +17,6 @@ import {getMessages} from '../api/chats/messages'
 import type {MessageOut} from '../api/chats/types'
 import {useSettings} from '../context/use-settings.ts'
 import {useServerEvent} from './use-server-events.ts'
-import {getAutoConfirm} from '../utils/auto-confirm.ts'
 import {notify} from '../utils/notifications'
 import {peekPendingPrompt} from '../utils/pending-prompt.ts'
 
@@ -336,7 +335,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
             return result
         }
 
-        if (isCurrent() && settings?.notifications_enabled && !getAutoConfirm()) {
+        if (isCurrent() && settings?.notifications_enabled && !settings.auto_confirm) {
             const names = Object.values(result.pending)
                 .map((call) => call.name)
                 .join(', ')

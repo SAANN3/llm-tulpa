@@ -5,6 +5,8 @@ export interface Settings {
     notifications_enabled: boolean
     theme: string | null
     language: string
+    /** Tool-permission prompts are approved automatically instead of waiting for the user. */
+    auto_confirm: boolean
     llm_provider: string
     active_model: string | null
 }
@@ -15,6 +17,7 @@ export interface SettingsUpdate {
     notifications_enabled?: boolean
     theme?: string
     language?: string
+    auto_confirm?: boolean
     llm_provider?: string
     active_model?: string
 }

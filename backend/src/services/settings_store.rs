@@ -71,6 +71,7 @@ impl SettingsStore {
             notifications_enabled: row.notifications_enabled,
             theme: row.theme,
             language: row.language,
+            auto_confirm: row.auto_confirm,
             llm_provider: active
                 .as_ref()
                 .map(|m| m.provider.clone())
@@ -140,6 +141,9 @@ impl SettingsStore {
         if let Some(language) = update.language {
             model.language = Set(language);
         }
+        if let Some(auto_confirm) = update.auto_confirm {
+            model.auto_confirm = Set(auto_confirm);
+        }
         if let Some(id) = active_model_id {
             model.active_model_id = Set(Some(id));
         }
@@ -183,6 +187,8 @@ pub struct Settings {
     pub notifications_enabled: bool,
     pub theme: Option<String>,
     pub language: String,
+    /// Tool-permission prompts are approved automatically instead of waiting for the user.
+    pub auto_confirm: bool,
     /// The provider of the active model (`ollama` until one is picked).
     pub llm_provider: String,
     pub active_model: Option<String>,
@@ -196,6 +202,7 @@ pub struct SettingsUpdate {
     pub notifications_enabled: Option<bool>,
     pub theme: Option<String>,
     pub language: Option<String>,
+    pub auto_confirm: Option<bool>,
     pub llm_provider: Option<String>,
     pub active_model: Option<String>,
 }

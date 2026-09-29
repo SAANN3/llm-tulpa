@@ -19,6 +19,8 @@ pub struct Model {
     /// The user's own system prompt, replacing the built-in default for their chats —
     /// `NULL` means the hardcoded default applies.
     pub system_prompt: Option<String>,
+    /// Whether tool-permission prompts are approved automatically instead of waiting for the user.
+    pub auto_confirm: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -20,7 +20,7 @@ import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import type {Decisions, PendingConfirmations, TurnResult} from '../hooks/use-messages.ts'
 import {ToolAllowance, useMessages} from '../hooks/use-messages.ts'
 import {useServerEvent} from '../hooks/use-server-events.ts'
-import {getAutoConfirm} from '../utils/auto-confirm.ts'
+import {useSettings} from '../context/use-settings.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
 
@@ -53,6 +53,7 @@ const Chat = () => {
 };
 
 const ChatView = ({chatId}: { chatId: number }) => {
+    const {settings} = useSettings()
     const lazyListRef = useRef<LazyListHandle>(null)
     const {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
@@ -135,7 +136,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         if (!result.needsConfirmation && result.reply.prompt_tokens != null) {
             setContextUsed(result.reply.prompt_tokens + (result.reply.eval_tokens ?? 0))
         }
-        if (result.needsConfirmation && getAutoConfirm()) {
+        if (result.needsConfirmation && settings?.auto_confirm) {
             setPausedTurn(null)
             result.confirm(autoConfirmDecisions(result.pending)).then(
                 (next) => handleTurnResult(forChatId, next),

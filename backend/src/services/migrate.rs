@@ -69,13 +69,17 @@ const V6_ADDITIONS: &str = "
     CREATE INDEX IF NOT EXISTS idx_chats_folder ON chats (folder_id);
 ";
 
-/// What version 7 added on top of version 6: sub-agent chats.
+/// What version 7 added on top of version 6: sub-agent chats and the auto-confirm setting.
 const V7_ADDITIONS: &str = "
     -- A sub-agent's chat points at the chat that delegated to it; NULL for every ordinary chat.
     -- CASCADE: a sub-chat has no meaning without its parent, and chats are only ever soft-deleted
     -- anyway, so this fires only when a whole user (and with them their chats) goes away.
     ALTER TABLE chats ADD COLUMN IF NOT EXISTS parent_chat_id BIGINT REFERENCES chats (id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS idx_chats_parent ON chats (parent_chat_id);
+
+    -- Whether tool-permission prompts are approved automatically, for the user's chats and for
+    -- the sub-agents those chats start (nobody is watching a sub-agent to answer a prompt).
+    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_confirm BOOLEAN NOT NULL DEFAULT false;
 ";
 
 /// The Postgres schema the pre-accounts (single-user) tables are moved into. See `stash_legacy`.
@@ -158,7 +162,8 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 }
 
 /// Version 2 → 7, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
-/// `user_settings.system_prompt`, the `folders` table, and `chats.parent_chat_id`. One transaction.
+/// `user_settings.system_prompt`, the `folders` table, `chats.parent_chat_id`, and
+/// `user_settings.auto_confirm`. One transaction.
 async fn upgrade_v2_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V3_ADDITIONS).await?;
@@ -172,8 +177,8 @@ async fn upgrade_v2_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
 }
 
 /// Version 3 → 7, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
-/// `messages.eval_tokens`, `user_settings.system_prompt`, the `folders` table, and
-/// `chats.parent_chat_id`.
+/// `messages.eval_tokens`, `user_settings.system_prompt`, the `folders` table,
+/// `chats.parent_chat_id`, and `user_settings.auto_confirm`.
 async fn upgrade_v3_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
@@ -185,8 +190,8 @@ async fn upgrade_v3_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.commit().await
 }
 
-/// Version 4 → 7, in place: adds the per-user `system_prompt` column, the `folders` table, and
-/// `chats.parent_chat_id`.
+/// Version 4 → 7, in place: adds the per-user `system_prompt` column, the `folders` table,
+/// `chats.parent_chat_id`, and `user_settings.auto_confirm`.
 async fn upgrade_v4_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
@@ -197,7 +202,8 @@ async fn upgrade_v4_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.commit().await
 }
 
-/// Version 5 → 7, in place: adds chat folders and `chats.parent_chat_id`.
+/// Version 5 → 7, in place: adds chat folders, `chats.parent_chat_id`, and
+/// `user_settings.auto_confirm`.
 async fn upgrade_v5_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
@@ -207,7 +213,7 @@ async fn upgrade_v5_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.commit().await
 }
 
-/// Version 6 → 7, in place: adds `chats.parent_chat_id`.
+/// Version 6 → 7, in place: adds `chats.parent_chat_id` and `user_settings.auto_confirm`.
 async fn upgrade_v6_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
