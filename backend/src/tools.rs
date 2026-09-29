@@ -3,6 +3,7 @@ pub mod files;
 pub mod llm;
 pub mod os;
 pub mod storage;
+pub mod subagent;
 pub mod temperature;
 pub mod ui;
 pub mod web;

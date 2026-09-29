@@ -94,6 +94,21 @@ impl PermissionStore {
         Ok(())
     }
 
+    /// Gives `to_chat_id` a copy of every grant `from_chat_id` holds, as of now — later grants on
+    /// either chat don't reach the other. What a sub-agent starts with: it can do what the chat
+    /// that started it was already allowed to, and nothing it is later granted flows back.
+    pub async fn copy_grants(&self, from_chat_id: i64, to_chat_id: i64) -> Result<(), PermissionStoreErrors> {
+        let rows = tool_permissions::Entity::find()
+            .filter(tool_permissions::Column::ChatId.eq(from_chat_id))
+            .all(&self.db)
+            .await?;
+
+        for row in rows {
+            self.create_scope(to_chat_id, &row.tool_name, row.scope).await?;
+        }
+        Ok(())
+    }
+
     /// Revokes a chat's grant for a tool. Not an error if there wasn't one.
     pub async fn delete(&self, chat_id: i64, tool_name: &str) -> Result<(), PermissionStoreErrors> {
         tool_permissions::Entity::delete_many()

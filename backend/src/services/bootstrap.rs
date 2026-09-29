@@ -36,7 +36,7 @@ pub struct AppServices {
     pub permission_store: Arc<PermissionStore>,
     pub file_store: Arc<FileStore>,
     pub folder_store: Arc<FolderStore>,
-    pub agent: Agent,
+    pub agent: Arc<Agent>,
     pub prompt: PromptFacade,
     pub user_cache: Arc<UserCacheService>,
     pub plugin_registry: Arc<PluginRegistry>,
@@ -191,7 +191,7 @@ pub async fn bootstrap(
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
-    let agent = Agent::new(
+    let agent = Arc::new(Agent::new(
         ollama.clone(),
         chat_store.clone(),
         tools.clone(),
@@ -202,7 +202,8 @@ pub async fn bootstrap(
         settings_store.clone(),
         agent_history_len,
         ollama_context_length,
-    );
+    ));
+    agent.bind_subagent_runner();
     let prompt = PromptFacade::new(ollama.clone());
     let user_cache = UserCacheService::new(settings_store.clone(), prompt.clone());
 

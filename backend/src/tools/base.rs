@@ -11,6 +11,7 @@ use crate::services::event_bus::EventBus;
 use crate::services::file_store::FileStore;
 use crate::services::job_store::JobStore;
 use crate::services::llm::OllamaService;
+use super::subagent::SubagentHandle;
 
 
 /// Anything that can be exposed to the model as a callable tool. One impl per tool.
@@ -151,6 +152,10 @@ pub struct ToolContext {
     /// The model this chat is bound to — what a tool that makes its own model call
     /// (`llm.read_image`) should run against.
     pub model: String,
+    /// How a tool starts a sub-agent. Not `Agent` itself, which would make `ToolContext` reentrant
+    /// in exactly the way the struct's own doc comment rules out — see `SubagentHandle`.
+    #[allow(dead_code)]
+    pub subagents: Arc<SubagentHandle>,
 }
 
 impl ToolContext {

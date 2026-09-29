@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::services::{
@@ -13,14 +14,17 @@ use crate::services::{
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
-    job_store::{JobRecord, JobStatus, JobStore},
+    job_store::{JobKind, JobRecord, JobStatus, JobStore},
     llm::{OllamaChatMessage, OllamaChatResponse, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
     settings_store::SettingsStore,
     tools::ToolService,
 };
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
+use crate::tools::subagent::{self, SubagentHandle, RETURN_AGENT_TOOL};
 use crate::tools::ui::attach_file::AttachFileTool;
+
+mod subagent_run;
 
 
 /// `compaction_trigger_tokens`/`compaction_keep_chars` (below) are derived from the
@@ -335,14 +339,28 @@ impl Regenerations {
     }
 }
 
+/// A job's command (or a sub-agent's prompt) as shown in a notice: one line's worth, cut short.
+fn command_preview(command: &str) -> String {
+    const MAX_COMMAND_CHARS: usize = 120;
+    let cut: String = command.chars().take(MAX_COMMAND_CHARS).collect();
+    let ellipsis = if command.chars().count() > MAX_COMMAND_CHARS { "..." } else { "" };
+    format!("{cut}{ellipsis}")
+}
+
+/// How much of the context window one sub-agent result may take up inside its notice, and the
+/// rough characters-per-token used to turn that into a size. The result is what the whole run was
+/// for, so it's inlined instead of left for a tool call — but a single message bigger than the
+/// window can't be compacted away, so a cap is the backstop. It scales with the context length like
+/// the compaction thresholds do; the sub-agent's own prompt is what asks it to keep results short.
+const INLINED_RESULT_FRACTION: f64 = 0.15;
+const INLINED_RESULT_CHARS_PER_TOKEN: f64 = 3.0;
+
 /// The text of the `notice` message written when a background job ends — what the model
 /// is told, and what the chat shows. Bracketed like the other backend-written notes
 /// (`with_attached_files_note`), and names the job by id and command so it's
 /// recognisable without the model having to remember which job that was.
 fn job_notice_text(job: &JobRecord) -> String {
-    const MAX_COMMAND_CHARS: usize = 120;
-    let command: String = job.command.chars().take(MAX_COMMAND_CHARS).collect();
-    let ellipsis = if job.command.chars().count() > MAX_COMMAND_CHARS { "..." } else { "" };
+    let command = command_preview(&job.command);
 
     let outcome = match (job.status, job.exit_code) {
         (JobStatus::Exited, Some(0)) => "finished successfully (exit code 0)".to_string(),
@@ -354,7 +372,7 @@ fn job_notice_text(job: &JobRecord) -> String {
     };
 
     format!(
-        "[Background job {} (`{command}{ellipsis}`) {outcome}. Read its output with os.job_output.]",
+        "[Background job {} (`{command}`) {outcome}. Read its output with os.job_output.]",
         job.id
     )
 }
@@ -442,8 +460,14 @@ pub struct Agent {
     compaction_trigger_tokens: u64,
     /// See `KEEP_CHARS_PER_TOKEN` — `context_length * KEEP_CHARS_PER_TOKEN`.
     compaction_keep_chars: usize,
+    /// See `INLINED_RESULT_FRACTION` — the most of a sub-agent's result a notice carries.
+    max_inlined_result_bytes: u64,
     /// Chats with a tool call executing right now. See `RunningToolGuard`.
     running_tools: Arc<Mutex<HashSet<i64>>>,
+    /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
+    /// two of them taking turns would each evict the other's cached prompt on every call — slower
+    /// for both than running back to back.
+    subagent_slot: Arc<Semaphore>,
 }
 
 /// What the model is told about a tool call that was cut short — worded to make it check what
@@ -499,6 +523,7 @@ impl Agent {
                 chat_id: 0,
                 user_id: 0,
                 model: String::new(),
+                subagents: Arc::new(SubagentHandle::new()),
             };
         Self {
             ollama,
@@ -511,7 +536,10 @@ impl Agent {
             history_len,
             compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
             compaction_keep_chars: (context_length as f64 * KEEP_CHARS_PER_TOKEN) as usize,
+            max_inlined_result_bytes: (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN)
+                as u64,
             running_tools: Arc::new(Mutex::new(HashSet::new())),
+            subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -694,12 +722,16 @@ impl Agent {
 
         let mut notices = Vec::with_capacity(jobs.len());
         for job in jobs {
+            let content = match job.kind {
+                JobKind::Process => job_notice_text(&job),
+                JobKind::Agent { .. } => self.agent_job_notice_text(&job).await,
+            };
             let stored = self
                 .chat_store
                 .new_message(NewMessage {
                     chat_id,
                     role: "notice".to_string(),
-                    content: job_notice_text(&job),
+                    content,
                     tool_name: None,
                     thinking: None,
                     thought_duration_ms: None,
@@ -725,6 +757,32 @@ impl Agent {
         }
 
         Ok(notices)
+    }
+
+    /// The `notice` text for a finished sub-agent job. Unlike a command's, it carries the outcome
+    /// itself: the result of a run that succeeded, or why it didn't get one.
+    async fn agent_job_notice_text(&self, job: &JobRecord) -> String {
+        let prompt = command_preview(&job.command);
+        let head = format!("[Sub-agent job {} (`{prompt}`)", job.id);
+
+        match (job.status, job.exit_code) {
+            (JobStatus::Lost, _) => format!(
+                "{head} was lost — the backend restarted while it was running, so it did not finish.]"
+            ),
+            (JobStatus::Exited, code) => {
+                let (text, cut) = match self.job_store.read_log_head(job, self.max_inlined_result_bytes).await {
+                    Ok(read) => read,
+                    Err(e) => (format!("(its result could not be read: {e})"), false),
+                };
+                let cut_note = if cut { "\n[cut here — os.job_output has the end of it]" } else { "" };
+                if code == Some(0) {
+                    format!("{head} finished. Its result:\n{text}{cut_note}]")
+                } else {
+                    format!("{head} did not finish: {text}{cut_note}]")
+                }
+            }
+            _ => format!("{head} ended.]"),
+        }
     }
 
     /// Sends `messages` (plus `new_message`, if any) to Ollama, prefixed with
@@ -753,11 +811,20 @@ impl Agent {
         // that can be held past any .await without keeping the ToolService lock open,
         // so plugin enable/disable can update the set concurrently with ongoing turns.
         let tools_snapshot: Vec<Arc<dyn Tool>> = self.tools.snapshot_tools().await;
-        let tools: Vec<&dyn Tool> = tools_snapshot.iter().map(|t| t.as_ref()).collect();
 
         // The chat metadata, read fresh so a model switch takes effect on this very turn
         // and last_prompt_tokens is available for accurate budget calculation.
         let chat = self.chat_store.chat(chat_id).await?;
+
+        // Which tools the model is shown depends on whether this chat is a sub-agent's — see
+        // `subagent::available_to`. Filtering the list (rather than only refusing a call) is what
+        // keeps a sub-agent from being able to try starting one of its own.
+        let is_subagent = chat.parent_chat_id.is_some();
+        let tools: Vec<&dyn Tool> = tools_snapshot
+            .iter()
+            .map(|t| t.as_ref())
+            .filter(|t| subagent::available_to(t.function_name(), is_subagent))
+            .collect();
         let model = chat.model;
         let known_prompt_tokens = chat.last_prompt_tokens.map(|t| t as u64);
 
@@ -1513,7 +1580,16 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// same as `can_use_tool` would, so a caller can tell whether to run another `use_tool`
     /// or move on without a separate round trip.
     pub async fn use_tool(&self, chat_id: i64, scope: Option<Value>) -> Result<UseToolOut, ErrorService> {
+        self.run_next_tool(chat_id, scope, false).await
+    }
+
+    /// `use_tool`'s body. `unattended` is for a chat nobody is watching (a sub-agent's): a denied
+    /// call is reported to the model as final for this run, instead of promising it "they'll be
+    /// asked to approve it then" — there is no one to ask.
+    async fn run_next_tool(&self, chat_id: i64, scope: Option<Value>, unattended: bool) -> Result<UseToolOut, ErrorService> {
         let _running = self.mark_running(chat_id)?;
+        let chat = self.chat_store.chat(chat_id).await?;
+        let is_subagent = chat.parent_chat_id.is_some();
         let mut pending = self.pending_tool_calls(chat_id).await?.into_iter();
         let next = pending
             .next()
@@ -1535,11 +1611,12 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             }
         };
 
-        let permission = self.tool_permission(&next.tool_name, next.arguments.clone(), effective_scope).await;
+        let permission = self
+            .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, is_subagent)
+            .await;
 
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
-                let chat = self.chat_store.chat(chat_id).await?;
                 let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.model);
                 match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
                     Ok(value) => (true, false, None, value),
@@ -1556,6 +1633,12 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
                 // that aren't restricted) is the expected next step, not something to
                 // refuse on principle.
                 let message = match (had_scope, escalation.is_some()) {
+                    _ if unattended => format!(
+                        "Tool call denied — nobody can approve tool calls during a sub-agent run, and '{}' isn't \
+                         permitted for these arguments ({reason}). Work within what is already allowed, or call \
+                         {RETURN_AGENT_TOOL} and say what you would have needed.",
+                        next.tool_name
+                    ),
                     (_, false) => format!(
                         "Tool call blocked — '{}' can't be approved for these exact arguments ({reason}). \
                          This only concerns this specific call, not the tool as a whole.",
@@ -1694,7 +1777,20 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// whoever's implementing the tool. A `Denied` from the tool itself always carries
     /// its `reason` through, whether or not it came with an `escalation` — a hard
     /// refusal still needs to reach the UI and the model, not just silently vanish.
-    async fn tool_permission(&self, tool_name: &str, data: Value, scope: ResolvedScope) -> AgentToolPermission {
+    async fn tool_permission(
+        &self,
+        tool_name: &str,
+        data: Value,
+        scope: ResolvedScope,
+        is_subagent: bool,
+    ) -> AgentToolPermission {
+        if !subagent::available_to(tool_name, is_subagent) {
+            return AgentToolPermission::Denied {
+                reason: format!("'{tool_name}' isn't available in this chat"),
+                escalation: None,
+            };
+        }
+
         let Some(tool) = self.tools.get_tool(tool_name).await else {
             return AgentToolPermission::Denied {
                 reason: format!("no tool named '{tool_name}'"),
@@ -1755,7 +1851,8 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
         arguments: Value,
     ) -> Result<AgentToolCall, ErrorService> {
         let scope = self.stored_scope(chat_id, &name).await?;
-        let permission = self.tool_permission(&name, arguments.clone(), scope).await;
+        let is_subagent = self.chat_store.chat(chat_id).await?.parent_chat_id.is_some();
+        let permission = self.tool_permission(&name, arguments.clone(), scope, is_subagent).await;
 
         Ok(AgentToolCall {
             permission,

@@ -152,6 +152,11 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Whether the user has tool-permission prompts approved automatically.
+    pub async fn auto_confirm(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.auto_confirm)
+    }
+
     /// The user's custom system prompt — `None` while the built-in default applies. Like the
     /// rest of the store, creates the user's empty row on first use.
     pub async fn system_prompt(&self, user_id: i64) -> Result<Option<String>, SettingsStoreErrors> {
