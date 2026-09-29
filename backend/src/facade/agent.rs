@@ -552,6 +552,7 @@ impl Agent {
                 file_store,
                 ollama: ollama.clone(),
                 job_store: job_store.clone(),
+                chat_store: chat_store.clone(),
                 events,
                 chat_id: 0,
                 user_id: 0,

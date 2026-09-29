@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
+use crate::services::chat_store::ChatStore;
 use crate::services::event_bus::EventBus;
 use crate::services::file_store::FileStore;
 use crate::services::job_store::JobStore;
@@ -137,6 +138,10 @@ pub struct ToolContext {
     /// tied to the chat that started it, so a tool reaching for this always pairs it
     /// with `chat_id` below rather than taking one as a model-facing argument.
     pub job_store: Arc<JobStore>,
+    /// The chat's own history — what the `chat.*` tools read. Like `job_store` it's
+    /// paired with `chat_id` below rather than taking a chat id as a model-facing
+    /// argument: a tool only ever reads the chat it's happening in.
+    pub chat_store: Arc<ChatStore>,
     /// For a tool that needs to tell connected frontends something outside the request
     /// it's answering — publish a `ServerEvent` here, see `services::event_bus`. No tool
     /// does yet; it's wired now so the first one that needs to is only a variant away.

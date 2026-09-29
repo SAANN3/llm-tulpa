@@ -1,4 +1,5 @@
 pub mod base;
+pub mod chat;
 pub mod files;
 pub mod llm;
 pub mod os;

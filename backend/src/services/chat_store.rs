@@ -223,6 +223,88 @@ impl ChatStore {
         self.hydrate_messages(rows).await
     }
 
+    /// A page of a chat's `user`/`assistant` messages, newest first — the list view
+    /// the `chat.*` tools build on: each entry is an id, who wrote it, when, and the
+    /// start of what it says. `role` filters to one writer, `limit`/`skip` page
+    /// through it, and the second return value is the total match count. Tool
+    /// results and notices aren't listed — they aren't conversational messages.
+    pub async fn history_page(
+        &self,
+        chat_id: i64,
+        role: Option<&str>,
+        limit: u64,
+        skip: u64,
+    ) -> Result<(Vec<HistoryEntry>, u64), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+
+        let mut filter = messages::Column::ChatId
+            .eq(chat_id)
+            .and(messages::Column::Role.is_in(["user".to_string(), "assistant".to_string()]));
+        if let Some(role) = role {
+            filter = filter.and(messages::Column::Role.eq(role));
+        }
+
+        let query = messages::Entity::find().filter(filter.clone());
+        let total = query.clone().count(&self.db).await?;
+
+        let rows = query
+            .order_by_desc(messages::Column::Id)
+            .limit(limit)
+            .offset(skip)
+            .all(&self.db)
+            .await?;
+
+        Ok((
+            rows
+                .into_iter()
+                .map(|row| HistoryEntry {
+                    id: row.id,
+                    role: row.role,
+                    created_at: row.created_at,
+                    snippet: snippet_of(&row.content),
+                })
+                .collect(),
+            total,
+        ))
+    }
+
+    /// The full text of specific messages of a chat — the ids the model picked from
+    /// `history_page`. Only `user`/`assistant` messages are retrievable, and only
+    /// ones of this chat: a requested id that doesn't match (foreign, deleted, or a
+    /// tool result/notice) comes back in `missing` instead of failing the call, so a
+    /// stale or guessed id is visible to the model rather than silent.
+    pub async fn messages_by_ids(
+        &self,
+        chat_id: i64,
+        ids: &[i64],
+    ) -> Result<(Vec<HistoryDetail>, Vec<i64>), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+
+        let rows = messages::Entity::find()
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .filter(messages::Column::Id.is_in(ids))
+            .filter(messages::Column::Role.is_in(["user".to_string(), "assistant".to_string()]))
+            .order_by_asc(messages::Column::Id)
+            .all(&self.db)
+            .await?;
+
+        let found: std::collections::HashSet<i64> = rows.iter().map(|row| row.id).collect();
+        let missing: Vec<i64> = ids.iter().copied().filter(|id| !found.contains(id)).collect();
+
+        Ok((
+            rows
+                .into_iter()
+                .map(|row| HistoryDetail {
+                    id: row.id,
+                    role: row.role,
+                    created_at: row.created_at,
+                    content: row.content,
+                })
+                .collect(),
+            missing,
+        ))
+    }
+
     /// Messages of a chat whose content, thinking, or a tool call's arguments contain
     /// `query` (case-insensitive substring, like a chat search box), newest first. Each
     /// hit carries which source matched (`matched_in`), the content around its first
@@ -832,6 +914,40 @@ pub struct Chat {
     pub folder_id: Option<i64>,
     /// The chat that delegated to this one, or `None` for an ordinary chat.
     pub parent_chat_id: Option<i64>,
+}
+
+/// The list view's content preview: whitespace collapsed to single spaces and cut at
+/// 120 characters. The model matches a message on this, so newlines (where a pasted
+/// block would break the match) stay out of it.
+fn snippet_of(content: &str) -> String {
+    let flat: String = content.split_whitespace().collect::<Vec<&str>>().join(" ");
+    if flat.chars().count() <= 120 {
+        flat
+    } else {
+        format!("{}…", flat.chars().take(120).collect::<String>())
+    }
+}
+
+/// One row of `history_page` — the list view of a chat's own messages: enough to
+/// recognize a message and fetch it by id, without its full text.
+#[derive(Serialize)]
+pub struct HistoryEntry {
+    pub id: i64,
+    pub role: String,
+    pub created_at: DateTimeUtc,
+    /// The start of the content, whitespace collapsed and cut at 120 characters —
+    /// what a message is about without fetching it.
+    pub snippet: String,
+}
+
+/// The full text of one message as `messages_by_ids` returns it: everything the
+/// message says, nothing the model can't read (no attached file/image data).
+#[derive(Serialize)]
+pub struct HistoryDetail {
+    pub id: i64,
+    pub role: String,
+    pub created_at: DateTimeUtc,
+    pub content: String,
 }
 
 pub struct Message {

@@ -44,6 +44,7 @@ async fn main() {
     tool_list.extend(tools::ui::collect());
     tool_list.extend(tools::files::collect());
     tool_list.extend(tools::llm::collect());
+    tool_list.extend(tools::chat::collect());
     let tools = Arc::new(ToolService::new(tool_list));
 
     let state = Arc::new(AppState::new(config, ollama, tools));

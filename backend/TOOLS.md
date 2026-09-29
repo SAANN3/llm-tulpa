@@ -121,6 +121,14 @@ As opposed to `storage.*`, which takes arbitrary real filesystem paths the model
 |---|---|---|
 | `files.get_attached_file` | Given a file id from an attached-files note on a message, makes a snapshot copy and returns its path and name — read the path with `storage.read_file` (or `storage.detect_file_type` first) to actually see its content. Refuses (same error as "doesn't exist") for a file id not attached to this chat. | shares `storage.read_file`'s `SharedBucket::StorageRead` |
 
+### `chat` — the chat's own history, for when a message has scrolled out of the context window
+The model only ever sees a window of the chat's most recent messages (plus a summary of what came before), so anything older is reachable by id through this pair instead: list it, then fetch the full text of the ids it wants. Both are scoped to the chat the call is happening in — no chat id is ever a model-facing argument — and both are ungated, reading a chat the model is already inside.
+
+| Tool | What it does |
+|---|---|
+| `chat.list_messages` | The chat's `user`/`assistant` messages, newest first: id, who wrote it, when, and a whitespace-collapsed 120-character snippet of the content. `role` filters to one writer; `limit` (default 50, at most 200) and `offset` (from the newest end) paginate; the result carries `total` and a `next_offset` to continue. Tool results and notices are never listed. |
+| `chat.get_messages` | The full text of the ids `chat.list_messages` returned, any mix of user and assistant, oldest first. An id that isn't a `user`/`assistant` message of this chat — foreign, deleted, or a tool result/notice — comes back in `missing` instead of failing the call. |
+
 ### `ui` — making the frontend show the user something
 | Tool | What it does | Permission |
 |---|---|---|
