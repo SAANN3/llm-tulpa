@@ -492,6 +492,10 @@ pub struct Agent {
     max_inlined_result_bytes: u64,
     /// Chats with a tool call executing right now. See `RunningToolGuard`.
     running_tools: Arc<Mutex<HashSet<i64>>>,
+    /// Sub-agent chats whose run is going on right now (from being started until it ends or is
+    /// killed). Their tool calls are the backend's to run, so `is_running` treats them as busy —
+    /// without it, opening one between two of its calls would look like a call cut short by a restart.
+    live_subagents: Arc<Mutex<HashSet<i64>>>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
     /// for both than running back to back.
@@ -510,7 +514,8 @@ const INTERRUPTED_TOOL_MESSAGE: &str = "Interrupted — the backend stopped (or 
 /// completion, on an error, or because the request was cancelled (a client that disconnects drops
 /// the handler's future) — clears the mark. Without it a chat with an *allowed* call in flight is
 /// indistinguishable from one whose call was cut short by a restart: both look like "allowed and
-/// still unresolved".
+/// still unresolved". The same guard marks a sub-agent's chat for its whole run
+/// (`live_subagents`), for the same reason.
 struct RunningToolGuard {
     running: Arc<Mutex<HashSet<i64>>>,
     chat_id: i64,
@@ -567,6 +572,7 @@ impl Agent {
             max_inlined_result_bytes: (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN)
                 as u64,
             running_tools: Arc::new(Mutex::new(HashSet::new())),
+            live_subagents: Arc::new(Mutex::new(HashSet::new())),
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }
@@ -582,7 +588,7 @@ impl Agent {
     }
 
     fn is_running(&self, chat_id: i64) -> bool {
-        self.running_tools.lock().unwrap().contains(&chat_id)
+        self.running_tools.lock().unwrap().contains(&chat_id) || self.live_subagents.lock().unwrap().contains(&chat_id)
     }
 
     /// Records the tool calls that were cut short as interrupted, instead of leaving them to be

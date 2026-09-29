@@ -75,14 +75,24 @@ impl Agent {
         let agent = self.clone();
         let task_prompt = prompt.clone();
         let sub_chat_id = sub.id;
+        let live = self.mark_subagent_live(sub.id);
         let job = self
             .job_store
             .start_agent(parent.id, &prompt, sub.id, async move {
+                // Held for the whole run; dropped when it ends or the job is killed.
+                let _live = live;
                 agent.run_to_end(sub_chat_id, auto_confirm, task_prompt).await
             })
             .await?;
 
         Ok(SubagentStarted { job_id: job.id, chat_id: sub.id })
+    }
+
+    /// Marks a sub-agent's chat as live until the returned guard is dropped — the same guard type
+    /// the tool-execution mark uses, over the set `is_running` also consults.
+    fn mark_subagent_live(&self, chat_id: i64) -> super::RunningToolGuard {
+        self.live_subagents.lock().unwrap().insert(chat_id);
+        super::RunningToolGuard { running: self.live_subagents.clone(), chat_id }
     }
 
     /// One sub-agent run, from waiting its turn to how it ended. A failure partway (Ollama
