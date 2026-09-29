@@ -67,7 +67,7 @@ src/
 └── cache/       # per-user, on-demand caches for expensive-to-generate values (greeting, input examples)
 ```
 
-The schema is normalized to 3NF: `users` + `user_settings` (1:1), `llm_providers` + `llm_models`, `chats` (per-user, each bound to a `llm_models` row) + `plugin_chats`, `messages` with `message_images`/`message_files` join tables, `tool_calls`, `files`, `tool_permissions`, and `user_plugins`. A single `schema_meta.version` sentinel drives the migration. Moving between versions never wipes data: a database *newer* than the build is refused untouched, and the one-time upgrade from the pre-accounts (single-user) release keeps everything — see below.
+The schema is normalized to 3NF: `users` + `user_settings` (1:1), `llm_providers` + `llm_models`, `chats` (per-user, each bound to a `llm_models` row; a sub-agent's chat points at the chat that started it through `parent_chat_id`) + `plugin_chats`, `messages` with `message_images`/`message_files` join tables, `tool_calls`, `files`, `jobs` (background commands and sub-agents), `tool_permissions`, and `user_plugins`. A single `schema_meta.version` sentinel drives the migration. Moving between versions never wipes data: a database *newer* than the build is refused untouched, and the one-time upgrade from the pre-accounts (single-user) release keeps everything — see below.
 
 ## Docs
 - [TOOLS.md](./TOOLS.md) — how the tool system works, how to add a tool, and the current tool list.

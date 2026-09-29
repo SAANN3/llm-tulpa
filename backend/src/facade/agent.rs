@@ -722,6 +722,7 @@ impl Agent {
     /// middle of an unfinished batch, so it goes out with the `continue_chat` that follows once
     /// they have.
     pub async fn flush_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
+        // Possible: also return empty while a model call is in flight (see TOOLS.md, "Known gap").
         if !self.pending_tool_calls(chat_id).await?.is_empty() {
             return Ok(vec![]);
         }

@@ -86,6 +86,8 @@ When a job ends on its own, the model has to find out without polling and withou
 
 A job whose outcome the model has already seen through a tool result (`os.start_job` returning it finished, `os.job_output` on a finished job, `os.job_kill`) is not reported again.
 
+**Known gap.** Whether a turn is in progress is tracked by the frontend (`sending` in the chat page), per browser tab; the backend only refuses to report while tool calls are unresolved. With one chat open in two tabs, an idle tab can therefore report a notice and start a model call while the other tab's call is still running — two concurrent model calls on one chat, no data lost. Sending a message from both tabs at once has the same gap. Closing it would take a per-chat "model call in flight" guard taken at `Agent::chat`/`continue_chat` (not inside `advance`, which calls itself) that makes a second call fail with 409, plus `flush_notices` returning empty while it is held; the frontend would treat that 409 as "another window is answering". Not built.
+
 ### `storage` — reading and writing files
 Every tool here is scoped per-folder, and read/write/delete are three independent shared permission levels — approving `storage.read_file` under a folder also covers every other read tool there (`list_directory`, `find_files`, `detect_file_type`), but implies nothing about write or delete access to the same folder. File-targeting tools (`read_file`, `write_file`, `replace_str`, `delete_file`, `detect_file_type`) scope to the file's *containing folder*; directory-targeting tools scope to the directory itself.
 
