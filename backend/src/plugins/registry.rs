@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::base::{Plugin, PluginBuilder, PluginError};
 use crate::services::error::ErrorService;
-use crate::services::plugin_settings_store::PluginSettingsStore;
+use crate::services::plugin_settings_store::{PluginSettingsStore, PluginSettingsStoreErrors};
 use crate::services::tools::ToolService;
 
 /// Identifies one plugin instance: (plugin_name, plugin_subname) — e.g.
@@ -172,7 +172,13 @@ impl PluginRegistry {
         // Only persisted when there's actually something to persist — a plugin
         // registered with no settings at all (from either source) has nothing to write.
         if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
-            self.store.set(&plugin_name, &plugin_subname, settings, enabled).await?;
+            match self.store.set(&plugin_name, &plugin_subname, settings, enabled).await {
+                // First run: the owner account doesn't exist until the setup wizard's last step, and
+                // a settings-less plugin registers before it. Nothing is lost — enabling or
+                // reconfiguring the plugin later persists it, once there's an owner to attach it to.
+                Err(PluginSettingsStoreErrors::NoOwner) => {}
+                other => other?,
+            }
         }
 
         let key = Self::key(&plugin_name, &plugin_subname);
