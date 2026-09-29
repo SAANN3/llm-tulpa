@@ -38,7 +38,7 @@ export interface AgentToolCall {
     arguments: Record<string, unknown>
 }
 
-/** Response shape shared by `chat`, `continue_chat` and `job_notices` — the model's reply for a turn. */
+/** Response shape shared by `chat` and `continue_chat` — the model's reply for a turn. */
 export interface ChatOut {
     /** The persisted assistant message's own id — usable for UI state right away, without waiting for a reload. */
     id: number

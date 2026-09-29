@@ -710,35 +710,23 @@ impl Agent {
         self.advance(chat_id, messages, None, think, notices, true).await
     }
 
-    /// Starts a turn only if a background job has finished since the model was last
-    /// told about one — `None` if there's nothing to report (or the chat is mid-turn, see
-    /// below), so a caller acting on a stale hint (`ServerEvent::JobFinished` for a job an in-progress turn already
-    /// reported) gets a harmless no-op instead of an unprompted extra model call. The
-    /// decision is made here, not by the caller, because only here is claiming the
-    /// finished jobs atomic. Otherwise identical to `continue_chat`: the notices are
-    /// persisted as the newest messages and the model replies to them.
-    pub async fn run_pending_notices(
-        &self,
-        chat_id: i64,
-        think: Option<ThinkChoice>,
-    ) -> Result<Option<ChatOut>, ErrorService> {
-        // A notice has to come after every tool result already in the chat, never in the
-        // middle of an unfinished batch — so while calls are still waiting to be run
-        // (mid-turn, or paused on a confirmation) this does nothing, and the notice goes
-        // out with the `continue_chat` that follows once they have.
+    /// Persists a `notice` for every background job (or sub-agent) that has finished since the model
+    /// was last told about one, and returns them — without calling the model. A client shows them at
+    /// once and then has the model respond with `continue_chat`; splitting it that way is what lets
+    /// the notice appear the moment the job ends instead of after a model call that can take a
+    /// while. Empty if there's nothing to report, which is what makes a stale hint
+    /// (`ServerEvent::JobFinished` for a job an in-progress turn already reported) harmless — the
+    /// decision is made here, not by the caller, because only here is claiming the finished jobs
+    /// atomic. Also empty while tool calls are still waiting to run (mid-turn, or paused on a
+    /// confirmation): a notice has to come after every tool result already in the chat, never in the
+    /// middle of an unfinished batch, so it goes out with the `continue_chat` that follows once
+    /// they have.
+    pub async fn flush_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
         if !self.pending_tool_calls(chat_id).await?.is_empty() {
-            return Ok(None);
+            return Ok(vec![]);
         }
 
-        let notices = self.flush_job_notices(chat_id).await?;
-        if notices.is_empty() {
-            return Ok(None);
-        }
-
-        let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
-        self.maybe_compact(chat_id, last_prompt_tokens).await;
-        let messages = self.ollama_history(chat_id).await?;
-        Ok(Some(self.advance(chat_id, messages, None, think, notices, true).await?))
+        self.flush_job_notices(chat_id).await
     }
 
     /// Turns every background job of `chat_id` that has finished but not been reported

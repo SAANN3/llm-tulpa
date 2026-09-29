@@ -29,6 +29,7 @@ pub fn router() -> Router<Arc<AppState>> {
         ChatRequest,
         ContinueChatRequest,
         JobNoticesRequest,
+        JobNoticesOut,
         CanUseToolRequest,
         UseToolRequest,
         AllowScopeRequest,

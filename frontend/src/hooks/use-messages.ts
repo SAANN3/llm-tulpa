@@ -393,7 +393,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    /** Asks the backend to report finished background jobs to the model and drives its reply like any turn; null when there was nothing to report */
+    /** Shows the notices for finished background jobs the moment the backend has them, then has the model respond and drives its reply like any turn; null when there was nothing to report */
     const runJobNotices = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
         const requestChatId = chatId
         const guardedAppend = (message: DisplayMessage) => {
@@ -403,9 +403,12 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         resetTurnTokens()
         setSendingChatId(requestChatId)
         try {
-            const reply = await jobNotices(chatId, think)
-            if (!reply) return null
+            const notices = await jobNotices(chatId)
+            if (notices.length === 0) return null
 
+            // Shown now, not with the reply: the model call below can take a while.
+            notices.forEach((notice) => guardedAppend(noticeMessage(notice)))
+            const reply = await continueChat(chatId, think)
             appendReply(reply, guardedAppend)
             return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
         } finally {
