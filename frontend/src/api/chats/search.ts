@@ -6,6 +6,8 @@ export interface SearchMessagesQuery {
     chatId: number
     query: string
     limit?: number
+    includeAssistant?: boolean
+    includeUser?: boolean
     includeThinking?: boolean
     includeTools?: boolean
 }
@@ -17,6 +19,8 @@ export const searchMessages = async (query: SearchMessagesQuery): Promise<Messag
             chat_id: query.chatId,
             query: query.query,
             limit: query.limit,
+            include_assistant: query.includeAssistant,
+            include_user: query.includeUser,
             include_thinking: query.includeThinking,
             include_tools: query.includeTools,
         },

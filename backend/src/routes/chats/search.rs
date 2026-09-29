@@ -17,6 +17,10 @@ pub(crate) struct SearchMessagesQuery {
     /// tool call arguments (case-insensitive)
     query: String,
     limit: Option<u64>,
+    /// Whether to include assistant messages in the search (default: true)
+    include_assistant: Option<bool>,
+    /// Whether to include user messages in the search (default: true)
+    include_user: Option<bool>,
     /// Whether to include assistant reasoning/thinking in the search (default: true)
     include_thinking: Option<bool>,
     /// Whether to include tool call arguments in the search (default: true)
@@ -68,6 +72,8 @@ pub async fn search_messages(
     Query(query): Query<SearchMessagesQuery>,
 ) -> Result<Json<MessageSearchResponse>, ErrorService> {
     let limit = query.limit.unwrap_or(50);
+    let include_assistant = query.include_assistant.unwrap_or(true);
+    let include_user = query.include_user.unwrap_or(true);
     let include_thinking = query.include_thinking.unwrap_or(true);
     let include_tools = query.include_tools.unwrap_or(true);
 
@@ -79,6 +85,8 @@ pub async fn search_messages(
             query.chat_id,
             &query.query,
             limit,
+            include_assistant,
+            include_user,
             include_thinking,
             include_tools,
         )

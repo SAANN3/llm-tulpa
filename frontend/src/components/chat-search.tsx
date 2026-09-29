@@ -18,6 +18,8 @@ const DEBOUNCE_MS = 250
 /** The most hits the results list shows */
 const MAX_HITS = 50
 
+const STORAGE_KEY_ASSISTANT = 'tulpa:search_include_assistant'
+const STORAGE_KEY_USER = 'tulpa:search_include_user'
 const STORAGE_KEY_THINKING = 'tulpa:search_include_thinking'
 const STORAGE_KEY_TOOLS = 'tulpa:search_include_tools'
 
@@ -45,6 +47,8 @@ const writeStorageBool = (key: string, value: boolean) => {
  */
 export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
     const [query, setQuery] = useState('')
+    const [includeAssistant, setIncludeAssistantState] = useState(() => readStorageBool(STORAGE_KEY_ASSISTANT, true))
+    const [includeUser, setIncludeUserState] = useState(() => readStorageBool(STORAGE_KEY_USER, true))
     const [includeThinking, setIncludeThinkingState] = useState(() => readStorageBool(STORAGE_KEY_THINKING, true))
     const [includeTools, setIncludeToolsState] = useState(() => readStorageBool(STORAGE_KEY_TOOLS, true))
     const [matches, setMatches] = useState<MessageSearchOut[] | null>(null)
@@ -52,6 +56,16 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
     const [loading, setLoading] = useState(false)
     const [failed, setFailed] = useState(false)
     const requestId = useRef(0)
+
+    const setIncludeAssistant = (val: boolean) => {
+        setIncludeAssistantState(val)
+        writeStorageBool(STORAGE_KEY_ASSISTANT, val)
+    }
+
+    const setIncludeUser = (val: boolean) => {
+        setIncludeUserState(val)
+        writeStorageBool(STORAGE_KEY_USER, val)
+    }
 
     const setIncludeThinking = (val: boolean) => {
         setIncludeThinkingState(val)
@@ -85,6 +99,8 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
                     chatId,
                     query: trimmed,
                     limit: MAX_HITS,
+                    includeAssistant,
+                    includeUser,
                     includeThinking,
                     includeTools,
                 })
@@ -102,7 +118,7 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
         }, DEBOUNCE_MS)
 
         return () => clearTimeout(timer)
-    }, [chatId, trimmed, includeThinking, includeTools])
+    }, [chatId, trimmed, includeAssistant, includeUser, includeThinking, includeTools])
 
     const select = (hit: MessageSearchOut) => {
         requestId.current += 1
@@ -123,6 +139,14 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
             />
 
             <Div className="chat-search__filters">
+                <label className="chat-search__filter">
+                    <Checkbox toggled={includeAssistant} onToggled={setIncludeAssistant}/>
+                    <Label text="Assistant"/>
+                </label>
+                <label className="chat-search__filter">
+                    <Checkbox toggled={includeUser} onToggled={setIncludeUser}/>
+                    <Label text="User"/>
+                </label>
                 <label className="chat-search__filter">
                     <Checkbox toggled={includeThinking} onToggled={setIncludeThinking}/>
                     <Label text="Thoughts"/>
@@ -147,11 +171,12 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
                                 <Label
                                     variant="secondary"
                                     className="chat-search__meta"
-                                    text={`${hit.role} · ${new Date(hit.created_at).toLocaleTimeString()}`}
+                                    text={
+                                        hit.matched_in !== 'content'
+                                            ? `${hit.role} · ${hit.matched_in.toUpperCase()} · ${new Date(hit.created_at).toLocaleTimeString()}`
+                                            : `${hit.role} · ${new Date(hit.created_at).toLocaleTimeString()}`
+                                    }
                                 />
-                                {hit.matched_in !== 'content' ? (
-                                    <Label variant="secondary" className="chat-search__tag" text={hit.matched_in} />
-                                ) : null}
                             </Div>
                             <Div className="chat-search__snippet">
                                 {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}

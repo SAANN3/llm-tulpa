@@ -312,12 +312,18 @@ impl ChatStore {
     /// for a tool-arguments match — the id of the *tool result* message the arguments
     /// belong to (they're persisted on the assistant's row, but the UI renders them on
     /// the paired result row), so a hit's `id` always names the message a search
-    /// click should land on. Also returns the total match count for the whole chat.
+    /// click should land on. `include_assistant`/`include_user` gate a role's own
+    /// content; `include_thinking` gates thinking and `include_tools` gates tool-call
+    /// arguments, each whichever role's row holds it (`include_tools` also gates the
+    /// tool-result and notice rows' own text). Also returns the total match
+    /// count for the whole chat.
     pub async fn search_messages(
         &self,
         chat_id: i64,
         query: &str,
         limit: u64,
+        include_assistant: bool,
+        include_user: bool,
         include_thinking: bool,
         include_tools: bool,
     ) -> Result<(Vec<MessageSearchHit>, u64), ChatStoreErrors> {
@@ -327,27 +333,25 @@ impl ChatStore {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
         let pattern = format!("%{}%", escaped);
 
-        // A tool-result row's `content` is the tool's own output (JSON), not conversational
-        // text — it's tool data, so it's excluded from the base content match (not just the
-        // separate tool-*arguments* match below) whenever `include_tools` is off. Without this,
-        // toggling "Tools" off only hid argument matches while a tool's result content kept
-        // matching unconditionally, which looked like the toggle did nothing.
-        let mut filter = messages::Column::ChatId
-            .eq(chat_id)
+        // Rows whose own content may match, per the toggles. Tool results and notices are tool output, not conversation, so both ride
+        // with "Tools" — otherwise turning it off would only hide argument matches while
+        // result content kept matching, which looked like the toggle did nothing.
+        let content_roles = searchable_roles(include_assistant, include_user, include_tools);
+        let visible_roles = content_roles.clone();
+        let mut filter = messages::Column::Role
+            .is_in(content_roles)
             .and(ilike(messages::Column::Content.into_expr(), &pattern));
-        if !include_tools {
-            filter = filter.and(messages::Column::Role.ne("tool"));
-        }
 
+        // Thinking is its own source with its own toggle, so it matches whatever the
+        // "Assistant" toggle says, like arguments below.
         if include_thinking {
-            let thinking_match = messages::Column::ChatId
-                .eq(chat_id)
-                .and(ilike(messages::Column::Thinking.into_expr(), &pattern));
-            filter = filter.or(thinking_match);
+            filter = filter.or(ilike(messages::Column::Thinking.into_expr(), &pattern));
         }
 
+        // Arguments are stored on the assistant's row but count as tool data, so they match
+        // whenever "Tools" is on, whatever the "Assistant" toggle says.
         if include_tools {
-            let args_exists = Expr::exists(
+            filter = filter.or(Expr::exists(
                 tool_calls::Entity::find()
                     .select_only()
                     .column(tool_calls::Column::Id)
@@ -367,12 +371,10 @@ impl ChatStore {
                     ))
                     .as_query()
                     .clone(),
-            );
-            let args_match = messages::Column::ChatId.eq(chat_id).and(args_exists);
-            filter = filter.or(args_match);
+            ));
         }
 
-        let base = messages::Entity::find().filter(filter);
+        let base = messages::Entity::find().filter(messages::Column::ChatId.eq(chat_id).and(filter));
         let total = base.clone().count(&self.db).await?;
 
         let rows = base
@@ -399,7 +401,12 @@ impl ChatStore {
         let mut hits = Vec::with_capacity(rows.len());
         for row in rows {
             let own_calls: &[ToolCallOut] = tool_calls.get(&row.id).map_or(&[], Vec::as_slice);
-            let Some(source) = find_search_source(&row, query, own_calls, include_thinking, include_tools) else {
+            // A row with its role toggled off can still be here through its thinking or tool arguments;
+            // its own content must not be reported as the match then.
+            let own_text_searchable = visible_roles.contains(&row.role);
+            let Some(source) =
+                find_search_source(&row, query, own_calls, own_text_searchable, include_thinking, include_tools)
+            else {
                 continue // recalled only by the SQL's coarse `::text` form
             };
             let (source_text, matched_in) = match &source {
@@ -999,6 +1006,7 @@ fn find_search_source(
     row: &messages::Model,
     query: &str,
     calls: &[ToolCallOut],
+    own_text_searchable: bool,
     include_thinking: bool,
     include_tools: bool,
 ) -> Option<SearchSource> {
@@ -1006,7 +1014,7 @@ fn find_search_source(
     if needle.is_empty() {
         return None;
     }
-    if row.content.to_lowercase().contains(&needle) {
+    if own_text_searchable && row.content.to_lowercase().contains(&needle) {
         return Some(SearchSource::Content);
     }
     if include_thinking
@@ -1030,6 +1038,23 @@ fn find_search_source(
         }
     }
     None
+}
+
+/// The roles whose own text a search may match, per the toggles. Tool results and notices
+/// are both tool output, so they follow "Tools".
+fn searchable_roles(include_assistant: bool, include_user: bool, include_tools: bool) -> Vec<String> {
+    let mut roles = Vec::new();
+    if include_user {
+        roles.push("user".to_string());
+    }
+    if include_assistant {
+        roles.push("assistant".to_string());
+    }
+    if include_tools {
+        roles.push("tool".to_string());
+        roles.push("notice".to_string());
+    }
+    roles
 }
 
 /// Case-insensitive `LIKE` — the `ilike` method lives on sea-query's Postgres extension
