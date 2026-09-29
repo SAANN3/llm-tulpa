@@ -8,6 +8,11 @@ use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolErro
 
 pub struct JobKillTool;
 
+impl JobKillTool {
+    // A const, not a literal in `function_name`, so `subagent::JOB_TOOLS` can name it without repeating the string.
+    pub const NAME: &'static str = "os.job_kill";
+}
+
 #[derive(Deserialize, ToolParams)]
 struct JobKillArgs {
     #[tool(description = "The id of a running job in this chat, as returned by os.start_job or listed by os.list_jobs.")]
@@ -23,11 +28,11 @@ struct JobKillOut {
 #[async_trait]
 impl Tool for JobKillTool {
     fn function_name(&self) -> &str {
-        "os.job_kill"
+        Self::NAME
     }
 
     fn description(&self) -> &str {
-        "Stops a running background job and everything it started. Fails if the job has already \
+        "Stops a running background job — a command and everything it started, or a sub-agent. Fails if the job has already \
          finished, and says what state it's in. Only jobs started in this chat. Its output so \
          far stays readable with os.job_output."
     }

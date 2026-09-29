@@ -16,6 +16,11 @@ use crate::tools::storage::normalize;
 
 pub struct StartJobTool;
 
+impl StartJobTool {
+    // A const, not a literal in `function_name`, so `subagent::JOB_TOOLS` can name it without repeating the string.
+    pub const NAME: &'static str = "os.start_job";
+}
+
 /// How long `start_job` waits for the job to finish by itself when the model doesn't
 /// say — long enough for a command that fails immediately (a missing binary, a port
 /// already in use) to show its error in the same result.
@@ -49,7 +54,7 @@ struct StartJobOut {
 #[async_trait]
 impl Tool for StartJobTool {
     fn function_name(&self) -> &str {
-        "os.start_job"
+        Self::NAME
     }
 
     fn description(&self) -> &str {

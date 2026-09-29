@@ -7,6 +7,11 @@ use crate::tools::base::{PropertyInfo, Tool, ToolContext, ToolError};
 
 pub struct ListJobsTool;
 
+impl ListJobsTool {
+    // A const, not a literal in `function_name`, so `subagent::JOB_TOOLS` can name it without repeating the string.
+    pub const NAME: &'static str = "os.list_jobs";
+}
+
 #[derive(Serialize)]
 struct ListJobsOut {
     jobs: Vec<JobView>,
@@ -15,12 +20,12 @@ struct ListJobsOut {
 #[async_trait]
 impl Tool for ListJobsTool {
     fn function_name(&self) -> &str {
-        "os.list_jobs"
+        Self::NAME
     }
 
     fn description(&self) -> &str {
         "Lists every background job started in this chat, oldest first, with each one's id, \
-         command, status (running, exited with its exit code, killed, or lost if the backend \
+         kind (a command, or a sub-agent whose command is the prompt it was given), status (running, exited with its exit code, killed, or lost if the backend \
          restarted while it ran) and log path. Use it to find a job's id again, or to see what's \
          still running. Takes no arguments."
     }

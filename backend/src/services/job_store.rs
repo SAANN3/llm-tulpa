@@ -1,16 +1,19 @@
 mod entities;
 
+use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
 use entities::jobs;
 use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbBackend, FromQueryResult, QueryOrder, Statement};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::task::AbortHandle;
 
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{EventBus, ServerEvent};
@@ -27,6 +30,9 @@ pub struct JobStore {
     db: DatabaseConnection,
     jobs_dir: PathBuf,
     events: Arc<EventBus>,
+    /// How to stop each running `agent` job: its task, by job id. A task removes its own entry when
+    /// it ends; killing the job aborts the task instead.
+    agent_tasks: Arc<Mutex<HashMap<i64, AbortHandle>>>,
 }
 
 /// Where a job is in its life. `Exited` means it stopped on its own (whatever its exit
@@ -64,11 +70,40 @@ impl JobStatus {
     }
 }
 
+/// What a job runs: a shell command, or a sub-agent working in a chat of its own. Both are
+/// started from a chat, finish on their own or are killed, and report back the same way — the
+/// difference is what "running" means (a process id vs. a task) and what the log holds (the
+/// command's output vs. the result the sub-agent handed back).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobKind {
+    Process,
+    Agent { chat_id: i64 },
+}
+
+impl JobKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JobKind::Process => "process",
+            JobKind::Agent { .. } => "agent",
+        }
+    }
+}
+
+/// How a sub-agent's run ended, as `start_agent` records it.
+pub struct AgentJobEnd {
+    /// Whether it reached an answer. Recorded as exit code `0`, otherwise `1`.
+    pub succeeded: bool,
+    /// The answer, or why there isn't one. Written to the job's log.
+    pub text: String,
+}
+
 /// What a row actually is, decoupled from the private SeaORM `jobs::Model` — same
 /// pattern as `FileStore`'s `FileRecord`.
 #[derive(Clone, Debug)]
 pub struct JobRecord {
     pub id: i64,
+    pub kind: JobKind,
+    /// The command line, or for a sub-agent the prompt it was given.
     pub command: String,
     pub workdir: Option<String>,
     pub log_path: PathBuf,
@@ -90,8 +125,13 @@ impl JobRecord {
 
 impl From<jobs::Model> for JobRecord {
     fn from(model: jobs::Model) -> Self {
+        let kind = match (model.kind.as_str(), model.agent_chat_id) {
+            ("agent", Some(chat_id)) => JobKind::Agent { chat_id },
+            _ => JobKind::Process,
+        };
         Self {
             id: model.id,
+            kind,
             command: model.command,
             workdir: model.workdir,
             log_path: PathBuf::from(model.log_path),
@@ -133,7 +173,7 @@ impl JobStore {
             }
         }
 
-        Self { db, jobs_dir, events }
+        Self { db, jobs_dir, events, agent_tasks: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Starts `process` as a new background job for `chat_id` and returns as soon as it
@@ -212,6 +252,74 @@ impl JobStore {
         self.get(chat_id, id).await
     }
 
+    /// Starts `run` — a sub-agent's whole run — as a background job of `chat_id`, and returns as soon
+    /// as the task is going. `prompt` is what's recorded and shown back; `agent_chat_id` is the chat
+    /// the sub-agent works in. When `run` ends, its text is written to the job's log and the job is
+    /// recorded as ended, which publishes `ServerEvent::JobFinished` — from there it reports back
+    /// exactly as a finished command does. The log file exists (empty) from the start, so reading
+    /// the output of a job that's still running, or was killed, works like it does for a command.
+    pub async fn start_agent<F>(
+        &self,
+        chat_id: i64,
+        prompt: &str,
+        agent_chat_id: i64,
+        run: F,
+    ) -> Result<JobRecord, JobStoreErrors>
+    where
+        F: Future<Output = AgentJobEnd> + Send + 'static,
+    {
+        let inserted = jobs::ActiveModel {
+            chat_id: Set(chat_id),
+            command: Set(prompt.to_string()),
+            status: Set(JobStatus::Running.as_str().to_string()),
+            kind: Set(JobKind::Agent { chat_id: agent_chat_id }.as_str().to_string()),
+            agent_chat_id: Set(Some(agent_chat_id)),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await?;
+        let id = inserted.id;
+
+        let log_path = self.jobs_dir.join(format!("{id}.log"));
+        if let Err(e) = tokio::fs::File::create(&log_path).await {
+            // Never started, so there's nothing for anyone to be told about later.
+            self.execute(
+                "UPDATE jobs SET status = 'exited', exit_code = -1, finished_at = now(), notified = TRUE \
+                 WHERE id = $1",
+                [id.into()],
+            )
+            .await?;
+            return Err(JobStoreErrors::Io(format!("couldn't create the sub-agent's log: {e}")));
+        }
+        self.execute(
+            "UPDATE jobs SET log_path = $2 WHERE id = $1",
+            [id.into(), log_path.to_string_lossy().to_string().into()],
+        )
+        .await?;
+
+        let db = self.db.clone();
+        let events = self.events.clone();
+        let tasks = self.agent_tasks.clone();
+        // The task waits for its abort handle to be registered before it starts, so a job that ends
+        // at once can't finish (and try to unregister) before there is anything to unregister.
+        let (registered, ready) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _ = ready.await;
+            let end = run.await;
+            // The result goes into the log before the job is recorded as ended: the moment the
+            // row says so, a notice may read it.
+            if let Err(e) = tokio::fs::write(&log_path, &end.text).await {
+                tracing::error!("couldn't write sub-agent job {id}'s result to its log: {e}");
+            }
+            record_exit(&db, &events, id, if end.succeeded { 0 } else { 1 }).await;
+            tasks.lock().unwrap().remove(&id);
+        });
+        self.agent_tasks.lock().unwrap().insert(id, handle.abort_handle());
+        let _ = registered.send(());
+
+        self.get(chat_id, id).await
+    }
+
     /// One of `chat_id`'s jobs. A job that exists but belongs to a different chat is
     /// reported as `NotFound`, same as a job that doesn't exist — a chat never learns
     /// another chat's jobs are there.
@@ -277,6 +385,9 @@ impl JobStore {
         if let Some(pid) = job.pid.and_then(|pid| u32::try_from(pid).ok()) {
             process::kill_process_tree(pid).await;
         }
+        if let Some(task) = self.agent_tasks.lock().unwrap().remove(&id) {
+            task.abort();
+        }
 
         Ok(job.into())
     }
@@ -331,6 +442,27 @@ impl JobStore {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).await.map_err(io_error)?;
         Ok((String::from_utf8_lossy(&bytes).to_string(), truncated))
+    }
+
+    /// The first `max_bytes` of the job's log, and whether anything after that was cut off — for a
+    /// sub-agent's result, where the start is what matters (`read_log_tail` is for command output,
+    /// where the end is).
+    pub async fn read_log_head(&self, job: &JobRecord, max_bytes: u64) -> Result<(String, bool), JobStoreErrors> {
+        let io_error = |e: std::io::Error| JobStoreErrors::Io(format!("couldn't read '{}': {e}", job.log_path.display()));
+
+        if !job.log_available() {
+            return Err(JobStoreErrors::LogRemoved);
+        }
+        let file = match tokio::fs::File::open(&job.log_path).await {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(JobStoreErrors::LogRemoved),
+            Err(e) => return Err(io_error(e)),
+        };
+        let len = file.metadata().await.map_err(io_error)?.len();
+
+        let mut bytes = Vec::new();
+        file.take(max_bytes).read_to_end(&mut bytes).await.map_err(io_error)?;
+        Ok((String::from_utf8_lossy(&bytes).to_string(), len > max_bytes))
     }
 
     async fn execute<const N: usize>(&self, sql: &str, values: [Value; N]) -> Result<(), JobStoreErrors> {

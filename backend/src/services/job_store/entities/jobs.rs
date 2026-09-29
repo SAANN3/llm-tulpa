@@ -7,7 +7,7 @@ pub struct Model {
     pub id: i64,
     pub chat_id: i64,
     /// The command line exactly as the model wrote it — not the version with the
-    /// package-manager preamble spliced in.
+    /// package-manager preamble spliced in. For an `agent` job, the prompt it was given.
     pub command: String,
     pub workdir: Option<String>,
     /// Where the job's combined stdout+stderr is being written — empty only for the
@@ -24,6 +24,11 @@ pub struct Model {
     /// is told (a `notice` message) or has seen the outcome itself (a tool result
     /// showing it), so it's never reported twice.
     pub notified: bool,
+    /// `process` (a shell command) or `agent` (a sub-agent) — see `JobKind`, the only thing that
+    /// reads or writes this as anything but a bare string.
+    pub kind: String,
+    /// For an `agent` job, the chat the sub-agent runs in; `NULL` for a `process`.
+    pub agent_chat_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

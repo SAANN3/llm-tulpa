@@ -18,14 +18,17 @@ const LOG_READ_BYTES: u64 = 256 * 1024;
 #[derive(Serialize)]
 pub(super) struct JobView {
     job_id: i64,
+    /// `process` (a command) or `agent` (a sub-agent).
+    kind: &'static str,
+    /// The command line, or for a sub-agent the prompt it was given.
     command: String,
     workdir: Option<String>,
     /// `running`, `exited`, `killed`, or `lost` (the backend restarted while it ran).
     status: &'static str,
     /// Only set once it has exited on its own.
     exit_code: Option<i32>,
-    /// Where its combined stdout+stderr is being written — readable with
-    /// `os.job_output`, or directly with `storage.read_file`. `null` once the log of a
+    /// Where its combined stdout+stderr is being written (for a sub-agent, the result it handed
+    /// back) — readable with `os.job_output`, or directly with `storage.read_file`. `null` once the log of a
     /// long-finished job has been cleaned up.
     log_path: Option<String>,
     started_at: String,
@@ -36,6 +39,7 @@ impl From<&JobRecord> for JobView {
     fn from(job: &JobRecord) -> Self {
         Self {
             job_id: job.id,
+            kind: job.kind.as_str(),
             command: job.command.clone(),
             workdir: job.workdir.clone(),
             status: job.status.as_str(),

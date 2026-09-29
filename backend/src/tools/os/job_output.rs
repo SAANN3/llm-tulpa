@@ -8,6 +8,11 @@ use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolErro
 
 pub struct JobOutputTool;
 
+impl JobOutputTool {
+    // A const, not a literal in `function_name`, so `subagent::JOB_TOOLS` can name it without repeating the string.
+    pub const NAME: &'static str = "os.job_output";
+}
+
 const DEFAULT_TAIL_LINES: u32 = 100;
 
 #[derive(Deserialize, ToolParams)]
@@ -30,13 +35,13 @@ struct JobOutputOut {
 #[async_trait]
 impl Tool for JobOutputTool {
     fn function_name(&self) -> &str {
-        "os.job_output"
+        Self::NAME
     }
 
     fn description(&self) -> &str {
         "Returns the current status of a background job (running, exited with its exit code, \
          killed, or lost if the backend restarted while it ran) together with the end of what it \
-         has printed so far — stdout and stderr combined, in order. Works the same while the job \
+         has printed so far — stdout and stderr combined, in order (for a sub-agent, the result it handed back). Works the same while the job \
          is still running and after it has finished, until the log of a long-finished job is cleaned \
          up (then this says so). Only jobs started in this chat."
     }

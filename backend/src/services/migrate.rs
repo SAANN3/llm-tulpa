@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBacken
 /// `if current < N { ... }` block to `run_migrations` that alters the existing tables in place
 /// (inside the same transaction) and bump this constant. A database *newer* than this build is
 /// refused rather than "fixed", so an older binary can't damage data a newer one wrote.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 /// What version 3 added on top of version 2: the compaction key facts and the background jobs.
 /// Run by `create_schema` for a fresh database and by `upgrade_v2_to_v3` for an existing one,
@@ -82,6 +82,16 @@ const V7_ADDITIONS: &str = "
     ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_confirm BOOLEAN NOT NULL DEFAULT false;
 ";
 
+/// What version 8 added on top of version 7: sub-agents as background jobs.
+const V8_ADDITIONS: &str = "
+    -- A job is either a shell command or a sub-agent. A sub-agent's job keeps the chat it runs in;
+    -- its `command` is the prompt it was given, and its log file holds the result it handed back.
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'process';
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS agent_chat_id BIGINT REFERENCES chats (id) ON DELETE CASCADE;
+    ALTER TABLE jobs ADD CONSTRAINT jobs_kind_valid
+        CHECK (kind IN ('process', 'agent') AND ((kind = 'agent') = (agent_chat_id IS NOT NULL)));
+";
+
 /// The Postgres schema the pre-accounts (single-user) tables are moved into. See `stash_legacy`.
 const LEGACY_SCHEMA: &str = "legacy";
 
@@ -107,7 +117,7 @@ const LEGACY_TABLES: [&str; 8] = [
 ///   `user_id`) → its tables are *moved*, not dropped, into a `legacy` schema and the new schema
 ///   is created next to them. There's no user to own that data yet, so it stays there until the
 ///   owner account is created, at which point `adopt_legacy_data` copies it in.
-/// - **Version 2, 3, 4, 5, or 6** → upgraded in place to the current version, nothing dropped.
+/// - **Version 2, 3, 4, 5, 6, or 7** → upgraded in place to the current version, nothing dropped.
 /// - **Any other version** → refused with an error; nothing is touched.
 ///
 /// The whole thing runs in one transaction (Postgres DDL is transactional), so a failure leaves
@@ -132,11 +142,12 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     match current {
         Some(SCHEMA_VERSION) => return Ok(()),
-        Some(2) => return upgrade_v2_to_v7(db).await,
-        Some(3) => return upgrade_v3_to_v7(db).await,
-        Some(4) => return upgrade_v4_to_v7(db).await,
-        Some(5) => return upgrade_v5_to_v7(db).await,
-        Some(6) => return upgrade_v6_to_v7(db).await,
+        Some(2) => return upgrade_v2_to_v8(db).await,
+        Some(3) => return upgrade_v3_to_v8(db).await,
+        Some(4) => return upgrade_v4_to_v8(db).await,
+        Some(5) => return upgrade_v5_to_v8(db).await,
+        Some(6) => return upgrade_v6_to_v8(db).await,
+        Some(7) => return upgrade_v7_to_v8(db).await,
         Some(other) => {
             return Err(DbErr::Custom(format!(
                 "the database is at schema version {other}, but this build understands version {SCHEMA_VERSION}; \
@@ -161,62 +172,77 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// Version 2 → 7, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
-/// `user_settings.system_prompt`, the `folders` table, `chats.parent_chat_id`, and
-/// `user_settings.auto_confirm`. One transaction.
-async fn upgrade_v2_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 2 → 8, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
+/// `user_settings.system_prompt`, the `folders` table, `chats.parent_chat_id`,
+/// `user_settings.auto_confirm`, and `jobs.kind`/`jobs.agent_chat_id`. One transaction.
+async fn upgrade_v2_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V3_ADDITIONS).await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 3 → 7, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
+/// Version 3 → 8, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
 /// `messages.eval_tokens`, `user_settings.system_prompt`, the `folders` table,
-/// `chats.parent_chat_id`, and `user_settings.auto_confirm`.
-async fn upgrade_v3_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, and `jobs.kind`/`jobs.agent_chat_id`.
+async fn upgrade_v3_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 4 → 7, in place: adds the per-user `system_prompt` column, the `folders` table,
-/// `chats.parent_chat_id`, and `user_settings.auto_confirm`.
-async fn upgrade_v4_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 4 → 8, in place: adds the per-user `system_prompt` column, the `folders` table,
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, and `jobs.kind`/`jobs.agent_chat_id`.
+async fn upgrade_v4_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 5 → 7, in place: adds chat folders, `chats.parent_chat_id`, and
-/// `user_settings.auto_confirm`.
-async fn upgrade_v5_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 5 → 8, in place: adds chat folders, `chats.parent_chat_id`, `user_settings.auto_confirm`,
+/// and `jobs.kind`/`jobs.agent_chat_id`.
+async fn upgrade_v5_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 6 → 7, in place: adds `chats.parent_chat_id` and `user_settings.auto_confirm`.
-async fn upgrade_v6_to_v7(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 6 → 8, in place: adds `chats.parent_chat_id`, `user_settings.auto_confirm`, and
+/// `jobs.kind`/`jobs.agent_chat_id`.
+async fn upgrade_v6_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
+    txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
+        .await?;
+    txn.commit().await
+}
+
+/// Version 7 → 8, in place: adds `jobs.kind` and `jobs.agent_chat_id`.
+async fn upgrade_v7_to_v8(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -402,6 +428,7 @@ async fn create_schema(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
+    txn.execute_unprepared(V8_ADDITIONS).await?;
     Ok(())
 }
 
