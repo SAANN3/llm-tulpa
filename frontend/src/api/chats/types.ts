@@ -11,6 +11,8 @@ export interface ChatOut {
     context_length: number
     /** The folder this chat is grouped under, or null if ungrouped. */
     folder_id: number | null
+    /** The chat that started this one as a sub-agent, or null for an ordinary chat. */
+    parent_chat_id: number | null
 }
 
 export interface ChatListOut {

@@ -1,8 +1,9 @@
 import {useRef} from 'react'
-import {ChevronDown, ChevronRight} from 'pixelarticons/react'
+import {ChevronDown, ChevronRight, ExternalLink} from 'pixelarticons/react'
+import {useNavigate} from 'react-router-dom'
 
 import '../styles/tool-message.scss'
-import {Div, Label} from './primitives'
+import {Button, Div, Label} from './primitives'
 import {highlightText} from '../utils/highlight.tsx'
 
 export interface ToolMessageProps {
@@ -47,6 +48,22 @@ const describeResult = (content: unknown): string => {
     return 'ok'
 };
 
+/** The chat a finished `llm.run_agent` call started, when this result is one. The result reaches
+ * here as an object when it arrives live and as its JSON text when it is loaded from history. */
+const subChatIdOf = (toolName: string, content: unknown): number | null => {
+    if (toolName !== 'llm.run_agent') return null
+    let value = content
+    if (typeof value === 'string') {
+        try {
+            value = JSON.parse(value)
+        } catch {
+            return null
+        }
+    }
+    const id = value !== null && typeof value === 'object' ? (value as Record<string, unknown>).sub_chat_id : null
+    return typeof id === 'number' ? id : null
+};
+
 /** A bounded, scrollable, labelled block of pre-formatted JSON */
 const DetailBlock = ({label, text, highlightQuery}: { label: string; text: string; highlightQuery?: string | null }) => (
     <Div className="vbox tool-message__block">
@@ -73,6 +90,8 @@ export const ToolMessage = ({
     const argsText = args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null
     const argsSummary = args ? describeArgs(args) : ''
     const resultChip = success === false ? 'error' : describeResult(content)
+    const navigate = useNavigate()
+    const subChatId = subChatIdOf(tool_name, content)
     const cardRef = useRef<HTMLDivElement>(null)
     const handleToggle = () => {
         const anchor = cardRef.current
@@ -93,6 +112,17 @@ export const ToolMessage = ({
                     )}
                     {!expanded && resultChip ? (
                         <Label variant="secondary" className="mono tool-message__chip" text={resultChip}/>
+                    ) : null}
+                    {subChatId != null ? (
+                        <Button variant="secondary" className="tool-message__open" title="Open the sub-agent's chat"
+                                onClicked={(event) => {
+                                    // The header toggles the card; this button only navigates.
+                                    event.stopPropagation()
+                                    navigate(`/chat?id=${subChatId}`)
+                                }}>
+                            <ExternalLink width={14} height={14}/>
+                            <span>sub-agent chat</span>
+                        </Button>
                     ) : null}
                     <span className="tool-message__caret">
             {expanded ? <ChevronDown width={14} height={14}/> : <ChevronRight width={14} height={14}/>}

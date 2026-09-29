@@ -51,6 +51,16 @@
   padding: 1px 6px;
 }
 
+.tool-message__open {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-1;
+  font-size: 11px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .tool-message__caret {
   display: inline-flex;
   align-items: center;

@@ -65,6 +65,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
     const [folderId, setFolderId] = useState<number | null>(null)
+    // undefined until the chat has been fetched: whether it is a sub-agent's chat changes what the page does
+    const [parentChatId, setParentChatId] = useState<number | null | undefined>(undefined)
     useDocumentTitle(chatName ?? 'Chat')
 
     useEffect(() => {
@@ -73,6 +75,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setContextUsed(null)
         setContextMax(null)
         setFolderId(null)
+        setParentChatId(undefined)
         let cancelled = false
 
         getChats({id: chatId}).then((result) => {
@@ -84,6 +87,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
                 setFolderId(result.folder_id)
+                setParentChatId(result.parent_chat_id)
             }
         })
 
@@ -222,7 +226,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
     }, [noticesWaiting, sending, pausedTurn, chatId])
 
     useEffect(() => {
-        if (!canContinue) return
+        // A sub-agent's chat is driven by the backend, never by this page — not even to finish a
+        // call it left unresolved — and until the chat is fetched it isn't known whether it is one.
+        if (!canContinue || parentChatId !== null) return
         const forChatId = chatId
 
         resumeRef
@@ -233,7 +239,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
             .catch(() => {
                 if (chatIdRef.current === forChatId) setTurnError('Something went wrong resuming that turn — try again.')
             })
-    }, [canContinue, chatId])
+    }, [canContinue, chatId, parentChatId])
 
     // A search hit may live in a page that isn't loaded yet: load older pages until it's
     // mounted, then scroll to it.
@@ -275,6 +281,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             contextMax={contextMax}
                             folderId={folderId}
                             onFolderChanged={setFolderId}
+                            parentChatId={parentChatId ?? null}
                             onSelectSearchResult={jumpToMessage}
                             hasActiveHighlight={searchHighlight != null}
                             onClearHighlight={() => setSearchHighlight(null)}/>
@@ -332,14 +339,20 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         <Button variant="secondary" text="Dismiss" onClicked={() => setTurnError(null)}/>
                     </Div>
                 ) : null}
-                <UserInput
-                    blocked={sending || pausedTurn != null}
-                    onSended={handleSend}
-                    inputDisabled={false}
-                    initialThink={initialThink}
-                    chatId={chatId}
-                    model={chatModel}
-                />
+                {parentChatId != null ? (
+                    <Div className="chat__readonly">
+                        <Label variant="secondary" text="This is a sub-agent's chat — it runs on its own, so there is nothing to send."/>
+                    </Div>
+                ) : (
+                    <UserInput
+                        blocked={sending || pausedTurn != null}
+                        onSended={handleSend}
+                        inputDisabled={false}
+                        initialThink={initialThink}
+                        chatId={chatId}
+                        model={chatModel}
+                    />
+                )}
             </Div>
         </Div>
     )

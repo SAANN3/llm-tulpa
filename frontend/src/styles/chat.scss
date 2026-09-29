@@ -22,6 +22,12 @@
   padding: $space-4 $space-2;
 }
 
+.chat__readonly {
+  padding: $space-3 $space-4;
+  border-top: $line-border solid var(--color-border);
+  font-size: 13px;
+}
+
 .chat__error {
   display: flex;
   align-items: center;

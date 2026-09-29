@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {Close, ExternalLink, Folder, Search} from 'pixelarticons/react'
+import {ArrowLeft, Close, ExternalLink, Folder, Search} from 'pixelarticons/react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
@@ -28,6 +28,8 @@ export interface ChatHeaderProps {
     /** The folder this chat is grouped under, or null if ungrouped */
     folderId: number | null
     onFolderChanged: (folderId: number | null) => void
+    /** The chat this one is a sub-agent's chat of, or null for an ordinary chat */
+    parentChatId: number | null
     /** Scroll the chat to the message of a clicked search hit */
     onSelectSearchResult: (hit: MessageSearchOut, query: string) => void
     /** Whether a search hit is currently highlighted in the timeline — shows the clear control */
@@ -48,6 +50,7 @@ export const ChatHeader = ({
     contextMax,
     folderId,
     onFolderChanged,
+    parentChatId,
     onSelectSearchResult,
     hasActiveHighlight,
     onClearHighlight,
@@ -86,6 +89,13 @@ export const ChatHeader = ({
 
     return (
         <Div className="chat-header">
+            {parentChatId != null ? (
+                <Button variant="secondary" className="chat-header__parent"
+                        onClicked={() => navigate(`/chat?id=${parentChatId}`)}>
+                    <ArrowLeft width={16} height={16}/>
+                    <span>parent chat</span>
+                </Button>
+            ) : null}
             <Label className="chat-header__name" text={name ?? 'Chat'}/>
             <Button variant="secondary" className="chat-header__model" onClicked={() => setOpen(true)}>
                 <span className="chat-header__model-label">model:</span>

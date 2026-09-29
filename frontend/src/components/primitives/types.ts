@@ -30,7 +30,7 @@ export interface LabelProps {
 
 export interface ButtonProps {
   text?: string
-  onClicked: () => void
+  onClicked: (event: MouseEvent<HTMLButtonElement>) => void
   children?: ReactNode
   disabled?: boolean
   title?: string

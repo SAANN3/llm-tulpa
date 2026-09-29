@@ -42,6 +42,9 @@ pub(crate) struct ChatOut {
     pub(crate) context_length: u64,
     /// The folder this chat is grouped under, or `null` if ungrouped.
     pub(crate) folder_id: Option<i64>,
+    /// The chat that started this one as a sub-agent, or `null` for an ordinary chat. A
+    /// sub-agent's chat is not in the chat list; it is reached from its parent.
+    pub(crate) parent_chat_id: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -93,6 +96,7 @@ pub async fn get_chats(
             last_prompt_tokens: chat.last_prompt_tokens,
             context_length: services.context_length,
             folder_id: chat.folder_id,
+            parent_chat_id: chat.parent_chat_id,
         })));
     }
 
@@ -114,6 +118,7 @@ pub async fn get_chats(
             last_prompt_tokens: chat.last_prompt_tokens,
             context_length: services.context_length,
             folder_id: chat.folder_id,
+            parent_chat_id: chat.parent_chat_id,
         })
         .collect();
 

@@ -43,6 +43,17 @@
   text-overflow: ellipsis;
 }
 
+.chat-header__parent {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: 12px;
+  height: 34px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .chat-header__folder-group {
   // The assign-folder and jump-to-folder buttons read as one control, not two: a shared
   // outer border/shadow (mimicking `button[data-variant]`'s own look, same trick as

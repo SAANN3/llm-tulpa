@@ -44,5 +44,6 @@ pub async fn create_chat(
         last_prompt_tokens: chat.last_prompt_tokens,
         context_length: services.context_length,
         folder_id: chat.folder_id,
+        parent_chat_id: chat.parent_chat_id,
     }))
 }
