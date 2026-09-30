@@ -51,8 +51,16 @@ mod subagent_run;
 /// (folding somewhat more than strictly necessary) has no correctness risk — it only
 /// costs a bit of verbatim detail that the summary/facts channel already exists to
 /// preserve.
+///
+/// 1.2 was still too close: a real agentic chat measured ~1.9 chars/token, so the
+/// kept tail came to ~82k tokens, which with ~10k tokens of tools and system prompt
+/// sat at the 0.70 trigger itself. Each fold then removed only 1-4 messages, the next
+/// turn crossed the trigger again, and every fold (it rewrites the summary at the very
+/// front of the prompt) cost a full ~150s re-evaluation at ~92k tokens, four times in
+/// nine minutes. At 0.6 a fold leaves roughly 40-50k tokens of tail, so the next one is
+/// tens of thousands of tokens of growth away.
 const TRIGGER_FRACTION: f64 = 0.70;
-const KEEP_CHARS_PER_TOKEN: f64 = 1.2;
+const KEEP_CHARS_PER_TOKEN: f64 = 0.6;
 
 /// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
 /// call (see `advance`), applying to every conversation. One entry per rule, so
