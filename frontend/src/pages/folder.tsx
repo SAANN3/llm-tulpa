@@ -6,9 +6,10 @@ import '../styles/folders.scss'
 import {deleteFolder} from '../api/folders/delete'
 import {getFolders} from '../api/folders/get'
 import {renameFolder} from '../api/folders/rename'
-import type {ChatOut} from '../api/chats/types'
 import {setChatFolder} from '../api/chats/set-folder'
+import type {ChatOut} from '../api/chats/types'
 import {ChatEntry} from '../components/chat-entry.tsx'
+import {CreateChatForm} from '../components/create-chat-form.tsx'
 import {FolderPicker} from '../components/folder-picker.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
 import {Popup} from '../components/popup.tsx'
@@ -30,6 +31,7 @@ const Folder = () => {
     const [renameDraft, setRenameDraft] = useState('')
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [assigningChat, setAssigningChat] = useState<ChatOut | null>(null)
+    const [creatingChat, setCreatingChat] = useState(false)
     useDocumentTitle(folderName ?? 'Folder')
 
     useEffect(() => {
@@ -43,7 +45,7 @@ const Folder = () => {
         }
     }, [folderId])
 
-    const {chats, loadOlder, rename, delete: deleteChat} = useChats(undefined, folderId)
+    const {chats, loadOlder, rename, delete: deleteChat, createChat} = useChats(undefined, folderId)
 
     const onRename = async () => {
         const name = renameDraft.trim()
@@ -60,6 +62,15 @@ const Folder = () => {
         navigate('/folders')
     }
 
+    const onCreateChat = () => {
+        setCreatingChat(true)
+    }
+
+    const onChatCreated = async (chat: ChatOut) => {
+        await setChatFolder(chat.id, folderId)
+        navigate(`/chat?id=${chat.id}`)
+    }
+
     return (
         <Div className="page">
             <Sidebar/>
@@ -73,6 +84,7 @@ const Folder = () => {
                     ) : (
                         <Label className="mono folders__title" text="~/folders/…"/>
                     )}
+                    <Button variant="secondary" className="folders__new-chat" onClicked={onCreateChat} text="New chat"/>
                     <Button
                         variant="secondary"
                         text="Rename"
@@ -140,6 +152,19 @@ const Folder = () => {
                                 if (assigningChat) await setChatFolder(assigningChat.id, chosen)
                                 setAssigningChat(null)
                             }}
+                        />
+                    </Div>
+                </Div>
+            </Popup>
+
+            <Popup open={creatingChat} onClose={() => setCreatingChat(false)} centered>
+                <Div className="dos-frame sidebar__folder-picker">
+                    <span className="dos-frame__title">New chat</span>
+                    <Div className="dos-frame__body">
+                        <CreateChatForm
+                            createChat={createChat}
+                            onCreated={onChatCreated}
+                            onCancel={() => setCreatingChat(false)}
                         />
                     </Div>
                 </Div>

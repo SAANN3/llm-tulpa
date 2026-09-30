@@ -15,10 +15,12 @@ export interface ChatEntryProps {
      * one used for a folder's own rows — a folder can't itself be assigned to a folder, so
      * that component has no equivalent prop rather than this one just going unused there. */
     onAssignFolder?: () => void
+    /** Optional leading icon (JSX element) */
+    icon?: React.ReactNode
 }
 
 /** One row in the chat list */
-export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAssignFolder}: ChatEntryProps) => {
+export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAssignFolder, icon}: ChatEntryProps) => {
     const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [renaming, setRenaming] = useState(false)
@@ -61,6 +63,7 @@ export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAss
                 className="list-row chat-entry"
             >
                 <Label text={label}/>
+                {icon ? <Div className="chat-entry__icon" style={{ marginLeft: 'auto' }}>{icon}</Div> : null}
                 {showTrigger ? (
                     <Div ref={triggerRef} onClick={openAtTrigger} className="chat-entry__menu-trigger">
                         <MoreVertical width={16} height={16}/>

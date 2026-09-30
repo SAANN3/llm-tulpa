@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
@@ -74,11 +74,36 @@ export const Sidebar = () => {
         </Button>
     )
 
-    // The shrunk rail: only the toggle, to expand again
+    // Collapse-safe utils: hide plugins/users if not owner
+    const utilsCollapsed = [
+        {label: 'Settings', path: '/settings', icon: <Settings2 width={16} height={16}/>, action: () => navigate('/settings')},
+        {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>, action: () => navigate('/folders')},
+        ...(user?.role === 'owner' ? [
+            {label: 'Plugins', path: '/plugins', icon: <Plug width={16} height={16}/>, action: () => navigate('/plugins')},
+            {label: 'Users', path: '/users', icon: <User width={16} height={16}/>, action: () => navigate('/users')},
+        ] : []),
+        {label: 'Log out', path: '#logout', icon: <Logout width={16} height={16}/>, action: logout},
+    ]
+
+    // The shrunk rail: toggle + utils icons, no text
     if (collapsed) {
         return (
             <Div className="vbox sidebar sidebar--collapsed">
-                <Div className="sidebar__top">{toggle}</Div>
+                <Div className="sidebar__top">
+                    {toggle}
+                </Div>
+                <Div className="sidebar__utils-collapsed">
+                    {utilsCollapsed.map(item => (
+                        <Button
+                            key={item.path}
+                            className="sidebar__utils-item sidebar__utils-item--compact"
+                            title={item.label}
+                            onClicked={item.action}
+                        >
+                            {item.icon}
+                        </Button>
+                    ))}
+                </Div>
             </Div>
         )
     }
@@ -91,15 +116,15 @@ export const Sidebar = () => {
             </Div>
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
-                <ChatEntry label="Settings" selected={false} onClicked={() => navigate('/settings')}/>
-                <ChatEntry label="Folders" selected={false} onClicked={() => navigate('/folders')}/>
+                <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} onClicked={() => navigate('/settings')}/>
+                <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} onClicked={() => navigate('/folders')}/>
                 {user?.role === 'owner' ? (
                     <>
-                        <ChatEntry label="Plugins" selected={false} onClicked={() => navigate('/plugins')}/>
-                        <ChatEntry label="Users" selected={false} onClicked={() => navigate('/users')}/>
+                        <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} onClicked={() => navigate('/plugins')}/>
+                        <ChatEntry label="Users" selected={location.pathname === '/users'} icon={<User width={18} height={18}/>} onClicked={() => navigate('/users')}/>
                     </>
                 ) : null}
-                <ChatEntry label="Log out" selected={false} onClicked={logout}/>
+                <ChatEntry label="Log out" selected={false} icon={<Logout width={18} height={18}/>} onClicked={logout}/>
             </Div>
             <Label className="section-heading" text="Chats"/>
             <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">

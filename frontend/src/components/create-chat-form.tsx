@@ -1,21 +1,21 @@
 import {useState} from 'react'
 
 import '../styles/folder-picker.scss'
-import {folderName} from '../api/prompts/folder-name'
-import type {FolderOut} from '../api/folders/types'
+import {chatName as chatNameApi} from '../api/prompts/chat-name'
+import type {ChatOut} from '../api/chats/types'
 import {Button, Div, Input, Label} from './primitives'
 
-export interface CreateFolderFormProps {
-    createFolder: (name: string) => Promise<FolderOut>
-    onCreated: (folder: FolderOut) => void
+export interface CreateChatFormProps {
+    createChat: (name: string) => Promise<ChatOut>
+    onCreated: (chat: ChatOut) => void
     onCancel: () => void
 }
 
 type CreateMode = 'describe' | 'name'
 
-/** Either type the folder's name directly, or describe what it's for and let the model
- * name it — shared by `FolderPicker`'s inline create and the `/folders` page's own button. */
-export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFolderFormProps) => {
+/** Either type the chat's name directly, or describe what it's for and let the model
+ * name it — shared by the folder page's new-chat button. */
+export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatFormProps) => {
     const [mode, setMode] = useState<CreateMode>('describe')
     const [draft, setDraft] = useState('')
     const [generating, setGenerating] = useState(false)
@@ -30,11 +30,11 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
             let name = text
             if (mode === 'describe') {
                 setGenerating(true)
-                name = (await folderName(text)).response.trim() || text
+                name = (await chatNameApi(text)).response.trim() || text
             }
-            onCreated(await createFolder(name))
+            onCreated(await createChat(name))
         } catch {
-            setError('Could not create the folder.')
+            setError('Could not create the chat.')
         } finally {
             setGenerating(false)
         }
@@ -44,13 +44,13 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
         <Div className="vbox folder-picker__create">
             <Div className="folder-picker__mode">
                 <Button variant={mode === 'describe' ? undefined : 'secondary'} text="Describe it" onClicked={() => setMode('describe')}/>
-                <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write name" onClicked={() => setMode('name')}/>
+                <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write name yourself" onClicked={() => setMode('name')}/>
             </Div>
             <Input
                 autoFocus
                 text={draft}
                 onChanged={setDraft}
-                placeholder={mode === 'describe' ? "What's this folder for? We'll name it." : 'Folder name'}
+                placeholder={mode === 'describe' ? "What's this chat about? We'll name it." : 'Chat name'}
             />
             {error ? <Label variant="secondary" className="folder-picker__error" text={error}/> : null}
             <Div className="folder-picker__create-actions">

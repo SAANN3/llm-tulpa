@@ -10,10 +10,16 @@
 }
 
 .chat-header__name {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-header__title-group {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  flex: 1;
 }
 
 .chat-header__model {
@@ -127,7 +133,8 @@
   // same reason `.composer__footer`'s icon button is nested the same way.
   .chat-header__search,
   .chat-header__search-clear,
-  .chat-header__folder-jump {
+  .chat-header__folder-jump,
+  .chat-header__rename {
     width: 34px;
     height: 34px;
     box-sizing: border-box;
@@ -140,8 +147,8 @@
 
   .chat-header__search svg,
   .chat-header__search-clear svg,
-  .chat-header__folder svg,
-  .chat-header__folder-jump svg {
+  .chat-header__folder-jump svg,
+  .chat-header__rename svg {
     display: block;
   }
 }

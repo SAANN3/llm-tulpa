@@ -1,8 +1,9 @@
 import {useEffect, useState} from 'react'
-import {ArrowLeft, Close, ExternalLink, Folder, Search} from 'pixelarticons/react'
+import {ArrowLeft, Close, ExternalLink, Folder, Pencil, Search} from 'pixelarticons/react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
+import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
 import {setChatModel} from '../api/chats/set-model'
 import type {MessageSearchOut} from '../api/chats/types'
@@ -12,7 +13,7 @@ import {ChatSearch} from './chat-search.tsx'
 import {FolderPicker} from './folder-picker.tsx'
 import {ModelPicker} from './model-picker.tsx'
 import {Popup} from './popup.tsx'
-import {Button, Div, Label} from './primitives'
+import {Button, Div, Input, Label} from './primitives'
 
 export interface ChatHeaderProps {
     chatId: number
@@ -59,6 +60,8 @@ export const ChatHeader = ({
     const [open, setOpen] = useState(false)
     const [folderOpen, setFolderOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
+    const [renameOpen, setRenameOpen] = useState(false)
+    const [renameDraft, setRenameDraft] = useState(name ?? '')
     const [folderName, setFolderName] = useState<string | null>(null)
 
     useEffect(() => {
@@ -87,6 +90,16 @@ export const ChatHeader = ({
         setFolderOpen(false)
     }
 
+    const startRename = () => {
+        setRenameDraft(name ?? 'Chat')
+        setRenameOpen(true)
+    }
+
+    const doRename = async (newName: string) => {
+        await renameChat(chatId, newName)
+        setRenameOpen(false)
+    }
+
     return (
         <Div className="chat-header">
             {parentChatId != null ? (
@@ -96,7 +109,12 @@ export const ChatHeader = ({
                     <span>parent chat</span>
                 </Button>
             ) : null}
-            <Label className="chat-header__name" text={name ?? 'Chat'}/>
+            <Div className="chat-header__title-group">
+                <Label className="chat-header__name" text={name ?? 'Chat'}/>
+                <Button variant="secondary" className="chat-header__rename" onClicked={startRename}>
+                    <Pencil width={16} height={16}/>
+                </Button>
+            </Div>
             <Button variant="secondary" className="chat-header__model" onClicked={() => setOpen(true)}>
                 <span className="chat-header__model-label">model:</span>
                 <span className="chat-header__model-name">{model ?? '…'}</span>
@@ -150,6 +168,24 @@ export const ChatHeader = ({
                     <span className="dos-frame__title">Assign folder</span>
                     <Div className="dos-frame__body">
                         <FolderPicker selected={folderId} onSelect={onSelectFolder}/>
+                    </Div>
+                </Div>
+            </Popup>
+            <Popup open={renameOpen} onClose={() => setRenameOpen(false)} centered>
+                <Div className="dos-frame chat-header__picker">
+                    <span className="dos-frame__title">Rename chat</span>
+                    <Div className="dos-frame__body">
+                        <Input text={renameDraft} onChanged={setRenameDraft}/>
+                        <Div className="dialog__actions">
+                            <Button className="dialog__action" text="Cancel" variant="primary"
+                                    onClicked={() => setRenameOpen(false)}/>
+                            <Button
+                                className="dialog__action"
+                                text="Save"
+                                variant="secondary"
+                                onClicked={() => doRename(renameDraft)}
+                            />
+                        </Div>
                     </Div>
                 </Div>
             </Popup>
