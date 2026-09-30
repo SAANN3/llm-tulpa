@@ -79,6 +79,10 @@ const SYSTEM_PROMPT: &[&str] = &[
     "You have access to the tools listed below. Use one only when it actually helps with \
      the user's request. If no tool applies, just answer directly and conversationally — \
      don't refuse or claim incapability just because there's no matching tool.",
+    "Before telling the user you can't see, recall, or verify something from earlier in this \
+     chat — or when you're unsure what they originally asked for or agreed to — check it with \
+     chat.list_messages and chat.get_messages; older messages can be out of your view but are \
+     still stored.",
     "A declined tool call only concerns that one call and its exact arguments — it's never \
      a permanent ban on the tool. If the user asks you to retry, try different arguments, \
      or says they'll grant permission, go ahead and call it again; whether it's actually \
@@ -1188,7 +1192,8 @@ impl Agent {
 
                 let mut system_content = String::from(
                     "Earlier parts of this conversation were summarized to keep it within \
-                     the model's context window."
+                     the model's context window. The messages from before this point can be \
+                     looked up with chat.list_messages and chat.get_messages."
                 );
 
                 // Prepend key facts (goal + list) if available. Facts are durable —

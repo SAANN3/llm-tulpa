@@ -227,11 +227,16 @@ impl ChatStore {
     /// the `chat.*` tools build on: each entry is an id, who wrote it, when, and the
     /// start of what it says. `role` filters to one writer, `limit`/`skip` page
     /// through it, and the second return value is the total match count. Tool
-    /// results and notices aren't listed — they aren't conversational messages.
+    /// results and notices aren't listed — they aren't conversational messages —
+    /// and neither are the assistant messages that carry tool calls unless
+    /// `include_tool_calls` asks for them: in an agentic chat those are nearly all
+    /// of the assistant's rows (a short narration line at best) and bury the user's
+    /// messages and the assistant's actual replies, which is what recall is after.
     pub async fn history_page(
         &self,
         chat_id: i64,
         role: Option<&str>,
+        include_tool_calls: bool,
         limit: u64,
         skip: u64,
     ) -> Result<(Vec<HistoryEntry>, u64), ChatStoreErrors> {
@@ -242,6 +247,14 @@ impl ChatStore {
             .and(messages::Column::Role.is_in(["user".to_string(), "assistant".to_string()]));
         if let Some(role) = role {
             filter = filter.and(messages::Column::Role.eq(role));
+        }
+        if !include_tool_calls {
+            filter = filter.and(messages::Column::Id.not_in_subquery(
+                tool_calls::Entity::find()
+                    .select_only()
+                    .column(tool_calls::Column::MessageId)
+                    .into_query(),
+            ));
         }
 
         let query = messages::Entity::find().filter(filter.clone());
