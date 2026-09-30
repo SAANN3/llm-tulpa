@@ -133,7 +133,7 @@ fn default_bind_addr() -> String {
 }
 
 fn default_agent_history_len() -> u64 {
-    200
+    2000
 }
 
 fn default_job_log_retention_days() -> u64 {

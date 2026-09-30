@@ -24,7 +24,7 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 | `bind_addr` | `127.0.0.1:3000` | What the HTTP server binds to. Loopback-only by default; `0.0.0.0:3000` makes it reachable from other machines. |
 | `ollama.url` | `http://localhost:11434` | Where to reach Ollama. |
 | `ollama.context_length` | `32768` | Must match Ollama's own context window (`OLLAMA_CONTEXT_LENGTH` in the root `.env` — see `llm/README.md`) — drives the per-request `num_predict` cap (sized from what is left of the window after the prompt) and the history-compaction thresholds. The two live in different files, so change them together. |
-| `agent_history_len` | `200` | How many of a chat's most recent messages get pulled into a single turn. |
+| `agent_history_len` | `2000` | How many of a chat's most recent messages get pulled into a single turn. Keep it high: once a chat has more messages than this, the oldest one drops out on every new message, which changes the prompt from its start and forces a full re-evaluation each call; history is bounded by compaction (by tokens), not by this. |
 | `files_dir` | `~/.llm-tulpa/files` | Where uploaded files are stored. |
 | `jobs_dir` | `~/.llm-tulpa/jobs` | Where `os.start_job`'s background jobs write their log files. |
 | `job_log_retention_days` | `7` | How many days a *finished* job's log is kept. The sweep runs once at startup and deletes older logs (the job's row stays, marked as cleaned up); `0` keeps every log. |
