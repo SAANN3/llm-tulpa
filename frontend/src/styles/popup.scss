@@ -1,18 +1,60 @@
 @use 'mixins' as *;
+@use 'tokens' as *;
 
 .popup {
   position: fixed;
   z-index: 1000;
+}
+
+.popup--menu {
   border: 1px solid currentColor;
   border-radius: 0;
   overflow: hidden;
   @include dos-shadow(var(--color-shadow));
+}
 
-  &:has(.dos-frame) {
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    overflow: visible;
+// The frame supplies its own border and shadow, so the overlay itself is just a positioner
+.popup--dialog {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.popup__frame {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 380px;
+  min-height: 120px;
+  max-width: calc(100vw - #{$space-8} * 2);
+  max-height: calc(100vh - #{$space-8} * 2);
+  margin: $space-4;
+
+  // Nested so these beat `.dos-frame__body` regardless of stylesheet order
+  > .popup__body {
+    min-height: 0;
+    overflow-y: auto;
+    padding: $space-5 $space-6;
+    gap: $space-3;
   }
 }
 
+// A row of buttons that share the popup's width, such as Cancel / Save
+.popup__actions {
+  display: flex;
+  gap: $space-2;
+
+  > button {
+    flex: 1;
+  }
+}
+
+.popup-menu__item {
+  padding: $space-2 $space-4;
+  cursor: pointer;
+  white-space: nowrap;
+}

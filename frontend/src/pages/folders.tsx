@@ -2,10 +2,9 @@ import {useState} from 'react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/folders.scss'
-import {CreateFolderForm} from '../components/create-folder-form.tsx'
 import {FolderEntry} from '../components/folder-entry.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
-import {Popup} from '../components/popup.tsx'
+import {NewFolderPopup} from '../components/popups/new-folder-popup.tsx'
 import {Button, Div, Input, Label} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
@@ -50,21 +49,15 @@ const Folders = () => {
                 </LazyList>
             </Div>
 
-            <Popup open={creating} onClose={() => setCreating(false)} centered>
-                <Div className="dos-frame sidebar__folder-picker">
-                    <span className="dos-frame__title">New folder</span>
-                    <Div className="dos-frame__body">
-                        <CreateFolderForm
-                            createFolder={createFolder}
-                            onCreated={(folder) => {
-                                setCreating(false)
-                                navigate(`/folders/${folder.id}`)
-                            }}
-                            onCancel={() => setCreating(false)}
-                        />
-                    </Div>
-                </Div>
-            </Popup>
+            <NewFolderPopup
+                open={creating}
+                createFolder={createFolder}
+                onCreated={(folder) => {
+                    setCreating(false)
+                    navigate(`/folders/${folder.id}`)
+                }}
+                onClose={() => setCreating(false)}
+            />
         </Div>
     )
 };

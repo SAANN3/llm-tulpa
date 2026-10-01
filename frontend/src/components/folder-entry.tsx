@@ -2,8 +2,10 @@ import {useRef, useState} from 'react'
 import type {MouseEvent} from 'react'
 import {MoreVertical} from 'pixelarticons/react'
 import '../styles/chat-entry.scss'
-import {Button, Div, Input, Label} from './primitives'
-import {Popup} from './popup.tsx'
+import {Div, Label} from './primitives'
+import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
+import {ContextMenu} from './popups/base/context-menu.tsx'
+import {InputPopup} from './popups/base/input-popup.tsx'
 
 export interface FolderEntryProps {
     label: string
@@ -21,7 +23,6 @@ export const FolderEntry = ({label, selected, onClicked, onRename, onDelete}: Fo
     const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [renaming, setRenaming] = useState(false)
-    const [renameDraft, setRenameDraft] = useState(label)
     const triggerRef = useRef<HTMLDivElement>(null)
     const hasMenu = onRename != null && onDelete != null
     const showTrigger = hasMenu && selected
@@ -40,17 +41,6 @@ export const FolderEntry = ({label, selected, onClicked, onRename, onDelete}: Fo
 
     const closeMenu = () => setMenuPosition(null)
 
-    const startRename = () => {
-        closeMenu()
-        setRenameDraft(label)
-        setRenaming(true)
-    }
-
-    const startDelete = () => {
-        closeMenu()
-        setConfirmingDelete(true)
-    }
-
     return (
         <>
             <Div
@@ -68,56 +58,34 @@ export const FolderEntry = ({label, selected, onClicked, onRename, onDelete}: Fo
             </Div>
 
             {hasMenu ? (
-                <Popup open={menuPosition != null} onClose={closeMenu} position={menuPosition ?? {x: 0, y: 0}}>
-                    <Div onClick={startRename} className="popup-menu__item">
-                        <Label text="Rename folder"/>
-                    </Div>
-                    <Div variant="primary" onClick={startDelete} className="popup-menu__item">
-                        <Label text="Delete folder"/>
-                    </Div>
-                </Popup>
+                <ContextMenu
+                    position={menuPosition}
+                    onClose={closeMenu}
+                    items={[
+                        {label: 'Rename folder', onSelect: () => setRenaming(true)},
+                        {label: 'Delete folder', onSelect: () => setConfirmingDelete(true), danger: true},
+                    ]}
+                />
             ) : null}
 
             {hasMenu ? (
-                <Popup open={confirmingDelete} onClose={() => setConfirmingDelete(false)} centered>
-                    <Div className="vbox dialog">
-                        <Label text={`Are you sure that you want to delete "${label}"`}/>
-                        <Div className="dialog__actions">
-                            <Button className="dialog__action" text="Cancel" variant="primary"
-                                    onClicked={() => setConfirmingDelete(false)}/>
-                            <Button
-                                className="dialog__action"
-                                text="Continue"
-                                variant="secondary"
-                                onClicked={() => {
-                                    setConfirmingDelete(false)
-                                    onDelete?.()
-                                }}
-                            />
-                        </Div>
-                    </Div>
-                </Popup>
+                <ConfirmPopup
+                    open={confirmingDelete}
+                    title="Delete folder"
+                    message={`Are you sure that you want to delete "${label}"`}
+                    onConfirm={() => onDelete?.()}
+                    onClose={() => setConfirmingDelete(false)}
+                />
             ) : null}
 
             {hasMenu ? (
-                <Popup open={renaming} onClose={() => setRenaming(false)} centered>
-                    <Div className="vbox dialog">
-                        <Input text={renameDraft} onChanged={setRenameDraft}/>
-                        <Div className="dialog__actions">
-                            <Button className="dialog__action" text="Cancel" variant="primary"
-                                    onClicked={() => setRenaming(false)}/>
-                            <Button
-                                className="dialog__action"
-                                text="Save"
-                                variant="secondary"
-                                onClicked={() => {
-                                    setRenaming(false)
-                                    onRename?.(renameDraft)
-                                }}
-                            />
-                        </Div>
-                    </Div>
-                </Popup>
+                <InputPopup
+                    open={renaming}
+                    title="Rename folder"
+                    value={label}
+                    onSubmit={(name) => onRename?.(name)}
+                    onClose={() => setRenaming(false)}
+                />
             ) : null}
         </>
     )

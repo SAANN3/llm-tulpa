@@ -1,8 +1,7 @@
 import {useState} from 'react'
 import '../styles/settings-fields.scss'
 import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
-import {ModelPicker} from './model-picker.tsx'
-import {Popup} from './popup.tsx'
+import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
 /** A field label in the small-caps style used above every input in this panel */
@@ -63,17 +62,15 @@ export const ActiveModelField = ({provider, model, onChosen}: ActiveModelFieldPr
                 <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
             </Div>
             <FieldHelp text="New chats start with this model. Each chat can be switched from its own header."/>
-            <Popup open={open} onClose={() => setOpen(false)} centered>
-                <Div className="dos-frame field__model-picker">
-                    <span className="dos-frame__title">Choose model</span>
-                    <Div className="dos-frame__body">
-                        <ModelPicker selected={model} onSelect={(chosen) => {
-                            onChosen(provider, chosen)
-                            setOpen(false)
-                        }}/>
-                    </Div>
-                </Div>
-            </Popup>
+            <ChooseModelPopup
+                open={open}
+                selected={model}
+                onSelect={(chosen) => {
+                    onChosen(provider, chosen)
+                    setOpen(false)
+                }}
+                onClose={() => setOpen(false)}
+            />
         </Div>
     )
 };

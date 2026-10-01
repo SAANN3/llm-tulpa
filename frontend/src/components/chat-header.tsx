@@ -9,11 +9,11 @@ import {setChatModel} from '../api/chats/set-model'
 import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
 import {formatTokenCount} from '../utils/format.ts'
-import {ChatSearch} from './chat-search.tsx'
-import {FolderPicker} from './folder-picker.tsx'
-import {ModelPicker} from './model-picker.tsx'
-import {Popup} from './popup.tsx'
-import {Button, Div, Input, Label} from './primitives'
+import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
+import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
+import {InputPopup} from './popups/base/input-popup.tsx'
+import {SearchMessagesPopup} from './popups/search-messages-popup.tsx'
+import {Button, Div, Label} from './primitives'
 
 export interface ChatHeaderProps {
     chatId: number
@@ -61,7 +61,6 @@ export const ChatHeader = ({
     const [folderOpen, setFolderOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
     const [renameOpen, setRenameOpen] = useState(false)
-    const [renameDraft, setRenameDraft] = useState(name ?? '')
     const [folderName, setFolderName] = useState<string | null>(null)
 
     useEffect(() => {
@@ -90,14 +89,8 @@ export const ChatHeader = ({
         setFolderOpen(false)
     }
 
-    const startRename = () => {
-        setRenameDraft(name ?? 'Chat')
-        setRenameOpen(true)
-    }
-
     const doRename = async (newName: string) => {
         await renameChat(chatId, newName)
-        setRenameOpen(false)
     }
 
     return (
@@ -111,7 +104,7 @@ export const ChatHeader = ({
             ) : null}
             <Div className="chat-header__title-group">
                 <Label className="chat-header__name" text={name ?? 'Chat'}/>
-                <Button variant="secondary" className="chat-header__rename" onClicked={startRename}>
+                <Button variant="secondary" className="chat-header__rename" onClicked={() => setRenameOpen(true)}>
                     <Pencil width={16} height={16}/>
                 </Button>
             </Div>
@@ -155,54 +148,26 @@ export const ChatHeader = ({
                     <Close width={20} height={20}/>
                 </Button>
             ) : null}
-            <Popup open={open} onClose={() => setOpen(false)} centered>
-                <Div className="dos-frame chat-header__picker">
-                    <span className="dos-frame__title">Choose model</span>
-                    <Div className="dos-frame__body">
-                        <ModelPicker selected={model} onSelect={onSelect}/>
-                    </Div>
-                </Div>
-            </Popup>
-            <Popup open={folderOpen} onClose={() => setFolderOpen(false)} centered>
-                <Div className="dos-frame chat-header__picker">
-                    <span className="dos-frame__title">Assign folder</span>
-                    <Div className="dos-frame__body">
-                        <FolderPicker selected={folderId} onSelect={onSelectFolder}/>
-                    </Div>
-                </Div>
-            </Popup>
-            <Popup open={renameOpen} onClose={() => setRenameOpen(false)} centered>
-                <Div className="dos-frame chat-header__picker">
-                    <span className="dos-frame__title">Rename chat</span>
-                    <Div className="dos-frame__body vbox chat-header__rename-body">
-                        <Input text={renameDraft} onChanged={setRenameDraft}/>
-                        <Div className="dialog__actions">
-                            <Button className="dialog__action" text="Cancel" variant="primary"
-                                    onClicked={() => setRenameOpen(false)}/>
-                            <Button
-                                className="dialog__action"
-                                text="Save"
-                                variant="secondary"
-                                onClicked={() => doRename(renameDraft)}
-                            />
-                        </Div>
-                    </Div>
-                </Div>
-            </Popup>
-            <Popup open={searchOpen} onClose={() => setSearchOpen(false)} centered>
-                <Div className="dos-frame chat-header__search-box">
-                    <span className="dos-frame__title">Search messages</span>
-                    <Div className="dos-frame__body">
-                        <ChatSearch
-                            chatId={chatId}
-                            onSelect={(hit, query) => {
-                                setSearchOpen(false)
-                                onSelectSearchResult(hit, query)
-                            }}
-                            onClose={() => setSearchOpen(false)}/>
-                    </Div>
-                </Div>
-            </Popup>
+            <ChooseModelPopup open={open} selected={model} onSelect={onSelect} onClose={() => setOpen(false)}/>
+            <AssignFolderPopup
+                open={folderOpen}
+                selected={folderId}
+                onSelect={onSelectFolder}
+                onClose={() => setFolderOpen(false)}
+            />
+            <InputPopup
+                open={renameOpen}
+                title="Rename chat"
+                value={name ?? 'Chat'}
+                onSubmit={doRename}
+                onClose={() => setRenameOpen(false)}
+            />
+            <SearchMessagesPopup
+                open={searchOpen}
+                chatId={chatId}
+                onSelect={onSelectSearchResult}
+                onClose={() => setSearchOpen(false)}
+            />
         </Div>
     )
 };

@@ -4,6 +4,7 @@ import '../styles/folder-picker.scss'
 import {chatName as chatNameApi} from '../api/prompts/chat-name'
 import type {ChatOut} from '../api/chats/types'
 import {Button, Div, Input, Label} from './primitives'
+import {PopupActions} from './popups/base/popup-actions.tsx'
 
 export interface CreateChatFormProps {
     createChat: (name: string) => Promise<ChatOut>
@@ -53,10 +54,13 @@ export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatForm
                 placeholder={mode === 'describe' ? "What's this chat about? We'll name it." : 'Chat name'}
             />
             {error ? <Label variant="secondary" className="folder-picker__error" text={error}/> : null}
-            <Div className="folder-picker__create-actions">
-                <Button variant="secondary" text="Cancel" onClicked={onCancel}/>
-                <Button text={generating ? 'Thinking…' : 'Create'} onClicked={onCreate} disabled={!draft.trim() || generating}/>
-            </Div>
+            <PopupActions
+                emphasis="confirm"
+                confirmLabel={generating ? 'Thinking…' : 'Create'}
+                confirmDisabled={!draft.trim() || generating}
+                onConfirm={onCreate}
+                onCancel={onCancel}
+            />
         </Div>
     )
 };

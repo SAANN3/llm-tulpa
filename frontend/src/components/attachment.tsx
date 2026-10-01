@@ -8,7 +8,7 @@ import {getFileExtension} from '../utils/file-extension.ts'
 import {AttachmentPreview} from './attachment-preview.tsx'
 import {Button, Div, Label} from './primitives'
 import {getMediaKind} from './previewers/registry'
-import {WindowsPopup} from './windows-popup.tsx'
+import {WindowsPopup} from './popups/base/windows-popup.tsx'
 
 export type AttachmentProps = {
     size?: number

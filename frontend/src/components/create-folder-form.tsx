@@ -4,6 +4,7 @@ import '../styles/folder-picker.scss'
 import {folderName} from '../api/prompts/folder-name'
 import type {FolderOut} from '../api/folders/types'
 import {Button, Div, Input, Label} from './primitives'
+import {PopupActions} from './popups/base/popup-actions.tsx'
 
 export interface CreateFolderFormProps {
     createFolder: (name: string) => Promise<FolderOut>
@@ -53,10 +54,13 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
                 placeholder={mode === 'describe' ? "What's this folder for? We'll name it." : 'Folder name'}
             />
             {error ? <Label variant="secondary" className="folder-picker__error" text={error}/> : null}
-            <Div className="folder-picker__create-actions">
-                <Button variant="secondary" text="Cancel" onClicked={onCancel}/>
-                <Button text={generating ? 'Thinking…' : 'Create'} onClicked={onCreate} disabled={!draft.trim() || generating}/>
-            </Div>
+            <PopupActions
+                emphasis="confirm"
+                confirmLabel={generating ? 'Thinking…' : 'Create'}
+                confirmDisabled={!draft.trim() || generating}
+                onConfirm={onCreate}
+                onCancel={onCancel}
+            />
         </Div>
     )
 };

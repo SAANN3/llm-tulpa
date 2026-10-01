@@ -1,8 +1,8 @@
 import type {CSSProperties, MouseEvent as ReactMouseEvent, ReactNode} from 'react'
 import {useRef, useState} from 'react'
 import {Close, Download} from 'pixelarticons/react'
-import {useEscapeToClose} from '../hooks/use-escape-to-close.ts'
-import {Button, Div, Label} from './primitives'
+import {useEscapeToClose} from '../../../hooks/use-escape-to-close.ts'
+import {Button, Div, Label} from '../../primitives'
 
 export interface WindowsPopupProps {
     open: boolean

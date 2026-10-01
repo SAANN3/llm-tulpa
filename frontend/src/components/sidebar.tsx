@@ -3,10 +3,9 @@ import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Anal
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
-import {FolderPicker} from './folder-picker.tsx'
 import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
-import {Popup} from './popup.tsx'
+import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
 import {Button, Div, Label} from './primitives'
 import {setChatFolder} from '../api/chats/set-folder'
 import type {ChatOut} from '../api/chats/types'
@@ -153,20 +152,15 @@ export const Sidebar = () => {
                     ))}
                 </Div>
             </LazyList>
-            <Popup open={assigningChat != null} onClose={() => setAssigningChat(null)} centered>
-                <Div className="dos-frame sidebar__folder-picker">
-                    <span className="dos-frame__title">Assign folder</span>
-                    <Div className="dos-frame__body">
-                        <FolderPicker
-                            selected={assigningChat?.folder_id ?? null}
-                            onSelect={async (folderId) => {
-                                if (assigningChat) await setChatFolder(assigningChat.id, folderId)
-                                setAssigningChat(null)
-                            }}
-                        />
-                    </Div>
-                </Div>
-            </Popup>
+            <AssignFolderPopup
+                open={assigningChat != null}
+                selected={assigningChat?.folder_id ?? null}
+                onSelect={async (folderId) => {
+                    if (assigningChat) await setChatFolder(assigningChat.id, folderId)
+                    setAssigningChat(null)
+                }}
+                onClose={() => setAssigningChat(null)}
+            />
         </Div>
     )
 };

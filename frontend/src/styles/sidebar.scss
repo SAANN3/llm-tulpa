@@ -86,17 +86,3 @@
   font-size: 11px;
 }
 
-.sidebar__folder-picker {
-  width: 380px;
-  max-width: calc(100vw - #{$space-8} * 2);
-  max-height: calc(100vh - #{$space-8} * 2);
-  margin: $space-4;
-  display: flex;
-  flex-direction: column;
-
-  .dos-frame__body {
-    min-height: 0;
-    overflow-y: auto;
-    padding: $space-5 $space-6;
-  }
-}

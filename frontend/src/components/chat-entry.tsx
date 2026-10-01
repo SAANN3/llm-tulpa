@@ -2,8 +2,10 @@ import {useRef, useState} from 'react'
 import type {MouseEvent} from 'react'
 import {MoreVertical} from 'pixelarticons/react'
 import '../styles/chat-entry.scss'
-import {Button, Div, Input, Label} from './primitives'
-import {Popup} from './popup.tsx'
+import {Div, Label} from './primitives'
+import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
+import {ContextMenu} from './popups/base/context-menu.tsx'
+import {InputPopup} from './popups/base/input-popup.tsx'
 
 export interface ChatEntryProps {
     label: string
@@ -24,7 +26,6 @@ export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAss
     const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [renaming, setRenaming] = useState(false)
-    const [renameDraft, setRenameDraft] = useState(label)
     const triggerRef = useRef<HTMLDivElement>(null)
     const hasMenu = onRename != null && onDelete != null
     const showTrigger = hasMenu && selected
@@ -42,17 +43,6 @@ export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAss
     }
 
     const closeMenu = () => setMenuPosition(null)
-
-    const startRename = () => {
-        closeMenu()
-        setRenameDraft(label)
-        setRenaming(true)
-    }
-
-    const startDelete = () => {
-        closeMenu()
-        setConfirmingDelete(true)
-    }
 
     return (
         <>
@@ -72,67 +62,35 @@ export const ChatEntry = ({label, selected, onClicked, onRename, onDelete, onAss
             </Div>
 
             {hasMenu ? (
-                <Popup open={menuPosition != null} onClose={closeMenu} position={menuPosition ?? {x: 0, y: 0}}>
-                    <Div onClick={startRename} className="popup-menu__item">
-                        <Label text="Rename chat"/>
-                    </Div>
-                    {onAssignFolder ? (
-                        <Div
-                            onClick={() => {
-                                closeMenu()
-                                onAssignFolder()
-                            }}
-                            className="popup-menu__item"
-                        >
-                            <Label text="Move to folder"/>
-                        </Div>
-                    ) : null}
-                    <Div variant="primary" onClick={startDelete} className="popup-menu__item">
-                        <Label text="Delete chat"/>
-                    </Div>
-                </Popup>
+                <ContextMenu
+                    position={menuPosition}
+                    onClose={closeMenu}
+                    items={[
+                        {label: 'Rename chat', onSelect: () => setRenaming(true)},
+                        ...(onAssignFolder ? [{label: 'Move to folder', onSelect: onAssignFolder}] : []),
+                        {label: 'Delete chat', onSelect: () => setConfirmingDelete(true), danger: true},
+                    ]}
+                />
             ) : null}
 
             {hasMenu ? (
-                <Popup open={confirmingDelete} onClose={() => setConfirmingDelete(false)} centered>
-                    <Div className="vbox dialog">
-                        <Label text={`Are you sure that you want to delete "${label}"`}/>
-                        <Div className="dialog__actions">
-                            <Button className="dialog__action" text="Cancel" variant="primary"
-                                    onClicked={() => setConfirmingDelete(false)}/>
-                            <Button
-                                className="dialog__action"
-                                text="Continue"
-                                variant="secondary"
-                                onClicked={() => {
-                                    setConfirmingDelete(false)
-                                    onDelete?.()
-                                }}
-                            />
-                        </Div>
-                    </Div>
-                </Popup>
+                <ConfirmPopup
+                    open={confirmingDelete}
+                    title="Delete chat"
+                    message={`Are you sure that you want to delete "${label}"`}
+                    onConfirm={() => onDelete?.()}
+                    onClose={() => setConfirmingDelete(false)}
+                />
             ) : null}
 
             {hasMenu ? (
-                <Popup open={renaming} onClose={() => setRenaming(false)} centered>
-                    <Div className="vbox dialog">
-                        <Input text={renameDraft} onChanged={setRenameDraft}/>
-                        <Div className="dialog__actions">
-                            <Button className="dialog__action" text="Cancel" variant="primary"
-                                    onClicked={() => setRenaming(false)}/>
-                            <Button
-                                className="dialog__action"
-                                text="Save"
-                                variant="secondary"
-                                onClicked={() => {
-                                    setRenaming(false)
-                                    onRename?.(renameDraft)
-                                }}
-                            />
-                        </Div>
-                    </Div>
-                </Popup>
+                <InputPopup
+                    open={renaming}
+                    title="Rename chat"
+                    value={label}
+                    onSubmit={(name) => onRename?.(name)}
+                    onClose={() => setRenaming(false)}
+                />
             ) : null}
         </>
     )
