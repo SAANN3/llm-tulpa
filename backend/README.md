@@ -58,7 +58,7 @@ src/
 ├── config.rs    # settings.json — every backend setting, load/save, platform path resolution, JWT secret
 ├── state.rs     # AppState — Arc handles + services behind RwLock<Option> (populated once a DB is configured)
 ├── routes/      # HTTP layer, one folder per domain (auth/, setup/, users/ + the rest)
-├── facade/      # orchestration layer between routes and services (agent, prompt)
+├── facade/      # orchestration layer between routes and services (agent, prompt, stats)
 ├── services/    # backend integrations and persistence; bootstrap.rs connects + builds every
 │                #   store, migrate.rs is the one centralized 3NF migration, auth.rs issues/verifies
 │                #   JWTs, model_library.rs is the model catalog + local files + pull/import tasks

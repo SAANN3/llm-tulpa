@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, auth, chats, events, files, folders, llm, plugins, prompts, settings, setup, users};
+use super::{agent, auth, chats, events, files, folders, llm, plugins, prompts, settings, setup, stats, users};
 
 /// Every route that needs a signed-in user — `main.rs` puts `require_auth` in front of the
 /// whole thing. Owner-only routes (users, plugins) are gated per handler by the `OwnerUser`
@@ -22,6 +22,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/plugins", plugins::router::router())
         .nest("/prompts", prompts::router::router())
         .nest("/settings", settings::router::router())
+        .nest("/stats", stats::router::router())
         .nest("/users", users::router::router())
         .fallback(not_found)
 }
@@ -53,5 +54,6 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
         .merge_from(prompts::router::ApiDoc::openapi())
         .merge_from(settings::router::ApiDoc::openapi())
         .merge_from(setup::router::ApiDoc::openapi())
+        .merge_from(stats::router::ApiDoc::openapi())
         .merge_from(users::router::ApiDoc::openapi())
 }

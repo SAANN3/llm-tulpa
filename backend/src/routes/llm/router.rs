@@ -14,7 +14,6 @@ use super::import::*;
 use super::local_files::*;
 use super::models::*;
 use super::pull::*;
-use super::stats::*;
 use super::tasks::*;
 use super::thinking_capability::*;
 
@@ -28,12 +27,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/pull", post(pull))
         .route("/import", post(import))
         .route("/tasks", get(tasks))
-        .route("/stats", get(stats))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(generate, thinking_capability, models, catalog, local_files, pull, import, tasks, stats),
+    paths(generate, thinking_capability, models, catalog, local_files, pull, import, tasks),
     components(schemas(
         GenerateRequest,
         GenerateResponse,
@@ -51,8 +49,6 @@ pub fn router() -> Router<Arc<AppState>> {
         crate::services::model_library::ModelTask,
         crate::services::model_library::TaskKind,
         crate::services::model_library::TaskState,
-        StatsResponse,
-        UsageDayOut,
     ))
 )]
 pub struct ApiDoc;

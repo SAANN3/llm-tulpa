@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{agent::Agent, prompt::PromptFacade};
+use crate::facade::{agent::Agent, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
@@ -36,8 +36,10 @@ pub struct AppServices {
     pub permission_store: Arc<PermissionStore>,
     pub file_store: Arc<FileStore>,
     pub folder_store: Arc<FolderStore>,
+    pub job_store: Arc<JobStore>,
     pub agent: Arc<Agent>,
     pub prompt: PromptFacade,
+    pub stats: StatsFacade,
     pub user_cache: Arc<UserCacheService>,
     pub plugin_registry: Arc<PluginRegistry>,
     /// The context window the agent runs under — Ollama's configured ceiling
@@ -205,6 +207,13 @@ pub async fn bootstrap(
     ));
     agent.bind_subagent_runner();
     let prompt = PromptFacade::new(ollama.clone());
+    let stats = StatsFacade::new(
+        chat_store.clone(),
+        job_store.clone(),
+        settings_store.clone(),
+        ollama.clone(),
+        ollama_context_length,
+    );
     let user_cache = UserCacheService::new(settings_store.clone(), prompt.clone());
 
     // A tool-less agent for plugin conversations — real persistence and replies with zero
@@ -243,8 +252,10 @@ pub async fn bootstrap(
         permission_store,
         file_store,
         folder_store,
+        job_store,
         agent,
         prompt,
+        stats,
         user_cache,
         plugin_registry,
         context_length: ollama_context_length,

@@ -344,6 +344,19 @@ impl JobStore {
         Ok(models.into_iter().map(JobRecord::from).collect())
     }
 
+    /// Every job the given chats started at or after `since`, oldest first — for usage stats, which
+    /// scope by user through the chat ids (a job belongs to a chat, not to a user).
+    pub async fn started_since(&self, chat_ids: &[i64], since: DateTimeUtc) -> Result<Vec<JobRecord>, JobStoreErrors> {
+        let models = jobs::Entity::find()
+            .filter(jobs::Column::ChatId.is_in(chat_ids.iter().copied()))
+            .filter(jobs::Column::StartedAt.gte(since))
+            .order_by_asc(jobs::Column::Id)
+            .all(&self.db)
+            .await?;
+
+        Ok(models.into_iter().map(JobRecord::from).collect())
+    }
+
     /// Waits until the job is no longer running or `timeout` passes, whichever comes
     /// first, and returns its state at that point.
     pub async fn wait_until_finished(

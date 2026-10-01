@@ -440,6 +440,26 @@ impl OllamaService {
         Ok(parsed.models)
     }
 
+    /// The models the backend has loaded right now, from `/api/ps` — answered by Ollama itself, or
+    /// by `mtp-proxy` on behalf of llama-server. Empty when nothing is loaded.
+    pub async fn running_models(&self) -> Result<RunningModels, OllamaErrors> {
+        let url = format!("{}/api/ps", self.base_url);
+
+        let res = self.client.get(&url).send().await.map_err(|e| {
+            tracing::error!(error = %e, "ollama /api/ps request failed");
+            OllamaErrors::RequestFailed(e.to_string())
+        })?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "ollama /api/ps returned a non-success status");
+            return Err(OllamaErrors::UnexpectedStatus(status, body));
+        }
+
+        decode_response(res).await
+    }
+
     /// Fetches ollama.com's public model library page. There is no API behind it, so
     /// `ModelLibrary` parses the returned HTML into a structured catalog.
     pub async fn fetch_catalog(&self) -> Result<String, OllamaErrors> {
@@ -730,6 +750,57 @@ pub struct LocalModelDetails {
     pub parameter_size: Option<String>,
     #[serde(default)]
     pub quantization_level: Option<String>,
+}
+
+/// A model the backend has loaded right now, from `/api/ps`. Only what the stats page shows is
+/// kept. `mtp-proxy` answers this for llama-server (which always has exactly its one model loaded
+/// and doesn't report memory use), so every field but the name may be absent.
+#[derive(Deserialize, Default)]
+pub struct RunningModel {
+    pub name: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub size_vram: Option<u64>,
+    /// When the backend will unload the model if it stays idle, RFC 3339.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub context_length: Option<u64>,
+}
+
+/// What llama-server has done since it started, which only `mtp-proxy` reports (under
+/// `llama_server` in its `/api/ps` answer; Ollama has no equivalent).
+#[derive(Deserialize, Default)]
+pub struct LlamaServerStats {
+    #[serde(default)]
+    pub model_file: Option<String>,
+    #[serde(default)]
+    pub slots_total: Option<u64>,
+    #[serde(default)]
+    pub slots_processing: Option<u64>,
+    #[serde(default)]
+    pub prompt_tokens_total: Option<f64>,
+    #[serde(default)]
+    pub prompt_tokens_cached_total: Option<f64>,
+    #[serde(default)]
+    pub prompt_tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub predicted_tokens_total: Option<f64>,
+    #[serde(default)]
+    pub predicted_tokens_per_second: Option<f64>,
+    #[serde(default)]
+    pub draft_tokens_total: Option<f64>,
+    #[serde(default)]
+    pub draft_tokens_accepted_total: Option<f64>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct RunningModels {
+    #[serde(default)]
+    pub models: Vec<RunningModel>,
+    #[serde(default)]
+    pub llama_server: Option<LlamaServerStats>,
 }
 
 #[derive(Serialize)]

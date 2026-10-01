@@ -10,4 +10,5 @@ pub mod prompts;
 pub mod router;
 pub mod settings;
 pub mod setup;
+pub mod stats;
 pub mod users;
