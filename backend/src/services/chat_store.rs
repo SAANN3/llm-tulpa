@@ -1,4 +1,5 @@
 mod entities;
+mod find;
 mod stats;
 
 use std::collections::HashMap;
@@ -66,6 +67,22 @@ impl ChatStore {
         Ok(chat)
     }
 
+    /// The chats a user sees in their chat list: not deleted, not a sub-agent's, not owned by a
+    /// plugin (those are reached through the plugin's own page). Everything that lists or searches
+    /// "the user's chats" starts from this, so the two can't drift apart.
+    fn listed_chats(user_id: i64) -> Select<chats::Entity> {
+        chats::Entity::find()
+            .filter(chats::Column::UserId.eq(user_id))
+            .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::ParentChatId.is_null())
+            .filter(chats::Column::Id.not_in_subquery(
+                plugin_chats::Entity::find()
+                    .select_only()
+                    .column(plugin_chats::Column::ChatId)
+                    .into_query(),
+            ))
+    }
+
     /// A user's non-deleted, non-plugin, non-sub-agent chats, newest-active first, plus the total count.
     /// `folder_id`: `Some(Some(id))` scopes to that folder, `Some(None)` to ungrouped chats,
     /// `None` doesn't filter by folder at all.
@@ -76,19 +93,7 @@ impl ChatStore {
         limit: u64,
         skip: u64,
     ) -> Result<(Vec<Chat>, u64), ChatStoreErrors> {
-        // Plugin-owned chats are excluded by anti-joining `plugin_chats`.
-        let plugin_chat_ids: Vec<i64> = plugin_chats::Entity::find()
-            .select_only()
-            .column(plugin_chats::Column::ChatId)
-            .into_tuple()
-            .all(&self.db)
-            .await?;
-
-        let mut query = chats::Entity::find()
-            .filter(chats::Column::UserId.eq(user_id))
-            .filter(chats::Column::IsDeleted.eq(false))
-            .filter(chats::Column::ParentChatId.is_null())
-            .filter(chats::Column::Id.is_not_in(plugin_chat_ids));
+        let mut query = Self::listed_chats(user_id);
 
         if let Some(folder_id) = folder_id {
             query = match folder_id {
@@ -345,9 +350,7 @@ impl ChatStore {
     ) -> Result<(Vec<MessageSearchHit>, u64), ChatStoreErrors> {
         self.chat(chat_id).await?;
 
-        // Escape LIKE wildcards so a searched `%` or `_` matches itself, not anything.
-        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-        let pattern = format!("%{}%", escaped);
+        let pattern = like_pattern(query);
 
         // Rows whose own content may match, per the toggles. Tool results and notices are tool output, not conversation, so both ride
         // with "Tools" — otherwise turning it off would only hide argument matches while
@@ -1077,6 +1080,13 @@ fn searchable_roles(include_assistant: bool, include_user: bool, include_tools: 
         roles.push("notice".to_string());
     }
     roles
+}
+
+/// A `LIKE` pattern matching `query` anywhere in a value. Its wildcards are escaped so a searched
+/// `%` or `_` matches itself, not anything.
+fn like_pattern(query: &str) -> String {
+    let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{escaped}%")
 }
 
 /// Case-insensitive `LIKE` — the `ilike` method lives on sea-query's Postgres extension

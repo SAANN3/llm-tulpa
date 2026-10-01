@@ -242,7 +242,9 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
     const {settings} = useSettings()
     const [messages, setMessages] = useState<DisplayMessage[]>([])
     const [total, setTotal] = useState(0)
-    const [loadingMore, setLoadingMore] = useState(false)
+    // The chat whose first page `messages` holds: until it is this chat's, `messages` is still the
+    // previous chat's (it is replaced when the fetch returns, not cleared on the switch)
+    const [loadedChatId, setLoadedChatId] = useState<number | null>(null)
     const [sendingChatId, setSendingChatId] = useState<number | null>(null)
     const sending = sendingChatId === chatId
     const [canContinue, setCanContinue] = useState(false)
@@ -285,6 +287,7 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
                 const historical = toDisplayMessages([...result.messages].reverse())
                 setMessages([...historical, ...liveAppendedSinceFetchRef.current])
                 setTotal(result.total + liveAppendedSinceFetchRef.current.length)
+                setLoadedChatId(chatId)
                 onAppendedRef.current?.()
             })
         }
@@ -298,19 +301,31 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }, [chatId])
 
+    // `loadOlder` is called from the list's top-reached event and from a search jump's own loop,
+    // each holding the closure of the render it was created in: the in-flight flag and the page
+    // offset have to be read from refs, or two calls fetch the same page and prepend it twice.
+    const loadingMoreRef = useRef(false)
+    const messagesRef = useRef(messages)
+    messagesRef.current = messages
+    const totalRef = useRef(total)
+    totalRef.current = total
     const loadOlder = async (): Promise<boolean> => {
-        if (loadingMore || messages.length >= total) return false
+        if (loadingMoreRef.current || messagesRef.current.length >= totalRef.current) return false
 
-        setLoadingMore(true)
+        loadingMoreRef.current = true
         try {
-            const skip = messages.length
+            const skip = messagesRef.current.length
             const result = await getMessages({chatId, skip, limit: MESSAGES_PAGE_SIZE})
             const older = toDisplayMessages([...result.messages].reverse())
-            setMessages((prev) => [...older, ...prev])
+            // Bumped now, not at the next render: a caller that awaits this and calls again
+            // straight away must not read the old offset.
+            messagesRef.current = [...older, ...messagesRef.current]
+            totalRef.current = result.total
+            setMessages(messagesRef.current)
             setTotal(result.total)
             return older.length > 0
         } finally {
-            setLoadingMore(false)
+            loadingMoreRef.current = false
         }
     }
 
@@ -416,5 +431,5 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    return {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens}
+    return {messages, total, ready: loadedChatId === chatId, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens}
 };

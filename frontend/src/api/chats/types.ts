@@ -66,3 +66,21 @@ export interface MessageSearchResponse {
     matches: MessageSearchOut[]
     total: number
 }
+
+/** One chat of a `find` result: why it matched, and the newest messages that did */
+export interface ChatFindOut {
+    chat_id: number
+    name: string
+    updated_at: string
+    /** Whether the chat's name contains the text */
+    name_matched: boolean
+    /** How many of the chat's messages contain it */
+    message_matches: number
+    /** The newest matching messages, a few of them; shaped like an in-chat search hit */
+    messages: MessageSearchOut[]
+}
+
+export interface FindChatsResponse {
+    /** Most recently active first */
+    chats: ChatFindOut[]
+}

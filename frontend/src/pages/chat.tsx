@@ -1,5 +1,5 @@
 import {Fragment, useEffect, useRef, useState} from 'react'
-import {Navigate, useSearchParams} from 'react-router-dom'
+import {Navigate, useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
 import type {ThinkChoice} from '../api/agent/types'
 import {getChats} from '../api/chats/get'
@@ -55,7 +55,7 @@ const Chat = () => {
 const ChatView = ({chatId}: { chatId: number }) => {
     const {settings} = useSettings()
     const lazyListRef = useRef<LazyListHandle>(null)
-    const {messages, total, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
+    const {messages, total, ready, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
     )
 
@@ -270,6 +270,20 @@ const ChatView = ({chatId}: { chatId: number }) => {
             await settle()
         }
     }
+
+    // A chat opened from the all-chats search arrives with the message it was found by in the
+    // navigation state. It waits for the chat's first page, then scrolls there like an in-chat
+    // search hit, and clears the state so a refresh or Back doesn't jump again.
+    const location = useLocation()
+    const navigate = useNavigate()
+    const jumpToMessageRef = useRef(jumpToMessage)
+    jumpToMessageRef.current = jumpToMessage
+    const jump = (location.state as { jump?: { hit: MessageSearchOut; query: string } } | null)?.jump
+    useEffect(() => {
+        if (!jump || !ready) return
+        navigate({pathname: location.pathname, search: location.search}, {replace: true, state: null})
+        void jumpToMessageRef.current(jump.hit, jump.query)
+    }, [jump, ready, navigate, location.pathname, location.search])
 
     return (
         <Div className="page">

@@ -1,0 +1,24 @@
+@use 'tokens' as *;
+
+// A chat's row and the message hits under it read as one group
+.chat-finder__chat {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.chat-finder__name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-finder__hit {
+  margin-left: $space-4;
+}
+
+.chat-finder__more {
+  margin-left: $space-4;
+  font-size: 11px;
+}

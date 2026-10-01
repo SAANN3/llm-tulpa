@@ -1,5 +1,6 @@
 mod create;
 mod delete;
+mod find;
 mod get;
 mod messages;
 mod rename;
