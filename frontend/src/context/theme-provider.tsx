@@ -1,6 +1,7 @@
 import {useEffect, useState, type ReactNode} from 'react'
 import {ThemeContext} from './theme-context.ts'
 import {themeNames} from '../themes'
+import {syncFaviconWithTheme} from '../utils/favicon.ts'
 
 export const ThemeProvider = ({children}: { children: ReactNode }) => {
     const [themeName, setThemeName] = useState<(typeof themeNames)[number]>(localStorage.getItem('theme_name') as (typeof themeNames)[number] ?? 'dark')
@@ -8,6 +9,7 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
     useEffect(() => {
         localStorage.setItem('theme_name', themeName)
         document.documentElement.dataset.theme = themeName
+        syncFaviconWithTheme()
     }, [themeName])
 
     return (

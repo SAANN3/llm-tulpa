@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- The tab icon follows the selected theme: the same leaf icon, on the theme's background color with its accent color, rebuilt in the browser whenever the theme changes. It is per browser, like the theme itself, so two devices on different themes show different icons; the static `favicon.svg` (Matcha colors) shows until the app has loaded.
 - Usage page — a "Usage" entry in the sidebar opens `/stats`: replies, generated tokens and prompt tokens over the last 7, 30 or 90 days, with a bar chart of generated tokens and of replies per day (hover a bar for its day and value). Backed by `GET /api/llm/stats?days=` (default 30, at most 365), which counts every chat of the calling user, including sub-agent chats and deleted ones, per UTC day. Prompt tokens are the whole context re-sent with every call, so they grow with chat length rather than with new text; the page says so.
 - Copy button on every chat message, copying its text (markdown source). Over plain http on a LAN address, where browsers expose no `navigator.clipboard`, it falls back to the legacy copy command.
 - Syntax highlighting for fenced code blocks that name a language in chat messages, through Prism in the active theme's own colors — text, accent and blends of the two, so it re-colors with every theme — on the same background as any other code block. The file previews use the same colors. While a chat search is active code blocks stay plain, so search matches inside them stay highlighted.
