@@ -142,6 +142,14 @@ Not dangerous — it's scoped, so no collision — just redundant, and it desync
 `styles/variants.scss` the moment someone changes the shared mapping without also updating this
 copy. If it's a variant color, that's `styles/variants.scss`'s job, not a theme file's.
 
+### Code blocks
+
+Syntax-highlighted code (chat messages and the code file preview) takes its colors from the
+same three variables: `src/utils/code-theme.ts` is a Prism token theme made of
+`var(--color-primary)` / `var(--color-tertiary)` and `color-mix()` blends of the two, handed
+to `react-syntax-highlighter`. A new theme needs nothing for code; keep its accent distinct from
+its text color, since that is the only thing telling a keyword from plain text.
+
 ### The one-sentence version
 
 **A theme only ever *fills in values* (`--color-primary: ...`); `styles/variants.scss` is the
