@@ -10,12 +10,14 @@ use super::can_use_tool::*;
 use super::chat::*;
 use super::continue_chat::*;
 use super::job_notices::*;
+use super::regenerate::*;
 use super::use_tool::*;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/chat", post(chat))
         .route("/continue", post(continue_chat))
+        .route("/regenerate", post(regenerate))
         .route("/job_notices", post(job_notices))
         .route("/can_use_tool", post(can_use_tool))
         .route("/use_tool", post(use_tool))
@@ -24,10 +26,11 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(chat, continue_chat, job_notices, can_use_tool, use_tool, allow_scope),
+    paths(chat, continue_chat, regenerate, job_notices, can_use_tool, use_tool, allow_scope),
     components(schemas(
         ChatRequest,
         ContinueChatRequest,
+        RegenerateRequest,
         JobNoticesRequest,
         JobNoticesOut,
         CanUseToolRequest,

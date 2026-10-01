@@ -58,6 +58,8 @@ export interface ChatOut {
     eval_tokens: number | null
     /** The prompt size Ollama measured for this reply's call — the context usage right after this reply. Null when unreported. */
     prompt_tokens: number | null
+    /** The id the user's own message was stored under — only on the reply to `chat`, so a message shown before the reply came back can be given its id. */
+    user_message_id: number | null
 }
 
 /** One `notice` message: the backend telling the chat a background job ended. */

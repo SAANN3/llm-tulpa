@@ -33,6 +33,13 @@
   opacity: 0.8;
 }
 
+.composer__editing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
 .composer__attachments {
   display: flex;
   gap: $space-2;

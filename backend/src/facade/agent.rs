@@ -685,7 +685,8 @@ impl Agent {
             self.tool_context.file_store.attach_to_chat(file_id, chat_id).await?;
         }
 
-        self.chat_store
+        let user_message = self
+            .chat_store
             .new_message(NewMessage {
                 chat_id,
                 role: "user".to_string(),
@@ -717,7 +718,9 @@ impl Agent {
         let mut messages = messages;
         messages.extend(tail);
 
-        self.advance(chat_id, messages, new_message, think, notices, true).await
+        let mut out = self.advance(chat_id, messages, new_message, think, notices, true).await?;
+        out.user_message_id = Some(user_message.id);
+        Ok(out)
     }
 
     /// Sends a chat's existing history to Ollama as-is and persists whatever it replies
@@ -733,6 +736,55 @@ impl Agent {
         let notices = self.flush_job_notices(chat_id).await?;
         let messages = self.ollama_history(chat_id).await?;
         self.advance(chat_id, messages, None, think, notices, true).await
+    }
+
+    /// Has the model answer again where it answered last, and replaces that answer with the new
+    /// one. Only a plain final reply qualifies: the chat's newest message, from the assistant,
+    /// with no tool calls, straight after the user's own message (so no tool ran in between, which
+    /// would be run again or answered differently) and newer than the compaction boundary (an
+    /// older one is no longer part of the history the model is sent), in an ordinary chat — not a
+    /// sub-agent's and not a messaging plugin's. `message_id` is the reply
+    /// the caller is looking at, so a stale view of the chat can't replace a different message.
+    ///
+    /// The old reply is deleted only after the new one is stored: a model that is down or fails
+    /// leaves the chat as it was. The history sent is the stored one minus that reply, and job
+    /// notices are left for the next turn to flush — one flushed now would land between the old
+    /// and the new reply.
+    pub async fn regenerate(&self, chat_id: i64, message_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
+        let not_regenerable = |why: &str| ErrorService::new(StatusCode::CONFLICT, format!("that reply can't be regenerated: {why}"));
+
+        let chat = self.chat_store.chat(chat_id).await?;
+        // A sub-agent's chat is driven by the backend, and a plugin's reply has already gone out to
+        // the messaging app, where a replacement here would never arrive.
+        if chat.parent_chat_id.is_some() {
+            return Err(not_regenerable("a sub-agent's chat runs on its own"));
+        }
+        if self.chat_store.is_plugin_chat(chat_id).await? {
+            return Err(not_regenerable("its reply has already been sent to a messaging app"));
+        }
+        let (newest, _) = self.chat_store.messages(chat_id, 2, 0).await?;
+        let [reply, before] = newest.as_slice() else {
+            return Err(not_regenerable("it isn't a reply to a message"));
+        };
+        if reply.id != message_id {
+            return Err(not_regenerable("it isn't the newest message"));
+        }
+        if reply.role != "assistant" || !reply.tool_calls.is_empty() {
+            return Err(not_regenerable("only a plain reply can be"));
+        }
+        if before.role != "user" {
+            return Err(not_regenerable("it doesn't directly follow a message of yours"));
+        }
+        if chat.summary_up_to_message_id.is_some_and(|boundary| reply.id <= boundary) {
+            return Err(not_regenerable("it is already folded into the chat's summary"));
+        }
+
+        let mut messages = self.ollama_history(chat_id).await?;
+        messages.pop();
+
+        let out = self.advance(chat_id, messages, None, think, vec![], true).await?;
+        self.chat_store.delete_message(chat_id, message_id).await?;
+        Ok(out)
     }
 
     /// Persists a `notice` for every background job (or sub-agent) that has finished since the model
@@ -1148,6 +1200,7 @@ impl Agent {
             notices,
             eval_tokens,
             prompt_tokens,
+            user_message_id: None,
         };
 
         let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
@@ -2173,6 +2226,10 @@ pub struct ChatOut {
     /// The prompt size Ollama measured for this reply's call — the running context
     /// usage right after this reply was generated. Same source as `chats.last_prompt_tokens`.
     pub prompt_tokens: Option<i64>,
+    /// The id the user's own message was stored under — set only on the reply to `chat`, which is
+    /// the one call that adds a message of the user's. A client that showed that message before
+    /// the reply came back has no id for it yet, and needs one to act on it (edit, delete).
+    pub user_message_id: Option<i64>,
 }
 
 /// One `notice` message: the backend telling the chat a background job ended.

@@ -19,6 +19,9 @@ export interface UserInputProps {
     inputDisabled?: boolean
     initialThink?: boolean
     chatId?: number
+    /** A message being edited: its text and attachments fill the composer until it is sent or cancelled. `key` tells one edit from the next. */
+    editing?: { key: number; text: string; images: string[]; fileIds: number[] } | null
+    onCancelEdit?: () => void
     /** The chat's bound model — only a change signal, so the thinking options are re-read after a switch */
     model?: string | null
 }
@@ -51,6 +54,8 @@ export const UserInput = ({
     initialThink = true,
     chatId,
     model,
+    editing,
+    onCancelEdit,
 }: UserInputProps) => {
     const [value, setValue] = useState(text ?? '')
     const [think, setThink] = useState(initialThink)
@@ -63,6 +68,25 @@ export const UserInput = ({
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const dragDepthRef = useRef(0)
+
+    // Starting an edit loads the message into the composer; ending one (sent or cancelled) empties
+    // it, so the edited text isn't left behind as a draft
+    const editKey = editing?.key
+    const wasEditingRef = useRef(false)
+    useEffect(() => {
+        if (editing) {
+            setValue(editing.text)
+            setImages(editing.images)
+            setFileIds(editing.fileIds)
+            textareaRef.current?.focus()
+        } else if (wasEditingRef.current) {
+            setValue('')
+            setImages([])
+            setFileIds([])
+        }
+        wasEditingRef.current = editing != null
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to a new edit, not to the object's identity
+    }, [editKey])
 
     useEffect(() => {
         const el = textareaRef.current
@@ -179,6 +203,12 @@ export const UserInput = ({
             {draggingOver ? (
                 <Div className="vbox center composer__overlay">
                     <Label className="composer__overlay-text" text="Drop to attach"/>
+                </Div>
+            ) : null}
+            {editing ? (
+                <Div className="composer__editing">
+                    <Label variant="secondary" text="Editing a message — sending replaces it and everything after it"/>
+                    <Button variant="secondary" text="Cancel" onClicked={() => onCancelEdit?.()}/>
                 </Div>
             ) : null}
             {images.length > 0 || fileIds.length > 0 ? (

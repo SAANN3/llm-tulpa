@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import type {Components} from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
-import {Check, ChevronDown, ChevronRight, Copy} from 'pixelarticons/react'
+import {Check, ChevronDown, ChevronRight, Copy, Pencil, Reload, Trash} from 'pixelarticons/react'
 import '../styles/chat-message.scss'
 import {Attachment} from './attachment.tsx'
 import {CodeBlock} from './code-block.tsx'
@@ -34,6 +34,12 @@ export interface ChatMessageProps {
     preserveScrollFor?: (anchorEl: HTMLElement, mutate: () => void) => void
     /** How many tokens generating this reply cost (Ollama `eval_count`) — shown under the bubble */
     eval_tokens?: number | null
+    /** Set only on the one reply that can be answered again; shows a button that does so */
+    onRegenerate?: () => void
+    /** Set only on a user message that can be edited: its text goes back into the composer */
+    onEdit?: () => void
+    /** Set only on a message that can be deleted, together with everything after it */
+    onDelete?: () => void
 }
 
 const formatThoughtDuration = (ms: number): string => {
@@ -63,6 +69,9 @@ export const ChatMessage = ({
     onToggleThinking,
     preserveScrollFor,
     eval_tokens,
+    onRegenerate,
+    onEdit,
+    onDelete,
 }: ChatMessageProps) => {
     const isUser = role === 'user'
     const [localThinking, setLocalThinking] = useState(false)
@@ -167,6 +176,21 @@ export const ChatMessage = ({
                     <Button className="chat-message__copy" variant="secondary" title="Copy message" onClicked={handleCopy}>
                         {copied ? <Check width={16} height={16}/> : <Copy width={16} height={16}/>}
                     </Button>
+                    {onEdit ? (
+                        <Button className="chat-message__copy" variant="secondary" title="Edit message" onClicked={onEdit}>
+                            <Pencil width={16} height={16}/>
+                        </Button>
+                    ) : null}
+                    {onRegenerate ? (
+                        <Button className="chat-message__copy" variant="secondary" title="Regenerate reply" onClicked={onRegenerate}>
+                            <Reload width={16} height={16}/>
+                        </Button>
+                    ) : null}
+                    {onDelete ? (
+                        <Button className="chat-message__copy" variant="secondary" title="Delete from here" onClicked={onDelete}>
+                            <Trash width={16} height={16}/>
+                        </Button>
+                    ) : null}
                 </Div>
             </Div>
         </Div>

@@ -3,6 +3,8 @@ import {allowScope} from '../api/agent/allow-scope.ts'
 import {canUseTool} from '../api/agent/can-use-tool.ts'
 import {chat as sendChatMessage} from '../api/agent/chat'
 import {continueChat} from '../api/agent/continue-chat.ts'
+import {regenerateChat} from '../api/agent/regenerate-chat.ts'
+import {rewindChat} from '../api/chats/rewind.ts'
 import {jobNotices} from '../api/agent/job-notices.ts'
 import type {
     AgentScopeGrant,
@@ -377,11 +379,19 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
             if (chatIdRef.current === requestChatId) appendMessage(message)
         }
 
-        guardedAppend(userMessage(prompt, images, fileIds))
+        const shown = userMessage(prompt, images, fileIds)
+        guardedAppend(shown)
         resetTurnTokens()
         setSendingChatId(requestChatId)
         try {
             const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
+            // The message was shown before it had an id, and without one it can't be edited or deleted
+            if (reply.user_message_id != null && chatIdRef.current === requestChatId) {
+                const stored = {...shown, id: reply.user_message_id}
+                const swap = (list: DisplayMessage[]) => list.map((m) => (m === shown ? stored : m))
+                liveAppendedSinceFetchRef.current = swap(liveAppendedSinceFetchRef.current)
+                setMessages(swap)
+            }
             appendReply(reply, guardedAppend)
             return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
         } finally {
@@ -408,6 +418,50 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
+    /** Has the model answer again and swaps its last reply (`messageId`) for the new one, then drives that reply like any turn. The old reply leaves the screen at once and comes back if no new reply could be had, since the backend only deletes it once the new one is stored. */
+    const regenerate = async (messageId: number, think: ThinkChoice = true): Promise<TurnResult> => {
+        const requestChatId = chatId
+        const guardedAppend = (message: DisplayMessage) => {
+            if (chatIdRef.current === requestChatId) appendMessage(message)
+        }
+
+        const old = messagesRef.current.find((m) => m.id === messageId)
+        const removeOld = () => {
+            liveAppendedSinceFetchRef.current = liveAppendedSinceFetchRef.current.filter((m) => m.id !== messageId)
+            setMessages((prev) => prev.filter((m) => m.id !== messageId))
+            setTotal((t) => t - 1)
+        }
+
+        resetTurnTokens()
+        setSendingChatId(requestChatId)
+        if (chatIdRef.current === requestChatId) removeOld()
+        let replaced = false
+        try {
+            const reply = await regenerateChat(chatId, messageId, think)
+            replaced = true
+            appendReply(reply, guardedAppend)
+            return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
+        } finally {
+            // Only when the call itself failed: the chat is then exactly as it was
+            if (!replaced && old && chatIdRef.current === requestChatId) appendMessage(old)
+            clearSending(requestChatId)
+        }
+    }
+
+    /** Removes a message and everything after it, in the backend and on screen. Throws (with nothing removed) when the backend refuses, e.g. because a tool was used from there on. */
+    const rewind = async (messageId: number) => {
+        const requestChatId = chatId
+        const deleted = await rewindChat(chatId, messageId)
+        if (chatIdRef.current !== requestChatId) return
+
+        const start = messagesRef.current.findIndex((m) => m.id === messageId)
+        if (start < 0) return
+        const removed = new Set(messagesRef.current.slice(start))
+        liveAppendedSinceFetchRef.current = liveAppendedSinceFetchRef.current.filter((m) => !removed.has(m))
+        setMessages((prev) => prev.slice(0, start))
+        setTotal((t) => t - deleted)
+    }
+
     /** Shows the notices for finished background jobs the moment the backend has them, then has the model respond and drives its reply like any turn; null when there was nothing to report */
     const runJobNotices = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
         const requestChatId = chatId
@@ -431,5 +485,5 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    return {messages, total, ready: loadedChatId === chatId, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens}
+    return {messages, total, ready: loadedChatId === chatId, loadOlder, send, regenerate, rewind, resume, runJobNotices, sending, canContinue, turnTokens}
 };

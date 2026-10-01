@@ -1,5 +1,6 @@
 mod entities;
 mod find;
+mod rewind;
 mod stats;
 
 use std::collections::HashMap;
@@ -621,6 +622,11 @@ impl ChatStore {
         self.users.owner_id().await?.ok_or(ChatStoreErrors::NotFound)
     }
 
+    /// Whether a messaging plugin owns this chat (it has a row in `plugin_chats`).
+    pub async fn is_plugin_chat(&self, chat_id: i64) -> Result<bool, ChatStoreErrors> {
+        Ok(plugin_chats::Entity::find_by_id(chat_id).one(&self.db).await?.is_some())
+    }
+
     /// Creates a chat owned by one plugin instance (belonging to the owner user), mapped
     /// to that plugin's own external chat id.
     pub async fn create_plugin_chat(
@@ -763,6 +769,20 @@ impl ChatStore {
             .filter(chats::Column::Id.eq(chat_id).or(chats::Column::ParentChatId.eq(chat_id)))
             .exec(&self.db)
             .await?;
+        Ok(())
+    }
+
+    /// Deletes one message of a chat (its tool calls, images and files go with it). A message of
+    /// another chat is `NotFound`, so a caller can't reach past the chat it already checked.
+    pub async fn delete_message(&self, chat_id: i64, message_id: i64) -> Result<(), ChatStoreErrors> {
+        let deleted = messages::Entity::delete_many()
+            .filter(messages::Column::Id.eq(message_id))
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .exec(&self.db)
+            .await?;
+        if deleted.rows_affected == 0 {
+            return Err(ChatStoreErrors::NotFound);
+        }
         Ok(())
     }
 
@@ -1209,6 +1229,8 @@ pub enum ChatStoreErrors {
     Model(ModelStoreErrors),
     User(UserStoreErrors),
     Folder(FolderStoreErrors),
+    /// The request can't be carried out in the chat's current state; the text says why
+    Conflict(String),
 }
 
 impl From<UserStoreErrors> for ChatStoreErrors {
@@ -1246,6 +1268,7 @@ impl From<ChatStoreErrors> for ErrorService {
             ChatStoreErrors::User(e) => e.into(),
             ChatStoreErrors::Folder(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
+            ChatStoreErrors::Conflict(why) => ErrorService::new(StatusCode::CONFLICT, why),
         }
     }
 }

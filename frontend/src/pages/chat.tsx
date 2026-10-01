@@ -9,6 +9,7 @@ import {ChatMessage} from '../components/chat-message.tsx'
 import {DateSeparator} from '../components/date-separator.tsx'
 import type {LazyListHandle} from '../components/lazy-list.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
+import {ConfirmPopup} from '../components/popups/base/confirm-popup.tsx'
 import {NoticeMessage} from '../components/notice-message.tsx'
 import {PendingAssistantMessage} from '../components/pending-assistant-message.tsx'
 import {Button, Div, Label} from '../components/primitives'
@@ -23,6 +24,7 @@ import {useServerEvent} from '../hooks/use-server-events.ts'
 import {useSettings} from '../context/use-settings.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
+import {errorReason} from '../utils/error-reason.ts'
 
 /** Auto-confirm's stand-in decision: grant the escalation, or acknowledge with nothing to grant */
 const autoConfirmDecisions = (pending: PendingConfirmations): Decisions => {
@@ -55,7 +57,7 @@ const Chat = () => {
 const ChatView = ({chatId}: { chatId: number }) => {
     const {settings} = useSettings()
     const lazyListRef = useRef<LazyListHandle>(null)
-    const {messages, total, ready, loadOlder, send, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
+    const {messages, total, ready, loadOlder, send, regenerate, rewind, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
     )
 
@@ -168,17 +170,53 @@ const ChatView = ({chatId}: { chatId: number }) => {
 
     // What the composer last asked for, reused for a turn the backend starts itself (a finished job)
     const lastThinkRef = useRef<ThinkChoice>(true)
+    const [editing, setEditing] = useState<{ key: number; messageId: number; text: string; images: string[]; fileIds: number[] } | null>(null)
     const handleSend = async (prompt: string, think?: ThinkChoice, images?: string[], fileIds?: number[]) => {
         const forChatId = chatId
         lastThinkRef.current = think ?? true
         setTurnError(null)
         setSearchHighlight(null)
+        // An edit sends the new text as an ordinary turn, once what it replaces is gone. If that
+        // can't be removed the composer keeps the text, so nothing the user wrote is lost.
+        if (editing) {
+            try {
+                await rewind(editing.messageId)
+            } catch (e) {
+                if (chatIdRef.current === forChatId) setTurnError(errorReason(e, "Couldn't replace that message — the chat is unchanged."))
+                return
+            }
+            setEditing(null)
+        }
         try {
             handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
         } catch {
             if (chatIdRef.current === forChatId) setTurnError('Something went wrong sending that — try again.')
         }
     }
+
+    const handleRegenerate = async (messageId: number) => {
+        const forChatId = chatId
+        setTurnError(null)
+        setSearchHighlight(null)
+        try {
+            handleTurnResult(forChatId, await regenerate(messageId, lastThinkRef.current))
+        } catch {
+            if (chatIdRef.current === forChatId) setTurnError("Couldn't regenerate that reply — the chat is unchanged.")
+        }
+    }
+
+    const handleDelete = async (messageId: number) => {
+        const forChatId = chatId
+        setTurnError(null)
+        setSearchHighlight(null)
+        try {
+            await rewind(messageId)
+        } catch (e) {
+            if (chatIdRef.current === forChatId) setTurnError(errorReason(e, "Couldn't delete that — the chat is unchanged."))
+        }
+    }
+
+    const [confirming, setConfirming] = useState<{ kind: 'regenerate' | 'delete'; messageId: number; later: number } | null>(null)
 
     const sendRef = useRef(handleSend)
     sendRef.current = handleSend
@@ -196,6 +234,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setExpandedThinking({})
         setTurnError(null)
         setSearchHighlight(null)
+        setEditing(null)
+        setConfirming(null)
     }, [chatId])
 
     useEffect(() => {
@@ -302,6 +342,14 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {
+                        // Only a plain reply straight after a message of the user's can be regenerated
+                        // (the backend checks the rest: tool calls, the compaction boundary)
+                        // A message can be edited or deleted when nothing from it onward is anything but plain
+                        // conversation (the backend checks the rest: the compaction boundary, plugin chats)
+                        const plainFromHere = messages.slice(i).every((x) => x.id != null && (x.role === 'user' || x.role === 'assistant'))
+                        const canCut = plainFromHere && !sending && pausedTurn == null && parentChatId === null
+                        const canRegenerate = i === messages.length - 1 && m.role === 'assistant' && m.id != null
+                            && messages[i - 1]?.role === 'user' && !sending && pausedTurn == null && parentChatId === null
                         const prev = messages[i - 1]
                         const showDate = !prev || !isSameDay(new Date(m.created_at), new Date(prev.created_at))
                         const isHit = m.id != null && searchHighlight?.messageId === m.id
@@ -338,6 +386,13 @@ const ChatView = ({chatId}: { chatId: number }) => {
                                             thinkingExpanded={id != null ? (expandedThinking[id] ?? false) : false}
                                             onToggleThinking={() => id != null && toggleThinkingExpanded(id)}
                                             preserveScrollFor={preserveScrollFor}
+                                            onRegenerate={canRegenerate && m.id != null ? () => setConfirming({kind: 'regenerate', messageId: m.id as number, later: 0}) : undefined}
+                                            onEdit={canCut && m.role === 'user' && m.id != null
+                                                ? () => setEditing({key: Date.now(), messageId: m.id as number, text: m.content, images: m.images ?? [], fileIds: m.file_ids ?? []})
+                                                : undefined}
+                                            onDelete={canCut && m.id != null
+                                                ? () => setConfirming({kind: 'delete', messageId: m.id as number, later: messages.length - i - 1})
+                                                : undefined}
                                         />
                                     )}
                                 </div>
@@ -362,12 +417,31 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         blocked={sending || pausedTurn != null}
                         onSended={handleSend}
                         inputDisabled={false}
+                        clearOnSend={editing == null}
+                        editing={editing}
+                        onCancelEdit={() => setEditing(null)}
                         initialThink={initialThink}
                         chatId={chatId}
                         model={chatModel}
                     />
                 )}
             </Div>
+            <ConfirmPopup
+                open={confirming != null}
+                title={confirming?.kind === 'regenerate' ? 'Regenerate reply' : 'Delete from here'}
+                message={confirming?.kind === 'regenerate'
+                    ? 'The model answers again, and the new reply replaces this one.'
+                    : confirming?.later
+                        ? `This message and the ${confirming.later} after it are deleted.`
+                        : 'This message is deleted.'}
+                confirmLabel={confirming?.kind === 'regenerate' ? 'Regenerate' : 'Delete'}
+                onConfirm={() => {
+                    if (!confirming) return
+                    if (confirming.kind === 'regenerate') void handleRegenerate(confirming.messageId)
+                    else void handleDelete(confirming.messageId)
+                }}
+                onClose={() => setConfirming(null)}
+            />
         </Div>
     )
 };

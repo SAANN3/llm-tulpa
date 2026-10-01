@@ -4,6 +4,7 @@ mod find;
 mod get;
 mod messages;
 mod rename;
+mod rewind;
 mod search;
 mod set_folder;
 mod set_model;
