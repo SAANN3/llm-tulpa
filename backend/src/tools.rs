@@ -1,6 +1,7 @@
 pub mod base;
 pub mod chat;
 pub mod files;
+pub mod lenient;
 pub mod llm;
 pub mod os;
 pub mod storage;

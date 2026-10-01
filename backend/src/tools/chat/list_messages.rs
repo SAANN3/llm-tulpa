@@ -21,8 +21,10 @@ struct ListMessagesArgs {
     #[tool(description = "Also list the assistant's intermediate steps, the messages that only carry tool calls. Default false: they are left out, so the list holds the user's messages and the assistant's actual replies.")]
     include_tool_calls: Option<bool>,
     #[tool(description = "How many messages per page. Default 50, at most 200.")]
+    #[serde(default, deserialize_with = "crate::tools::lenient::opt_int")]
     limit: Option<u64>,
     #[tool(description = "How many messages to skip from the newest end — the page to continue from. Default 0.")]
+    #[serde(default, deserialize_with = "crate::tools::lenient::opt_int")]
     offset: Option<u64>,
 }
 

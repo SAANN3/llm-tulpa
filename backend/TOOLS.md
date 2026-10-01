@@ -127,7 +127,7 @@ The model only ever sees a window of the chat's most recent messages (plus a sum
 | Tool | What it does |
 |---|---|
 | `chat.list_messages` | The chat's `user`/`assistant` messages, newest first: id, who wrote it, when, and a whitespace-collapsed 120-character snippet of the content. `role` filters to one writer; `limit` (default 50, at most 200) and `offset` (from the newest end) paginate; the result carries `total` and a `next_offset` to continue. Tool results and notices are never listed, and the assistant messages that only carry tool calls are left out unless `include_tool_calls` is set — in an agentic chat they are nearly all of the assistant's rows and would bury the user's messages and the actual replies. |
-| `chat.get_messages` | The full text of the ids `chat.list_messages` returned, any mix of user and assistant, oldest first. An id that isn't a `user`/`assistant` message of this chat — foreign, deleted, or a tool result/notice — comes back in `missing` instead of failing the call. |
+| `chat.get_messages` | The full text of the ids `chat.list_messages` returned, any mix of user and assistant, oldest first. An id that isn't a `user`/`assistant` message of this chat — foreign, deleted, or a tool result/notice — comes back in `missing` instead of failing the call. `ids` (like `limit` and `offset` of `chat.list_messages`) also takes numbers written as strings, via `tools/lenient.rs`, since models do that. |
 
 ### `ui` — making the frontend show the user something
 | Tool | What it does | Permission |

@@ -11,6 +11,7 @@ pub struct GetMessagesTool;
 #[derive(Deserialize, ToolParams)]
 struct GetMessagesArgs {
     #[tool(description = "The ids of the messages to fetch — the ids chat.list_messages returned. Pass every id you want in one call.")]
+    #[serde(deserialize_with = "crate::tools::lenient::int_vec")]
     ids: Vec<i64>,
 }
 
