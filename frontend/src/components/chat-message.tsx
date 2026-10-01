@@ -45,6 +45,10 @@ const formatThoughtDuration = (ms: number): string => {
     return `Thought for ${minutes}m ${seconds}s`
 };
 
+// Search highlighting wraps text nodes, which Prism's token spans would hide, so while a search is
+// active code blocks stay plain (keeping their copy button) and their matches stay visible.
+const PlainCodeBlock = ({children}: { children?: ReactNode }) => <CodeBlock plain>{children}</CodeBlock>;
+
 /** One chat message bubble, aligned by role */
 export const ChatMessage = ({
     role,
@@ -82,8 +86,6 @@ export const ChatMessage = ({
     }
 
     const markdownComponents = useMemo(() => {
-        // Search highlighting wraps text nodes, which Prism's token spans would hide, so while
-        // a search is active code blocks stay plain and their matches stay visible.
         if (!highlightQuery?.trim()) return {pre: CodeBlock} satisfies Components
         const q = highlightQuery.trim()
         const wrap = (tag: ElementType) => {
@@ -93,6 +95,7 @@ export const ChatMessage = ({
             )
         }
         return {
+            pre: PlainCodeBlock,
             p: wrap('p'),
             li: wrap('li'),
             h1: wrap('h1'),

@@ -1,0 +1,21 @@
+@use 'tokens' as *;
+
+.code-block {
+  position: relative;
+}
+
+// `button[data-variant]` (variants.scss) sets the padding and shadow, so a bare class would lose
+button.code-block__copy {
+  position: absolute;
+  top: $space-2;
+  right: $space-2;
+  display: inline-flex;
+  padding: 2px 4px;
+  opacity: 0.6;
+  box-shadow: none;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
+}
