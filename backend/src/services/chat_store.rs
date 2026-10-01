@@ -911,6 +911,41 @@ impl ChatStore {
             eval_tokens: message.eval_tokens,
         })
     }
+
+    /// What the model processed for a user's chats since `since`, per UTC day, oldest first.
+    /// Every chat of the user counts — sub-agent chats and deleted ones too, since the tokens
+    /// were spent either way. Only the three columns needed are read and summed here rather
+    /// than in SQL, which keeps the day boundary (UTC, from the stored timestamp) in one place.
+    pub async fn usage_by_day(&self, user_id: i64, since: DateTimeUtc) -> Result<Vec<DailyUsage>, ChatStoreErrors> {
+        let rows: Vec<(DateTimeUtc, Option<i64>, Option<i64>)> = messages::Entity::find()
+            .select_only()
+            .column(messages::Column::CreatedAt)
+            .column(messages::Column::PromptTokens)
+            .column(messages::Column::EvalTokens)
+            .filter(messages::Column::CreatedAt.gte(since))
+            .filter(messages::Column::ChatId.in_subquery(
+                chats::Entity::find()
+                    .select_only()
+                    .column(chats::Column::Id)
+                    .filter(chats::Column::UserId.eq(user_id))
+                    .into_query(),
+            ))
+            .filter(messages::Column::PromptTokens.is_not_null().or(messages::Column::EvalTokens.is_not_null()))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+
+        let mut days: std::collections::BTreeMap<Date, DailyUsage> = std::collections::BTreeMap::new();
+        for (created_at, prompt_tokens, eval_tokens) in rows {
+            let day = created_at.date_naive();
+            let usage = days.entry(day).or_insert(DailyUsage { day, replies: 0, prompt_tokens: 0, eval_tokens: 0 });
+            usage.replies += 1;
+            usage.prompt_tokens += prompt_tokens.unwrap_or(0);
+            usage.eval_tokens += eval_tokens.unwrap_or(0);
+        }
+
+        Ok(days.into_values().collect())
+    }
 }
 
 pub struct Chat {
@@ -1164,6 +1199,16 @@ impl ChatFacts {
     pub fn is_empty(&self) -> bool {
         self.goal.is_none() && self.facts.is_empty()
     }
+}
+
+/// One UTC day of `usage_by_day`: the assistant replies that carry token counts, and the
+/// tokens they cost. `prompt_tokens` is the whole context sent with each call, so a long
+/// agentic chat adds its full length again on every call.
+pub struct DailyUsage {
+    pub day: Date,
+    pub replies: u64,
+    pub prompt_tokens: i64,
+    pub eval_tokens: i64,
 }
 
 /// Wraps every SeaORM failure uniformly — nothing about which specific query failed

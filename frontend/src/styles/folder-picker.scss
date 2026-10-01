@@ -49,6 +49,10 @@
 
 .folder-picker__create-actions {
   display: flex;
-  justify-content: flex-end;
   gap: $space-2;
+
+  // Each takes half the width, like the rename dialog's `.dialog__action`
+  > button {
+    flex: 1;
+  }
 }

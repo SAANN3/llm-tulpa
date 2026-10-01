@@ -1,0 +1,36 @@
+@use 'tokens' as *;
+
+.usage-chart {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.usage-chart__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  border-bottom: $line-border solid var(--color-border);
+}
+
+.usage-chart__slot {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.usage-chart__bar {
+  width: 100%;
+  min-height: 1px;
+  background: var(--color-tertiary);
+}
+
+.usage-chart__slot:hover .usage-chart__bar {
+  background: var(--color-primary);
+}
+
+.usage-chart__readout {
+  font-size: 12px;
+}

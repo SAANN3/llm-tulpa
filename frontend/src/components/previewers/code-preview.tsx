@@ -1,30 +1,10 @@
 import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter'
 import {oneDark, oneLight} from 'react-syntax-highlighter/dist/esm/styles/prism'
 import {useTheme} from '../../context/use-theme.ts'
+import {LANGUAGE_ALIASES} from '../../utils/code-language.ts'
 import {Div, Label} from '../primitives'
 import type {PreviewerProps} from './types'
 import {useTextContent} from './use-text-content.ts'
-
-const LANGUAGE_ALIASES: Record<string, string> = {
-    rs: 'rust',
-    ts: 'typescript',
-    js: 'javascript',
-    mjs: 'javascript',
-    cjs: 'javascript',
-    py: 'python',
-    sh: 'bash',
-    zsh: 'bash',
-    yml: 'yaml',
-    kt: 'kotlin',
-    kts: 'kotlin',
-    rb: 'ruby',
-    md: 'markdown',
-    h: 'c',
-    hpp: 'cpp',
-    cc: 'cpp',
-    hs: 'haskell',
-    cs: 'csharp',
-}
 
 const getExtension = (fileName: string): string => {
     const dot = fileName.lastIndexOf('.')

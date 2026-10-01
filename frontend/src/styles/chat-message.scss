@@ -74,9 +74,28 @@
 .chat-message__time {
   font-size: 11px;
   opacity: 0.6;
+}
+
+.chat-message__footer {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
   margin-top: 6px;
 }
 
-.chat-message__time--user {
-  text-align: right;
+.chat-message__footer--user {
+  justify-content: flex-end;
+}
+
+// `button[data-variant]` (variants.scss) sets the padding and shadow, so a bare class would lose
+button.chat-message__copy {
+  display: inline-flex;
+  padding: 2px 4px;
+  opacity: 0.6;
+  box-shadow: none;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
 }

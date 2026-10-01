@@ -1,14 +1,16 @@
-import {useMemo, useRef, useState} from 'react'
+import {useEffect, useMemo, useRef, useState} from 'react'
 import type {ElementType, ReactNode} from 'react'
 import ReactMarkdown from 'react-markdown'
 import type {Components} from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
-import {ChevronDown, ChevronRight} from 'pixelarticons/react'
+import {Check, ChevronDown, ChevronRight, Copy} from 'pixelarticons/react'
 import '../styles/chat-message.scss'
 import {Attachment} from './attachment.tsx'
+import {CodeBlock} from './code-block.tsx'
 import {Button, Div, Label} from './primitives'
 import {highlightInNode, highlightText} from '../utils/highlight.tsx'
+import {copyText} from '../utils/copy-text.ts'
 import {formatTokenCount} from '../utils/format.ts'
 
 export interface ChatMessageProps {
@@ -69,8 +71,20 @@ export const ChatMessage = ({
         else toggleThinking()
     }
 
+    const [copied, setCopied] = useState(false)
+    const copiedTimer = useRef<number>(undefined)
+    useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
+    const handleCopy = async () => {
+        if (!(await copyText(content))) return
+        setCopied(true)
+        window.clearTimeout(copiedTimer.current)
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 2000)
+    }
+
     const markdownComponents = useMemo(() => {
-        if (!highlightQuery?.trim()) return undefined
+        // Search highlighting wraps text nodes, which Prism's token spans would hide, so while
+        // a search is active code blocks stay plain and their matches stay visible.
+        if (!highlightQuery?.trim()) return {pre: CodeBlock} satisfies Components
         const q = highlightQuery.trim()
         const wrap = (tag: ElementType) => {
             const Tag = tag
@@ -137,15 +151,20 @@ export const ChatMessage = ({
                     <Label variant="secondary" className="chat-message__thought"
                            text={formatThoughtDuration(thought_duration_ms)}/>
                 ) : null}
-                <Label
-                    variant="secondary"
-                    className={`chat-message__time${isUser ? ' chat-message__time--user' : ''}`}
-                    text={
-                        !isUser && eval_tokens != null
-                            ? `${new Date(created_at).toLocaleTimeString()}, spent ${formatTokenCount(eval_tokens)} tokens`
-                            : new Date(created_at).toLocaleTimeString()
-                    }
-                />
+                <Div className={`chat-message__footer${isUser ? ' chat-message__footer--user' : ''}`}>
+                    <Label
+                        variant="secondary"
+                        className="chat-message__time"
+                        text={
+                            !isUser && eval_tokens != null
+                                ? `${new Date(created_at).toLocaleTimeString()}, spent ${formatTokenCount(eval_tokens)} tokens`
+                                : new Date(created_at).toLocaleTimeString()
+                        }
+                    />
+                    <Button className="chat-message__copy" variant="secondary" title="Copy message" onClicked={handleCopy}>
+                        {copied ? <Check width={16} height={16}/> : <Copy width={16} height={16}/>}
+                    </Button>
+                </Div>
             </Div>
         </Div>
     )

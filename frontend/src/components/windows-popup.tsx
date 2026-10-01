@@ -1,6 +1,7 @@
 import type {CSSProperties, MouseEvent as ReactMouseEvent, ReactNode} from 'react'
 import {useRef, useState} from 'react'
 import {Close, Download} from 'pixelarticons/react'
+import {useEscapeToClose} from '../hooks/use-escape-to-close.ts'
 import {Button, Div, Label} from './primitives'
 
 export interface WindowsPopupProps {
@@ -44,6 +45,7 @@ const coverViewportDuringDrag = (cursor: string): () => void => {
 
 /** A themed, draggable, resizable window over freeform content, retro-OS style */
 export const WindowsPopup = ({open, onClose, title, children, onDownload, defaultSize}: WindowsPopupProps) => {
+    useEscapeToClose(open, onClose)
     const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
     const [size, setSize] = useState<{ width: number; height: number } | null>(defaultSize ?? null)
     const [dragging, setDragging] = useState(false)

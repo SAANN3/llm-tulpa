@@ -174,7 +174,7 @@ export const ChatHeader = ({
             <Popup open={renameOpen} onClose={() => setRenameOpen(false)} centered>
                 <Div className="dos-frame chat-header__picker">
                     <span className="dos-frame__title">Rename chat</span>
-                    <Div className="dos-frame__body">
+                    <Div className="dos-frame__body vbox chat-header__rename-body">
                         <Input text={renameDraft} onChanged={setRenameDraft}/>
                         <Div className="dialog__actions">
                             <Button className="dialog__action" text="Cancel" variant="primary"

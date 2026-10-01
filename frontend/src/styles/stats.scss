@@ -1,0 +1,47 @@
+@use 'tokens' as *;
+
+.stats {
+  gap: $space-5;
+}
+
+.stats__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.stats__panel {
+  width: min(640px, calc(100vw - #{$space-8}));
+}
+
+.stats__body {
+  display: flex;
+  flex-direction: column;
+  gap: $space-5;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+}
+
+.stats__ranges {
+  display: flex;
+  gap: $space-2;
+}
+
+.stats__totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-6;
+}
+
+.stats__total {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.stats__total-value {
+  font-size: 20px;
+}
+
+.stats__note {
+  font-size: 12px;
+}

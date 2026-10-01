@@ -126,6 +126,11 @@
   width: 460px;
 }
 
+// The same spacing as the sidebar's rename dialog (`.dialog`)
+.chat-header__rename-body {
+  gap: $space-3;
+}
+
 .chat-header {
   // Nested (not flat) so this beats the generic `button[data-variant]` padding
   // (an element+attribute selector — higher specificity than a single flat class),

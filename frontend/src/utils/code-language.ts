@@ -1,0 +1,21 @@
+/** File extensions and markdown fence tags that Prism knows under another name */
+export const LANGUAGE_ALIASES: Record<string, string> = {
+    rs: 'rust',
+    ts: 'typescript',
+    js: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    py: 'python',
+    sh: 'bash',
+    zsh: 'bash',
+    yml: 'yaml',
+    kt: 'kotlin',
+    kts: 'kotlin',
+    rb: 'ruby',
+    md: 'markdown',
+    h: 'c',
+    hpp: 'cpp',
+    cc: 'cpp',
+    hs: 'haskell',
+    cs: 'csharp',
+}

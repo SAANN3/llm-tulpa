@@ -1,6 +1,7 @@
 import {useEffect, useRef} from 'react'
 import type {ReactNode} from 'react'
 import '../styles/popup.scss'
+import {useEscapeToClose} from '../hooks/use-escape-to-close.ts'
 import {Div} from './primitives'
 
 export interface PopupProps {
@@ -11,9 +12,11 @@ export interface PopupProps {
     children: ReactNode
 }
 
-/** A themed, positioned overlay that closes itself on an outside click */
+/** A themed, positioned overlay that closes itself on an outside click or Escape */
 export const Popup = ({open, onClose, position, centered, children}: PopupProps) => {
     const ref = useRef<HTMLDivElement>(null)
+
+    useEscapeToClose(open, onClose)
 
     useEffect(() => {
         if (!open) return
