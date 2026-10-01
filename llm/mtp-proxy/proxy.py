@@ -176,6 +176,10 @@ def metrics_fields(openai_resp: dict) -> dict:
     return {
         "prompt_eval_count": usage.get("prompt_tokens"),
         "prompt_eval_duration": int(prompt_ms * 1e6),
+        # Not an Ollama field. `prompt_ms` times only the tokens llama-server actually evaluated
+        # (`prompt_n`) — the rest of the prompt came from its cache — while `prompt_eval_count`
+        # above is the whole prompt. The backend needs both to tell a speed from a cache hit.
+        "prompt_eval_processed": timings.get("prompt_n"),
         "eval_count": usage.get("completion_tokens"),
         "eval_duration": int(predicted_ms * 1e6),
         "total_duration": int((prompt_ms + predicted_ms) * 1e6),
@@ -291,6 +295,78 @@ def handle_tags() -> dict:
     }
 
 
+def upstream_get(path: str, timeout: float = 5):
+    with urllib.request.urlopen(f"{UPSTREAM}{path}", timeout=timeout) as resp:
+        return resp.read().decode()
+
+
+def prometheus_gauges(text: str) -> dict:
+    """The plain `name value` lines of llama-server's `/metrics` (comments and labelled series
+    skipped) as a dict. The gauges that matter here have no labels."""
+    gauges: dict = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#") or "{" in line:
+            continue
+        name, _, value = line.partition(" ")
+        try:
+            gauges[name] = float(value)
+        except ValueError:
+            pass
+    return gauges
+
+
+def handle_ps() -> dict:
+    """Translates Ollama's `GET /api/ps` (the models loaded right now, with their memory and
+    context) for llama-server, which serves exactly one model for as long as it runs: it is
+    always "loaded", never expires, and doesn't report its memory use — `size`, `size_vram` and
+    `expires_at` are left null (all optional on the Rust side). `context_length` comes from
+    `/props`; `/slots` and `/metrics` add what the server is doing and has done since it started, under
+    `llama_server`, which Ollama has no equivalent of. `/slots` and `/metrics` are optional on
+    the server's side, so each is skipped when it isn't served rather than failing the call."""
+    props = json.loads(upstream_get("/props", timeout=30))
+    n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
+    model_file = os.path.basename(props.get("model_path") or "") or None
+
+    server: dict = {"slots_total": props.get("total_slots"), "model_file": model_file}
+    try:
+        slots = json.loads(upstream_get("/slots"))
+        server["slots_processing"] = sum(1 for slot in slots if slot.get("is_processing"))
+    except Exception:
+        pass
+    try:
+        counters = prometheus_gauges(upstream_get("/metrics"))
+        # Lifetime averages from the totals: the server's own "per second" gauges describe only its
+        # last measuring window, so they read 0 whenever it is idle.
+        def per_second(tokens: str, seconds: str):
+            total_seconds = counters.get(f"llamacpp:{seconds}") or 0
+            return counters.get(f"llamacpp:{tokens}", 0) / total_seconds if total_seconds else None
+
+        server["prompt_tokens_total"] = counters.get("llamacpp:prompt_tokens_total")
+        server["prompt_tokens_cached_total"] = counters.get("llamacpp:prompt_tokens_cached_total")
+        server["prompt_tokens_per_second"] = per_second("prompt_tokens_total", "prompt_seconds_total")
+        server["predicted_tokens_total"] = counters.get("llamacpp:tokens_predicted_total")
+        server["predicted_tokens_per_second"] = per_second("tokens_predicted_total", "tokens_predicted_seconds_total")
+        server["draft_tokens_total"] = counters.get("llamacpp:spec_decode_num_draft_tokens_total")
+        server["draft_tokens_accepted_total"] = counters.get("llamacpp:spec_decode_num_accepted_tokens_total")
+        server["requests_processing"] = counters.get("llamacpp:requests_processing")
+    except Exception:
+        pass
+
+    return {
+        "models": [
+            {
+                "name": "local-llm:latest",
+                "model": "local-llm:latest",
+                "size": None,
+                "size_vram": None,
+                "expires_at": None,
+                "context_length": n_ctx,
+            }
+        ],
+        "llama_server": server,
+    }
+
+
 def handle_show(_body: dict) -> dict:
     """Translates Ollama's `POST /api/show` to llama-server's `GET /props` — this
     project's own backend uses `/api/show` specifically to read a model's raw Jinja
@@ -350,6 +426,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/tags":
                 self._send_json(200, handle_tags())
+            elif self.path == "/api/ps":
+                self._send_json(200, handle_ps())
             else:
                 self._send_json(404, {"error": "not found"})
         except urllib.error.HTTPError as e:
