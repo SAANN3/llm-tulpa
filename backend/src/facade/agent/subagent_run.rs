@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use serde_json::Value;
 
 use super::{Agent, AgentToolPermission};
-use crate::services::chat_store::NewMessage;
+use crate::services::chat_store::{MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
 use crate::services::job_store::AgentJobEnd;
 use crate::services::llm::{ThinkChoice, ThinkingCapability};
@@ -193,6 +193,7 @@ impl Agent {
                 file_ids: vec![],
                 prompt_tokens: None,
                 eval_tokens: None,
+                timings: MessageTimings::default(),
             })
             .await?;
         Ok(())

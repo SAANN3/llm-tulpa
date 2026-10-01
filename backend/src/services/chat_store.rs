@@ -817,6 +817,7 @@ impl ChatStore {
             file_ids,
             prompt_tokens,
             eval_tokens,
+            timings,
         } = new_message;
 
         let tool_calls_out: Vec<ToolCallOut> = tool_calls
@@ -841,6 +842,10 @@ impl ChatStore {
                         tool_denied: Set(tool_denied),
                         prompt_tokens: Set(prompt_tokens),
                         eval_tokens: Set(eval_tokens),
+                        eval_duration_ms: Set(timings.eval_ms),
+                        prompt_eval_duration_ms: Set(timings.prompt_eval_ms),
+                        load_duration_ms: Set(timings.load_ms),
+                        prompt_processed_tokens: Set(timings.prompt_processed),
                         ..Default::default()
                     }
                     .insert(txn)
@@ -1175,6 +1180,18 @@ pub struct NewMessage {
     pub file_ids: Vec<i64>,
     pub prompt_tokens: Option<i64>,
     pub eval_tokens: Option<i64>,
+    pub timings: MessageTimings,
+}
+
+/// The timings the model backend reported for the call behind a reply, in milliseconds, and how
+/// many prompt tokens it actually evaluated — all `None` for a message that no model call
+/// produced, or from a backend that reports none.
+#[derive(Clone, Copy, Default)]
+pub struct MessageTimings {
+    pub eval_ms: Option<i64>,
+    pub prompt_eval_ms: Option<i64>,
+    pub load_ms: Option<i64>,
+    pub prompt_processed: Option<i64>,
 }
 
 /// Structured, append-only key facts for a chat — exact facts extracted from

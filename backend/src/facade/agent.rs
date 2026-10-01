@@ -10,7 +10,7 @@ use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::{ChatStore, ChatFacts, Message, NewMessage, NewToolCall, ToolCallOut},
+    chat_store::{ChatStore, ChatFacts, Message, MessageTimings, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
@@ -328,6 +328,16 @@ fn cap_replayed_thinking(thinking: &str) -> String {
     format!("... [earlier thinking truncated] ...\n{}", &thinking[clean_start..])
 }
 
+/// What Ollama reported about the time the call behind `response` took, for storing with its message
+fn timings_of(response: &OllamaChatResponse) -> MessageTimings {
+    MessageTimings {
+        eval_ms: response.eval_duration_ms(),
+        prompt_eval_ms: response.prompt_eval_duration_ms(),
+        load_ms: response.load_duration_ms(),
+        prompt_processed: response.prompt_processed_tokens(),
+    }
+}
+
 /// Why a model reply was thrown away and asked for again instead of being stored.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplyProblem {
@@ -639,6 +649,7 @@ impl Agent {
                     file_ids: vec![],
                     prompt_tokens: None,
                     eval_tokens: None,
+                    timings: MessageTimings::default(),
                 })
                 .await?;
         }
@@ -689,6 +700,7 @@ impl Agent {
                 file_ids: file_ids.clone(),
                 prompt_tokens: None,
                 eval_tokens: None,
+                timings: MessageTimings::default(),
             })
             .await?;
 
@@ -778,6 +790,7 @@ impl Agent {
                     file_ids: vec![],
                     prompt_tokens: None,
                     eval_tokens: None,
+                    timings: MessageTimings::default(),
                 })
                 .await;
 
@@ -975,6 +988,7 @@ impl Agent {
                 let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
                 let prompt_eval_count = response.prompt_eval_count();
                 let eval_count = response.eval_count();
+                let timings = timings_of(&response);
 
                 tracing::warn!(
                     chat_id,
@@ -999,6 +1013,7 @@ impl Agent {
                         file_ids: vec![],
                         prompt_tokens: prompt_eval_count.map(|c| c as i64),
                         eval_tokens: eval_count.map(|c| c as i64),
+                        timings,
                     })
                     .await?;
 
@@ -1035,6 +1050,7 @@ impl Agent {
                         file_ids: vec![],
                         prompt_tokens: None,
                         eval_tokens: None,
+                        timings: MessageTimings::default(),
                     })
                     .await?;
 
@@ -1066,6 +1082,7 @@ impl Agent {
         let eval_count = response.eval_count();
         let prompt_tokens = prompt_eval_count.map(|c| c as i64);
         let eval_tokens = eval_count.map(|c| c as i64);
+        let timings = timings_of(&response);
 
         let thinking = response.message.thinking.clone();
 
@@ -1100,6 +1117,7 @@ impl Agent {
                 file_ids,
                 prompt_tokens,
                 eval_tokens,
+                timings,
             })
             .await?;
 
@@ -1717,6 +1735,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
                 file_ids: vec![],
                 prompt_tokens: None,
                 eval_tokens: None,
+                timings: MessageTimings::default(),
             })
             .await?;
 

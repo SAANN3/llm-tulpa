@@ -23,6 +23,14 @@ pub struct Model {
     pub created_at: DateTimeUtc,
     pub prompt_tokens: Option<i64>,
     pub eval_tokens: Option<i64>,
+    /// What the model backend reported for the call that produced this message, in milliseconds:
+    /// generating the reply, evaluating its prompt, and loading the model — and how many prompt
+    /// tokens it actually evaluated (`prompt_tokens` is the whole prompt, cached part included).
+    /// `None` on replies from before they were recorded, and from a backend that doesn't report them.
+    pub eval_duration_ms: Option<i64>,
+    pub prompt_eval_duration_ms: Option<i64>,
+    pub load_duration_ms: Option<i64>,
+    pub prompt_processed_tokens: Option<i64>,
     // Attached images/files are normalized into `message_images`/`message_files` (3NF);
     // `ChatStore` reassembles them onto the public `Message` struct.
 }

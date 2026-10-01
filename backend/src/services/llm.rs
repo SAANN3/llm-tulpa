@@ -842,6 +842,32 @@ impl OllamaChatResponse {
     pub fn eval_count(&self) -> Option<u64> {
         self.metrics.eval_count
     }
+
+    /// How long generating the reply took, in milliseconds, if reported.
+    pub fn eval_duration_ms(&self) -> Option<i64> {
+        nanos_to_ms(self.metrics.eval_duration)
+    }
+
+    /// How long evaluating the prompt took, in milliseconds, if reported. Includes only the part
+    /// the server had to compute: a prompt it already held in its cache costs next to nothing.
+    pub fn prompt_eval_duration_ms(&self) -> Option<i64> {
+        nanos_to_ms(self.metrics.prompt_eval_duration)
+    }
+
+    /// How many prompt tokens were actually evaluated, if the backend says — only `mtp-proxy` does;
+    /// Ollama's own `prompt_eval_count` can't be told apart from a cached prompt's size.
+    pub fn prompt_processed_tokens(&self) -> Option<i64> {
+        self.metrics.prompt_eval_processed.map(|n| i64::try_from(n).unwrap_or(i64::MAX))
+    }
+
+    /// How long loading the model took, in milliseconds, if reported — zero when it was resident.
+    pub fn load_duration_ms(&self) -> Option<i64> {
+        nanos_to_ms(self.metrics.load_duration)
+    }
+}
+
+fn nanos_to_ms(nanos: Option<u64>) -> Option<i64> {
+    nanos.map(|ns| i64::try_from(ns / 1_000_000).unwrap_or(i64::MAX))
 }
 
 /// Timing/count fields Ollama includes on every non-streamed `/api/generate` and
@@ -856,6 +882,11 @@ struct OllamaMetrics {
     prompt_eval_count: Option<u64>,
     #[serde(default)]
     prompt_eval_duration: Option<u64>,
+    /// Not an Ollama field: `mtp-proxy` adds it, because llama-server's prompt timing covers only
+    /// the tokens it evaluated while `prompt_eval_count` is the whole prompt (cached part
+    /// included), and a speed needs the tokens that the time was spent on.
+    #[serde(default)]
+    prompt_eval_processed: Option<u64>,
     #[serde(default)]
     eval_count: Option<u64>,
     #[serde(default)]
