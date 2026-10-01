@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# A disposable, separate llm-tulpa instance for checking a change: its own Postgres container, its
+# own backend process and (optionally) frontend dev server, all on their own ports, with a
+# first-run setup already done and sample data in it. Nothing of the real stack (containers,
+# volumes, database, ports, .env) is touched, and `down` removes everything.
+#
+#   scripts/verify-env up [--build] [--frontend] [--ollama-url URL] [--no-seed]
+#   scripts/verify-env status | token | down
+#   scripts/verify-env get /api/stats/usage?days=7
+#   scripts/verify-env restart [--build]          # after changing the backend
+#   scripts/verify-env snapshot NAME [LISTFILE]   # save the JSON of a list of GET endpoints
+#   scripts/verify-env diff A B                   # what changed between two snapshots
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="${VERIFY_ENV_DIR:-/tmp/tulpa-verify-env}"
+PG_NAME=tulpa-verify-pg
+PG_PORT=55432
+BACKEND_PORT=3103
+FRONTEND_PORT=5174
+ADMIN_USER=admin
+ADMIN_PASSWORD=admin-verify
+MIN_FREE_GB=5
+BASE="http://127.0.0.1:$BACKEND_PORT"
+DEFAULT_ENDPOINTS="$ROOT/scripts/verify-env.endpoints"
+
+die() { echo "verify-env: $*" >&2; exit 1; }
+
+# Names a missing tool and how to get it, instead of failing later with "command not found"
+require() { command -v "$1" >/dev/null 2>&1 || die "'$1' is not installed. $2"; }
+
+require curl "Install it with your package manager (Arch: pacman -S curl, Debian/Ubuntu: apt install curl, Fedora: dnf install curl)."
+require python3 "Install it with your package manager (Arch: pacman -S python, Debian/Ubuntu: apt install python3, Fedora: dnf install python3)."
+require ss "It comes with iproute2 (Arch: pacman -S iproute2, Debian/Ubuntu: apt install iproute2, Fedora: dnf install iproute)."
+
+# What starting an instance needs on top: Docker for Postgres, and the toolchains for what is run
+check_docker() {
+    require docker "Install Docker (https://docs.docker.com/engine/install/) and start its service."
+    docker info >/dev/null 2>&1 \
+        || die "Docker is installed but not reachable. Start the daemon (sudo systemctl start docker) and make sure your user may use it (the 'docker' group), then try again."
+}
+
+port_pids() { ss -ltnp 2>/dev/null | grep -E ":$1\b" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true; }
+
+# Stops what listens on a port. By port, never by command line: a pattern that also appears in
+# this very command line would kill the shell running it.
+stop_port() {
+    local pids; pids="$(port_pids "$1")"
+    # shellcheck disable=SC2086
+    [ -n "$pids" ] && kill $pids 2>/dev/null || true
+}
+
+wait_for() {  # wait_for DESCRIPTION SECONDS COMMAND...
+    local what="$1" seconds="$2"; shift 2
+    for _ in $(seq 1 "$seconds"); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
+    die "timed out waiting for $what"
+}
+
+api() {  # api METHOD PATH [JSON] — with the saved token when there is one
+    local method="$1" path="$2" body="${3:-}"
+    local auth=()
+    [ -s "$WORK/token" ] && auth=(-H "Authorization: Bearer $(cat "$WORK/token")")
+    if [ -n "$body" ]; then
+        curl -fsS -m 60 -X "$method" "${auth[@]}" -H 'Content-Type: application/json' -d "$body" "$BASE$path"
+    else
+        curl -fsS -m 60 -X "$method" "${auth[@]}" "$BASE$path"
+    fi
+}
+
+backend_binary() { echo "$ROOT/backend/target/debug/backend"; }
+
+build_backend() { (cd "$ROOT/backend" && cargo build); }
+
+start_backend() {
+    stop_port "$BACKEND_PORT"
+    # The old process has to be gone before its binary can be overwritten ("Text file busy")
+    for _ in $(seq 1 30); do [ -z "$(port_pids "$BACKEND_PORT")" ] && break; sleep 0.5; done
+    [ -z "$(port_pids "$BACKEND_PORT")" ] || die "the old backend on :$BACKEND_PORT would not stop"
+    # The backend reads <exe_dir>/data/settings.json, so it runs from a copy in the scratch dir
+    cp "$(backend_binary)" "$WORK/backend"
+    # The redirects belong to the whole subshell, and `exec` replaces it with the backend: a bare
+    # `cd … && ./backend > log &` leaves a shell behind that holds this script's output open, so
+    # whoever reads it (a pipe, an agent's tool call) would wait for the backend to exit.
+    (cd "$WORK" && RUST_LOG=warn exec ./backend) > "$WORK/backend.log" 2>&1 < /dev/null &
+    disown
+    wait_for "the backend on :$BACKEND_PORT" 60 curl -fs -m 5 "$BASE/api/setup/status"
+}
+
+cmd_down() {
+    stop_port "$BACKEND_PORT"
+    stop_port "$FRONTEND_PORT"
+    docker rm -f -v "$PG_NAME" >/dev/null 2>&1 || true
+    rm -rf "$WORK"
+    echo "verify-env: removed"
+}
+
+cmd_up() {
+    local build=0 frontend=0 seed=1 ollama_url="http://127.0.0.1:1"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --build) build=1 ;;
+            --frontend) frontend=1 ;;
+            --no-seed) seed=0 ;;
+            --ollama-url) ollama_url="${2:?--ollama-url needs a value}"; shift ;;
+            *) die "unknown option $1" ;;
+        esac
+        shift
+    done
+
+    check_docker
+    [ "$build" -eq 1 ] && require cargo "Install Rust (https://rustup.rs) to build the backend."
+    if [ "$frontend" -eq 1 ]; then
+        require npx "Install Node.js (https://nodejs.org or your package manager) for the frontend dev server."
+        [ -d "$ROOT/frontend/node_modules" ] || die "frontend dependencies are missing: run 'npm install' in frontend/ first."
+    fi
+
+    cmd_down >/dev/null  # a leftover from an earlier run
+    local free; free="$(df --output=avail -BG / | tail -1 | tr -dc '0-9')"
+    [ "$free" -ge "$MIN_FREE_GB" ] || die "only ${free} GB free on /; need $MIN_FREE_GB (a full disk makes Postgres fail at initdb)"
+    for port in $BACKEND_PORT $PG_PORT $FRONTEND_PORT; do
+        [ -z "$(port_pids "$port")" ] || die "port $port is in use"
+    done
+    [ "$build" -eq 1 ] && build_backend
+    [ -x "$(backend_binary)" ] || die "no backend binary; run with --build"
+
+    mkdir -p "$WORK/data" "$WORK/files" "$WORK/jobs"
+    docker run -d --rm --name "$PG_NAME" -e POSTGRES_PASSWORD=postgres -p "127.0.0.1:$PG_PORT:5432" postgres:17 >/dev/null
+    # pg_isready answers before the server accepts real queries, so ask with one
+    wait_for "Postgres" 60 docker exec "$PG_NAME" psql -U postgres -c 'select 1'
+    docker exec "$PG_NAME" psql -U postgres -qc 'create database llm_tulpa'
+
+    # No database block: the backend starts in setup mode, and the wizard's own endpoints (below)
+    # connect it, migrate it and write the block into this file — the real first-run path.
+    OLLAMA_URL="$ollama_url" python3 - <<PY
+import json, os
+json.dump({
+    "bind_addr": "127.0.0.1:$BACKEND_PORT",
+    "ollama": {"url": os.environ["OLLAMA_URL"], "context_length": 32768},
+    "files_dir": "$WORK/files",
+    "jobs_dir": "$WORK/jobs",
+    "model_dir": None,
+    "host_root": None,
+}, open("$WORK/data/settings.json", "w"), indent=2)
+PY
+    start_backend
+
+    api POST /api/setup/database '{"host":"localhost","port":'"$PG_PORT"',"name":"llm_tulpa","user":"postgres","password":"postgres"}' >/dev/null
+    api POST /api/setup/owner '{"username":"'"$ADMIN_USER"'","password":"'"$ADMIN_PASSWORD"'"}' \
+        | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])' > "$WORK/token"
+    api POST /api/settings '{"name":"Verify","timezone":0,"notifications_enabled":false}' >/dev/null
+    [ "$seed" -eq 1 ] && docker exec -i "$PG_NAME" psql -U postgres -d llm_tulpa -q -v ON_ERROR_STOP=1 < "$ROOT/scripts/verify-env.seed.sql"
+
+    if [ "$frontend" -eq 1 ]; then
+        (cd "$ROOT/frontend" && VITE_BACKEND_URL="$BASE" exec npx vite --port "$FRONTEND_PORT" --strictPort) > "$WORK/vite.log" 2>&1 < /dev/null &
+        disown
+        wait_for "the dev server on :$FRONTEND_PORT" 60 curl -fs -m 5 "http://localhost:$FRONTEND_PORT/"
+    fi
+
+    cat <<INFO
+verify-env is up.
+  backend    $BASE   (login $ADMIN_USER / $ADMIN_PASSWORD, token: scripts/verify-env token)
+  postgres   localhost:$PG_PORT   (user/password postgres, database llm_tulpa)
+  model API  $ollama_url   (the default is a dead address: the backend reports its model server as offline)
+INFO
+    if [ "$frontend" -eq 1 ]; then
+        cat <<INFO
+  frontend   http://localhost:$FRONTEND_PORT
+             The backend's dev CORS only allows an origin ending in :5173, so drive this one with
+             Playwright launched with args=['--no-sandbox', '--disable-web-security'].
+INFO
+    fi
+    echo "  stop it    scripts/verify-env down"
+}
+
+cmd_status() {
+    echo "postgres : $(docker ps --filter "name=^$PG_NAME\$" --format '{{.Status}}' | grep . || echo down)"
+    echo "backend  : $(curl -fs "$BASE/api/setup/status" 2>/dev/null || echo down)"
+    echo "frontend : $([ -n "$(port_pids "$FRONTEND_PORT")" ] && echo "up on :$FRONTEND_PORT" || echo down)"
+}
+
+cmd_get() {
+    api GET "${1:?usage: get PATH}" | python3 -m json.tool --sort-keys
+}
+
+cmd_restart() {
+    [ "${1:-}" = "--build" ] && build_backend
+    start_backend
+    echo "verify-env: backend restarted"
+}
+
+cmd_snapshot() {
+    local name="${1:?usage: snapshot NAME [LISTFILE]}" list="${2:-$DEFAULT_ENDPOINTS}"
+    local dir="$WORK/snapshots/$name"
+    rm -rf "$dir"; mkdir -p "$dir"
+    while IFS= read -r path; do
+        case "$path" in ''|'#'*) continue ;; esac
+        local file; file="$dir/$(echo "$path" | tr '/?=&' '____').json"
+        # A failing endpoint is part of what is being compared, so its status is saved too
+        curl -sS -w '\n%{http_code}' -H "Authorization: Bearer $(cat "$WORK/token")" "$BASE$path" \
+            | python3 -c '
+import sys, json
+raw = sys.stdin.read()
+body, _, status = raw.rpartition("\n")
+try: body = json.loads(body)
+except ValueError: pass
+json.dump({"status": status, "body": body}, sys.stdout, indent=1, sort_keys=True)
+' > "$file"
+    done < "$list"
+    echo "verify-env: saved $(ls "$dir" | wc -l) endpoints to $dir"
+}
+
+cmd_diff() {
+    local a="${1:?usage: diff A B}" b="${2:?usage: diff A B}"
+    if diff -ru "$WORK/snapshots/$a" "$WORK/snapshots/$b"; then echo "verify-env: snapshots $a and $b are identical"; fi
+}
+
+case "${1:-}" in
+    up) shift; cmd_up "$@" ;;
+    down) cmd_down ;;
+    status) cmd_status ;;
+    token) cat "$WORK/token" ;;
+    get) shift; cmd_get "$@" ;;
+    restart) shift; cmd_restart "$@" ;;
+    snapshot) shift; cmd_snapshot "$@" ;;
+    diff) shift; cmd_diff "$@" ;;
+    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

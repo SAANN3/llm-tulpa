@@ -1,0 +1,13 @@
+# GET endpoints `verify-env snapshot` saves and `verify-env diff` compares. One path per line.
+/api/auth/me
+/api/settings
+/api/chats
+/api/folders
+/api/stats/usage?days=7
+/api/stats/usage?days=30
+/api/stats/usage?months=3
+/api/stats/breakdown?days=30
+/api/stats/activity?days=30
+/api/stats/activity?months=3
+/api/stats/context
+/api/stats/server
