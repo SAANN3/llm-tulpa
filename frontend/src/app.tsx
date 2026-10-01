@@ -48,7 +48,7 @@ const App = () => (
                                 <Route path="/folders/:id" element={<Folder/>}/>
                                 <Route path="/settings" element={<Settings/>}/>
                                 <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
-                                <Route path="/stats" element={<Stats/>}/>
+                                <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
                                 <Route element={<RequireOwner/>}>
                                     <Route path="/plugins" element={<Plugins/>}/>
                                     <Route path="/users" element={<Users/>}/>

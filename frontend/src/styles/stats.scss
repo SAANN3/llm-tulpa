@@ -10,38 +10,260 @@
 }
 
 .stats__panel {
-  width: min(640px, calc(100vw - #{$space-8}));
+  width: min(860px, calc(100vw - #{$space-8}));
 }
 
 .stats__body {
   display: flex;
   flex-direction: column;
-  gap: $space-5;
+  gap: $space-4;
   overflow-y: auto;
   max-height: calc(100vh - 100px);
 }
 
+// Tabs on the left, the range on the right: one row instead of two
+.stats__bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
+.stats__tabs,
 .stats__ranges {
   display: flex;
+  flex-wrap: wrap;
   gap: $space-2;
 }
 
-.stats__totals {
+// Two charts to a row, so a tab with several still fits one screen
+.stats__charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $space-4;
+}
+
+.stats__cards {
   display: flex;
   flex-wrap: wrap;
-  gap: $space-6;
-}
-
-.stats__total {
-  display: flex;
-  flex-direction: column;
-  gap: $space-1;
-}
-
-.stats__total-value {
-  font-size: 20px;
+  gap: $space-3;
 }
 
 .stats__note {
   font-size: 12px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.stat-card__value {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.stat-card__hint {
+  font-size: 12px;
+}
+
+.stats-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.stats-table__row {
+  display: grid;
+  gap: $space-3;
+  padding: $space-2 $space-1;
+  border-bottom: $line-border solid var(--color-border);
+}
+
+.stats-table__row--head {
+  font-size: 12px;
+}
+
+.stats-table__head {
+  display: flex;
+  align-items: center;
+  gap: $space-1;
+}
+
+.stats-table__head--number {
+  justify-content: flex-end;
+}
+
+.stats-table__head--sortable {
+  cursor: pointer;
+}
+
+.stats-table__more {
+  align-self: flex-start;
+  margin-top: $space-3;
+}
+
+.stats-table__name {
+  overflow-wrap: anywhere;
+}
+
+.stats-table__number {
+  text-align: right;
+}
+
+.heatmap-block {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.heatmap__row {
+  display: flex;
+  gap: 2px;
+}
+
+.heatmap__label {
+  flex: 0 0 58px;
+  font-size: 11px;
+}
+
+.heatmap__gutter {
+  flex: 0 0 44px;
+  padding-left: 6px;
+  font-size: 11px;
+}
+
+.heatmap__cell {
+  flex: 1;
+  height: 14px;
+  min-width: 0;
+  border: $line-border solid var(--color-border);
+  box-sizing: border-box;
+}
+
+.heatmap__cell--tall {
+  height: 22px;
+}
+
+// The hour labels sit on the grid's own scale, so 24 lands on its right edge
+.heatmap__ticks {
+  position: relative;
+  flex: 1;
+  height: 14px;
+}
+
+.heatmap__tick {
+  position: absolute;
+  font-size: 11px;
+}
+
+.heatmap__tick--mid {
+  transform: translateX(-50%);
+}
+
+.heatmap__tick--end {
+  transform: translateX(-100%);
+}
+
+.heatmap__day {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.heatmap__day-number,
+.heatmap__day-month {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.heatmap--months {
+  flex-direction: row;
+  gap: $space-4;
+}
+
+.heatmap__month {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.heatmap__month-title {
+  font-size: 13px;
+}
+
+.heatmap__calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.heatmap__weekday {
+  font-size: 11px;
+  text-align: center;
+}
+
+.heatmap__date {
+  height: 26px;
+  min-width: 0;
+  border: $line-border solid var(--color-border);
+  box-sizing: border-box;
+}
+
+.heatmap__date-number {
+  font-size: 10px;
+  padding: 1px 3px;
+}
+
+.heatmap__readout {
+  font-size: 12px;
+}
+
+.context-list {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.context-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 1fr);
+  align-items: center;
+  gap: $space-3;
+}
+
+.context-list__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-list__bar {
+  height: 10px;
+  border: $line-border solid var(--color-border);
+}
+
+.context-list__fill {
+  height: 100%;
+  background: var(--color-tertiary);
+}
+
+.context-list__value {
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
 }

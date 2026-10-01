@@ -118,7 +118,7 @@ export const Sidebar = () => {
             <Div className="vbox">
                 <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} onClicked={() => navigate('/settings')}/>
                 <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} onClicked={() => navigate('/folders')}/>
-                <ChatEntry label="Usage" selected={location.pathname === '/stats'} icon={<Analytics width={18} height={18}/>} onClicked={() => navigate('/stats')}/>
+                <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} onClicked={() => navigate('/stats')}/>
                 {user?.role === 'owner' ? (
                     <>
                         <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} onClicked={() => navigate('/plugins')}/>

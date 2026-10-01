@@ -1,32 +1,31 @@
 import {useEffect, useState} from 'react'
-import {getUsageStats} from '../api/llm/stats'
-import type {UsageStats} from '../api/llm/types'
+import type {StatsRange} from '../api/stats/types'
 
-/** The user's token usage over the last `days` days; re-fetches when `days` changes. `stats` is
- * the last range that loaded, with `loadedDays` saying which — it stays put while the next
- * range loads, so switching ranges doesn't blank the page. */
-export const useUsageStats = (days: number) => {
-    const [loaded, setLoaded] = useState<{ days: number; stats: UsageStats } | null>(null)
-    const [failedFor, setFailedFor] = useState<number | null>(null)
+/** A stats view over a range, re-fetched when `range` changes. `data` is the last
+ * range that loaded and stays put while the next one loads, so switching ranges doesn't blank
+ * the page. `load` and `range` must be stable (a
+ * module-level API call and one of the page's range constants), since they are what triggers a fetch. */
+export const useStats = <T>(load: (range: StatsRange) => Promise<T>, range: StatsRange) => {
+    const [loaded, setLoaded] = useState<{ range: StatsRange; data: T } | null>(null)
+    const [failedFor, setFailedFor] = useState<StatsRange | null>(null)
 
     useEffect(() => {
         let cancelled = false
-        getUsageStats(days).then(
-            (stats) => {
-                if (!cancelled) setLoaded({days, stats})
+        load(range).then(
+            (data) => {
+                if (!cancelled) setLoaded({range, data})
             },
             () => {
-                if (!cancelled) setFailedFor(days)
+                if (!cancelled) setFailedFor(range)
             },
         )
         return () => {
             cancelled = true
         }
-    }, [days])
+    }, [load, range])
 
     return {
-        stats: loaded?.stats ?? null,
-        loadedDays: loaded?.days ?? null,
-        failed: failedFor === days,
+        data: loaded?.data ?? null,
+        failed: failedFor === range,
     }
 };

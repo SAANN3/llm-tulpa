@@ -49,20 +49,3 @@ export interface ImportItem {
     name?: string
     projector?: string
 }
-
-/** One UTC day of a user's token usage */
-export interface UsageDay {
-    /** `YYYY-MM-DD` */
-    day: string
-    /** Assistant replies that day */
-    replies: number
-    /** Summed over the replies — the whole context is re-sent with every call */
-    prompt_tokens: number
-    /** Tokens the model generated */
-    eval_tokens: number
-}
-
-export interface UsageStats {
-    /** Only the days that had any activity, oldest first */
-    days: UsageDay[]
-}
