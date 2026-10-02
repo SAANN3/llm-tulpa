@@ -1,5 +1,4 @@
 import {useEffect, useMemo, useRef, useState, type CSSProperties} from 'react'
-import axios from 'axios'
 
 import '../styles/model-picker.scss'
 import {importFiles} from '../api/llm/import'
@@ -11,6 +10,7 @@ import {fetchCatalog} from '../api/llm/catalog'
 import type {Catalog, LocalFile, LocalFiles, ModelTask} from '../api/llm/types'
 import {useAuth} from '../context/use-auth.ts'
 import {useModelTasks} from '../hooks/use-model-tasks.ts'
+import {errorReason} from '../utils/error-reason.ts'
 import {formatBytes} from '../utils/format-bytes.ts'
 import {modelRequirements} from '../utils/model-info'
 import {Button, Checkbox, Div, Input, Label, Select} from './primitives'
@@ -23,10 +23,6 @@ export interface ModelPickerProps {
 const NO_PROJECTOR = 'no vision'
 
 const baseName = (tag: string): string => tag.split(':')[0]
-
-/** The backend's own explanation when it gave one (`{error}`), else a generic fallback */
-const reason = (e: unknown, fallback: string): string =>
-    (axios.isAxiosError(e) && (e.response?.data as { error?: string } | undefined)?.error) || fallback
 
 const catalogMeta = (m: Catalog['models'][number]): string =>
     [m.capabilities.join(', '), m.sizes.join(' '), m.pulls ? `${m.pulls} pulls` : ''].filter(Boolean).join(' · ')
@@ -108,7 +104,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
             setShown((prev) => new Set([...prev, task.id]))
             await refreshTasks()
         } catch (e) {
-            setError(reason(e, `Could not start pulling "${name}".`))
+            setError(errorReason(e, `Could not start pulling "${name}".`))
         }
     }
 
@@ -139,7 +135,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
             setChecked(new Set())
             await refreshTasks()
         } catch (e) {
-            setError(reason(e, 'Could not start the import.'))
+            setError(errorReason(e, 'Could not start the import.'))
         } finally {
             setImporting(false)
         }

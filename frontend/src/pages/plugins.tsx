@@ -1,6 +1,5 @@
 import {useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
-import axios from 'axios'
 
 import {Gear} from 'pixelarticons/react'
 
@@ -11,12 +10,9 @@ import {Button, Div, Label, ToggleSwitch} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {usePlugins} from '../hooks/use-plugins.ts'
+import {errorReason} from '../utils/error-reason.ts'
 
 const pluginKey = (plugin: PluginInfo): string => `${plugin.plugin_name}/${plugin.plugin_subname}`;
-
-/** The backend's own explanation when it gave one (`{error}`), else a generic fallback */
-const reason = (e: unknown, fallback: string): string =>
-    (axios.isAxiosError(e) && (e.response?.data as {error?: string} | undefined)?.error) || fallback
 
 const Plugins = () => {
     useDocumentTitle('Plugins')
@@ -38,7 +34,7 @@ const Plugins = () => {
         try {
             await setEnabled(plugin.plugin_name, plugin.plugin_subname, enabled)
         } catch (e) {
-            setNotice({key, message: reason(e, 'Something went wrong changing this plugin — try again.')})
+            setNotice({key, message: errorReason(e, 'Something went wrong changing this plugin — try again.')})
         }
     }
 
