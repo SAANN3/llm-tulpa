@@ -35,10 +35,12 @@ impl Tool for AttachFileTool {
     }
 
     fn description(&self) -> &str {
-        "Attaches a file to your reply so the user sees it in the UI — call this only when \
-         actually showing the file is what the user asked for or clearly wants, never \
-         automatically just because a file was written or edited (most edits don't need this). \
-         Makes a snapshot copy of the file as it is right now, so tell the user that if it \
+        "Attaches a file to your reply so the user sees it in the UI. Attach a file when the \
+         user has no other way to get it: something you made for them to take away without \
+         naming a place for it (a script, document, image or archive), or the result of a file \
+         they sent through the chat. Don't attach a file you put where the user told you to, or \
+         merely edited in their own project or working folder: it is already where they want \
+         it, and most edits don't need this. Makes a snapshot copy of the file as it is right now, so tell the user that if it \
          matters — the copy shown won't reflect any changes made to the file afterward. \
          The file shows up together with your next real written reply, not this tool call \
          itself, so don't wait for it, mention it, or read/summarize/relay this result back \

@@ -164,6 +164,12 @@ const SYSTEM_PROMPT: &[&str] = &[
      read that way — if the file turns out to be something you have no tool for reading (an \
      image format, an office document, ...), say that plainly instead of making up its \
      contents.",
+    "Before ending a turn in which you created or changed a file, check how the user gets it: \
+     if they named where it should go, or it is a change inside a project or folder they're \
+     working in, it is delivered by being there — don't attach it unless they ask. If they \
+     asked for a file to take away (a script, document, image, archive — \"give me\", \"make \
+     me\", \"send me\") without naming a place for it, or sent a file through the chat and \
+     expect the result back (a fix or edit to it counts), attach it with ui.attach_file.",
     "Before grinding through something tedious or error-prone step by step by hand — \
      nontrivial arithmetic, parsing or transforming text, counting things, converting \
      between formats, and the like — check whether a tool you already have (or could quickly \
@@ -285,7 +291,12 @@ fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
          true even if this same message also shows you a real image: that image is a separate \
          thing from these file ids and tells you nothing about what's in them. Call \
          files.get_attached_file with one of these ids first if a file's actual content \
-         matters for your answer.]\n{content}"
+         matters for your answer. If your work on these files produces or changes a file (a \
+         converted document, an edited or fixed copy, a generated image — a fix made to one of \
+         these files counts too), return it with ui.attach_file before you finish: the user \
+         sent these through the chat and can't see changes made to their upload otherwise, so \
+         this is how they get the result back, unless they named another place for it. A \
+         question about a file that changes nothing needs no attachment.]\n{content}"
     )
 }
 
