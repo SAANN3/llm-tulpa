@@ -4,6 +4,22 @@ import type {SelectProps, ThemedProps} from './types'
 const PANEL_MAX_HEIGHT = 240
 const PANEL_MARGIN = 4
 
+/** The vertical span the panel can show in: the window, narrowed by the nearest ancestor that
+ * clips or scrolls (a dialog's body), since a panel past that edge is cut off however much room
+ * the window has */
+const visibleSpan = (el: HTMLElement): { top: number; bottom: number } => {
+    let top = 0
+    let bottom = window.innerHeight
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+        const overflowY = getComputedStyle(parent).overflowY
+        if (overflowY === 'visible') continue
+        const rect = parent.getBoundingClientRect()
+        top = Math.max(top, rect.top)
+        bottom = Math.min(bottom, rect.bottom)
+    }
+    return {top, bottom}
+}
+
 export const Select = ({
     style,
     className,
@@ -43,8 +59,9 @@ export const Select = ({
 
         const rect = rootRef.current?.getBoundingClientRect()
         if (rect) {
-            const spaceBelow = window.innerHeight - rect.bottom
-            const spaceAbove = rect.top
+            const span = visibleSpan(rootRef.current as HTMLElement)
+            const spaceBelow = span.bottom - rect.bottom
+            const spaceAbove = rect.top - span.top
             const fitsBelow = spaceBelow >= PANEL_MAX_HEIGHT + PANEL_MARGIN
             setDirection(!fitsBelow && spaceAbove > spaceBelow ? 'up' : 'down')
         }
@@ -61,6 +78,10 @@ export const Select = ({
                 onClick={toggleOpen}
             >
                 {selected ?? ''}
+                {/* Every option, stacked and hidden, so the trigger is as wide as the widest one: choosing a value never resizes it, and the list below never cuts an option off */}
+                <span data-select-sizer aria-hidden="true">
+                    {values.map((value) => <span key={value}>{value}</span>)}
+                </span>
             </button>
             {open && (
                 <ul data-select-panel data-direction={direction} role="listbox">

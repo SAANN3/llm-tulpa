@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {ArrowLeft, Close, ExternalLink, Folder, Pencil, Search} from 'pixelarticons/react'
+import {ArrowLeft, Close, ExternalLink, Folder, Pencil, Search, Share} from 'pixelarticons/react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
@@ -11,6 +11,7 @@ import {getFolders} from '../api/folders/get'
 import {formatTokenCount} from '../utils/format.ts'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
+import {ExportChatPopup} from './popups/export-chat-popup.tsx'
 import {InputPopup} from './popups/base/input-popup.tsx'
 import {SearchMessagesPopup} from './popups/search-messages-popup.tsx'
 import {Button, Div, Label} from './primitives'
@@ -60,6 +61,7 @@ export const ChatHeader = ({
     const [open, setOpen] = useState(false)
     const [folderOpen, setFolderOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
+    const [exportOpen, setExportOpen] = useState(false)
     const [renameOpen, setRenameOpen] = useState(false)
     const [folderName, setFolderName] = useState<string | null>(null)
 
@@ -135,6 +137,10 @@ export const ChatHeader = ({
                     </Div>
                 </Div>
             ) : null}
+            <Button className="chat-header__search" title="Export chat"
+                    onClicked={() => setExportOpen(true)}>
+                <Share width={20} height={20}/>
+            </Button>
             <Button className="chat-header__search"
                     onClicked={() => setSearchOpen(true)}>
                 <Search width={20} height={20}/>
@@ -162,6 +168,7 @@ export const ChatHeader = ({
                 onSubmit={doRename}
                 onClose={() => setRenameOpen(false)}
             />
+            <ExportChatPopup open={exportOpen} chatId={chatId} chatName={name} onClose={() => setExportOpen(false)}/>
             <SearchMessagesPopup
                 open={searchOpen}
                 chatId={chatId}

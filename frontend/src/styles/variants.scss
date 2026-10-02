@@ -158,6 +158,18 @@ button[data-variant]:disabled {
   background-repeat: no-repeat;
 }
 
+[data-select-sizer] {
+  display: grid;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+[data-select-sizer] > span {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
 [data-select-trigger]:focus-visible,
 [data-select-trigger][aria-expanded='true'] {
   outline: 2px solid var(--color-tertiary);

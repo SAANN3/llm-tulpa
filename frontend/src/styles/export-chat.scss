@@ -1,0 +1,28 @@
+@use 'tokens' as *;
+
+.export-chat__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
+.export-chat__option {
+  display: flex;
+  align-items: flex-start;
+  gap: $space-3;
+  cursor: pointer;
+  user-select: none;
+}
+
+.export-chat__hint {
+  font-size: 11px;
+}
+
+.export-chat__error {
+  color: var(--color-danger);
+}
+
+.export-chat__attachments {
+  gap: $space-1;
+}

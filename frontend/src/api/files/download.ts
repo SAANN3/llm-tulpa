@@ -1,5 +1,6 @@
 import axios from 'axios'
 import {BACKEND_URL} from '../../config'
+import {saveBlob} from '../../utils/save-blob.ts'
 
 /**
  * URL that serves a file's raw bytes. The route needs the Bearer token, which a browser
@@ -16,12 +17,5 @@ export const fetchFileBlob = async (id: number): Promise<Blob> => {
 
 /** Saves a file to disk under `fileName`, via a blob so the authenticated request is what downloads it */
 export const saveFile = async (id: number, fileName: string): Promise<void> => {
-    const url = URL.createObjectURL(await fetchFileBlob(id))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = fileName
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    saveBlob(await fetchFileBlob(id), fileName)
 };

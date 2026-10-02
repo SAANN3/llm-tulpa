@@ -10,6 +10,7 @@ use crate::state::AppState;
 
 use super::create::*;
 use super::delete::*;
+use super::export::*;
 use super::find::*;
 use super::get::*;
 use super::messages::*;
@@ -29,11 +30,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/messages", get(get_messages))
         .route("/search", get(search_messages))
         .route("/find", get(find_chats))
+        .route("/export", get(export_chat))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_folder, get_messages, search_messages, find_chats),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_folder, get_messages, search_messages, find_chats, export_chat),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -52,6 +54,8 @@ pub fn router() -> Router<Arc<AppState>> {
         ChatFindMessageOut,
         ChatFindOut,
         FindChatsResponse,
+        ExportFormatParam,
+        AttachmentModeParam,
     )),
 )]
 pub struct ApiDoc;
