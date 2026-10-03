@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tool_derive::ToolParams;
 
-use crate::services::llm::{OllamaService, ThinkChoice};
+use crate::services::llm::{CallParams, ChatMessage, ThinkChoice};
 use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
     ToolParams, ToolPermission, ToolSerializationError,
@@ -83,15 +83,19 @@ impl Tool for ReadImageTool {
         // asking the (vision-capable) model a single question about one image and
         // relaying the answer back. `think: Some(false)`: nothing here needs a
         // reasoning trace, just a direct answer.
-        let message = OllamaService::user_message_with_images(prompt, vec![STANDARD.encode(&bytes)]);
-        let response = ctx.ollama.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None).await.map_err(|e| {
+        let message = ChatMessage::user_with_images(prompt, vec![STANDARD.encode(&bytes)]);
+        let provider = ctx.providers.get(&ctx.provider).map_err(|e| {
+            ToolError::FailedUnknown(format!("couldn't read the image: {}", e.message.unwrap_or_default()))
+        })?;
+        let response = provider.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None, &CallParams::default()).await.map_err(|e| {
             let reason = match e {
-                crate::services::llm::OllamaErrors::RequestFailed(msg) => msg,
-                crate::services::llm::OllamaErrors::UnexpectedStatus(status, body) => {
-                    format!("ollama returned status {status}: {body}")
+                crate::services::llm::LlmErrors::RequestFailed(_, msg) => msg,
+                crate::services::llm::LlmErrors::UnexpectedStatus(provider, status, body) => {
+                    format!("{provider} returned status {status}: {body}")
                 }
-                crate::services::llm::OllamaErrors::DecodeFailed(msg) => msg,
-                crate::services::llm::OllamaErrors::Rejected(_, msg) | crate::services::llm::OllamaErrors::Failed(msg) => msg,
+                crate::services::llm::LlmErrors::DecodeFailed(_, msg) => msg,
+                crate::services::llm::LlmErrors::Rejected(_, msg) | crate::services::llm::LlmErrors::Failed(msg) => msg,
+                crate::services::llm::LlmErrors::Unavailable(err) => err.message.unwrap_or_default(),
             };
             ToolError::FailedUnknown(format!("couldn't read the image: {reason}"))
         })?;

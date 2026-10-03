@@ -11,7 +11,7 @@ use crate::services::chat_store::ChatStore;
 use crate::services::event_bus::EventBus;
 use crate::services::file_store::FileStore;
 use crate::services::job_store::JobStore;
-use crate::services::llm::OllamaService;
+use crate::services::llm::LlmProviders;
 use super::subagent::SubagentHandle;
 
 
@@ -130,10 +130,9 @@ pub struct ToolContext {
     /// For a tool that itself needs to ask the model something — e.g. `llm.read_image`
     /// making its own one-shot vision call on an image the model can't already see
     /// inline. Not reentrant the way holding the full `Agent`/`ToolService` would be:
-    /// `OllamaService` only ever talks to Ollama's own HTTP API, it doesn't know
-    /// about tools or turns at all, so a tool calling through this can't loop back
-    /// into anything.
-    pub ollama: Arc<OllamaService>,
+    /// a provider only ever talks to its own model server, it doesn't know about tools
+    /// or turns at all, so a tool calling through this can't loop back into anything.
+    pub providers: LlmProviders,
     /// Background jobs — what the `os.*_job` tools start, read and stop. Every job is
     /// tied to the chat that started it, so a tool reaching for this always pairs it
     /// with `chat_id` below rather than taking one as a model-facing argument.
@@ -157,6 +156,8 @@ pub struct ToolContext {
     /// The model this chat is bound to — what a tool that makes its own model call
     /// (`llm.read_image`) should run against.
     pub model: String,
+    /// The provider `model` belongs to — which of `providers` a tool's own model call goes to.
+    pub provider: String,
     /// How a tool starts a sub-agent. Not `Agent` itself, which would make `ToolContext` reentrant
     /// in exactly the way the struct's own doc comment rules out — see `SubagentHandle`.
     pub subagents: Arc<SubagentHandle>,
@@ -169,8 +170,8 @@ impl ToolContext {
     /// rather than in whatever calls it, so a new service field added to `ToolContext`
     /// later needs updating in exactly one place, not at every call site that builds a
     /// per-call context.
-    pub fn copy_with_chat_id(&self, chat_id: i64, user_id: i64, model: String) -> Self {
-        Self { chat_id, user_id, model, ..self.clone() }
+    pub fn copy_with_chat_id(&self, chat_id: i64, user_id: i64, provider: String, model: String) -> Self {
+        Self { chat_id, user_id, provider, model, ..self.clone() }
     }
 }
 

@@ -45,11 +45,17 @@ pub async fn thinking_capability(
     Query(query): Query<ThinkingCapabilityQuery>,
 ) -> Result<Json<ThinkingCapability>, ErrorService> {
     let services = state.services().await?;
-    let model = match query.chat_id {
-        Some(chat_id) => services.chat_store.owned_chat(auth.id, chat_id).await?.model,
-        None => services.settings_store.effective_model(auth.id).await?,
+    let (provider, model) = match query.chat_id {
+        Some(chat_id) => {
+            let chat = services.chat_store.owned_chat(auth.id, chat_id).await?;
+            (chat.provider, chat.model)
+        }
+        None => {
+            let model = services.settings_store.effective_model(auth.id).await?;
+            (model.provider, model.name)
+        }
     };
 
-    let result = state.ollama.thinking_capability(&model).await?;
+    let result = state.providers.get(&provider)?.thinking_capability(&model).await?;
     Ok(Json(result))
 }

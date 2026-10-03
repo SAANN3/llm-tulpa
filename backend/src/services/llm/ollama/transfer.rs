@@ -1,5 +1,5 @@
 //! The parts of Ollama's API that move model data around — pulling from a registry and
-//! importing a local file — as opposed to the chat/generate calls in `llm.rs`. Split out
+//! importing a local file — as opposed to the chat/generate calls in `ollama.rs`. Split out
 //! because they share none of those calls' assumptions: they run for minutes to hours
 //! (so they override the client's generation-sized timeout), and they report progress as
 //! they go rather than returning one result.
@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 
-use super::{OllamaErrors, OllamaService};
+use super::{OllamaService, PROVIDER};
+use crate::services::llm::LlmErrors;
 
 /// Transfers get a day: a large model over a slow link legitimately takes hours, and the
 /// point of the cap is only that a hung connection eventually ends.
@@ -43,7 +44,7 @@ impl OllamaService {
     /// Pulls `name` (a library tag like `qwen3:8b`, or `hf.co/<user>/<repo>[:<quant>]` for a
     /// GGUF on Hugging Face) into Ollama, calling `on_event` for every progress line. Returns
     /// once Ollama reports success; an error line from Ollama comes back as `Err` with its text.
-    pub async fn pull_streaming(&self, name: &str, mut on_event: impl FnMut(PullEvent)) -> Result<(), OllamaErrors> {
+    pub async fn pull_streaming(&self, name: &str, mut on_event: impl FnMut(PullEvent)) -> Result<(), LlmErrors> {
         let mut res = self
             .client
             .post(format!("{}/api/pull", self.base_url))
@@ -51,26 +52,26 @@ impl OllamaService {
             .json(&serde_json::json!({ "model": name, "stream": true }))
             .send()
             .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+            .map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
 
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/pull returned a non-success status");
-            return Err(OllamaErrors::Rejected(status, error_text(&body)));
+            return Err(LlmErrors::Rejected(status, error_text(&body)));
         }
 
         // The body is newline-delimited JSON, but chunk boundaries fall anywhere — a line can
         // arrive split across two chunks — so buffer until a newline completes one.
         let mut buffer = Vec::new();
         let mut succeeded = false;
-        while let Some(chunk) = res.chunk().await.map_err(|e| OllamaErrors::RequestFailed(e.to_string()))? {
+        while let Some(chunk) = res.chunk().await.map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))? {
             buffer.extend_from_slice(&chunk);
             while let Some(newline) = buffer.iter().position(|&b| b == b'\n') {
                 let line: Vec<u8> = buffer.drain(..=newline).collect();
                 let Ok(event) = serde_json::from_slice::<PullEvent>(&line) else { continue };
                 if let Some(error) = event.error {
-                    return Err(OllamaErrors::Failed(error));
+                    return Err(LlmErrors::Failed(error));
                 }
                 succeeded |= event.status == "success";
                 on_event(event);
@@ -80,24 +81,24 @@ impl OllamaService {
         if succeeded {
             Ok(())
         } else {
-            Err(OllamaErrors::Failed("the pull ended before Ollama reported success".to_string()))
+            Err(LlmErrors::Failed("the pull ended before Ollama reported success".to_string()))
         }
     }
 
     /// Whether Ollama already holds the blob with this digest (`sha256:<hex>`).
-    async fn blob_exists(&self, digest: &str) -> Result<bool, OllamaErrors> {
+    async fn blob_exists(&self, digest: &str) -> Result<bool, LlmErrors> {
         let res = self
             .client
             .head(format!("{}/api/blobs/{digest}", self.base_url))
             .send()
             .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+            .map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
         Ok(res.status().is_success())
     }
 
     /// Uploads a file as the blob `digest`, counting bytes sent into `sent` as they go.
     /// Skipped when Ollama already has it (importing the same file twice is then instant).
-    async fn upload_blob(&self, digest: &str, path: &Path, sent: Arc<AtomicU64>) -> Result<(), OllamaErrors> {
+    async fn upload_blob(&self, digest: &str, path: &Path, sent: Arc<AtomicU64>) -> Result<(), LlmErrors> {
         if self.blob_exists(digest).await? {
             let size = tokio::fs::metadata(path).await.map(|m| m.len()).unwrap_or(0);
             sent.store(size, Ordering::Relaxed);
@@ -106,7 +107,7 @@ impl OllamaService {
 
         let file = tokio::fs::File::open(path)
             .await
-            .map_err(|e| OllamaErrors::Failed(format!("could not open {}: {e}", path.display())))?;
+            .map_err(|e| LlmErrors::Failed(format!("could not open {}: {e}", path.display())))?;
         let counted = ReaderStream::with_capacity(file, 1 << 20).inspect_ok(move |chunk| {
             sent.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         });
@@ -118,13 +119,13 @@ impl OllamaService {
             .body(reqwest::Body::wrap_stream(counted))
             .send()
             .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+            .map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
 
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama blob upload returned a non-success status");
-            return Err(OllamaErrors::Rejected(status, error_text(&body)));
+            return Err(LlmErrors::Rejected(status, error_text(&body)));
         }
         Ok(())
     }
@@ -139,14 +140,14 @@ impl OllamaService {
         name: &str,
         files: &[std::path::PathBuf],
         progress: &ImportProgress,
-    ) -> Result<(), OllamaErrors> {
+    ) -> Result<(), LlmErrors> {
         let mut blobs: HashMap<String, String> = HashMap::new();
 
         for (index, path) in files.iter().enumerate() {
             progress.file_index.store(index, Ordering::Relaxed);
             progress.set_phase("hashing");
             let digest = sha256_file(path, progress.done.clone()).await.map_err(|e| {
-                OllamaErrors::Failed(format!("could not read {}: {e}", path.display()))
+                LlmErrors::Failed(format!("could not read {}: {e}", path.display()))
             })?;
             let digest = format!("sha256:{digest}");
 
@@ -165,13 +166,13 @@ impl OllamaService {
             .json(&serde_json::json!({ "model": name, "files": blobs, "stream": false }))
             .send()
             .await
-            .map_err(|e| OllamaErrors::RequestFailed(e.to_string()))?;
+            .map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
 
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
             tracing::error!(%status, body, "ollama /api/create returned a non-success status");
-            return Err(OllamaErrors::Rejected(status, error_text(&body)));
+            return Err(LlmErrors::Rejected(status, error_text(&body)));
         }
         Ok(())
     }

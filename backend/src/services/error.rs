@@ -7,7 +7,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 /// The one error type route handlers return. Every service defines its own error enum
-/// (e.g. `OllamaErrors`) and converts into this via `From`, so handlers can propagate
+/// (e.g. `LlmErrors`) and converts into this via `From`, so handlers can propagate
 /// with `?` without knowing which service failed — `IntoResponse` below turns it into
 /// the actual HTTP response.
 pub struct ErrorService {

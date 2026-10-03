@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::llm::CallParams, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct GenerateRequest {
@@ -40,7 +40,7 @@ pub async fn generate(
     Json(body): Json<GenerateRequest>,
 ) -> Result<Json<GenerateResponse>, ErrorService> {
     let model = state.services().await?.settings_store.effective_model(auth.id).await?;
-    let result = state.ollama.generate(body.prompt, body.think, &model).await?;
+    let result = state.providers.get(&model.provider)?.generate(body.prompt, body.think, &model.name, &CallParams::default()).await?;
 
     Ok(Json(GenerateResponse {
         response: result.response,

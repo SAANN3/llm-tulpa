@@ -1,9 +1,8 @@
-use std::sync::Arc;
 
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::services::{error::ErrorService, llm::{OllamaService, ThinkChoice}};
+use crate::services::{error::ErrorService, llm::{CallParams, ChatMessage, LlmProviders, ThinkChoice}, model_store::ModelRef};
 
 /// Facade for one-shot, predefined-prompt generation — the caller asks for a specific
 /// kind of string and, if the prompt calls for it, supplies values to be interpolated
@@ -14,12 +13,12 @@ use crate::services::{error::ErrorService, llm::{OllamaService, ThinkChoice}};
 /// own to warrant a dedicated error type.
 #[derive(Clone)]
 pub struct PromptFacade {
-    ollama: Arc<OllamaService>,
+    providers: LlmProviders,
 }
 
 impl PromptFacade {
-    pub fn new(ollama: Arc<OllamaService>) -> Self {
-        Self { ollama }
+    pub fn new(providers: LlmProviders) -> Self {
+        Self { providers }
     }
 
     /// A short, lively greeting for the "no chat open yet" landing page — never a
@@ -33,7 +32,7 @@ impl PromptFacade {
         &self,
         local_time: String,
         username: String,
-        model: &str,
+        model: &ModelRef,
     ) -> Result<GreetOut, ErrorService> {
         let prompt = format!(
             "You need to write a message that will be shown on our page it need to be \
@@ -53,7 +52,7 @@ impl PromptFacade {
              "
         );
 
-        let result = self.ollama.generate(prompt, Some(true), model).await?;
+        let result = self.providers.get(&model.provider)?.generate(prompt, Some(true), &model.name, &CallParams::default()).await?;
 
         Ok(GreetOut {
             response: result.response,
@@ -76,9 +75,9 @@ impl PromptFacade {
         &self,
         content: String,
         images: Vec<String>,
-        model: &str,
+        model: &ModelRef,
     ) -> Result<GreetOut, ErrorService> {
-        let system = OllamaService::system_message(
+        let system = ChatMessage::system(
             "Write a single very very short sentence (1-5 words) that summarizes the \
              user's next message, capturing its essence. This answer will be used as a \
              label for that message. Write it from the user's own perspective, not a \
@@ -91,14 +90,16 @@ impl PromptFacade {
         );
 
         let result = self
-            .ollama
+            .providers
+            .get(&model.provider)?
             .chat(
                 vec![system],
-                Some(OllamaService::user_message_with_images(content, images)),
+                Some(ChatMessage::user_with_images(content, images)),
                 &[],
                 Some(ThinkChoice::Enabled(false)),
-                model,
+                &model.name,
                 None,
+                &CallParams::default(),
             )
             .await?;
 
@@ -115,8 +116,8 @@ impl PromptFacade {
     /// the folder is for ("my rust backend chats") — either way it's untrusted notes
     /// text, not instructions, so it goes in a separate `user` message for the same
     /// reason `chat_name` does.
-    pub async fn folder_name(&self, content: String, model: &str) -> Result<GreetOut, ErrorService> {
-        let system = OllamaService::system_message(
+    pub async fn folder_name(&self, content: String, model: &ModelRef) -> Result<GreetOut, ErrorService> {
+        let system = ChatMessage::system(
             "Write a single very short name (1-4 words) for a folder that groups chats \
              together, based on the next message. The next message either describes what \
              the folder is for, or is example content the folder should group — either \
@@ -127,8 +128,9 @@ impl PromptFacade {
         );
 
         let result = self
-            .ollama
-            .chat(vec![system], Some(OllamaService::user_message_with_images(content, vec![])), &[], Some(ThinkChoice::Enabled(false)), model, None)
+            .providers
+            .get(&model.provider)?
+            .chat(vec![system], Some(ChatMessage::user_with_images(content, vec![])), &[], Some(ThinkChoice::Enabled(false)), &model.name, None, &CallParams::default())
             .await?;
 
         Ok(GreetOut {
@@ -146,7 +148,7 @@ impl PromptFacade {
     /// `local_time`. The model is asked for 5 outputs, one per line, but the caller
     /// (`UserCacheService::input_examples`) doesn't require exactly 5 back — whatever
     /// non-empty lines come back are usable.
-    pub async fn input_examples(&self, date: String, model: &str) -> Result<Vec<String>, ErrorService> {
+    pub async fn input_examples(&self, date: String, model: &ModelRef) -> Result<Vec<String>, ErrorService> {
         let prompt = format!(
             "Current date is {date}. You can use this information for tweaking output. Write 5 \
              outputs on on each line.  You can't say exactly date or value, but can point to it, \
@@ -162,7 +164,7 @@ impl PromptFacade {
              subtle time hint constraint while remaining natural and within limits."
         );
 
-        let result = self.ollama.generate(prompt, Some(false), model).await?;
+        let result = self.providers.get(&model.provider)?.generate(prompt, Some(false), &model.name, &CallParams::default()).await?;
 
         let examples = result
             .response
