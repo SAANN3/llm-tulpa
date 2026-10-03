@@ -44,6 +44,7 @@ pub async fn stream(
     let chats = state.services().await?.chat_store;
 
     let events = events_for(state.events.subscribe(), chats, auth.id)
+        .take_until(state.shutdown.clone().cancelled_owned())
         .filter_map(|event| async move { Some(Ok(Event::default().json_data(&event).ok()?)) });
 
     Ok(Sse::new(events).keep_alive(KeepAlive::default()))
@@ -61,7 +62,10 @@ fn events_for(
         let chats = chats.clone();
         async move {
             let event = received.ok()?;
-            chats.owned_chat(user_id, event.chat_id()).await.ok()?;
+            // An event about no chat in particular (the model server's state) is everyone's
+            if let Some(chat_id) = event.chat_id() {
+                chats.owned_chat(user_id, chat_id).await.ok()?;
+            }
             Some(event)
         }
     })

@@ -38,17 +38,40 @@ pub enum ServerEvent {
     /// `eval_tokens` deltas for the duration of one turn but take `prompt_tokens` as-is
     /// (it's already cumulative, not a delta).
     TurnProgress { chat_id: i64, eval_tokens: u64, prompt_tokens: Option<u64> },
+    /// The model server started loading, became ready, stopped or failed. Not about any one chat:
+    /// everyone is told, so a page can say "the model is being applied, don't close it".
+    ModelState {
+        state: ModelStateKind,
+        /// The launch profile that is loading or loaded
+        profile_id: Option<i64>,
+        /// The model's file name
+        model: Option<String>,
+        /// Why it failed or stopped, when there is something to say
+        detail: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStateKind {
+    Loading,
+    Ready,
+    Stopped,
+    Failed,
+    /// Somebody's request is waiting for the model to be free of the turn that has it
+    Queued,
 }
 
 impl ServerEvent {
-    /// The chat this event is about. The bus is shared by every connected user, so the event
-    /// stream (`routes/events/stream.rs`) delivers an event only to the owner of this chat —
-    /// a new variant has to say which chat (and so which user) it concerns, or the stream has no
-    /// way to keep it from everyone else.
-    pub fn chat_id(&self) -> i64 {
+    /// The chat this event is about, or `None` for one that concerns everybody. The bus is shared by
+    /// every connected user, so the event stream (`routes/events/stream.rs`) delivers a chat's event
+    /// only to the owner of that chat — a new variant has to say which chat (and so which user) it
+    /// concerns, or be deliberately global, or the stream has no way to keep it from everyone else.
+    pub fn chat_id(&self) -> Option<i64> {
         match self {
-            ServerEvent::JobFinished { chat_id, .. } => *chat_id,
-            ServerEvent::TurnProgress { chat_id, .. } => *chat_id,
+            ServerEvent::JobFinished { chat_id, .. } => Some(*chat_id),
+            ServerEvent::TurnProgress { chat_id, .. } => Some(*chat_id),
+            ServerEvent::ModelState { .. } => None,
         }
     }
 }

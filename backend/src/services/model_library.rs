@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 
 use crate::services::error::ErrorService;
 use crate::services::gguf::{read_gguf_info, GgufInfo, GgufKind};
-use crate::services::llm::{ImportProgress, OllamaService};
+use crate::services::llm::{ImportProgress, LlmProvider, OllamaService};
 
 /// How long a fetched catalog is reused. The library changes slowly, and opening the model
 /// picker shouldn't cost a round trip to ollama.com every time.
@@ -72,6 +72,14 @@ pub struct LocalFile {
     /// For a model: the one projector worth preselecting, when there's a clear answer — a
     /// compatible projector with the same `general.name`, or the only compatible one.
     pub suggested_projector: Option<String>,
+    /// For a model: whether the file carries an MTP draft head, so MTP drafting can be switched on.
+    pub has_mtp: bool,
+    /// For a model: the context length it was trained for.
+    pub trained_context: Option<u64>,
+    /// For a model: how many layers it has, which is what `-ngl` counts.
+    pub block_count: Option<u64>,
+    /// For a model: its quantization (`IQ3_S`, `Q4_K_M`), when the file says.
+    pub quantization: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -209,11 +217,21 @@ impl ModelLibrary {
         LocalFiles { configured: true, files }
     }
 
+    /// A model file's GGUF header, by its path relative to the model directory.
+    pub async fn gguf_info(&self, relative: &str) -> Result<GgufInfo, ErrorService> {
+        let path = self.resolve_local(relative)?;
+        let headers = self.headers.clone();
+        let info = tokio::task::spawn_blocking(move || header_of(&headers, &path))
+            .await
+            .map_err(|e| ErrorService::internal(e.to_string()))?;
+        info.map_err(|e| ErrorService::new(StatusCode::BAD_REQUEST, format!("'{relative}' isn't a readable GGUF file: {e}")))
+    }
+
     /// Resolves a path the client sent (relative to the model directory) to a real `.gguf` file
     /// inside it. The client is trusted with *which* file, not with reaching outside the
     /// directory: absolute paths and `..` are refused outright, and the canonical result must
     /// still sit under the canonical root (which also rules out symlinks pointing elsewhere).
-    fn resolve_local(&self, relative: &str) -> Result<PathBuf, ErrorService> {
+    pub fn resolve_local(&self, relative: &str) -> Result<PathBuf, ErrorService> {
         let bad = |why: &str| ErrorService::new(StatusCode::BAD_REQUEST, format!("'{relative}': {why}"));
         let root = self
             .model_dir
@@ -240,7 +258,7 @@ impl ModelLibrary {
     /// model, the second (if any) a vision projector, and the projector has to fit the model —
     /// otherwise Ollama would build the model without complaint and it would answer nonsense
     /// about every image. `files` are the resolved paths; `model_name` is only for messages.
-    async fn check_pairing(&self, model_name: &str, files: &[PathBuf]) -> Result<(), ErrorService> {
+    pub async fn check_pairing(&self, model_name: &str, files: &[PathBuf]) -> Result<(), ErrorService> {
         let (headers, paths) = (self.headers.clone(), files.to_vec());
         let infos: Vec<Result<GgufInfo, String>> = tokio::task::spawn_blocking(move || {
             paths.iter().map(|p| header_of(&headers, p)).collect()
@@ -460,13 +478,14 @@ impl ModelLibrary {
 }
 
 /// The message a person should see for an Ollama failure.
-fn describe(err: &crate::services::llm::OllamaErrors) -> String {
-    use crate::services::llm::OllamaErrors::*;
+fn describe(err: &crate::services::llm::LlmErrors) -> String {
+    use crate::services::llm::LlmErrors::*;
     match err {
-        RequestFailed(msg) => format!("could not reach Ollama: {msg}"),
-        UnexpectedStatus(code, body) => format!("Ollama returned status {code}: {body}"),
-        DecodeFailed(msg) | Failed(msg) => msg.clone(),
+        RequestFailed(_, msg) => format!("could not reach Ollama: {msg}"),
+        UnexpectedStatus(_, code, body) => format!("Ollama returned status {code}: {body}"),
+        DecodeFailed(_, msg) | Failed(msg) => msg.clone(),
         Rejected(_, msg) => msg.clone(),
+        Unavailable(err) => err.message.clone().unwrap_or_default(),
     }
 }
 
@@ -595,6 +614,10 @@ fn classify(scanned: Vec<(String, u64, Result<GgufInfo, String>)>) -> Vec<LocalF
                 error,
                 compatible_projectors: compatible,
                 suggested_projector: suggested,
+                has_mtp: info.as_ref().is_ok_and(|i| i.has_mtp()),
+                trained_context: info.as_ref().ok().and_then(|i| i.trained_context),
+                block_count: info.as_ref().ok().and_then(|i| i.block_count),
+                quantization: info.as_ref().ok().and_then(|i| i.quantization()).map(str::to_string),
             }
         })
         .collect()

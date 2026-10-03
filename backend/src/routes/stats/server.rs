@@ -58,13 +58,17 @@ impl From<LlamaServerStats> for LlamaServerOut {
 pub(crate) struct ServerResponse {
     /// Whether the model backend answered at all
     reachable: bool,
+    /// For the managed llama.cpp when it isn't answering: `stopped`, `starting`, `failed` or `not_installed`
+    state: Option<String>,
+    /// Why, when it failed or is missing
+    detail: Option<String>,
     /// The models it has loaded right now (empty when idle and unloaded)
     models: Vec<RunningModelOut>,
     llama_server: Option<LlamaServerOut>,
 }
 
-/// What the model backend is running right now, from its `/api/ps` — Ollama's own, or
-/// `mtp-proxy`'s translation of llama-server.
+/// What the model backend is running right now, from its provider — Ollama's own `/api/ps`, or
+/// llama.cpp's own server.
 #[utoipa::path(
     get,
     path = "/api/stats/server",
@@ -79,6 +83,8 @@ pub async fn server(State(state): State<Arc<AppState>>, _auth: AuthUser) -> Resu
 
     Ok(Json(ServerResponse {
         reachable: snapshot.reachable,
+        state: snapshot.state,
+        detail: snapshot.detail,
         models: snapshot
             .models
             .into_iter()

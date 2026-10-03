@@ -205,8 +205,9 @@ impl Agent {
     /// to tell (Ollama unreachable) is not a reason to fail the run here — the model call itself
     /// reports that.
     async fn subagent_think(&self, sub_chat_id: i64) -> Result<Option<ThinkChoice>, ErrorService> {
-        let model = self.chat_store.chat(sub_chat_id).await?.model;
-        Ok(match self.ollama.thinking_capability(&model).await {
+        let chat = self.chat_store.chat(sub_chat_id).await?;
+        let provider = self.providers.get(&chat.provider)?;
+        Ok(match provider.thinking_capability(&chat.model).await {
             Ok(ThinkingCapability::Unsupported) => Some(ThinkChoice::Enabled(false)),
             _ => None,
         })

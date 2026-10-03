@@ -50,3 +50,5 @@ html2text = "0.17.1"
 typst-as-lib = { version = "0.16.0", features = ["typst-kit-fonts", "typst-kit-embed-fonts"] }
 typst-pdf = "0.15.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"

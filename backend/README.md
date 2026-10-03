@@ -23,6 +23,12 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 |---|---|---|
 | `bind_addr` | `127.0.0.1:3000` | What the HTTP server binds to. Loopback-only by default; `0.0.0.0:3000` makes it reachable from other machines. |
 | `ollama.url` | `http://localhost:11434` | Where to reach Ollama. |
+| `llama_cpp.dir` | unset | The folder holding the llama.cpp release (`llama-server` and its libraries). Unset: `~/.llm-tulpa/llama`, where the setup step downloads it. |
+| `llama_cpp.port` | `18080` | The port the backend's own `llama-server` listens on (loopback only). |
+| `llama_cpp.autostart` | `false` | Load the default model when the backend starts. Off: it loads on the first request. |
+| `llama_cpp.idle_unload_minutes` | `0` | Stop the server after this many idle minutes, freeing the GPU for something else. `0` never stops it. |
+| `llama_cpp.load_timeout_secs` | `300` | How long to wait for a model to finish loading. |
+| `llama_cpp.external_url` | unset | Use a `llama-server` already running at this URL instead of starting one; the backend then neither starts nor stops it, so the model can't be switched from the UI. |
 | `ollama.context_length` | `32768` | Must match Ollama's own context window (`OLLAMA_CONTEXT_LENGTH` in the root `.env` — see `llm/README.md`) — drives the per-request `num_predict` cap (sized from what is left of the window after the prompt) and the history-compaction thresholds. The two live in different files, so change them together. |
 | `agent_history_len` | `2000` | How many of a chat's most recent messages get pulled into a single turn. Keep it high: once a chat has more messages than this, the oldest one drops out on every new message, which changes the prompt from its start and forces a full re-evaluation each call; history is bounded by compaction (by tokens), not by this. |
 | `files_dir` | `~/.llm-tulpa/files` | Where uploaded files are stored. |

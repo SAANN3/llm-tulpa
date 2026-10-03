@@ -83,6 +83,69 @@ impl Default for OllamaConfig {
     }
 }
 
+/// The llama.cpp server the backend runs itself (see `services/llama_runtime.rs`)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LlamaCppConfig {
+    /// The folder holding the llama.cpp release (`llama-server` and its libraries). Unset: the
+    /// app's own folder, `~/.llm-tulpa/llama`, where the setup step downloads it.
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+    /// The port the managed `llama-server` listens on (loopback only).
+    #[serde(default = "default_llama_port")]
+    pub port: u16,
+    /// Load the default model when the backend starts. Off: it loads on the first request.
+    #[serde(default)]
+    pub autostart: bool,
+    /// Stop the server after this many idle minutes, freeing the GPU. 0 never stops it.
+    #[serde(default)]
+    pub idle_unload_minutes: u64,
+    /// How long to wait for a model to finish loading, in seconds.
+    #[serde(default = "default_llama_load_timeout_secs")]
+    pub load_timeout_secs: u64,
+    /// Use a `llama-server` that is already running at this URL instead of starting one. The
+    /// backend then neither starts nor stops it, so a model can't be switched from the UI.
+    #[serde(default)]
+    pub external_url: Option<String>,
+}
+
+fn default_llama_port() -> u16 {
+    18080
+}
+
+fn default_llama_load_timeout_secs() -> u64 {
+    300
+}
+
+impl Default for LlamaCppConfig {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            port: default_llama_port(),
+            autostart: false,
+            idle_unload_minutes: 0,
+            load_timeout_secs: default_llama_load_timeout_secs(),
+            external_url: None,
+        }
+    }
+}
+
+impl LlamaCppConfig {
+    /// Where the backend reaches its llama-server.
+    pub fn base_url(&self) -> String {
+        self.external_url.clone().unwrap_or_else(|| format!("http://127.0.0.1:{}", self.port))
+    }
+
+    /// `dir` if set, else `~/.llm-tulpa/llama`. Panics without a home directory, like
+    /// `AppConfig::resolved_files_dir`.
+    pub fn resolved_dir(&self) -> PathBuf {
+        self.dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `llama_cpp.dir` in settings.json"))
+                .join(".llm-tulpa/llama")
+        })
+    }
+}
+
 /// Everything the backend is configured with, read from `settings.json` at startup. The
 /// database block and the JWT secret are written by the app itself (first run and the setup
 /// wizard); the rest is edited by hand — every field has a default, so a file that lists only
@@ -101,6 +164,8 @@ pub struct AppConfig {
     pub bind_addr: String,
     #[serde(default)]
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub llama_cpp: LlamaCppConfig,
     /// How many of a chat's most recent messages get pulled into a single turn.
     #[serde(default = "default_agent_history_len")]
     pub agent_history_len: u64,
@@ -151,6 +216,7 @@ impl AppConfig {
             jwt_secret: generate_secret(),
             bind_addr: default_bind_addr(),
             ollama: OllamaConfig::default(),
+            llama_cpp: LlamaCppConfig::default(),
             agent_history_len: default_agent_history_len(),
             files_dir: None,
             jobs_dir: None,

@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 
+use crate::services::llama_runtime::LlamaRuntime;
 use crate::services::{
     chat_store::{ChatStore, ContextUsage, DailyUsage, ModelUsage, StatsRange, ToolUsage},
     error::ErrorService,
     job_store::{JobKind, JobRecord, JobStatus, JobStore},
-    llm::{LlamaServerStats, OllamaService, RunningModel},
+    llm::{LlamaServerStats, LlmProviders, RunningModel},
     settings_store::SettingsStore,
 };
 
@@ -50,6 +51,10 @@ pub struct ContextSummary {
 /// What the model backend reports it is running; `reachable: false` when it didn't answer.
 pub struct ServerSnapshot {
     pub reachable: bool,
+    /// Why the managed llama.cpp isn't answering when it is the backend asked: `stopped`, `starting`,
+    /// `failed` or `not_installed`
+    pub state: Option<String>,
+    pub detail: Option<String>,
     pub models: Vec<RunningModel>,
     pub llama_server: Option<LlamaServerStats>,
 }
@@ -64,7 +69,8 @@ pub struct StatsFacade {
     chat_store: Arc<ChatStore>,
     job_store: Arc<JobStore>,
     settings_store: Arc<SettingsStore>,
-    ollama: Arc<OllamaService>,
+    providers: LlmProviders,
+    runtime: Arc<LlamaRuntime>,
     context_length: u64,
 }
 
@@ -73,10 +79,11 @@ impl StatsFacade {
         chat_store: Arc<ChatStore>,
         job_store: Arc<JobStore>,
         settings_store: Arc<SettingsStore>,
-        ollama: Arc<OllamaService>,
+        providers: LlmProviders,
+        runtime: Arc<LlamaRuntime>,
         context_length: u64,
     ) -> Self {
-        Self { chat_store, job_store, settings_store, ollama, context_length }
+        Self { chat_store, job_store, settings_store, providers, runtime, context_length }
     }
 
     fn ended_cleanly(job: &JobRecord) -> bool {
@@ -152,9 +159,14 @@ impl StatsFacade {
     /// error: the page shows "offline" instead of failing, and the cause is already logged where
     /// the request fails.
     pub async fn server(&self) -> ServerSnapshot {
-        match self.ollama.running_models().await {
-            Ok(running) => ServerSnapshot { reachable: true, models: running.models, llama_server: running.llama_server },
-            Err(_) => ServerSnapshot { reachable: false, models: vec![], llama_server: None },
+        // The managed llama.cpp has states of its own: a stopped or missing one is not "offline"
+        let status = self.runtime.status();
+        if matches!(status.state.as_str(), "stopped" | "starting" | "failed" | "not_installed") {
+            return ServerSnapshot { reachable: false, state: Some(status.state), detail: status.detail, models: vec![], llama_server: None };
+        }
+        match self.providers.default_provider().running_models().await {
+            Ok(running) => ServerSnapshot { reachable: true, state: None, detail: None, models: running.models, llama_server: running.llama_server },
+            Err(_) => ServerSnapshot { reachable: false, state: None, detail: None, models: vec![], llama_server: None },
         }
     }
 }

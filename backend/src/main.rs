@@ -15,7 +15,7 @@ use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
-use services::{llm::OllamaService, tools::ToolService};
+use services::{event_bus::EventBus, llama_runtime::LlamaRuntime, llm::{LlamaCppProvider, LlmProviders, OllamaService}, tools::ToolService};
 use state::AppState;
 use tools::base::Tool;
 use tools::temperature::TemperatureTool;
@@ -47,7 +47,21 @@ async fn main() {
     tool_list.extend(tools::chat::collect());
     let tools = Arc::new(ToolService::new(tool_list));
 
-    let state = Arc::new(AppState::new(config, ollama, tools));
+    let events = Arc::new(EventBus::new());
+    let runtime = LlamaRuntime::new(config.llama_cpp.clone(), events.clone());
+    ollama.share_gpu_with(runtime.clone());
+    runtime.set_before_start({
+        let ollama = ollama.clone();
+        move || {
+            let ollama = ollama.clone();
+            Box::pin(async move { ollama.unload_all().await })
+        }
+    });
+    let llama_cpp = Arc::new(LlamaCppProvider::new(runtime.clone(), config.model_dir.clone(), config.llama_cpp.base_url(), config.ollama.context_length));
+    let providers = LlmProviders::new(llama_cpp, vec![ollama.clone()]);
+
+    let state = Arc::new(AppState::new(config, ollama, providers, tools, events, runtime.clone()));
+    let shutdown = state.shutdown.clone();
 
     // No database configured (first run) or an unreachable one: start in setup mode, and let
     // the wizard (or a later status poll) bring the services up.
@@ -76,5 +90,33 @@ async fn main() {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown)).await.unwrap();
+
+    // The model server is the backend's child: leaving it behind would keep the model in VRAM.
+    runtime.shutdown().await;
+}
+
+/// Resolves on Ctrl-C or, on Unix, SIGTERM (what `docker stop` and a service manager send).
+async fn shutdown_signal(shutdown: tokio_util::sync::CancellationToken) {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    // Open event streams would otherwise keep the server waiting for ever
+    shutdown.cancel();
 }

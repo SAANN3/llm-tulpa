@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
@@ -10,16 +10,19 @@ use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::{ChatStore, ChatFacts, Message, MessageTimings, NewMessage, NewToolCall, ToolCallOut},
+    chat_store::{Chat, ChatStore, ChatFacts, Message, MessageTimings, NewMessage, NewToolCall, ToolCallOut},
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
     job_store::{JobKind, JobRecord, JobStatus, JobStore},
-    llm::{OllamaChatMessage, OllamaChatResponse, OllamaService, ThinkChoice, OllamaToolCall, OllamaToolCallFunction},
+    llm::{CallParams, ChatMessage, LaunchRequest, ChatResponse, LlmProvider, LlmProviders, ThinkChoice, ModelToolCall, ModelToolCallFunction},
     permission_store::{PermissionStore, PermissionStoreErrors},
+    preset_store::PresetStore,
     settings_store::SettingsStore,
     tools::ToolService,
 };
+use crate::facade::launch::LaunchFacade;
+use crate::services::llama_runtime::CallGuard;
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
 use crate::tools::llm::return_agent::ReturnAgentTool;
 use crate::tools::subagent::{self, SubagentHandle};
@@ -28,7 +31,7 @@ use crate::tools::ui::attach_file::AttachFileTool;
 mod subagent_run;
 
 
-/// `compaction_trigger_tokens`/`compaction_keep_chars` (below) are derived from the
+/// `trigger_tokens`/`keep_chars` (below) are derived from the
 /// real, configured context window rather than hardcoded — otherwise they'd silently
 /// drift out of sync with `OLLAMA_CONTEXT_LENGTH` if that's ever changed without also
 /// hand-editing these. `TRIGGER_FRACTION` leaves real headroom under the ceiling
@@ -42,7 +45,7 @@ mod subagent_run;
 /// agentic, tool/code-heavy chat's real content tokenizes far less efficiently than
 /// prose (observed ~2.3 chars/token on a real chat's `os.execute_command`/
 /// `web.request`-heavy tail, against a naive ~4+ for plain English). Too little
-/// margin here means `compaction_keep_chars` ends up corresponding to nearly the
+/// margin here means `keep_chars` ends up corresponding to nearly the
 /// *entire* context window in real tokens instead of a meaningfully smaller kept
 /// slice — the kept tail then sits right at that ceiling with almost nothing left
 /// eligible to fold, so compaction re-triggers on nearly every turn (each one
@@ -306,7 +309,7 @@ fn with_attached_files_note(content: String, file_ids: &[i64]) -> String {
 /// Qwen 3.8 and similar models produce rich reasoning traces that are critical for
 /// avoiding amnesia and repetitive exploration loops across turns. However, an
 /// anomalous run-away reasoning turn could single-handedly consume the uncompacted
-/// history budget (`compaction_keep_chars`). Capping at 10,000 characters (~2,500–3,000
+/// history budget (`keep_chars`). Capping at 10,000 characters (~2,500–3,000
 /// tokens) preserves several turns of deep reasoning while preventing pathological
 /// budget exhaustion.
 const MAX_REPLAYED_THINKING_CHARS: usize = 10_000;
@@ -340,7 +343,7 @@ fn cap_replayed_thinking(thinking: &str) -> String {
 }
 
 /// What Ollama reported about the time the call behind `response` took, for storing with its message
-fn timings_of(response: &OllamaChatResponse) -> MessageTimings {
+fn timings_of(response: &ChatResponse) -> MessageTimings {
     MessageTimings {
         eval_ms: response.eval_duration_ms(),
         prompt_eval_ms: response.prompt_eval_duration_ms(),
@@ -442,7 +445,7 @@ fn job_notice_text(job: &JobRecord) -> String {
 /// before injecting a dynamic circuit-breaker notice into the prompt.
 const READ_ONLY_STREAK_THRESHOLD: usize = 5;
 
-fn read_only_streak_notice(messages: &[OllamaChatMessage]) -> Option<String> {
+fn read_only_streak_notice(messages: &[ChatMessage]) -> Option<String> {
     let mut streak = 0;
     for msg in messages.iter().rev() {
         if msg.role == "user" {
@@ -485,14 +488,35 @@ fn read_only_streak_notice(messages: &[OllamaChatMessage]) -> Option<String> {
     }
 }
 
-/// Facade over `OllamaService`, `ChatStore`, and `ToolService` — where the actual
+/// Facade over the model providers, `ChatStore`, and `ToolService` — where the actual
 /// "fetch history, call Ollama, persist the result, run tool calls" sequencing lives,
 /// rather than in route handlers or inside any one of the services it composes. Holds
 /// its own `Arc` clones of each rather than borrowing from `AppState`, so it can be
 /// used independently of any particular request's `State` extraction.
+/// How long a turn's claim on the model server outlasts its last model call.
+const TURN_HOLD_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// What a chat ran on when its turn started: a model change made while the turn goes on waits for
+/// the next prompt.
+#[derive(Clone)]
+struct TurnBinding {
+    model_id: i64,
+    provider: String,
+    model: String,
+    launch_profile_id: Option<i64>,
+}
+
+struct TurnHold {
+    _guard: CallGuard,
+    generation: u64,
+    binding: TurnBinding,
+}
+
 #[derive(Clone)]
 pub struct Agent {
-    ollama: Arc<OllamaService>,
+    providers: LlmProviders,
+    presets: Arc<PresetStore>,
+    launch: Arc<LaunchFacade>,
     chat_store: Arc<ChatStore>,
     tools: Arc<ToolService>,
     /// Template `use_tool` calls `copy_with_chat_id` on to get the real, per-call
@@ -516,11 +540,9 @@ pub struct Agent {
     /// context length is — how much history is worth paying for is a deployment
     /// decision, not something this code should hardcode.
     history_len: u64,
-    /// See `TRIGGER_FRACTION` — `context_length * TRIGGER_FRACTION`, computed once
-    /// here rather than at every `maybe_compact` call.
-    compaction_trigger_tokens: u64,
-    /// See `KEEP_CHARS_PER_TOKEN` — `context_length * KEEP_CHARS_PER_TOKEN`.
-    compaction_keep_chars: usize,
+    /// The configured context window: what a chat with no launch profile runs under, and what a
+    /// sub-agent's inlined result is sized against.
+    context_length: u64,
     /// See `INLINED_RESULT_FRACTION` — the most of a sub-agent's result a notice carries.
     max_inlined_result_bytes: u64,
     /// Chats with a tool call executing right now. See `RunningToolGuard`.
@@ -529,6 +551,10 @@ pub struct Agent {
     /// killed). Their tool calls are the backend's to run, so `is_running` treats them as busy —
     /// without it, opening one between two of its calls would look like a call cut short by a restart.
     live_subagents: Arc<Mutex<HashSet<i64>>>,
+    /// What keeps the model server on a chat's launch profile from the turn's first model call until
+    /// its final reply, across the tool runs and permission prompts between model calls — see
+    /// `hold_turn`.
+    turn_holds: Arc<Mutex<HashMap<i64, TurnHold>>>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
     /// for both than running back to back.
@@ -565,7 +591,7 @@ impl Agent {
     // with the services rather than with anything that would be clearer grouped.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        ollama: Arc<OllamaService>,
+        providers: LlmProviders,
         chat_store: Arc<ChatStore>,
         tools: Arc<ToolService>,
         file_store: Arc<FileStore>,
@@ -573,27 +599,32 @@ impl Agent {
         events: Arc<EventBus>,
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
+        presets: Arc<PresetStore>,
+        launch: Arc<LaunchFacade>,
         history_len: u64,
         context_length: u64,
     ) -> Self {
         // `chat_id: 0` here is a placeholder — never read as-is, always replaced via
-        // `copy_with_chat_id` before a tool actually sees this context. `ollama` is
-        // cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
+        // `copy_with_chat_id` before a tool actually sees this context. `providers`
+        // is cloned (an `Arc` bump) rather than moved directly, since `Agent` itself also
         // holds its own copy below.
         let tool_context =
             ToolContext {
                 file_store,
-                ollama: ollama.clone(),
+                providers: providers.clone(),
                 job_store: job_store.clone(),
                 chat_store: chat_store.clone(),
                 events,
                 chat_id: 0,
                 user_id: 0,
                 model: String::new(),
+                provider: String::new(),
                 subagents: Arc::new(SubagentHandle::new()),
             };
         Self {
-            ollama,
+            providers,
+            presets,
+            launch,
             chat_store,
             tools,
             tool_context,
@@ -601,12 +632,12 @@ impl Agent {
             permission_store,
             settings_store,
             history_len,
-            compaction_trigger_tokens: (context_length as f64 * TRIGGER_FRACTION) as u64,
-            compaction_keep_chars: (context_length as f64 * KEEP_CHARS_PER_TOKEN) as usize,
+            context_length,
             max_inlined_result_bytes: (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN)
                 as u64,
             running_tools: Arc::new(Mutex::new(HashSet::new())),
             live_subagents: Arc::new(Mutex::new(HashSet::new())),
+            turn_holds: Arc::new(Mutex::new(HashMap::new())),
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }
@@ -723,8 +754,8 @@ impl Agent {
         // order in the chat). The last of them is what `advance` sends as the newest
         // message; the rest go in front of it as ordinary history.
         let ollama_content = with_attached_files_note(prompt, &file_ids);
-        let mut tail = vec![OllamaService::user_message_with_images(ollama_content, images)];
-        tail.extend(notices.iter().map(|notice| OllamaService::user_message(notice.content.clone())));
+        let mut tail = vec![ChatMessage::user_with_images(ollama_content, images)];
+        tail.extend(notices.iter().map(|notice| ChatMessage::user(notice.content.clone())));
         let new_message = tail.pop();
         let mut messages = messages;
         messages.extend(tail);
@@ -913,8 +944,58 @@ impl Agent {
     async fn advance(
         &self,
         chat_id: i64,
-        mut messages: Vec<OllamaChatMessage>,
-        new_message: Option<OllamaChatMessage>,
+        messages: Vec<ChatMessage>,
+        new_message: Option<ChatMessage>,
+        think: Option<ThinkChoice>,
+        notices: Vec<NoticeOut>,
+        can_auto_continue: bool,
+    ) -> Result<ChatOut, ErrorService> {
+        let result = self.advance_once(chat_id, messages, new_message, think, notices, can_auto_continue).await;
+        // A reply that asks for tools means the turn goes on (the tools run, the model is called
+        // again): the model server stays claimed. Anything else ends it.
+        if !result.as_ref().is_ok_and(|out| out.can_use_tools) {
+            self.turn_holds.lock().unwrap().remove(&chat_id);
+        }
+        result
+    }
+
+    /// Claims the model server for `chat_id`'s turn on its launch profile, and keeps the claim until
+    /// the turn ends (`advance`) or `TURN_HOLD_TTL` passes without another model call, which is how a
+    /// turn left at a permission prompt that nobody answers lets go. While held, another user who
+    /// needs a different profile is told to wait instead of reloading under the turn and discarding
+    /// its cached prompt.
+    async fn hold_turn(&self, chat: &Chat, provider: &dyn LlmProvider, launch: Option<&LaunchRequest>) -> Result<(), ErrorService> {
+        let chat_id = chat.id;
+        let guard = provider.acquire(launch).await?;
+        let generation = {
+            let mut holds = self.turn_holds.lock().unwrap();
+            let generation = holds.get(&chat_id).map_or(0, |h| h.generation + 1);
+            let binding = holds.get(&chat_id).map(|h| h.binding.clone()).unwrap_or_else(|| TurnBinding {
+                model_id: chat.model_id,
+                provider: chat.provider.clone(),
+                model: chat.model.clone(),
+                launch_profile_id: chat.launch_profile_id,
+            });
+            // The old claim (if any) is dropped here, after the new one is in place
+            holds.insert(chat_id, TurnHold { _guard: guard, generation, binding });
+            generation
+        };
+        let holds = self.turn_holds.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(TURN_HOLD_TTL).await;
+            let mut holds = holds.lock().unwrap();
+            if holds.get(&chat_id).is_some_and(|h| h.generation == generation) {
+                holds.remove(&chat_id);
+            }
+        });
+        Ok(())
+    }
+
+    async fn advance_once(
+        &self,
+        chat_id: i64,
+        mut messages: Vec<ChatMessage>,
+        new_message: Option<ChatMessage>,
         think: Option<ThinkChoice>,
         notices: Vec<NoticeOut>,
         can_auto_continue: bool,
@@ -924,9 +1005,16 @@ impl Agent {
         // so plugin enable/disable can update the set concurrently with ongoing turns.
         let tools_snapshot: Vec<Arc<dyn Tool>> = self.tools.snapshot_tools().await;
 
-        // The chat metadata, read fresh so a model switch takes effect on this very turn
-        // and last_prompt_tokens is available for accurate budget calculation.
-        let chat = self.chat_store.chat(chat_id).await?;
+        // The chat metadata, read fresh so a model switch takes effect with the next prompt and
+        // last_prompt_tokens is available for accurate budget calculation.
+        let mut chat = self.chat_store.chat(chat_id).await?;
+        // Switching the model of a chat in the middle of its turn takes effect with the next prompt
+        if let Some(held) = self.turn_holds.lock().unwrap().get(&chat_id).map(|h| h.binding.clone()) {
+            chat.model_id = held.model_id;
+            chat.provider = held.provider;
+            chat.model = held.model;
+            chat.launch_profile_id = held.launch_profile_id;
+        }
 
         // Which tools the model is shown depends on whether this chat is a sub-agent's — see
         // `subagent::available_to`. Filtering the list (rather than only refusing a call) is what
@@ -937,6 +1025,9 @@ impl Agent {
             .map(|t| t.as_ref())
             .filter(|t| subagent::available_to(t.function_name(), is_subagent))
             .collect();
+        let provider = self.providers.get(&chat.provider)?;
+        let params = self.call_params(&chat).await?;
+        self.hold_turn(&chat, provider.as_ref(), params.launch.as_ref()).await?;
         let model = chat.model;
         let known_prompt_tokens = chat.last_prompt_tokens.map(|t| t as u64);
 
@@ -972,7 +1063,7 @@ impl Agent {
         let attached_files = Self::pending_attached_files(&messages);
         let streak_note = read_only_streak_notice(&messages);
 
-        let mut messages_with_system = vec![OllamaService::system_message(system_prompt)];
+        let mut messages_with_system = vec![ChatMessage::system(system_prompt)];
         messages_with_system.extend(messages);
 
         // Stamped onto whichever message is newest — `new_message` when there is one
@@ -1014,8 +1105,7 @@ impl Agent {
         let started_at = Instant::now();
         let mut regenerations = Regenerations::default();
         let response = loop {
-            let response = self
-                .ollama
+            let response = provider
                 .chat(
                     messages_with_system.clone(),
                     new_message.clone(),
@@ -1023,6 +1113,7 @@ impl Agent {
                     think.clone(),
                     &model,
                     known_prompt_tokens,
+                    &params,
                 )
                 .await?;
 
@@ -1038,7 +1129,7 @@ impl Agent {
                 });
             }
 
-            let Some(problem) = self.unusable_reply(&response, &model).await else { break response };
+            let Some(problem) = self.unusable_reply(provider.as_ref(), &response, &model).await else { break response };
 
             if problem == ReplyProblem::CutOffInThinking && can_auto_continue {
                 let thought_trace = response
@@ -1220,6 +1311,23 @@ impl Agent {
         Ok(out)
     }
 
+    /// What a call for this chat may override about how its model runs: the context window of the
+    /// launch profile it runs on (when the profile fixes one), and the sampling the chat's user has
+    /// chosen for the model. A chat on a model with no profile, and a user with no chosen preset,
+    /// override nothing and get the server's own behavior.
+    async fn call_params(&self, chat: &Chat) -> Result<CallParams, ErrorService> {
+        let launch = self.launch.request_for(chat.user_id, chat.model_id, chat.launch_profile_id).await?;
+        let context_length = launch.as_ref().and_then(|l| l.profile.context_length).map(|c| c as u64);
+        let sampling = self.presets.effective_sampling(chat.user_id, chat.model_id).await?;
+        Ok(CallParams { launch, context_length, sampling })
+    }
+
+    /// The context window `chat_id`'s model runs under.
+    async fn context_of(&self, chat_id: i64) -> Result<u64, ErrorService> {
+        let chat = self.chat_store.chat(chat_id).await?;
+        Ok(self.launch.contexts(self.context_length).await?.for_profile(chat.launch_profile_id))
+    }
+
     /// Whether a model reply is unusable — see `ReplyProblem` — and so should be asked for
     /// again rather than stored. A reply that carries a real tool call is always usable,
     /// and so is one that was cut off by the token limit: asking again would just run
@@ -1227,10 +1335,10 @@ impl Agent {
     ///
     /// Tool-call-as-text is recognized by the model's own wrapper tags (`<tool_call>` /
     /// `</tool_call>` for Qwen, whatever another model's template says — see
-    /// `OllamaService::tool_call_markers`) turning up in its reasoning or answer with no
+    /// `LlmProvider::tool_call_markers`) turning up in its reasoning or answer with no
     /// call actually parsed. Emptiness alone deliberately doesn't count as that: it can be
     /// a legitimate reply, so it's its own, more cautious, problem.
-    async fn unusable_reply(&self, response: &OllamaChatResponse, model: &str) -> Option<ReplyProblem> {
+    async fn unusable_reply(&self, provider: &dyn LlmProvider, response: &ChatResponse, model: &str) -> Option<ReplyProblem> {
         let message = &response.message;
         if message.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty()) {
             return None;
@@ -1247,7 +1355,7 @@ impl Agent {
         // template lookup off the path of every ordinary reply.
         let texts = [message.thinking.as_deref().unwrap_or_default(), message.content.as_str()];
         if texts.iter().any(|text| text.contains("tool_call") || text.contains("function_call")) {
-            let markers = self.ollama.tool_call_markers(model).await;
+            let markers = provider.tool_call_markers(model).await;
             if texts.iter().any(|text| markers.iter().any(|marker| text.contains(marker.as_str()))) {
                 return Some(ReplyProblem::ToolCallAsText);
             }
@@ -1262,7 +1370,7 @@ impl Agent {
     /// message, prefixed with key facts (if any). Only what's newer is sent verbatim;
     /// otherwise this is the full history up to `history_len`, same as before compaction
     /// existed.
-    async fn ollama_history(&self, chat_id: i64) -> Result<Vec<OllamaChatMessage>, ErrorService> {
+    async fn ollama_history(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
 
         match (&chat.summary, chat.summary_up_to_message_id) {
@@ -1293,7 +1401,7 @@ impl Agent {
                 system_content.push_str("\n\nSummary of everything before this point:\n\n");
                 system_content.push_str(summary);
 
-                let mut history = vec![OllamaService::system_message(system_content)];
+                let mut history = vec![ChatMessage::system(system_content)];
                 history.extend(recent.into_iter().rev().map(Self::to_ollama_message));
                 Ok(history)
             }
@@ -1305,25 +1413,32 @@ impl Agent {
     }
 
     /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over
-    /// `compaction_trigger_tokens` and, if so, compacts older history into
+    /// `trigger_tokens` and, if so, compacts older history into
     /// `Chat::summary` before returning — so the *next* request (a fresh turn, or
     /// another `continue_chat` later in the same tool-calling round) builds a smaller
     /// prompt via `ollama_history`. Best-effort: a failure here doesn't fail the turn
     /// that already succeeded, it just means history stays as big as it is and gets
     /// another chance to trigger this again.
     async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>) {
-        if prompt_eval_count.unwrap_or(0) < self.compaction_trigger_tokens {
+        // The thresholds follow the window the chat's own model runs under (its launch profile's
+        // context), not one global number. A failed lookup is a reason to skip this check, not to fail.
+        let context = match self.context_of(chat_id).await {
+            Ok(context) => context,
+            Err(_) => return,
+        };
+        let trigger_tokens = (context as f64 * TRIGGER_FRACTION) as u64;
+        if prompt_eval_count.unwrap_or(0) < trigger_tokens {
             return;
         }
 
         tracing::info!(
             chat_id,
             prompt_eval_count,
-            trigger_threshold = self.compaction_trigger_tokens,
+            trigger_threshold = trigger_tokens,
             "compaction triggered for chat_id {chat_id}"
         );
 
-        if let Err(e) = self.compact(chat_id).await {
+        if let Err(e) = self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize).await {
             tracing::warn!(
                 "history compaction failed for chat {chat_id}: {}",
                 e.message.as_deref().unwrap_or("unknown error")
@@ -1332,11 +1447,11 @@ impl Agent {
     }
 
     /// Folds the oldest not-yet-summarized messages into `Chat::summary` until what's
-    /// left is under `compaction_keep_chars`, merging in the existing summary (if any)
+    /// left is under `keep_chars`, merging in the existing summary (if any)
     /// rather than discarding it. No-ops if everything already fits — that means
-    /// `compaction_trigger_tokens` fired on a single outsized turn rather than a long
+    /// `trigger_tokens` fired on a single outsized turn rather than a long
     /// history, which folding can't help with.
-    async fn compact(&self, chat_id: i64) -> Result<(), ErrorService> {
+    async fn compact(&self, chat_id: i64, keep_chars: usize) -> Result<(), ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         let after_id = chat.summary_up_to_message_id.unwrap_or(0);
 
@@ -1354,14 +1469,14 @@ impl Agent {
                     + message.images.iter().map(String::len).sum::<usize>()
             })
             .collect();
-        let split_at = pick_compaction_boundary(&sizes, self.compaction_keep_chars);
+        let split_at = pick_compaction_boundary(&sizes, keep_chars);
 
         if split_at == 0 {
             tracing::info!(
                 chat_id,
                 total_messages = messages.len(),
-                keep_chars = self.compaction_keep_chars,
-                "compaction skipped: recent history already fits within compaction_keep_chars"
+                keep_chars,
+                "compaction skipped: recent history already fits within keep_chars"
             );
             return Ok(());
         }
@@ -1377,8 +1492,8 @@ impl Agent {
             "calling summarize for chat_id {chat_id}"
         );
 
-        let summary = self.summarize(chat.summary.clone(), to_fold, &chat.model).await?;
-        let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.model).await;
+        let summary = self.summarize(chat.summary.clone(), to_fold, &chat.provider, &chat.model).await?;
+        let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.provider, &chat.model).await;
         let existing_facts_count = chat.key_facts.as_ref().map_or(0, |f| f.facts.len());
         let merged = Self::merge_facts(chat.key_facts.clone().unwrap_or_default(), facts.goal, facts.facts);
         // `merge_facts` only ever appends, so this can't underflow in practice — saturating
@@ -1402,6 +1517,7 @@ impl Agent {
         &self,
         existing_summary: Option<String>,
         to_fold: &[Message],
+        provider: &str,
         model: &str,
     ) -> Result<String, ErrorService> {
         // The image data itself never goes into the transcript (it's not text, and this
@@ -1429,7 +1545,7 @@ impl Agent {
             .map(|summary| format!("Summary of everything before this excerpt:\n{summary}\n\n"))
             .unwrap_or_default();
 
-        let system = OllamaService::system_message(
+        let system = ChatMessage::system(
             "Summarize the conversation excerpt that follows into concise continuity notes. \
              Structure the summary using these three clear sections:\n\
              1. ESTABLISHED FACTS & FINDINGS: Confirmed discoveries, codebase structure, and \
@@ -1451,7 +1567,7 @@ impl Agent {
              rather than inventing an explanation. Write plain notes, not a reply."
                 .to_string(),
         );
-        let user = OllamaService::user_message(format!(
+        let user = ChatMessage::user(format!(
             "{prior}Conversation excerpt to summarize:\n\n{transcript}"
         ));
 
@@ -1463,8 +1579,9 @@ impl Agent {
         // prompt above asks it to preserve. Reasoning first turned out to hurt the
         // thing it was meant to help here, not just cost more.
         let response = self
-            .ollama
-            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None)
+            .providers
+            .get(provider)?
+            .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None, &CallParams::default())
             .await?;
         Ok(response.message.content)
     }
@@ -1503,6 +1620,7 @@ impl Agent {
         &self,
         to_fold: &[Message],
         existing_key_facts: Option<ChatFacts>,
+        provider: &str,
         model: &str,
     ) -> ChatFacts {
         let existing = existing_key_facts.as_ref();
@@ -1524,7 +1642,7 @@ impl Agent {
 
         let transcript = Self::transcript_of(to_fold);
 
-        let system = OllamaService::system_message(format!(
+        let system = ChatMessage::system(format!(
             "Extract key facts from the conversation excerpt. Output ONLY a JSON object: \
              {{\"goal\": <string|null>, \"facts\": [<string>]}}. No prose, no markdown, no \
              code fences.\n\
@@ -1557,16 +1675,25 @@ impl Agent {
              {existing_facts_str}"
         ));
 
-        let user = OllamaService::user_message(format!(
+        let user = ChatMessage::user(format!(
             "Extract new key facts from the conversation excerpt below.
 
 Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             existing_goal.as_deref().unwrap_or("(none)"),
         ));
 
-        match self.ollama.chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None).await {
+        // Best-effort (see above): a provider that can't be found is the same failure as one that
+        // can't answer, and falls back the same way.
+        let result = match self.providers.get(provider) {
+            Ok(provider) => provider
+                .chat(vec![system], Some(user), &[], Some(ThinkChoice::Enabled(false)), model, None, &CallParams::default())
+                .await
+                .map_err(ErrorService::from),
+            Err(err) => Err(err),
+        };
+        match result {
             Err(err) => {
-                let es: ErrorService = err.into();
+                let es: ErrorService = err;
                 tracing::warn!(
                     error = es.message.as_deref().unwrap_or("unknown error"),
                     "fact extraction ollama call failed, using existing facts"
@@ -1740,7 +1867,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
 
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
-                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.model);
+                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.provider, chat.model);
                 match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
                     Ok(value) => (true, false, None, value),
                     Err(e) => {
@@ -1994,7 +2121,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// generated. Everything from here to the end of history is this turn's own
     /// tool-calling rounds (`assistant` messages requesting tools, `tool` messages
     /// with their results), so no other role needs to stop the scan.
-    fn pending_attached_files(messages: &[OllamaChatMessage]) -> Vec<i64> {
+    fn pending_attached_files(messages: &[ChatMessage]) -> Vec<i64> {
         let attach_file_name = AttachFileTool.function_name();
         let mut file_ids: Vec<i64> = messages
             .iter()
@@ -2009,7 +2136,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     }
 
     /// Maps a persisted `Message` back into the shape Ollama's `/api/chat` expects for
-    /// history. `OllamaToolCall::id` is left empty — we never persisted Ollama's
+    /// history. `ModelToolCall::id` is left empty — we never persisted Ollama's
     /// original per-call id (only `function.name`/`arguments`, which is all replaying
     /// history needs), and it's not yet confirmed whether Ollama expects/uses `id` at
     /// all on the *outgoing* (request) side versus just returning it in responses.
@@ -2020,7 +2147,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// happens AFTER `with_attached_files_note` so any file annotations remain inside
     /// `content` under the `<think>` block.
     ///
-    /// We deliberately keep `OllamaChatMessage::thinking` as `None` rather than passing a
+    /// We deliberately keep `ChatMessage::thinking` as `None` rather than passing a
     /// separate field: upstream chat templates and API proxies (such as OpenAI-compatible
     /// endpoints like `llama-mtp`) do not consistently support or forward a separate
     /// reasoning input field on prior turns, whereas textual concatenation inside `content` is
@@ -2028,14 +2155,14 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     ///
     /// Replayed thinking is capped at `MAX_REPLAYED_THINKING_CHARS` (keeping the freshest tail)
     /// to prevent an anomalous reasoning turn from consuming the uncompacted context budget.
-    fn to_ollama_message(message: Message) -> OllamaChatMessage {
-        let tool_calls: Vec<OllamaToolCall> = message
+    fn to_ollama_message(message: Message) -> ChatMessage {
+        let tool_calls: Vec<ModelToolCall> = message
             .tool_calls
             .into_iter()
             .enumerate()
-            .map(|(index, call)| OllamaToolCall {
+            .map(|(index, call)| ModelToolCall {
                 id: String::new(),
-                function: OllamaToolCallFunction {
+                function: ModelToolCallFunction {
                     index: Some(index as u32),
                     name: call.tool_name,
                     arguments: call.arguments,
@@ -2049,7 +2176,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
             content = format!("<think>\n{capped}\n</think>\n\n{content}");
         }
 
-        OllamaChatMessage {
+        ChatMessage {
             // A `notice` is the backend telling the model something (a job finished) —
             // chat templates only know system/user/assistant/tool, and it reads as
             // something said to the model, so it goes out as a `user` message.
@@ -2160,7 +2287,7 @@ fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
 /// `Agent`'s outputs (this one included) derive `Serialize` and go straight out as JSON
 /// from route handlers, unlike service-layer types — `Agent` *is* the app's public API
 /// shape already (that's what a facade is), so there's nothing upstream-specific left to
-/// strip before a route can return it, unlike `OllamaChatMessage` et al.
+/// strip before a route can return it, unlike `ChatMessage` et al.
 #[derive(Serialize, ToSchema)]
 pub struct AgentToolCall {
     pub permission: AgentToolPermission,
@@ -2171,7 +2298,7 @@ pub struct AgentToolCall {
 
 /// Facade-owned mirror of `tools::base::ToolPermission` — kept as a separate type
 /// (rather than deriving `Serialize`/`ToSchema` on the original and reusing it
-/// directly) for the same reason `OllamaChatMessage` never goes straight out over our
+/// directly) for the same reason `ChatMessage` never goes straight out over our
 /// API: the tools layer's internal shape shouldn't be what callers of `Agent` end up
 /// depending on.
 #[derive(Serialize, ToSchema)]

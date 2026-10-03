@@ -41,7 +41,15 @@ pub async fn set_settings(
     // default model deliberately doesn't regenerate them: what's cached still reads fine, and
     // it's replaced by itself when it ages out.
     let affects_generated_content = body.name.is_some() || body.timezone.is_some();
+    let changed_model = body.active_model.is_some();
     services.settings_store.update(auth.id, body).await?;
+
+    // Calls that name no launch (greeting, chat names) run on the default model's profile
+    if changed_model {
+        if let Some(request) = services.launches.default_request_for(auth.id).await? {
+            state.runtime.set_default(request);
+        }
+    }
 
     // The greeting and placeholders were generated from the old name/timezone.
     if affects_generated_content {

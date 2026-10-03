@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{agent::Agent, export::ExportFacade, prompt::PromptFacade, stats::StatsFacade};
+use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
@@ -15,8 +15,8 @@ use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::services::{
     chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore,
-    folder_store::FolderStore, job_store::JobStore,
-    llm::OllamaService, migrate::run_migrations,
+    folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
+    llama_runtime::LlamaRuntime, llm::LlmProviders, migrate::run_migrations, preset_store::PresetStore,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
     plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
     user_store::UserStore,
@@ -37,6 +37,9 @@ pub struct AppServices {
     pub file_store: Arc<FileStore>,
     pub folder_store: Arc<FolderStore>,
     pub job_store: Arc<JobStore>,
+    pub launch_store: Arc<LaunchStore>,
+    pub preset_store: Arc<PresetStore>,
+    pub launches: Arc<LaunchFacade>,
     pub agent: Arc<Agent>,
     pub prompt: PromptFacade,
     pub stats: StatsFacade,
@@ -76,6 +79,18 @@ impl AppServices {
     /// frontend back to the wizard, rather than leaving every request to fail on its own.
     pub async fn ping(&self) -> bool {
         self.db.execute_unprepared("SELECT 1").await.is_ok()
+    }
+
+    /// Whether a release has changed the setup since the owner last went through it.
+    pub async fn setup_update_available(&self) -> bool {
+        crate::services::migrate::setup_revision(&self.db).await.is_ok_and(|rev| rev < crate::services::migrate::SETUP_REVISION)
+    }
+
+    pub async fn complete_setup(&self) -> Result<(), ErrorService> {
+        crate::services::migrate::complete_setup(&self.db).await.map_err(|e| {
+            tracing::error!("could not record the setup as complete: {e}");
+            ErrorService::internal("database query failed")
+        })
     }
 }
 
@@ -146,11 +161,13 @@ pub async fn bootstrap(
     files_dir: PathBuf,
     jobs_dir: PathBuf,
     job_log_retention_days: u64,
-    ollama: Arc<OllamaService>,
+    providers: LlmProviders,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
     agent_history_len: u64,
     ollama_context_length: u64,
+    model_dir: Option<PathBuf>,
+    runtime: Arc<LlamaRuntime>,
 ) -> Result<AppServices, BootstrapError> {
     if !is_plain_identifier(db_name) {
         return Err(BootstrapError::InvalidDatabaseName);
@@ -187,15 +204,25 @@ pub async fn bootstrap(
     let user_store = Arc::new(UserStore::new(db.clone()));
     let model_store = Arc::new(ModelStore::new(db.clone()));
     let folder_store = Arc::new(FolderStore::new(db.clone()));
-    let chat_store = Arc::new(ChatStore::new(db.clone(), model_store.clone(), user_store.clone(), folder_store.clone()));
+    let launch_store = Arc::new(LaunchStore::new(db.clone()));
+    let preset_store = Arc::new(PresetStore::new(db.clone()));
+    let chat_store = Arc::new(ChatStore::new(
+        db.clone(),
+        model_store.clone(),
+        user_store.clone(),
+        folder_store.clone(),
+        launch_store.clone(),
+    ));
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
+    let launches = Arc::new(LaunchFacade::new(providers.clone(), runtime.clone(), launch_store.clone(), model_store.clone(), user_store.clone(), model_dir));
+
     let agent = Arc::new(Agent::new(
-        ollama.clone(),
+        providers.clone(),
         chat_store.clone(),
         tools.clone(),
         file_store.clone(),
@@ -203,16 +230,19 @@ pub async fn bootstrap(
         events.clone(),
         permission_store.clone(),
         settings_store.clone(),
+        preset_store.clone(),
+        launches.clone(),
         agent_history_len,
         ollama_context_length,
     ));
     agent.bind_subagent_runner();
-    let prompt = PromptFacade::new(ollama.clone());
+    let prompt = PromptFacade::new(providers.clone());
     let stats = StatsFacade::new(
         chat_store.clone(),
         job_store.clone(),
         settings_store.clone(),
-        ollama.clone(),
+        providers.clone(),
+        runtime.clone(),
         ollama_context_length,
     );
     let export = ExportFacade::new(chat_store.clone(), file_store.clone(), settings_store.clone());
@@ -221,7 +251,7 @@ pub async fn bootstrap(
     // A tool-less agent for plugin conversations — real persistence and replies with zero
     // tool-calling risk, sharing the same stores as the main agent.
     let plugin_agent = Arc::new(Agent::new(
-        ollama.clone(),
+        providers.clone(),
         chat_store.clone(),
         Arc::new(ToolService::new(vec![])),
         file_store.clone(),
@@ -229,6 +259,8 @@ pub async fn bootstrap(
         events,
         permission_store.clone(),
         settings_store.clone(),
+        preset_store.clone(),
+        launches.clone(),
         agent_history_len,
         ollama_context_length,
     ));
@@ -255,6 +287,9 @@ pub async fn bootstrap(
         file_store,
         folder_store,
         job_store,
+        launch_store,
+        preset_store,
+        launches,
         agent,
         prompt,
         stats,
@@ -263,6 +298,15 @@ pub async fn bootstrap(
         plugin_registry,
         context_length: ollama_context_length,
     };
+
+    // What a call that names no launch runs when nothing is loaded, and what the server loads at
+    // boot when `llama_cpp.autostart` is on. Best effort: no owner or model yet is the normal case
+    // before setup.
+    match services.launches.default_request().await {
+        Ok(Some(request)) => runtime.remember_default(request),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("could not work out the default model launch: {}", e.message.unwrap_or_default()),
+    }
 
     // A previous adoption that didn't finish (the owner exists, the legacy data is still there)
     // is retried here rather than waiting for a first-run request that will never come again.

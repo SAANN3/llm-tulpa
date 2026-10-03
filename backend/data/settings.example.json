@@ -4,6 +4,14 @@
     "url": "http://localhost:11434",
     "context_length": 32768
   },
+  "llama_cpp": {
+    "dir": null,
+    "port": 18080,
+    "autostart": false,
+    "idle_unload_minutes": 0,
+    "load_timeout_secs": 300,
+    "external_url": null
+  },
   "agent_history_len": 2000,
   "searxng_url": "http://localhost:8090",
   "files_dir": null,

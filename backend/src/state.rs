@@ -9,7 +9,10 @@ use crate::services::{
     bootstrap::{bootstrap, AppServices, BootstrapError},
     error::ErrorService,
     event_bus::EventBus,
-    llm::OllamaService,
+    hf_library::HfLibrary,
+    llama_install::LlamaInstaller,
+    llama_runtime::LlamaRuntime,
+    llm::{LlmProviders, OllamaService},
     model_library::ModelLibrary,
     tools::ToolService,
 };
@@ -17,8 +20,17 @@ use crate::services::{
 pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub auth: AuthService,
-    pub ollama: Arc<OllamaService>,
+    /// Everything that runs a model goes through here; Ollama's own library (catalog, pull,
+    /// import) is `library`, which holds the Ollama client it needs.
+    pub providers: LlmProviders,
     pub tools: Arc<ToolService>,
+    /// The llama-server the backend runs itself: which profile it has loaded, its log, who holds it.
+    pub runtime: Arc<LlamaRuntime>,
+    /// Cancelled when the backend is asked to stop: long-lived responses (the event stream) end
+    /// on it, since the server's graceful shutdown waits for every open connection.
+    pub shutdown: tokio_util::sync::CancellationToken,
+    /// Downloads llama.cpp (or records the user's own build) for `runtime` to run
+    pub installer: Arc<LlamaInstaller>,
     /// What the backend broadcasts to connected frontends (`GET /api/events`). Needs no
     /// database, so it lives here rather than in `AppServices`; the job store and the agent
     /// get a handle to it when the services are built.
@@ -26,6 +38,8 @@ pub struct AppState {
     /// The public model catalog, local model files, and the pull/import tasks — none of it
     /// needs the database, so it works before setup completes.
     pub library: Arc<ModelLibrary>,
+    /// Hugging Face search and downloads into the model folder
+    pub hf: Arc<HfLibrary>,
     pub services: Arc<RwLock<Option<AppServices>>>,
     /// Serializes anything that builds `AppServices`. Building them starts the enabled
     /// plugins' background loops, so two builds racing would leave two copies of every bot
@@ -59,14 +73,26 @@ impl From<ConfigureError> for ErrorService {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, ollama: Arc<OllamaService>, tools: Arc<ToolService>) -> Self {
+    pub fn new(
+        config: AppConfig,
+        ollama: Arc<OllamaService>,
+        providers: LlmProviders,
+        tools: Arc<ToolService>,
+        events: Arc<EventBus>,
+        runtime: Arc<LlamaRuntime>,
+    ) -> Self {
+        let installer = LlamaInstaller::new(runtime.clone(), config.llama_cpp.resolved_dir());
         Self {
             auth: AuthService::new(&config.jwt_secret),
             library: Arc::new(ModelLibrary::new(ollama.clone(), config.model_dir.clone())),
+            hf: Arc::new(HfLibrary::new(config.model_dir.clone())),
             config: Arc::new(RwLock::new(config)),
-            ollama,
+            providers,
             tools,
-            events: Arc::new(EventBus::new()),
+            events,
+            installer,
+            shutdown: tokio_util::sync::CancellationToken::new(),
+            runtime,
             services: Arc::new(RwLock::new(None)),
             connect_lock: Mutex::new(()),
         }
@@ -83,10 +109,12 @@ impl AppState {
     /// later turn would then fail against a model Ollama has never heard of. Installed models
     /// (per Ollama, live) pass; if Ollama can't be asked, only one already registered does.
     pub async fn require_installed_model(&self, services: &AppServices, provider: &str, name: &str) -> Result<(), ErrorService> {
-        let installed = if provider == "ollama" {
-            self.ollama.list_local_models().await.ok().map(|models| models.iter().any(|m| m.name == name))
-        } else {
-            None
+        // A llama-server serves only the model it has loaded, so what it lists says nothing about
+        // which model files exist: for the one the backend runs itself, registered is installed.
+        let installed = match self.providers.get(provider) {
+            Ok(_) if provider == "llama-cpp" => None,
+            Ok(provider) => provider.list_local_models().await.ok().map(|models| models.iter().any(|m| m.name == name)),
+            Err(_) => None,
         };
 
         let known = match installed {
@@ -108,11 +136,13 @@ impl AppState {
             config.resolved_files_dir(),
             config.resolved_jobs_dir(),
             config.job_log_retention_days,
-            self.ollama.clone(),
+            self.providers.clone(),
             self.tools.clone(),
             self.events.clone(),
             config.agent_history_len,
             config.ollama.context_length,
+            config.model_dir.clone(),
+            self.runtime.clone(),
         )
         .await
     }
