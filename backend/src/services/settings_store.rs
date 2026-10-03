@@ -7,10 +7,10 @@ use entities::settings;
 use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, SqlErr};
 
 use crate::services::error::ErrorService;
-use crate::services::model_store::{ModelStore, ModelStoreErrors};
+use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
 
 /// The provider reported for a user who hasn't picked a model yet.
-const DEFAULT_PROVIDER: &str = "ollama";
+const DEFAULT_PROVIDER: &str = "llama-cpp";
 
 /// The largest custom system prompt accepted — it's sent to the model on every single turn,
 /// so its size is a recurring context cost, and an unbounded one would eat the budget whole.
@@ -72,6 +72,7 @@ impl SettingsStore {
             theme: row.theme,
             language: row.language,
             auto_confirm: row.auto_confirm,
+            has_hf_token: row.hf_token.is_some(),
             llm_provider: active
                 .as_ref()
                 .map(|m| m.provider.clone())
@@ -80,11 +81,11 @@ impl SettingsStore {
         })
     }
 
-    /// The model name one-shot prompts (greeting, chat naming, ...) run against for this
-    /// user: their active model, else the first registered one. Errs `NoModel` when none
-    /// has been picked yet.
-    pub async fn effective_model(&self, user_id: i64) -> Result<String, SettingsStoreErrors> {
-        Ok(self.models.resolve_default(user_id).await?.name)
+    /// The model one-shot prompts (greeting, chat naming, ...) run against for this user: their
+    /// active model, else the first registered one, with the provider it belongs to. Errs
+    /// `NoModel` when none has been picked yet.
+    pub async fn effective_model(&self, user_id: i64) -> Result<ModelRef, SettingsStoreErrors> {
+        Ok(self.models.resolve_default(user_id).await?)
     }
 
     /// Whether the user has completed the minimum settings the app needs (a name and a
@@ -144,12 +145,21 @@ impl SettingsStore {
         if let Some(auto_confirm) = update.auto_confirm {
             model.auto_confirm = Set(auto_confirm);
         }
+        if let Some(token) = update.hf_token {
+            // An empty token clears it
+            model.hf_token = Set(Some(token.trim().to_string()).filter(|t| !t.is_empty()));
+        }
         if let Some(id) = active_model_id {
             model.active_model_id = Set(Some(id));
         }
 
         model.update(&self.db).await?;
         Ok(())
+    }
+
+    /// The user's Hugging Face token, when they have set one.
+    pub async fn hf_token(&self, user_id: i64) -> Result<Option<String>, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.hf_token)
     }
 
     /// Whether the user has tool-permission prompts approved automatically.
@@ -194,6 +204,8 @@ pub struct Settings {
     pub language: String,
     /// Tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
+    /// Whether a Hugging Face token is set (the token itself is never sent back).
+    pub has_hf_token: bool,
     /// The provider of the active model (`ollama` until one is picked).
     pub llm_provider: String,
     pub active_model: Option<String>,
@@ -208,6 +220,8 @@ pub struct SettingsUpdate {
     pub theme: Option<String>,
     pub language: Option<String>,
     pub auto_confirm: Option<bool>,
+    /// A Hugging Face access token; empty clears it
+    pub hf_token: Option<String>,
     pub llm_provider: Option<String>,
     pub active_model: Option<String>,
 }

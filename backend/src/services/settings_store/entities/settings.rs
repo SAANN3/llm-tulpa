@@ -21,6 +21,8 @@ pub struct Model {
     pub system_prompt: Option<String>,
     /// Whether tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
+    /// The user's Hugging Face access token, for downloading gated models.
+    pub hf_token: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
