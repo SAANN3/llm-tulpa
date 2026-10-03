@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 /// The provider a model is registered under when the request doesn't name one.
-const DEFAULT_PROVIDER: &str = "ollama";
+const DEFAULT_PROVIDER: &str = "llama-cpp";
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct SetModelRequest {
@@ -15,7 +15,7 @@ pub(crate) struct SetModelRequest {
     /// The model this chat should use from now on. Must be installed (pull or import it
     /// first); it's registered in the database if it isn't known yet.
     model: String,
-    /// The provider the model belongs to; defaults to `ollama`.
+    /// The provider the model belongs to; defaults to `llama-cpp`.
     provider: Option<String>,
 }
 

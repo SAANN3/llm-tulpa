@@ -21,6 +21,7 @@ pub use stats::{ContextUsage, DailyUsage, ModelUsage, StatsRange, ToolUsage};
 
 use crate::services::error::ErrorService;
 use crate::services::folder_store::{FolderStore, FolderStoreErrors};
+use crate::services::launch_store::{LaunchStore, LaunchStoreErrors};
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
 use crate::services::user_store::{UserStore, UserStoreErrors};
 
@@ -38,12 +39,19 @@ pub struct ChatStore {
     /// Only for the ownership check in `set_folder` — the `folders` table is
     /// `FolderStore`'s, not this store's.
     folders: Arc<FolderStore>,
+    launch: Arc<LaunchStore>,
 }
 
 impl ChatStore {
     /// Holds an already-connected, already-migrated connection (see `services::bootstrap`).
-    pub fn new(db: DatabaseConnection, models: Arc<ModelStore>, users: Arc<UserStore>, folders: Arc<FolderStore>) -> Self {
-        Self { db, models, users, folders }
+    pub fn new(
+        db: DatabaseConnection,
+        models: Arc<ModelStore>,
+        users: Arc<UserStore>,
+        folders: Arc<FolderStore>,
+        launch: Arc<LaunchStore>,
+    ) -> Self {
+        Self { db, models, users, folders, launch }
     }
 
     /// A chat by id — the one place that decides whether a chat is usable (exists and
@@ -187,6 +195,7 @@ impl ChatStore {
             last_prompt_tokens: row.last_prompt_tokens,
             folder_id: row.folder_id,
             parent_chat_id: row.parent_chat_id,
+            launch_profile_id: row.launch_profile_id,
         }
     }
 
@@ -557,15 +566,26 @@ impl ChatStore {
         Ok(grouped)
     }
 
-    /// Creates an ordinary (non-plugin) chat owned by `user_id`, bound to the user's
-    /// default model (their active model, else the first registered one). Errs `Model(NoModel)`
-    /// when no model exists at all — a chat can't be created without one.
-    pub async fn create_chat(&self, user_id: i64, name: String) -> Result<Chat, ChatStoreErrors> {
+    /// What a new chat of this user runs on: their default model (the one they picked in the
+    /// settings, else the first registered) with its default launch profile. A chat then remembers
+    /// what it runs on, whatever the user later switches it to, and the default is untouched. Errs
+    /// `Model(NoModel)` when no model exists at all.
+    async fn binding_for_new_chat(&self, user_id: i64) -> Result<(ModelRef, Option<i64>), ChatStoreErrors> {
         let model = self.models.resolve_default(user_id).await?;
+        let profile = self.launch.default_for_model(model.id).await?.map(|p| p.id);
+        Ok((model, profile))
+    }
+
+    /// Creates an ordinary (non-plugin) chat owned by `user_id`, on their default model (see
+    /// `binding_for_new_chat`). Errs `Model(NoModel)` when no model exists at all — a
+    /// chat can't be created without one.
+    pub async fn create_chat(&self, user_id: i64, name: String) -> Result<Chat, ChatStoreErrors> {
+        let (model, launch_profile_id) = self.binding_for_new_chat(user_id).await?;
         let row = chats::ActiveModel {
             user_id: Set(user_id),
             name: Set(name),
             model_id: Set(model.id),
+            launch_profile_id: Set(launch_profile_id),
             ..Default::default()
         }
         .insert(&self.db)
@@ -585,6 +605,7 @@ impl ChatStore {
             model_id: Set(parent.model_id),
             folder_id: Set(parent.folder_id),
             parent_chat_id: Set(Some(parent.id)),
+            launch_profile_id: Set(parent.launch_profile_id),
             ..Default::default()
         }
         .insert(&self.db)
@@ -597,9 +618,44 @@ impl ChatStore {
     /// the caller's responsibility.
     pub async fn set_model(&self, chat_id: i64, model_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
-        chats::ActiveModel { id: Set(chat_id), model_id: Set(model_id), ..Default::default() }
+        // The profile belongs to the model it was written for: a chat moved to another model starts
+        // on that model's default profile (or none, for a model that has none).
+        let launch_profile_id = self.launch.default_for_model(model_id).await?.map(|p| p.id);
+        chats::ActiveModel { id: Set(chat_id), model_id: Set(model_id), launch_profile_id: Set(launch_profile_id), ..Default::default() }
             .update(&self.db)
             .await?;
+        Ok(())
+    }
+
+    /// Moves every chat bound to one of `from_models` onto `profile_id`'s model and profile, for the
+    /// owner's move from another provider to the managed llama.cpp. Returns how many chats moved.
+    pub async fn rebind_models(&self, from_models: &[i64], profile_id: i64) -> Result<u64, ChatStoreErrors> {
+        if from_models.is_empty() {
+            return Ok(0);
+        }
+        let profile = self.launch.get(profile_id).await?;
+        let result = chats::Entity::update_many()
+            .col_expr(chats::Column::ModelId, sea_orm::sea_query::Expr::value(profile.model_id))
+            .col_expr(chats::Column::LaunchProfileId, sea_orm::sea_query::Expr::value(profile.id))
+            .filter(chats::Column::ModelId.is_in(from_models.to_vec()))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected)
+    }
+
+    /// Rebinds a chat to a launch profile, and so to the profile's model, from its next turn.
+    /// Ownership is the caller's responsibility.
+    pub async fn set_launch_profile(&self, chat_id: i64, profile_id: i64) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+        let profile = self.launch.get(profile_id).await?;
+        chats::ActiveModel {
+            id: Set(chat_id),
+            model_id: Set(profile.model_id),
+            launch_profile_id: Set(Some(profile.id)),
+            ..Default::default()
+        }
+        .update(&self.db)
+        .await?;
         Ok(())
     }
 
@@ -643,6 +699,7 @@ impl ChatStore {
             user_id: Set(owner),
             name: Set(name),
             model_id: Set(model.id),
+            launch_profile_id: Set(self.launch.default_for_model(model.id).await?.map(|p| p.id)),
             ..Default::default()
         }
         .insert(&self.db)
@@ -967,6 +1024,9 @@ pub struct Chat {
     pub folder_id: Option<i64>,
     /// The chat that delegated to this one, or `None` for an ordinary chat.
     pub parent_chat_id: Option<i64>,
+    /// The launch profile the chat runs on, which implies its model. `None` for a chat on a model
+    /// that has no launch profiles (an Ollama model, whose server decides how it runs).
+    pub launch_profile_id: Option<i64>,
 }
 
 /// The list view's content preview: whitespace collapsed to single spaces and cut at
@@ -1220,7 +1280,7 @@ impl ChatFacts {
 
 /// Wraps every SeaORM failure uniformly — nothing about which specific query failed
 /// changes how the caller should react (there's no retry/fallback logic per-query-type),
-/// so unlike `OllamaErrors` this doesn't need multiple variants for that case. `NotFound`
+/// so unlike `LlmErrors` this doesn't need multiple variants for that case. `NotFound`
 /// is separate since it maps to a different HTTP status (404, not 500) and isn't a
 /// failure at all from the database's point of view.
 #[derive(Debug)]
@@ -1230,6 +1290,7 @@ pub enum ChatStoreErrors {
     Model(ModelStoreErrors),
     User(UserStoreErrors),
     Folder(FolderStoreErrors),
+    Launch(LaunchStoreErrors),
     /// The request can't be carried out in the chat's current state; the text says why
     Conflict(String),
 }
@@ -1237,6 +1298,12 @@ pub enum ChatStoreErrors {
 impl From<UserStoreErrors> for ChatStoreErrors {
     fn from(err: UserStoreErrors) -> Self {
         ChatStoreErrors::User(err)
+    }
+}
+
+impl From<LaunchStoreErrors> for ChatStoreErrors {
+    fn from(err: LaunchStoreErrors) -> Self {
+        ChatStoreErrors::Launch(err)
     }
 }
 
@@ -1268,6 +1335,7 @@ impl From<ChatStoreErrors> for ErrorService {
             ChatStoreErrors::Model(e) => e.into(),
             ChatStoreErrors::User(e) => e.into(),
             ChatStoreErrors::Folder(e) => e.into(),
+            ChatStoreErrors::Launch(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
             ChatStoreErrors::Conflict(why) => ErrorService::new(StatusCode::CONFLICT, why),
         }

@@ -45,6 +45,9 @@ pub(crate) struct ChatOut {
     /// The chat that started this one as a sub-agent, or `null` for an ordinary chat. A
     /// sub-agent's chat is not in the chat list; it is reached from its parent.
     pub(crate) parent_chat_id: Option<i64>,
+    /// The launch profile this chat runs on (which implies its model), or `null` for a chat on a
+    /// model that has none.
+    pub(crate) launch_profile_id: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -85,6 +88,7 @@ pub async fn get_chats(
 
     if let Some(id) = query.id {
         let chat = services.chat_store.owned_chat(auth.id, id).await?;
+        let contexts = services.launches.contexts(services.context_length).await?;
 
         return Ok(Json(GetChatsResponse::Single(ChatOut {
             id: chat.id,
@@ -94,9 +98,10 @@ pub async fn get_chats(
             created_at: chat.created_at,
             updated_at: chat.updated_at,
             last_prompt_tokens: chat.last_prompt_tokens,
-            context_length: services.context_length,
+            context_length: contexts.for_profile(chat.launch_profile_id),
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
+            launch_profile_id: chat.launch_profile_id,
         })));
     }
 
@@ -106,6 +111,7 @@ pub async fn get_chats(
 
     let (chats, total) = services.chat_store.chats(auth.id, folder_id, limit, skip).await?;
 
+    let contexts = services.launches.contexts(services.context_length).await?;
     let chats = chats
         .into_iter()
         .map(|chat| ChatOut {
@@ -116,9 +122,10 @@ pub async fn get_chats(
             created_at: chat.created_at,
             updated_at: chat.updated_at,
             last_prompt_tokens: chat.last_prompt_tokens,
-            context_length: services.context_length,
+            context_length: contexts.for_profile(chat.launch_profile_id),
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
+            launch_profile_id: chat.launch_profile_id,
         })
         .collect();
 

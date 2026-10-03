@@ -27,6 +27,9 @@ pub struct Model {
     pub folder_id: Option<i64>,
     /// The chat that delegated to this one (`chats.id`), or NULL for an ordinary chat.
     pub parent_chat_id: Option<i64>,
+    /// The launch profile this chat runs on (`launch_profiles.id`), which implies its model; NULL for
+    /// a chat on a model that has none.
+    pub launch_profile_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

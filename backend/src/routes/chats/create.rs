@@ -33,6 +33,7 @@ pub async fn create_chat(
 ) -> Result<Json<ChatOut>, ErrorService> {
     let services = state.services().await?;
     let chat = services.chat_store.create_chat(auth.id, body.name).await?;
+    let contexts = services.launches.contexts(services.context_length).await?;
 
     Ok(Json(ChatOut {
         id: chat.id,
@@ -42,8 +43,9 @@ pub async fn create_chat(
         created_at: chat.created_at,
         updated_at: chat.updated_at,
         last_prompt_tokens: chat.last_prompt_tokens,
-        context_length: services.context_length,
+        context_length: contexts.for_profile(chat.launch_profile_id),
         folder_id: chat.folder_id,
         parent_chat_id: chat.parent_chat_id,
+        launch_profile_id: chat.launch_profile_id,
     }))
 }

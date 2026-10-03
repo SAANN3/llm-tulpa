@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use axum::http::StatusCode;
 use entities::{active_model, llm_models, llm_providers};
 use sea_orm::{
-    prelude::*, sea_query::OnConflict, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder,
+    prelude::*, sea_query::{Expr, OnConflict}, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder,
 };
 
 use crate::services::error::ErrorService;
@@ -23,6 +23,7 @@ pub struct ModelRef {
     pub id: i64,
     pub provider: String,
     pub name: String,
+    pub display_name: Option<String>,
 }
 
 impl ModelStore {
@@ -31,7 +32,7 @@ impl ModelStore {
     }
 
     fn to_ref(model: llm_models::Model, provider: llm_providers::Model) -> ModelRef {
-        ModelRef { id: model.id, provider: provider.name, name: model.name }
+        ModelRef { id: model.id, provider: provider.name, name: model.name, display_name: model.display_name }
     }
 
     /// The names of every provider the app supports.
@@ -55,6 +56,40 @@ impl ModelStore {
             .one(&self.db)
             .await?
             .is_some())
+    }
+
+    /// A registered model by provider and name, or `None` when nobody has picked or pulled it.
+    pub async fn find(&self, provider: &str, name: &str) -> Result<Option<ModelRef>, ModelStoreErrors> {
+        Ok(llm_models::Entity::find()
+            .find_also_related(llm_providers::Entity)
+            .filter(llm_providers::Column::Name.eq(provider))
+            .filter(llm_models::Column::Name.eq(name))
+            .one(&self.db)
+            .await?
+            .and_then(|(model, provider)| provider.map(|p| Self::to_ref(model, p))))
+    }
+
+    /// The models registered under `provider`, oldest first.
+    pub async fn list(&self, provider: &str) -> Result<Vec<ModelRef>, ModelStoreErrors> {
+        Ok(llm_models::Entity::find()
+            .find_also_related(llm_providers::Entity)
+            .filter(llm_providers::Column::Name.eq(provider))
+            .order_by_asc(llm_models::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|(model, provider)| provider.map(|p| Self::to_ref(model, p)))
+            .collect())
+    }
+
+    /// Sets (or, with `None`, clears) the name the UI shows for a model.
+    pub async fn set_display_name(&self, id: i64, display_name: Option<String>) -> Result<(), ModelStoreErrors> {
+        llm_models::Entity::update_many()
+            .col_expr(llm_models::Column::DisplayName, Expr::value(display_name))
+            .filter(llm_models::Column::Id.eq(id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
     }
 
     /// Registers `name` under `provider` if it isn't known yet, and returns it either way.

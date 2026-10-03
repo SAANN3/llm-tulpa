@@ -8,6 +8,8 @@ pub struct Model {
     pub id: i64,
     pub provider_id: i64,
     pub name: String,
+    /// What the UI calls it, when the file name isn't friendly enough
+    pub display_name: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

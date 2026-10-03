@@ -9,4 +9,5 @@ mod rewind;
 mod search;
 mod set_folder;
 mod set_model;
+mod set_profile;
 pub mod router;

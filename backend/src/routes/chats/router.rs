@@ -19,6 +19,7 @@ use super::rewind::*;
 use super::search::*;
 use super::set_folder::*;
 use super::set_model::*;
+use super::set_profile::*;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -26,6 +27,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/rename", post(rename_chat))
         .route("/rewind", post(rewind_chat))
         .route("/model", post(set_model))
+        .route("/profile", post(set_profile))
         .route("/folder", post(set_folder))
         .route("/messages", get(get_messages))
         .route("/search", get(search_messages))
@@ -35,7 +37,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_folder, get_messages, search_messages, find_chats, export_chat),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_folder, get_messages, search_messages, find_chats, export_chat),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -45,6 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
         RewindChatRequest,
         RewindChatResponse,
         SetModelRequest,
+        SetProfileRequest,
         SetFolderRequest,
         MessageToolCallOut,
         MessageOut,
