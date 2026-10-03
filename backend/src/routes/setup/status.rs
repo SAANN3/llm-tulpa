@@ -12,6 +12,8 @@ pub struct SetupStatus {
     configured: bool,
     /// Whether the owner account has been created.
     has_owner: bool,
+    /// Whether a newer release changed what the wizard sets up since the owner last completed it.
+    update_available: bool,
 }
 
 /// Public: reports whether the backend has a *working* database connection and an owner —
@@ -34,12 +36,13 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<SetupStatus> {
     }
 
     let services = state.services.read().await.clone();
-    let (configured, has_owner) = match services {
+    let (configured, has_owner, update_available) = match services {
         Some(services) if services.ping().await => {
-            (true, services.user_store.user_count().await.unwrap_or(0) > 0)
+            let has_owner = services.user_store.user_count().await.unwrap_or(0) > 0;
+            (true, has_owner, has_owner && services.setup_update_available().await)
         }
-        _ => (false, false),
+        _ => (false, false, false),
     };
 
-    Json(SetupStatus { configured, has_owner })
+    Json(SetupStatus { configured, has_owner, update_available })
 }

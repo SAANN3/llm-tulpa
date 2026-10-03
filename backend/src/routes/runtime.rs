@@ -1,0 +1,14 @@
+mod devices;
+mod hardware;
+mod install;
+mod install_status;
+mod load;
+mod logs;
+mod models;
+mod rebind_chats;
+mod register;
+mod setup_complete;
+pub mod router;
+mod status;
+mod stop;
+mod test;
