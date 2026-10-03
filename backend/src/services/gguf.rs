@@ -13,6 +13,8 @@ use std::path::Path;
 const MAX_KV_PAIRS: u64 = 100_000;
 const MAX_KEY_LEN: u64 = 1 << 16;
 const MAX_WANTED_STRING_LEN: u64 = 1 << 16;
+/// A chat template is a program, a few kilobytes for every model seen so far.
+const MAX_TEMPLATE_LEN: u64 = 1 << 18;
 
 /// What a GGUF file is, as far as importing it cares.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,9 +35,31 @@ pub struct GgufInfo {
     pub embedding_length: Option<u64>,
     /// A projector's output size (`clip.vision.projection_dim`): what it projects into.
     pub projection_dim: Option<u64>,
+    /// The context length the model was trained for (`<arch>.context_length`).
+    pub trained_context: Option<u64>,
+    /// How many layers the model has (`<arch>.block_count`).
+    pub block_count: Option<u64>,
+    /// How many MTP draft layers the file carries (`<arch>.nextn_predict_layers`): the draft head is
+    /// stored with the model, and a file without it can't draft tokens with MTP.
+    pub mtp_layers: Option<u64>,
+    /// llama.cpp's quantization id (`general.file_type`), see `quantization_name`.
+    pub file_type: Option<u64>,
+    /// The model's own chat template (`tokenizer.chat_template`), the source of what `think` and tool
+    /// calls look like for it.
+    pub chat_template: Option<String>,
 }
 
 impl GgufInfo {
+    /// Whether the file carries an MTP draft head.
+    pub fn has_mtp(&self) -> bool {
+        self.mtp_layers.is_some_and(|layers| layers > 0)
+    }
+
+    /// The quantization's usual name (`IQ3_S`, `Q4_K_M`), when the id is a known one.
+    pub fn quantization(&self) -> Option<&'static str> {
+        quantization_name(self.file_type?)
+    }
+
     /// Whether `projector` can feed this model: its output size has to equal the model's hidden
     /// size. `None` when either file doesn't say, in which case nothing can be concluded.
     pub fn accepts(&self, projector: &GgufInfo) -> Option<bool> {
@@ -179,6 +203,11 @@ pub fn read_gguf_info(path: &Path) -> io::Result<GgufInfo> {
     let mut name = None;
     let mut projection_dim = None;
     let mut embedding_lengths: HashMap<String, u64> = HashMap::new();
+    let mut trained_contexts: HashMap<String, u64> = HashMap::new();
+    let mut block_counts: HashMap<String, u64> = HashMap::new();
+    let mut mtp_layers: HashMap<String, u64> = HashMap::new();
+    let mut file_type = None;
+    let mut chat_template = None;
 
     for _ in 0..kv_count {
         let key = read_string(&mut r, MAX_KEY_LEN)?.ok_or_else(|| invalid("implausible key length"))?;
@@ -189,9 +218,26 @@ pub fn read_gguf_info(path: &Path) -> io::Result<GgufInfo> {
             "general.type" if ty == T_STRING => general_type = read_string(&mut r, MAX_WANTED_STRING_LEN)?,
             "general.name" if ty == T_STRING => name = read_string(&mut r, MAX_WANTED_STRING_LEN)?,
             "clip.vision.projection_dim" => projection_dim = read_uint(&mut r, ty)?,
+            "general.file_type" => file_type = read_uint(&mut r, ty)?,
+            "tokenizer.chat_template" if ty == T_STRING => chat_template = read_string(&mut r, MAX_TEMPLATE_LEN)?,
             k if k.ends_with(".embedding_length") => {
                 if let Some(v) = read_uint(&mut r, ty)? {
                     embedding_lengths.insert(k.trim_end_matches(".embedding_length").to_string(), v);
+                }
+            }
+            k if k.ends_with(".context_length") => {
+                if let Some(v) = read_uint(&mut r, ty)? {
+                    trained_contexts.insert(k.trim_end_matches(".context_length").to_string(), v);
+                }
+            }
+            k if k.ends_with(".block_count") => {
+                if let Some(v) = read_uint(&mut r, ty)? {
+                    block_counts.insert(k.trim_end_matches(".block_count").to_string(), v);
+                }
+            }
+            k if k.ends_with(".nextn_predict_layers") => {
+                if let Some(v) = read_uint(&mut r, ty)? {
+                    mtp_layers.insert(k.trim_end_matches(".nextn_predict_layers").to_string(), v);
                 }
             }
             _ => skip_value(&mut r, ty)?,
@@ -206,5 +252,48 @@ pub fn read_gguf_info(path: &Path) -> io::Result<GgufInfo> {
     };
     let embedding_length = embedding_lengths.get(&architecture).copied();
 
-    Ok(GgufInfo { kind, name, embedding_length, projection_dim })
+    let (trained_context, block_count, mtp_layers) = (
+        trained_contexts.get(&architecture).copied(),
+        block_counts.get(&architecture).copied(),
+        mtp_layers.get(&architecture).copied(),
+    );
+
+    Ok(GgufInfo { kind, name, embedding_length, projection_dim, trained_context, block_count, mtp_layers, file_type, chat_template })
+}
+
+/// llama.cpp's `llama_ftype` ids, by their usual quantization names. Only the ones in common use.
+pub fn quantization_name(file_type: u64) -> Option<&'static str> {
+    Some(match file_type {
+        0 => "F32",
+        1 => "F16",
+        2 => "Q4_0",
+        3 => "Q4_1",
+        7 => "Q8_0",
+        8 => "Q5_0",
+        9 => "Q5_1",
+        10 => "Q2_K",
+        11 => "Q3_K_S",
+        12 => "Q3_K_M",
+        13 => "Q3_K_L",
+        14 => "Q4_K_S",
+        15 => "Q4_K_M",
+        16 => "Q5_K_S",
+        17 => "Q5_K_M",
+        18 => "Q6_K",
+        19 => "IQ2_XXS",
+        20 => "IQ2_XS",
+        21 => "Q2_K_S",
+        22 => "IQ3_XS",
+        23 => "IQ3_XXS",
+        24 => "IQ1_S",
+        25 => "IQ4_NL",
+        26 => "IQ3_S",
+        27 => "IQ3_M",
+        28 => "IQ2_S",
+        29 => "IQ2_M",
+        30 => "IQ4_XS",
+        31 => "IQ1_M",
+        32 => "BF16",
+        _ => return None,
+    })
 }
