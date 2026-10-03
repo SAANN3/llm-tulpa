@@ -1,5 +1,5 @@
 # llm-tulpa
-A local-first LLM chat agent with real tool-calling — reads/writes files, inspects the machine it runs on, gated behind a permission system so nothing actually happens without your say-so. Rust/axum backend, React frontend, Ollama for inference — nothing leaves your machine.
+A local-first LLM chat agent with real tool-calling — reads/writes files, inspects the machine it runs on, gated behind a permission system so nothing actually happens without your say-so. Rust/axum backend, React frontend, llama.cpp for inference (Ollama optional) — nothing leaves your machine.
 
 <p align="center">
   <img src="./readme/chat-tool-usage.png" alt="Chat with the agent checking several paths via tool calls, each one asking for permission first" width="720">
@@ -7,7 +7,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 <p align="center"><em>Asked to check three paths at once — the agent reasons about it (collapsed above), then stops to ask permission before each <code>storage.list_directory</code> call.</em></p>
 
 ## Quickstart
-1. Get a model — anything Ollama can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/` (or a folder you point `MODEL_DIR` at) — the app can import it from there without downloading anything, or set `MODEL_FILE` to have Ollama register it at start (copy `.env.example` to `.env` in the repo root — see [`llm/README.md`](./llm/README.md)). You can also pull a model (from Ollama's library or Hugging Face) from inside the app. Optionally, for vision (see Features below), also grab a matching mmproj/CLIP projector `.gguf` and pair it with the model when importing it (or set `MMPROJ_FILE`).
+1. Get a model — anything llama.cpp can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/` (or a folder you point `MODEL_DIR` at), or search and download one from Hugging Face on the app's Models page. The app downloads and runs llama.cpp itself: the setup wizard looks at your hardware, installs the right build and has you pick the model file; every model setting (context, KV cache, GPU layers, MTP, vision projector, sampling) is editable in the app afterwards. Ollama still works as a second provider (`--profile ollama`; see [`llm/README.md`](./llm/README.md)).
 2. ```bash
    git clone https://github.com/SAANN3/llm-tulpa
    cd llm-tulpa
@@ -30,7 +30,7 @@ A local-first LLM chat agent with real tool-calling — reads/writes files, insp
 - Plugin system — talk to the agent from Telegram, Discord, or VK, each configured from its own settings panel — see [`backend/PLUGINS.md`](./backend/PLUGINS.md).
 - Multi-user with an owner account — each user's chats and settings are their own; the owner manages the rest.
 - Switch the model per chat from the chat header; the owner can pull a new one (Ollama's catalog, or a Hugging Face GGUF) or import `.gguf` files already on disk without leaving the app.
-- Runs entirely on your own hardware via Ollama — no API keys, nothing sent anywhere.
+- Runs entirely on your own hardware via llama.cpp (or Ollama) — no API keys, nothing sent anywhere.
 - Themes to pick from — Slate, Paper, Matcha, and the warm dark Ember, Twilight and Cinder — will expand in the future!
 
 ## Screenshots

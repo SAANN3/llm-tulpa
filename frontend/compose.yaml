@@ -1,0 +1,17 @@
+services:
+  frontend:
+    build:
+      context: .
+      network: host
+      # Unset by default — see frontend/Dockerfile and frontend/src/config.ts for why. Named
+      # differently from the dev server's own VITE_BACKEND_URL: compose reads this folder's .env
+      # (the dev server's), and that one must not end up baked into the image.
+      args:
+        VITE_BACKEND_URL: ${FRONTEND_BACKEND_URL:-}
+    ports:
+      - "5173:80"
+    networks:
+      - app-net
+    depends_on:
+      - backend
+    restart: unless-stopped

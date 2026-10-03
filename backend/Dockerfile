@@ -1,4 +1,4 @@
-FROM rust:1-bookworm AS builder
+FROM rust:1-trixie AS builder
 WORKDIR /app
 
 # libdrm-dev is needed at link time by gfxinfo's AMD-GPU-detection dependency
@@ -13,18 +13,16 @@ COPY src ./src
 
 RUN cargo build --release --locked
 
-FROM debian:bookworm-slim
-# Debian bookworm's own `nodejs` package is stuck on 18.20.4 (itself already EOL) —
-# too old for current Playwright (needs Node >=20 as of late-2025 releases) and worth
-# outgrowing regardless for a toolkit meant to stay current. Adds NodeSource's own apt
-# repo so the real install line below just asks for `nodejs` and gets their current
-# LTS instead; needs curl/ca-certificates/gnupg already present first, hence this
-# tiny bootstrap ahead of everything else.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && rm -rf /var/lib/apt/lists/*
+FROM debian:trixie-slim
+# Debian 13 (trixie): the ROCm build of llama.cpp the app downloads needs glibc 2.38 or newer, and
+# trixie has 2.41. Its own `nodejs` package is Node 20, which is what current Playwright needs, so
+# no extra apt repository is added for it.
 
+# libgomp1 (OpenMP, for llama.cpp's CPU code), libvulkan1 and mesa-vulkan-drivers (the Vulkan
+# build of llama.cpp the app downloads on first setup runs on AMD and Intel GPUs through Mesa) are
+# what the llama.cpp release the backend runs needs from the system. NVIDIA's libraries come from
+# the NVIDIA Container Toolkit instead (compose.gpu-nvidia.yaml).
+#
 # libdrm2/libdrm-amdgpu1 are the runtime counterparts of the builder stage's
 # libdrm-dev — linking needs the dev package, running needs the actual .so.
 #
@@ -41,7 +39,7 @@ RUN apt-get update \
 # there:
 #   - python3 + pip + venv: the most common ad hoc scripting/calculator need (see
 #     the "grinding through arithmetic by hand" SYSTEM_PROMPT rule this unblocks)
-#   - nodejs (npm bundled, via NodeSource above), golang-go: two of the other
+#   - nodejs + npm (Debian's own, Node 20), golang-go: two of the other
 #     languages likely to come up, each with its own package manager already
 #     present (rustc/cargo come from the builder stage instead — see below)
 #   - build-essential: gcc/make, needed by anything that compiles C/C++ or a native
@@ -64,8 +62,9 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates libssl3 libdrm2 libdrm-amdgpu1 sudo \
+        libgomp1 libvulkan1 mesa-vulkan-drivers \
         python3 python3-pip python3-venv \
-        nodejs \
+        nodejs npm \
         golang-go \
         build-essential \
         git jq unzip zip curl wget poppler-utils \
@@ -79,7 +78,7 @@ RUN apt-get update \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # rustc/cargo, copied from the builder stage instead of `apt-get install rustc
-# cargo` above — Debian bookworm's own packaged rustc is old enough (1.63) to
+# cargo` above — Debian's own packaged rustc is old enough to
 # reject current-edition crates outright, and the builder stage already has a
 # current, verified-working toolchain (it just built this very binary with it) —
 # copying it costs no extra download and can't drift out of sync with what

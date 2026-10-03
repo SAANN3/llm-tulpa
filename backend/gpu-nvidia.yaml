@@ -1,0 +1,12 @@
+# Added by start-docker.sh on a machine with an NVIDIA GPU. Needs the NVIDIA Container Toolkit on
+# the host (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/), which is what
+# puts the driver's libraries into the container.
+services:
+  backend:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

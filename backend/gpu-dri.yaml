@@ -1,0 +1,9 @@
+# Added by start-docker.sh for an Intel GPU (or any other card the kernel exposes under /dev/dri):
+# Vulkan through Mesa, which the backend image ships.
+services:
+  backend:
+    devices:
+      - "/dev/dri:/dev/dri"
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"

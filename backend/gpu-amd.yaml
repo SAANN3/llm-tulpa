@@ -1,0 +1,14 @@
+# Added by start-docker.sh on a machine with an AMD GPU: hands the GPU device nodes to the backend
+# container, so the llama.cpp it runs (the Vulkan build, or ROCm where its libraries are in the container)
+# can use the card. `VIDEO_GID` and `RENDER_GID` are the host's numeric group ids, which
+# start-docker.sh looks up; the device nodes are owned by those groups.
+services:
+  backend:
+    devices:
+      - "/dev/kfd:/dev/kfd"
+      - "/dev/dri:/dev/dri"
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
+    ulimits:
+      memlock: -1
