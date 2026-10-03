@@ -16,7 +16,7 @@ export const OllamaModelList = ({selected, onSelect}: OllamaModelListProps) => {
     const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
-        listModels('ollama').then(setModels).catch(() => setError('Could not reach Ollama.'))
+        listModels('ollama').then(setModels).catch(() => setError('Could not reach Ollama. Check its address on the Models page, in the Ollama tab.'))
     }, [])
 
     if (error) return <Label variant="secondary" className="model-picker__error" text={error}/>

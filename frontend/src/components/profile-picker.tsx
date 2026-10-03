@@ -1,16 +1,13 @@
 import '../styles/model-picker.scss'
 import type {LaunchProfile} from '../api/profiles/types'
 import {useProfileCatalog} from '../hooks/use-profile-catalog.ts'
+import {profileSummary} from '../utils/profile-summary.ts'
 import {Button, Div, Label} from './primitives'
 
 export interface ProfilePickerProps {
     selectedProfileId: number | null
     onSelect: (profile: LaunchProfile) => void
 }
-
-const detail = (p: LaunchProfile): string =>
-    [p.context_length ? `${p.context_length} ctx` : 'auto ctx', p.mtp ? 'MTP' : null, p.mmproj_file ? 'vision' : null]
-        .filter(Boolean).join(' · ')
 
 /** The models the backend runs itself, each with its launch profiles to choose from */
 export const ProfilePicker = ({selectedProfileId, onSelect}: ProfilePickerProps) => {
@@ -31,7 +28,7 @@ export const ProfilePicker = ({selectedProfileId, onSelect}: ProfilePickerProps)
                              className={`model-picker__row${profile.id === selectedProfileId ? ' model-picker__row--active' : ''}`}>
                             <Div className="model-picker__info">
                                 <Label className="model-picker__name" text={profile.name}/>
-                                <Label variant="secondary" className="model-picker__meta" text={detail(profile)}/>
+                                <Label variant="secondary" className="model-picker__meta" text={profileSummary(profile)}/>
                             </Div>
                             {profile.id === selectedProfileId ? (
                                 <Label variant="secondary" className="model-picker__active-tag" text="active"/>

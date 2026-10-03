@@ -19,6 +19,8 @@ export interface ModelPickerProps {
     selected?: string | null
     /** Called when a model is chosen; without it the picker only manages models (no Select buttons) */
     onSelect?: (name: string) => void
+    /** When given, the selected model has a button to deselect it instead of the "active" tag */
+    onDeselect?: () => void
 }
 
 const NO_PROJECTOR = 'no vision'
@@ -33,7 +35,7 @@ const catalogMeta = (m: Catalog['models'][number]): string =>
  * also add more — pull from Ollama's library or Hugging Face, or import `.gguf` files that are
  * already on disk (several at once) — and watch those run in the background.
  */
-export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
+export const ModelPicker = ({selected, onSelect, onDeselect}: ModelPickerProps) => {
     const {user} = useAuth()
     const isOwner = user?.role === 'owner'
 
@@ -50,7 +52,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
     // The pull whose model should become the selection once it lands.
     const selectWhenDone = useRef<number | null>(null)
 
-    const refreshLocal = () => listModels().then(setLocal).catch(() => setError('Could not reach Ollama.'))
+    const refreshLocal = () => listModels().then(setLocal).catch(() => setError('Could not reach Ollama. Check its address.'))
 
     const {tasks, refresh: refreshTasks} = useModelTasks(isOwner, (task) => {
         listModels()
@@ -61,7 +63,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
                     if (installed) onSelect?.(installed.name)
                 }
             })
-            .catch(() => setError('Could not reach Ollama.'))
+            .catch(() => setError('Could not reach Ollama. Check its address.'))
     })
 
     useEffect(() => {
@@ -181,7 +183,9 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
                                        text={modelRequirements(m) || 'installed'}/>
                             </Div>
                             {!onSelect ? null : isSelected ? (
-                                <Label variant="secondary" className="model-picker__active-tag" text="active"/>
+                                onDeselect
+                                    ? <Button variant="secondary" text="Deselect" onClicked={onDeselect}/>
+                                    : <Label variant="secondary" className="model-picker__active-tag" text="active"/>
                             ) : (
                                 <Button variant="secondary" text="Select" onClicked={() => onSelect(m.name)}/>
                             )}

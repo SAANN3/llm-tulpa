@@ -2,6 +2,7 @@ import {useState} from 'react'
 import '../styles/settings-fields.scss'
 import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
+import {useModelsData} from '../hooks/use-models-data.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
 /** A field label in the small-caps style used above every input in this panel */
@@ -47,12 +48,19 @@ export const NameTimezoneFields = ({name, onNameChanged, timezoneText, onTimezon
 export interface ActiveModelFieldProps {
     provider: string
     model: string | null
-    onChosen: (provider: string, model: string) => void
+    /** The launch profile that was chosen with it, when one was; null means the model's first */
+    launchProfileId: number | null
+    onChosen: (provider: string, model: string, launchProfileId?: number) => void
 }
 
 /** The model new chats start with — an existing chat keeps the model it's bound to */
-export const ActiveModelField = ({provider, model, onChosen}: ActiveModelFieldProps) => {
+export const ActiveModelField = ({provider, model, launchProfileId, onChosen}: ActiveModelFieldProps) => {
     const [open, setOpen] = useState(false)
+    const {models, profiles} = useModelsData(false)
+
+    // New chats start on the profile that was chosen, else the model's first; Ollama's models have none
+    const shownProfileId = provider === 'ollama' ? undefined : launchProfileId ?? models.find((m) => m.file === model)?.profile_ids[0]
+    const profileName = profiles.find((p) => p.id === shownProfileId)?.name ?? null
 
     return (
         <Div className="field">
@@ -61,17 +69,19 @@ export const ActiveModelField = ({provider, model, onChosen}: ActiveModelFieldPr
                 <Label text={model ?? 'none selected'}/>
                 <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
             </Div>
+            {profileName ? <Label variant="secondary" className="field__help" text={`Launch profile: ${profileName}`}/> : null}
             <FieldHelp text="New chats start with this model. Each chat can be switched from its own header."/>
             <ChooseModelPopup
                 open={open}
                 provider={provider}
                 selected={provider === 'ollama' ? model : null}
+                selectedProfileId={shownProfileId ?? null}
                 onSelect={(chosen) => {
                     onChosen('ollama', chosen)
                     setOpen(false)
                 }}
                 onSelectProfile={(profile) => {
-                    onChosen(profile.provider, profile.model)
+                    onChosen(profile.provider, profile.model, profile.id)
                     setOpen(false)
                 }}
                 onClose={() => setOpen(false)}

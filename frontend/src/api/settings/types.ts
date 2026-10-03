@@ -11,6 +11,8 @@ export interface Settings {
     has_hf_token: boolean
     llm_provider: string
     active_model: string | null
+    /** The launch profile of that model new chats start on; null means its first one */
+    launch_profile_id: number | null
 }
 
 export interface SettingsUpdate {
@@ -24,6 +26,8 @@ export interface SettingsUpdate {
     hf_token?: string
     llm_provider?: string
     active_model?: string
+    /** The launch profile of `active_model`; leaving it out with a new model clears the choice */
+    launch_profile_id?: number
 }
 
 export interface SystemPromptOut {

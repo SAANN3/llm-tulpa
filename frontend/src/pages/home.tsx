@@ -60,7 +60,10 @@ const Home = () => {
                 setGreetingLoading(false)
             })
             .catch((err) => {
-                if (!axios.isCancel(err)) throw err
+                if (axios.isCancel(err)) return
+                // No model to answer (the server is down, nothing is set up yet): the page works without a
+                // greeting, so it stops waiting for one instead of showing "Thinking" for ever
+                setGreetingLoading(false)
             })
 
         return () => controller.abort()
@@ -71,8 +74,8 @@ const Home = () => {
 
         inputExample(controller.signal)
             .then(setPlaceholder)
-            .catch((err) => {
-                if (!axios.isCancel(err)) throw err
+            .catch(() => {
+                // Only a suggestion for the composer's placeholder: the default one stays
             })
 
         return () => controller.abort()

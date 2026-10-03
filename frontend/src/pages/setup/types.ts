@@ -14,6 +14,10 @@ export interface StepDef {
     /** Runs when the primary button is pressed; resolving `false` keeps the wizard on this step */
     onNext?: () => Promise<boolean>
     primaryLabel?: string
+    /** Runs when Back is pressed; returning `true` means the step handled it itself (a sub-view closing) and the wizard stays */
+    onBack?: () => boolean
+    /** Something is in progress that must not be walked away from: Back and the primary button wait */
+    locked?: boolean
 }
 
 /** What the shell hands every step hook */

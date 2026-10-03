@@ -13,10 +13,12 @@
   --color-danger: #e5484d;
 }
 
+// The scrollbar is drawn from the theme's accent: a dotted track and a thumb that lights up on hover.
+// Firefox has no pseudo-elements for it, only the two colours.
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: auto;
-    scrollbar-color: var(--color-border) var(--color-secondary);
+    scrollbar-color: color-mix(in srgb, var(--color-tertiary) 55%, var(--color-secondary)) var(--color-secondary);
   }
 }
 
@@ -27,14 +29,14 @@
 
 *::-webkit-scrollbar-track {
   background-color: var(--color-secondary);
-  background-image: radial-gradient(var(--color-border) 1px, transparent 1px);
+  background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 30%, var(--color-secondary)) 1px, transparent 1px);
   background-size: 4px 4px;
   background-position: 0 0;
   border-radius: 0;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: color-mix(in srgb, var(--color-tertiary) 55%, var(--color-secondary));
   border: $line-border solid var(--color-secondary);
   border-radius: 0;
   box-shadow: inset 0 0 0 1px var(--color-secondary), 2px 2px 0 0 var(--color-secondary);
@@ -139,6 +141,9 @@ button[data-variant]:disabled {
   position: relative;
   display: inline-block;
   align-self: start;
+  // Wider than its container (the widest option sets its size): it shrinks and the trigger truncates
+  max-width: 100%;
+  min-width: 0;
 }
 
 [data-select-trigger] {
@@ -156,6 +161,9 @@ button[data-variant]:disabled {
   background-position: calc(100% - 1.1em) center, calc(100% - 0.7em) center;
   background-size: 0.4em 0.4em;
   background-repeat: no-repeat;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 [data-select-sizer] {
@@ -191,6 +199,10 @@ button[data-variant]:disabled {
   border-radius: 0;
   max-height: 240px;
   overflow-y: auto;
+}
+
+[data-select-option] {
+  overflow-wrap: anywhere;
 }
 
 [data-select-panel][data-direction='up'] {

@@ -1,5 +1,6 @@
 import {useEffect, useRef} from 'react'
 import type {ReactNode} from 'react'
+import {createPortal} from 'react-dom'
 import '../../../styles/popup.scss'
 import {useEscapeToClose} from '../../../hooks/use-escape-to-close.ts'
 import {Div} from '../../primitives'
@@ -52,21 +53,25 @@ export const Popup = (props: PopupProps) => {
 
     if (!open) return null
 
+    // Rendered into <body>: `position: fixed` is relative to the nearest transformed ancestor, so
+    // inside the setup wizard's sliding track (a transform, clipped) a popup opened off-screen
     if (props.position) {
-        return (
+        return createPortal(
             <Div ref={ref} variant="secondary" className="vbox popup popup--menu"
                  style={{left: props.position.x, top: props.position.y}}>
                 {children}
-            </Div>
+            </Div>,
+            document.body
         )
     }
 
-    return (
+    return createPortal(
         <Div ref={ref} variant="secondary" className="vbox popup popup--dialog">
             <Div className="dos-frame popup__frame" style={{width: props.width}}>
                 <span className="dos-frame__title">{props.title}</span>
                 <Div className="dos-frame__body popup__body">{children}</Div>
             </Div>
-        </Div>
+        </Div>,
+        document.body
     )
 };

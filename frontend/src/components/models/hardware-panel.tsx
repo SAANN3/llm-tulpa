@@ -41,6 +41,20 @@ export const HardwarePanel = ({status}: HardwarePanelProps) => {
             {facts && status?.state === 'ready' ? (
                 <>
                     <Label variant="secondary" className="models__heading" text="Loaded model"/>
+                    {status.placement ? (
+                        <>
+                            <Label className={status.placement.verdict === 'gpu' || status.placement.verdict === 'unknown' ? 'models__meta' : 'models__error'}
+                                   text={status.placement.summary}/>
+                            {status.placement.layers_requested != null && status.placement.layers_total != null ? (
+                                <Label variant="secondary" className="models__meta"
+                                       text={`${status.placement.layers_requested} of ${status.placement.layers_total} layers asked for the GPU by the launch profile`}/>
+                            ) : null}
+                            {status.placement.memory ? (
+                                <Label variant="secondary" className="models__meta"
+                                       text={`Held by the server: ${status.placement.memory.vram_mib} MiB on the GPU, ${status.placement.memory.system_mib} MiB of system memory used by the GPU · model file ${status.placement.model_mib} MiB`}/>
+                            ) : null}
+                        </>
+                    ) : null}
                     {facts.layers_offloaded != null ? (
                         <Label className="models__meta" text={`${facts.layers_offloaded} of ${facts.layers_total} layers on the GPU`}/>
                     ) : null}

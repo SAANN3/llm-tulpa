@@ -16,6 +16,8 @@ import {Button, Div, Label, Select} from '../primitives'
 
 export interface PresetsPanelProps {
     models: ManagedModel[]
+    /** The model that is loaded right now, which the model selector starts on */
+    loadedModelId: number | null
 }
 
 const blank = (modelId: number | null): PresetIn => ({
@@ -34,6 +36,9 @@ const summary = (p: Preset): string =>
         p.seed != null ? `seed ${p.seed}` : null,
     ].filter(Boolean).join(' · ') || 'the server\'s defaults'
 
+/** The starting point that fills nothing in */
+const EMPTY = 'Empty'
+
 const label = (m: ManagedModel): string => m.display_name ?? m.file
 
 /**
@@ -41,21 +46,18 @@ const label = (m: ManagedModel): string => m.display_name ?? m.file
  * a time per model. Built-in templates are starting points to copy, and the whole set can be
  * exported to a file and imported again (on another install, say).
  */
-export const PresetsPanel = ({models}: PresetsPanelProps) => {
-    const [modelId, setModelId] = useState<number | null>(models[0]?.id ?? null)
+export const PresetsPanel = ({models, loadedModelId}: PresetsPanelProps) => {
+    // What the user picked; until then the loaded model, else the first one
+    const [pickedModelId, setModelId] = useState<number | null>(null)
+    const modelId = pickedModelId ?? loadedModelId ?? models[0]?.id ?? null
     const [presets, setPresets] = useState<Preset[]>([])
     const [chosen, setChosen] = useState<number | null>(null)
     const [templates, setTemplates] = useState<PresetIn[]>([])
-    const [template, setTemplate] = useState<string>('')
+    const [template, setTemplate] = useState<string>(EMPTY)
     const [editing, setEditing] = useState<{ id: number | null; initial: PresetIn } | null>(null)
     const [removing, setRemoving] = useState<Preset | null>(null)
     const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null)
     const fileInput = useRef<HTMLInputElement>(null)
-
-    // The first model to arrive becomes the selection
-    useEffect(() => {
-        if (modelId == null && models.length > 0) setModelId(models[0].id)
-    }, [models, modelId])
 
     const reload = useCallback(async () => {
         if (modelId == null) return
@@ -73,10 +75,7 @@ export const PresetsPanel = ({models}: PresetsPanelProps) => {
     }, [reload])
 
     useEffect(() => {
-        getPresetTemplates().then((list) => {
-            setTemplates(list)
-            setTemplate((current) => current || list[0]?.name || '')
-        }).catch(() => setTemplates([]))
+        getPresetTemplates().then(setTemplates).catch(() => setTemplates([]))
     }, [])
 
     if (models.length === 0) {
@@ -130,7 +129,11 @@ export const PresetsPanel = ({models}: PresetsPanelProps) => {
         if (fileInput.current) fileInput.current.value = ''
     }
 
-    const selectedTemplate = templates.find((t) => t.name === template)
+    // New preset starts from the chosen template's values (Empty fills nothing in)
+    const startingPoint = (): PresetIn => {
+        const chosenTemplate = templates.find((t) => t.name === template)
+        return chosenTemplate ? {...chosenTemplate, name: '', model_id: modelId} : blank(modelId)
+    }
 
     return (
         <Div className="models__section">
@@ -168,12 +171,11 @@ export const PresetsPanel = ({models}: PresetsPanelProps) => {
             ))}
 
             <Div className="models__toolbar">
-                <Button text="New preset" onClicked={() => setEditing({id: null, initial: blank(modelId)})}/>
+                <Button text="New preset" onClicked={() => setEditing({id: null, initial: startingPoint()})}/>
                 {templates.length > 0 ? (
                     <>
-                        <Select values={templates.map((t) => t.name)} selected={template} onChosen={setTemplate}/>
-                        <Button variant="secondary" text="Copy template"
-                                onClicked={() => selectedTemplate && setEditing({id: null, initial: {...selectedTemplate, model_id: modelId}})}/>
+                        <Label variant="secondary" className="models__meta" text="starting from"/>
+                        <Select values={[EMPTY, ...templates.map((t) => t.name)]} selected={template} onChosen={setTemplate}/>
                     </>
                 ) : null}
                 <Button variant="secondary" text="Export" onClicked={() => void onExport()}/>

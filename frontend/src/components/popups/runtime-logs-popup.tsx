@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useEffect, useLayoutEffect, useRef, useState} from 'react'
 import {getRuntimeLogs} from '../../api/runtime/logs'
 import {errorReason} from '../../utils/error-reason.ts'
 import {Button, Div, Label} from '../primitives'
@@ -15,6 +15,15 @@ const POLL_MS = 2000
 export const RuntimeLogsPopup = ({open, onClose}: RuntimeLogsPopupProps) => {
     const [lines, setLines] = useState<string[]>([])
     const [error, setError] = useState<string | null>(null)
+    const box = useRef<HTMLDivElement>(null)
+    // Whether the reader is at the end of the log: new lines then scroll into view, but someone who
+    // has scrolled up to read is left where they are
+    const following = useRef(true)
+
+    useLayoutEffect(() => {
+        const el = box.current
+        if (el && following.current) el.scrollTop = el.scrollHeight
+    }, [lines])
 
     useEffect(() => {
         if (!open) return
@@ -41,12 +50,16 @@ export const RuntimeLogsPopup = ({open, onClose}: RuntimeLogsPopupProps) => {
     return (
         <Popup open={open} onClose={onClose} title="Model server log" width={760}>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
-            <Div className="models__log">
+            <Div ref={box} className="models__log"
+                 onScroll={(e) => {
+                     const el = e.currentTarget
+                     following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+                 }}>
                 {lines.length === 0 ? <Label variant="secondary" text="Nothing logged yet."/> : null}
                 {lines.map((line, index) => <pre key={index} className="models__log-line">{line}</pre>)}
             </Div>
             <Div className="popup__actions">
-                <Button variant="secondary" text="Close" onClicked={onClose}/>
+                <Button variant="primary" text="Close" onClicked={onClose}/>
             </Div>
         </Popup>
     )

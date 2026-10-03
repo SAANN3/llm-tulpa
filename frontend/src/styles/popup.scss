@@ -53,6 +53,11 @@
   }
 }
 
+// The same buttons one per row
+.popup__actions--stacked {
+  flex-direction: column;
+}
+
 .popup-menu__item {
   padding: $space-2 $space-4;
   cursor: pointer;

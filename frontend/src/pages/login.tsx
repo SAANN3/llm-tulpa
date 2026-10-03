@@ -1,5 +1,5 @@
 import {useState} from 'react'
-import {Navigate, useNavigate} from 'react-router-dom'
+import {Navigate, useLocation, useNavigate} from 'react-router-dom'
 import axios from 'axios'
 
 import '../styles/login.scss'
@@ -12,6 +12,7 @@ import {useDocumentTitle} from '../hooks/use-document-title.ts'
 const Login = () => {
     useDocumentTitle('Login')
     const navigate = useNavigate()
+    const existingDatabase = Boolean((useLocation().state as { existingDatabase?: boolean } | null)?.existingDatabase)
     const {login, token} = useAuth()
     const {status, loading: setupLoading} = useSetup()
     const [username, setUsername] = useState('')
@@ -49,6 +50,10 @@ const Login = () => {
             <Div className="dos-frame login__panel">
                 <span className="dos-frame__title">Login</span>
                 <Div className="dos-frame__body login__body">
+                    {existingDatabase ? (
+                        <Label variant="secondary" className="field__help"
+                               text="That database already has an account: sign in with it."/>
+                    ) : null}
                     <Div className="field">
                         <Label className="field__label" text="Username"/>
                         <Input text={username} onChanged={setUsername} placeholder="Enter your username"

@@ -95,6 +95,20 @@
   transition: width 0.4s linear;
 }
 
+.model-picker__row--wrap {
+  flex-wrap: wrap;
+
+  // The file name gets the whole first line, the controls sit under it
+  > .model-picker__info {
+    flex: 1 1 100%;
+  }
+
+  > .model-picker__projector {
+    flex: 1 1 0;
+    max-width: none;
+  }
+}
+
 .model-picker__projector {
   flex-shrink: 0;
   max-width: 40%;

@@ -12,6 +12,8 @@ const NO_PROJECTOR = 'no vision'
 
 export interface ProfileEditorPopupProps {
     open: boolean
+    /** The model file the profile launches, shown so it is clear what is being edited */
+    modelFile: string
     /** The profile being changed; null makes a new one from the defaults */
     profile: LaunchProfile | null
     /** Projector files in the model folder that fit this model */
@@ -34,7 +36,7 @@ const Field = ({label, hint, children}: { label: string; hint?: string; children
 )
 
 // Its own component so the draft lives only while the popup is open, like `InputPopup`.
-const ProfileForm = ({profile, projectors, hasMtp, layers, trainedContext, onSave, onClose}: Omit<ProfileEditorPopupProps, 'open'>) => {
+const ProfileForm = ({modelFile, profile, projectors, hasMtp, layers, trainedContext, onSave, onClose}: Omit<ProfileEditorPopupProps, 'open'>) => {
     const [name, setName] = useState(profile?.name ?? '')
     const [context, setContext] = useState(numberText(profile?.context_length ?? null))
     const [cacheK, setCacheK] = useState(profile?.cache_type_k ?? 'q8_0')
@@ -82,6 +84,10 @@ const ProfileForm = ({profile, projectors, hasMtp, layers, trainedContext, onSav
 
     return (
         <>
+            <Div className="field">
+                <Label className="field__label" text="Model"/>
+                <Label className="models__meta" text={modelFile}/>
+            </Div>
             <Field label="Name"><Input text={name} onChanged={setName} placeholder="e.g. Long context"/></Field>
             <Field label="Context (tokens)"
                    hint={`Empty sizes it to free memory.${trainedContext ? ` The model was trained for ${trainedContext}.` : ''}`}>

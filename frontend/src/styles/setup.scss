@@ -2,6 +2,8 @@
 
 .setup {
   gap: $space-5;
+  padding: $space-6 0;
+  box-sizing: border-box;
 }
 
 .setup__title {
@@ -9,18 +11,41 @@
   letter-spacing: 0.14em;
 }
 
+.setup__title {
+  flex-shrink: 0;
+}
+
+// The panel never outgrows the window: the step inside it scrolls, while the title, Back/Next
+// and the dots stay put (every flex level down to the slide needs `min-height: 0` for that)
 .setup__panel {
   width: 460px;
   max-width: calc(100vw - #{$space-8});
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .setup__body {
   gap: $space-6;
+  // The slides keep their own side padding (below), so the frame's total inset is unchanged
+  padding-inline: calc(#{$space-6} - #{$space-3});
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.setup__body > .setup__nav,
+.setup__body > .setup__dots {
+  flex-shrink: 0;
 }
 
 .setup__viewport {
   overflow: clip;
   width: 100%;
+  // Its height is set by AnimatedSize to the step's content; a window shorter than that shrinks it
+  // and the slide scrolls
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
 }
 
 .setup__track {
@@ -28,13 +53,26 @@
   flex-wrap: nowrap;
   width: 100%;
   transform: translateX(calc(-1 * var(--step, 0) * 100%));
-  transition: transform 200ms ease;
-  align-items: flex-start;
+  transition: transform 380ms cubic-bezier(0.4, 0, 0.2, 1);
+  align-items: stretch;
+  min-height: 0;
+  // Fills the animated viewport, so each slide is as tall as the box and scrolls when its content isn't
+  height: 100%;
+}
+
+.setup__slide-content {
+  display: flow-root;
 }
 
 .setup__slide {
   flex: 0 0 100%;
   width: 100%;
+  box-sizing: border-box;
+  // Keeps what sits at the right edge (a toggle, a button) clear of the scrollbar: where scrollbars
+  // float over the content and widen on hover, an element flush against the edge loses clicks to it
+  padding-inline: $space-3;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .setup__step {
@@ -56,6 +94,32 @@
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: $space-3;
+}
+
+// One provider to choose among: a radio button and what it means
+.setup__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: $space-3;
+  padding: $space-3;
+  border: $line-border solid var(--color-border);
+  cursor: pointer;
+}
+
+// The radio is a flex item next to wrapping text: unless told not to, a long line squeezes it into an oval
+.setup__choice > input {
+  flex-shrink: 0;
+}
+
+.setup__choice--active {
+  border-color: var(--color-tertiary);
+}
+
+.setup__choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  min-width: 0;
 }
 
 .setup__error {

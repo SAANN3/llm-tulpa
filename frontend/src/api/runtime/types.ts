@@ -7,6 +7,19 @@ export interface LoadFacts {
     context_per_slot: number | null
 }
 
+/** Whether the loaded model is really on the GPU, judged from the launch profile and what the system reports the server holds there */
+export interface Placement {
+    /** `gpu`; `partial` (some of the model runs on the CPU or sits in system memory); `cpu`; `unknown` (it can't be confirmed on this system) */
+    verdict: 'gpu' | 'partial' | 'cpu' | 'unknown'
+    /** The answer in a sentence */
+    summary: string
+    layers_requested: number | null
+    layers_total: number | null
+    model_mib: number
+    /** What the server holds on the GPU itself and in system memory the GPU uses, when the system reports it */
+    memory: { vram_mib: number; system_mib: number } | null
+}
+
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'failed' | 'not_installed' | 'external'
 
 export interface RuntimeStatus {
@@ -22,6 +35,7 @@ export interface RuntimeStatus {
     /** How many requests are waiting for the model to be free of those turns */
     queued: number
     facts: LoadFacts
+    placement: Placement | null
     binary: string | null
     version: string | null
 }

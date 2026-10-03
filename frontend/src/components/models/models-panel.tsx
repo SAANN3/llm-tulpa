@@ -10,6 +10,9 @@ import {runSpeedTest} from '../../api/runtime/test'
 import type {ManagedModel, RuntimeStatus, SpeedTest} from '../../api/runtime/types'
 import {errorReason} from '../../utils/error-reason.ts'
 import {formatBytes} from '../../utils/format-bytes.ts'
+import {profileSummary} from '../../utils/profile-summary.ts'
+import {ModelFolderField} from './model-folder-field.tsx'
+import {ServerSettingsField} from './server-settings-field.tsx'
 import {ConfirmPopup} from '../popups/base/confirm-popup.tsx'
 import {ProfileEditorPopup} from '../popups/profile-editor-popup.tsx'
 import {Button, Div, Label, Select} from '../primitives'
@@ -26,16 +29,6 @@ export interface ModelsPanelProps {
 }
 
 const NO_PROJECTOR = 'no vision'
-
-/** What a profile does, in a line */
-const summary = (p: LaunchProfile): string =>
-    [
-        p.context_length ? `${p.context_length} ctx` : 'auto ctx',
-        `KV ${p.cache_type_k}/${p.cache_type_v}`,
-        p.mtp ? 'MTP' : null,
-        p.mmproj_file ? 'vision' : null,
-        p.gpu_layers < 99 ? `${p.gpu_layers} GPU layers` : null,
-    ].filter(Boolean).join(' · ')
 
 const speedLine = (t: SpeedTest): string =>
     [
@@ -108,8 +101,16 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
 
     const save = async (settings: LaunchProfileIn) => {
         if (!editing) return
-        if (editing.profile) await updateProfile(editing.profile.id, settings)
-        else await createProfile(editing.model.id, settings)
+        if (editing.profile) {
+            const updated = await updateProfile(editing.profile.id, settings)
+            onChanged()
+            // The running server keeps the old settings until the profile loads again; a change that doesn't
+            // alter how it is launched (a rename) leaves it running. Not awaited: the popup closes now and the
+            // profile's row shows the loading.
+            if (status?.profile_id === updated.id && status.state === 'ready') void onLoad(updated)
+            return
+        }
+        await createProfile(editing.model.id, settings)
         onChanged()
     }
 
@@ -119,6 +120,8 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
 
     return (
         <Div className="models__section">
+            {isOwner ? <ModelFolderField onChanged={onChanged}/> : null}
+            {isOwner ? <ServerSettingsField/> : null}
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
 
             {models.length === 0 ? (
@@ -145,7 +148,7 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                                 <Div key={profile.id} className={`models__profile${active ? ' models__profile--active' : ''}`}>
                                     <Div className="models__profile-main">
                                         <Label className="models__profile-name" text={profile.name}/>
-                                        <Label variant="secondary" className="models__meta" text={summary(profile)}/>
+                                        <Label variant="secondary" className="models__meta" text={profileSummary(profile)}/>
                                         {message?.profileId === profile.id ? (
                                             <Label variant="secondary" className={message.bad ? 'models__error' : 'models__meta'}
                                                    text={message.text}/>
@@ -196,6 +199,7 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
 
             <ProfileEditorPopup
                 open={editing != null}
+                modelFile={editing?.model.file ?? ''}
                 profile={editing?.profile ?? null}
                 projectors={(files?.files ?? []).filter((f) => f.kind === 'projector').map((f) => f.path)}
                 hasMtp={editedFile?.has_mtp ?? false}

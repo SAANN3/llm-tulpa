@@ -1,5 +1,7 @@
 import {useEffect, useState, type CSSProperties} from 'react'
 import '../../styles/model-picker.scss'
+import '../../styles/models.scss'
+import {getModelFolder} from '../../api/runtime/folder'
 import {startHfDownload} from '../../api/hf/download'
 import {listHfFiles} from '../../api/hf/files'
 import {searchHf} from '../../api/hf/search'
@@ -12,13 +14,20 @@ import {Button, Checkbox, Div, Input, Label} from '../primitives'
 export interface HfPanelProps {
     /** Called when a download finishes, so the model list can pick the file up */
     onDownloaded: () => void
+    /** What a finished download says about where to find the file next; by default, the Models tab */
+    doneHint?: string
+    /** Told whenever a download starts or ends, for a caller that must not be left while one runs */
+    onRunningChange?: (running: boolean) => void
 }
+
+/** How long typing has to pause before the search runs */
+const SEARCH_DEBOUNCE_MS = 400
 
 const POLL_MS = 1500
 
 /** Searches Hugging Face for GGUF models and downloads their files into the model folder. A gated
  * repository is hidden until asked for, and says what it needs (a token in the settings). */
-export const HfPanel = ({onDownloaded}: HfPanelProps) => {
+export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the Models tab', onRunningChange}: HfPanelProps) => {
     const [query, setQuery] = useState('')
     const [repos, setRepos] = useState<HfRepo[] | null>(null)
     const [hasToken, setHasToken] = useState(false)
@@ -27,6 +36,9 @@ export const HfPanel = ({onDownloaded}: HfPanelProps) => {
     const [files, setFiles] = useState<HfFile[]>([])
     const [tasks, setTasks] = useState<HfTask[]>([])
     const [error, setError] = useState<string | null>(null)
+    const [folder, setFolder] = useState<string | null>(null)
+    // Files whose download was just requested, until the task list shows them: stops a second press
+    const [starting, setStarting] = useState<string[]>([])
 
     const refreshTasks = () => listHfTasks().then((next) => {
         setTasks((prev) => {
@@ -36,11 +48,13 @@ export const HfPanel = ({onDownloaded}: HfPanelProps) => {
     }).catch(() => undefined)
 
     useEffect(() => {
+        getModelFolder().then((f) => setFolder(f.path)).catch(() => setFolder(null))
         void refreshTasks()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     const running = tasks.some((t) => t.state === 'running')
+    useEffect(() => onRunningChange?.(running), [running, onRunningChange])
     useEffect(() => {
         if (!running) return
         const id = setInterval(() => void refreshTasks(), POLL_MS)
@@ -48,17 +62,26 @@ export const HfPanel = ({onDownloaded}: HfPanelProps) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [running])
 
-    const search = async () => {
-        setError(null)
-        setOpen(null)
-        try {
-            const result = await searchHf(query)
-            setRepos(result.repos)
-            setHasToken(result.has_token)
-        } catch (e) {
-            setError(errorReason(e, 'The search failed.'))
+    // Searches as the typing pauses; an empty query lists the most downloaded models. `stale` drops the
+    // answer of a search that a newer keystroke has already replaced.
+    useEffect(() => {
+        let stale = false
+        const timer = setTimeout(() => {
+            setError(null)
+            searchHf(query.trim()).then((result) => {
+                if (stale) return
+                setOpen(null)
+                setRepos(result.repos)
+                setHasToken(result.has_token)
+            }).catch((e) => {
+                if (!stale) setError(errorReason(e, 'The search failed.'))
+            })
+        }, query.trim() ? SEARCH_DEBOUNCE_MS : 0)
+        return () => {
+            stale = true
+            clearTimeout(timer)
         }
-    }
+    }, [query])
 
     const openRepo = async (repo: HfRepo) => {
         setError(null)
@@ -74,44 +97,72 @@ export const HfPanel = ({onDownloaded}: HfPanelProps) => {
         }
     }
 
+    // The newest task of a file, wherever it was started from: the state of a file's button comes from
+    // here, not from the card that is open, so it reads the same after hiding files or searching again
+    const taskOf = (repo: string, file: string) => tasks.findLast((t) => t.repo === repo && t.file === file)
+
     const download = async (repo: string, file: string) => {
+        const key = `${repo}/${file}`
         setError(null)
+        setStarting((s) => [...s, key])
         try {
             await startHfDownload(repo, file)
             await refreshTasks()
         } catch (e) {
             setError(errorReason(e, 'Could not start the download.'))
+        } finally {
+            setStarting((s) => s.filter((k) => k !== key))
         }
     }
+
+    const downloadButton = (repo: string, f: HfFile) => {
+        const task = taskOf(repo, f.path)
+        const size = formatBytes(f.size_bytes)
+        if (task?.state === 'running' || starting.includes(`${repo}/${f.path}`)) {
+            const fraction = task && task.total_bytes > 0 ? Math.floor(100 * task.completed_bytes / task.total_bytes) : null
+            return <Button variant="secondary" disabled onClicked={() => undefined} text={fraction == null ? 'Downloading…' : `Downloading ${fraction}%`}/>
+        }
+        if (task?.state === 'done') return <Button variant="secondary" disabled onClicked={() => undefined} text="Downloaded"/>
+        return <Button variant="secondary" text={`Download ${size}`} onClicked={() => void download(repo, f.path)}/>
+    }
+
+    const taskRow = (t: HfTask) => (
+        <Div key={t.id} className="models__preset">
+            <Div className="models__profile-main">
+                <Label className="models__profile-name" text={t.local_path}/>
+                <Label variant="secondary" className={t.state === 'failed' ? 'models__error' : 'models__meta'}
+                       text={t.state === 'failed' ? t.error ?? 'failed' : t.state === 'done' ? doneHint
+                           : `${t.phase} · ${formatBytes(t.completed_bytes)} / ${formatBytes(t.total_bytes)}`}/>
+                {t.state === 'running' ? (
+                    <Div className="model-picker__bar">
+                        <Div className="model-picker__bar-fill"
+                             style={{'--fraction': t.total_bytes > 0 ? t.completed_bytes / t.total_bytes : 0} as CSSProperties}/>
+                    </Div>
+                ) : null}
+            </Div>
+        </Div>
+    )
 
     const shown = (repos ?? []).filter((r) => showGated || !r.gated)
     const hidden = (repos ?? []).length - shown.length
 
     return (
         <Div className="models__section">
-            <Div className="models__toolbar">
-                <Input text={query} onChanged={setQuery} placeholder="Search Hugging Face for GGUF models"
-                       onKeyDown={(e) => e.key === 'Enter' && query.trim() && void search()}/>
-                <Button text="Search" disabled={!query.trim()} onClicked={() => void search()}/>
+            {/* Pinned to the top of the scrolling area, so the downloads in progress stay in view while
+                files further down are picked, and whatever is searched meanwhile */}
+            <Div className="hf-panel__pinned">
+                <Input className="model-picker__search" text={query} onChanged={setQuery}
+                       placeholder="Search Hugging Face for GGUF models"/>
+                {tasks.filter((t) => t.state === 'running').map((t) => taskRow(t))}
             </Div>
+            {folder ? (
+                <Label variant="secondary" className="models__meta"
+                       text={`Saved to ${folder}, in a folder per repository (${folder}/<owner>/<repository>/).`}/>
+            ) : null}
+            {!query.trim() && repos != null ? <Label variant="secondary" className="models__meta" text="Most downloaded"/> : null}
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
 
-            {tasks.map((t) => (
-                <Div key={t.id} className="models__preset">
-                    <Div className="models__profile-main">
-                        <Label className="models__profile-name" text={t.local_path}/>
-                        <Label variant="secondary" className={t.state === 'failed' ? 'models__error' : 'models__meta'}
-                               text={t.state === 'failed' ? t.error ?? 'failed' : t.state === 'done' ? 'downloaded — add it on the Models tab'
-                                   : `${t.phase} · ${formatBytes(t.completed_bytes)} / ${formatBytes(t.total_bytes)}`}/>
-                        {t.state === 'running' ? (
-                            <Div className="model-picker__bar">
-                                <Div className="model-picker__bar-fill"
-                                     style={{'--fraction': t.total_bytes > 0 ? t.completed_bytes / t.total_bytes : 0} as CSSProperties}/>
-                            </Div>
-                        ) : null}
-                    </Div>
-                </Div>
-            ))}
+            {tasks.filter((t) => t.state !== 'running').map((t) => taskRow(t))}
 
             {repos != null ? (
                 <Div className="field__row">
@@ -143,10 +194,9 @@ export const HfPanel = ({onDownloaded}: HfPanelProps) => {
                         <Div key={f.path} className="models__profile">
                             <Div className="models__profile-main">
                                 <Label className="models__profile-name" text={f.path}/>
-                                <Label variant="secondary" className="models__meta"
-                                       text={`${formatBytes(f.size_bytes)}${f.projector ? ' · vision projector' : ''}`}/>
+                                {f.projector ? <Label variant="secondary" className="models__meta" text="vision projector"/> : null}
                             </Div>
-                            <Button variant="secondary" text="Download" onClicked={() => void download(repo.id, f.path)}/>
+                            {downloadButton(repo.id, f)}
                         </Div>
                     )) : null}
                 </Div>

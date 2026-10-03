@@ -69,7 +69,8 @@ const Settings = () => {
                     <ActiveModelField
                         provider={settings?.llm_provider ?? 'ollama'}
                         model={settings?.active_model ?? null}
-                        onChosen={(llm_provider, active_model) => setSettings({llm_provider, active_model})}
+                        launchProfileId={settings?.launch_profile_id ?? null}
+                        onChosen={(llm_provider, active_model, launch_profile_id) => setSettings({llm_provider, active_model, launch_profile_id})}
                     />
                     <HfTokenField hasToken={settings?.has_hf_token ?? false} onSave={(hf_token) => setSettings({hf_token})}/>
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>

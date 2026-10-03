@@ -41,11 +41,12 @@ const ChooseModelForm = ({provider, selected, selectedProfileId = null, onSelect
             ) : (
                 <ProfilePicker selectedProfileId={selectedProfileId} onSelect={onSelectProfile}/>
             )}
-            <Div className="popup__actions">
-                <Button variant="secondary" text="Manage models…" onClicked={() => {
+            <Div className="popup__actions popup__actions--stacked">
+                <Button variant="secondary" text="Manage models" onClicked={() => {
                     onClose()
                     navigate('/models')
                 }}/>
+                <Button variant="primary" text="Close" onClicked={onClose}/>
             </Div>
         </>
     )
