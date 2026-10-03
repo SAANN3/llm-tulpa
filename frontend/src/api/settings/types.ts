@@ -7,6 +7,8 @@ export interface Settings {
     language: string
     /** Tool-permission prompts are approved automatically instead of waiting for the user. */
     auto_confirm: boolean
+    /** Whether a Hugging Face token is set (the token itself is never sent back) */
+    has_hf_token: boolean
     llm_provider: string
     active_model: string | null
 }
@@ -18,6 +20,8 @@ export interface SettingsUpdate {
     theme?: string
     language?: string
     auto_confirm?: boolean
+    /** A Hugging Face access token; empty clears it */
+    hf_token?: string
     llm_provider?: string
     active_model?: string
 }

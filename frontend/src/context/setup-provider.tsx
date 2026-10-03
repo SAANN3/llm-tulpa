@@ -12,7 +12,7 @@ export const SetupProvider = ({children}: { children: ReactNode }) => {
         try {
             setStatus(await getSetupStatus())
         } catch {
-            setStatus({configured: false, has_owner: false})
+            setStatus({configured: false, has_owner: false, update_available: false})
         }
     }, [])
 

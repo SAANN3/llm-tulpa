@@ -13,6 +13,8 @@ export interface ChatOut {
     folder_id: number | null
     /** The chat that started this one as a sub-agent, or null for an ordinary chat. */
     parent_chat_id: number | null
+    /** The launch profile this chat runs its model under, or null for a model with none (an Ollama model). */
+    launch_profile_id: number | null
 }
 
 export interface ChatListOut {

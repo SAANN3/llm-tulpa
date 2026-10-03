@@ -6,8 +6,11 @@ import '../styles/chat-header.scss'
 import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
 import {setChatModel} from '../api/chats/set-model'
+import {setChatProfile} from '../api/chats/set-profile'
 import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
+import type {LaunchProfile} from '../api/profiles/types'
+import {profileLabel, useProfileCatalog} from '../hooks/use-profile-catalog.ts'
 import {formatTokenCount} from '../utils/format.ts'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
@@ -22,7 +25,10 @@ export interface ChatHeaderProps {
     /** The model this chat is bound to, or null while it's still loading */
     model: string | null
     provider: string
-    onModelChanged: (model: string) => void
+    /** Called with the new model, and with the launch profile it runs under (null for an Ollama model) */
+    onModelChanged: (model: string, provider: string, profileId: number | null) => void
+    /** The launch profile the chat runs under, or null for a model with none */
+    launchProfileId: number | null
     /** How much context the chat is using (Ollama's last measured prompt size), null while unknown */
     contextUsed: number | null
     /** The context window the agent runs under — the gauge's max */
@@ -48,6 +54,7 @@ export const ChatHeader = ({
     model,
     provider,
     onModelChanged,
+    launchProfileId,
     contextUsed,
     contextMax,
     folderId,
@@ -79,9 +86,19 @@ export const ChatHeader = ({
         }
     }, [folderId])
 
+    const {models, profiles} = useProfileCatalog()
+
+    // An Ollama model: the backend moves the chat off any launch profile
     const onSelect = async (chosen: string) => {
-        await setChatModel(chatId, chosen, provider)
-        onModelChanged(chosen)
+        await setChatModel(chatId, chosen, 'ollama')
+        onModelChanged(chosen, 'ollama', null)
+        setOpen(false)
+    }
+
+    const onSelectProfile = async (profile: LaunchProfile) => {
+        await setChatModel(chatId, profile.model, profile.provider)
+        await setChatProfile(chatId, profile.id)
+        onModelChanged(profile.model, profile.provider, profile.id)
         setOpen(false)
     }
 
@@ -112,7 +129,7 @@ export const ChatHeader = ({
             </Div>
             <Button variant="secondary" className="chat-header__model" onClicked={() => setOpen(true)}>
                 <span className="chat-header__model-label">model:</span>
-                <span className="chat-header__model-name">{model ?? '…'}</span>
+                <span className="chat-header__model-name">{profileLabel(models, profiles, launchProfileId) ?? model ?? '…'}</span>
             </Button>
             <Div className="chat-header__folder-group">
                 <Button variant="secondary" className="chat-header__folder" onClicked={() => setFolderOpen(true)}>
@@ -154,7 +171,8 @@ export const ChatHeader = ({
                     <Close width={20} height={20}/>
                 </Button>
             ) : null}
-            <ChooseModelPopup open={open} selected={model} onSelect={onSelect} onClose={() => setOpen(false)}/>
+            <ChooseModelPopup open={open} provider={provider} selected={provider === 'ollama' ? model : null} selectedProfileId={launchProfileId}
+                              onSelect={onSelect} onSelectProfile={onSelectProfile} onClose={() => setOpen(false)}/>
             <AssignFolderPopup
                 open={folderOpen}
                 selected={folderId}

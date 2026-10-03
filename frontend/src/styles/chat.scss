@@ -28,6 +28,12 @@
   font-size: 13px;
 }
 
+.chat__status {
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  font-size: 13px;
+}
+
 .chat__error {
   display: flex;
   align-items: center;

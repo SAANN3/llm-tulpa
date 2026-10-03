@@ -1,4 +1,6 @@
-import {BrowserRouter, Navigate, Outlet, Route, Routes} from 'react-router-dom'
+import {useState} from 'react'
+import {BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate} from 'react-router-dom'
+import {SetupUpdatePopup} from './components/popups/setup-update-popup.tsx'
 import {AuthProvider} from './context/auth-provider.tsx'
 import {SettingsProvider} from './context/settings-provider.tsx'
 import {SetupProvider} from './context/setup-provider.tsx'
@@ -11,6 +13,7 @@ import Folders from './pages/folders.tsx'
 import Search from './pages/search.tsx'
 import Home from './pages/home.tsx'
 import Login from './pages/login.tsx'
+import Models from './pages/models.tsx'
 import Plugins from './pages/plugins.tsx'
 import Settings from './pages/settings.tsx'
 import SystemPrompt from './pages/settings/system-prompt.tsx'
@@ -18,14 +21,40 @@ import Setup from './pages/setup/setup.tsx'
 import Stats from './pages/stats.tsx'
 import Users from './pages/users.tsx'
 
+const UPDATE_DISMISSED_KEY = 'setup_update_dismissed'
+
 const RequireAuth = () => {
     const {status, loading: setupLoading} = useSetup()
-    const {token, loading: authLoading} = useAuth()
+    const {token, user, loading: authLoading} = useAuth()
+    const navigate = useNavigate()
+    const [dismissed, setDismissed] = useState(() => {
+        try {
+            return sessionStorage.getItem(UPDATE_DISMISSED_KEY) === '1'
+        } catch {
+            return false
+        }
+    })
 
     if (setupLoading || authLoading || !status) return null
     if (!status.configured || !status.has_owner) return <Navigate to="/setup" replace/>
     if (!token) return <Navigate to="/login" replace/>
-    return <Outlet/>
+    return (
+        <>
+            <Outlet/>
+            <SetupUpdatePopup
+                open={user?.role === 'owner' && status.update_available && !dismissed}
+                onSetup={() => navigate('/setup/update')}
+                onLater={() => {
+                    setDismissed(true)
+                    try {
+                        sessionStorage.setItem(UPDATE_DISMISSED_KEY, '1')
+                    } catch {
+                        // Without storage the prompt simply comes back on the next load.
+                    }
+                }}
+            />
+        </>
+    )
 };
 
 const RequireOwner = () => {
@@ -41,6 +70,7 @@ const App = () => (
                     <BrowserRouter>
                         <Routes>
                             <Route path="/setup" element={<Setup/>}/>
+                            <Route path="/setup/update" element={<Setup/>}/>
                             <Route path="/login" element={<Login/>}/>
                             <Route element={<RequireAuth/>}>
                                 <Route path="/" element={<Home/>}/>
@@ -51,6 +81,7 @@ const App = () => (
                                 <Route path="/settings" element={<Settings/>}/>
                                 <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
                                 <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
+                                <Route path="/models/:tab?" element={<Models/>}/>
                                 <Route element={<RequireOwner/>}>
                                     <Route path="/plugins" element={<Plugins/>}/>
                                     <Route path="/users" element={<Users/>}/>

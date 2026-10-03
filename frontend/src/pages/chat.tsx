@@ -1,3 +1,4 @@
+import axios from 'axios'
 import {Fragment, useEffect, useRef, useState} from 'react'
 import {Navigate, useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
@@ -9,7 +10,9 @@ import {ChatMessage} from '../components/chat-message.tsx'
 import {DateSeparator} from '../components/date-separator.tsx'
 import type {LazyListHandle} from '../components/lazy-list.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
+import {ModelStateBanner} from '../components/model-state-banner.tsx'
 import {ConfirmPopup} from '../components/popups/base/confirm-popup.tsx'
+import {ModelBusyPopup} from '../components/popups/model-busy-popup.tsx'
 import {NoticeMessage} from '../components/notice-message.tsx'
 import {PendingAssistantMessage} from '../components/pending-assistant-message.tsx'
 import {Button, Div, Label} from '../components/primitives'
@@ -64,6 +67,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [chatName, setChatName] = useState<string | null>(null)
     const [chatModel, setChatModel] = useState<string | null>(null)
     const [chatProvider, setChatProvider] = useState('ollama')
+    const [chatProfileId, setChatProfileId] = useState<number | null>(null)
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
     const [folderId, setFolderId] = useState<number | null>(null)
@@ -86,6 +90,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatName(result.name)
                 setChatModel(result.model)
                 setChatProvider(result.provider)
+                setChatProfileId(result.launch_profile_id)
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
                 setFolderId(result.folder_id)
@@ -97,6 +102,15 @@ const ChatView = ({chatId}: { chatId: number }) => {
             cancelled = true
         }
     }, [chatId])
+
+    // With an automatic context the window is whatever the server picked when it loaded the model, so
+    // the gauge's maximum is read again once a load finishes.
+    useServerEvent('model_state', (event) => {
+        if (event.state !== 'ready') return
+        getChats({id: chatId}).then((result) => {
+            if (!('chats' in result)) setContextMax(result.context_length)
+        })
+    })
 
     const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({})
     const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({})
@@ -111,8 +125,17 @@ const ChatView = ({chatId}: { chatId: number }) => {
     } | null>(null)
     const [pausedTurn, setPausedTurn] = useState<PausedTurn | null>(null)
     const [turnError, setTurnError] = useState<string | null>(null)
+    // Set when another user has the model server busy with a different model: that is a wait, not an error
+    const [busyReason, setBusyReason] = useState<string | null>(null)
     const chatIdRef = useRef(chatId)
     chatIdRef.current = chatId
+
+    /** Reports why a turn failed: a busy model server (423) gets its own popup, anything else the error bar */
+    const turnFailed = (forChatId: number, e: unknown, fallback: string) => {
+        if (chatIdRef.current !== forChatId) return
+        if (axios.isAxiosError(e) && e.response?.status === 423) setBusyReason(errorReason(e, 'The model is in use by someone else.'))
+        else setTurnError(errorReason(e, fallback))
+    }
 
     // Shared by every collapsible message (thinking traces, tool output): keeps the
     // toggled element pinned on screen instead of `LazyList`'s default bottom-relative
@@ -146,9 +169,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
             setPausedTurn(null)
             result.confirm(autoConfirmDecisions(result.pending)).then(
                 (next) => handleTurnResult(forChatId, next),
-                () => {
-                    if (chatIdRef.current === forChatId) setTurnError('Something went wrong continuing that turn — try again.')
-                },
+                (e) => turnFailed(forChatId, e, 'Something went wrong continuing that turn — try again.'),
             )
             return
         }
@@ -163,8 +184,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setTurnError(null)
         try {
             handleTurnResult(forChatId, await confirm(decisions))
-        } catch {
-            if (chatIdRef.current === forChatId) setTurnError("Something went wrong continuing that turn — try again.")
+        } catch (e) {
+            turnFailed(forChatId, e, 'Something went wrong continuing that turn — try again.')
         }
     }
 
@@ -189,8 +210,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
         }
         try {
             handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
-        } catch {
-            if (chatIdRef.current === forChatId) setTurnError('Something went wrong sending that — try again.')
+        } catch (e) {
+            turnFailed(forChatId, e, 'Something went wrong sending that — try again.')
         }
     }
 
@@ -200,8 +221,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setSearchHighlight(null)
         try {
             handleTurnResult(forChatId, await regenerate(messageId, lastThinkRef.current))
-        } catch {
-            if (chatIdRef.current === forChatId) setTurnError("Couldn't regenerate that reply — the chat is unchanged.")
+        } catch (e) {
+            turnFailed(forChatId, e, "Couldn't regenerate that reply — the chat is unchanged.")
         }
     }
 
@@ -260,9 +281,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
             .then((result) => {
                 if (result) handleTurnResultRef.current(forChatId, result)
             })
-            .catch(() => {
-                if (chatIdRef.current === forChatId) setTurnError('Something went wrong reacting to a finished job — try again.')
-            })
+            .catch((e) => turnFailed(forChatId, e, 'Something went wrong reacting to a finished job — try again.'))
     }, [noticesWaiting, sending, pausedTurn, chatId])
 
     useEffect(() => {
@@ -276,9 +295,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
             .then((result) => {
                 if (result) handleTurnResult(forChatId, result)
             })
-            .catch(() => {
-                if (chatIdRef.current === forChatId) setTurnError('Something went wrong resuming that turn — try again.')
-            })
+            .catch((e) => turnFailed(forChatId, e, 'Something went wrong resuming that turn — try again.'))
     }, [canContinue, chatId, parentChatId])
 
     // A search hit may live in a page that isn't loaded yet: load older pages until it's
@@ -330,7 +347,16 @@ const ChatView = ({chatId}: { chatId: number }) => {
             <Sidebar/>
             <Div className="chat">
                 <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider}
-                            onModelChanged={setChatModel}
+                            launchProfileId={chatProfileId}
+                            onModelChanged={(model, provider, profileId) => {
+                                setChatModel(model)
+                                setChatProvider(provider)
+                                setChatProfileId(profileId)
+                                // A profile's context window is its own: the gauge's maximum follows the chat
+                                getChats({id: chatId}).then((result) => {
+                                    if (!('chats' in result)) setContextMax(result.context_length)
+                                })
+                            }}
                             contextUsed={contextUsed}
                             contextMax={contextMax}
                             folderId={folderId}
@@ -401,6 +427,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     })}
                     {sending ? <PendingAssistantMessage tokens={turnTokens}/> : null}
                 </LazyList>
+                <ModelStateBanner/>
                 {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm}/> : null}
                 {turnError ? (
                     <Div className="chat__error">
@@ -426,6 +453,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     />
                 )}
             </Div>
+            <ModelBusyPopup reason={busyReason} onClose={() => setBusyReason(null)}/>
             <ConfirmPopup
                 open={confirming != null}
                 title={confirming?.kind === 'regenerate' ? 'Regenerate reply' : 'Delete from here'}

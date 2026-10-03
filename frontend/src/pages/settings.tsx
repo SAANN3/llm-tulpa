@@ -7,6 +7,7 @@ import {
     AutoConfirmField,
     NameTimezoneFields,
     NotificationsField,
+    HfTokenField,
 } from '../components/settings-fields.tsx'
 import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
@@ -70,6 +71,7 @@ const Settings = () => {
                         model={settings?.active_model ?? null}
                         onChosen={(llm_provider, active_model) => setSettings({llm_provider, active_model})}
                     />
+                    <HfTokenField hasToken={settings?.has_hf_token ?? false} onSave={(hf_token) => setSettings({hf_token})}/>
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>
                     <AutoConfirmField enabled={autoConfirmEnabled} onToggle={setAutoConfirmEnabled}/>
                     <Div className="settings__actions">

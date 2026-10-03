@@ -64,13 +64,41 @@ export const ActiveModelField = ({provider, model, onChosen}: ActiveModelFieldPr
             <FieldHelp text="New chats start with this model. Each chat can be switched from its own header."/>
             <ChooseModelPopup
                 open={open}
-                selected={model}
+                provider={provider}
+                selected={provider === 'ollama' ? model : null}
                 onSelect={(chosen) => {
-                    onChosen(provider, chosen)
+                    onChosen('ollama', chosen)
+                    setOpen(false)
+                }}
+                onSelectProfile={(profile) => {
+                    onChosen(profile.provider, profile.model)
                     setOpen(false)
                 }}
                 onClose={() => setOpen(false)}
             />
+        </Div>
+    )
+};
+
+export interface HfTokenFieldProps {
+    hasToken: boolean
+    /** Saves the token (empty clears it) */
+    onSave: (token: string) => Promise<void>
+}
+
+/** The user's Hugging Face token, needed to download gated models; saved on its own, never shown again */
+export const HfTokenField = ({hasToken, onSave}: HfTokenFieldProps) => {
+    const [token, setToken] = useState('')
+
+    return (
+        <Div className="field">
+            <FieldLabel text="Hugging Face token"/>
+            <Div className="field__control">
+                <Input type="password" text={token} onChanged={setToken} placeholder={hasToken ? 'a token is set' : 'hf_…'}/>
+                <Button variant="secondary" text={token.trim() ? 'Save' : 'Clear'} disabled={!token.trim() && !hasToken}
+                        onClicked={() => onSave(token.trim()).then(() => setToken(''))}/>
+            </Div>
+            <FieldHelp text="Only needed to download gated models. Create one at huggingface.co/settings/tokens (read access)."/>
         </Div>
     )
 };

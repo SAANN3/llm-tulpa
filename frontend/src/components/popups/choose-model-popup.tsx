@@ -1,16 +1,60 @@
-import {ModelPicker} from '../model-picker.tsx'
+import {useState} from 'react'
+import {useNavigate} from 'react-router-dom'
+import type {LaunchProfile} from '../../api/profiles/types'
+import {OllamaModelList} from '../ollama-model-list.tsx'
+import {ProfilePicker} from '../profile-picker.tsx'
+import {Button, Div} from '../primitives'
 import {Popup} from './base/popup.tsx'
 
 export interface ChooseModelPopupProps {
     open: boolean
+    /** The provider of the current selection, which decides the tab the popup opens on */
+    provider: string
+    /** The Ollama model that is selected, when the selection is an Ollama one */
     selected?: string | null
+    /** The launch profile that is selected, when the selection is a backend-run model */
+    selectedProfileId?: number | null
     onSelect: (name: string) => void
+    onSelectProfile: (profile: LaunchProfile) => void
     onClose: () => void
 }
 
-/** Pick one of the installed models */
-export const ChooseModelPopup = ({open, selected, onSelect, onClose}: ChooseModelPopupProps) => (
+const TABS = [
+    {id: 'llama-cpp', label: 'llama.cpp'},
+    {id: 'ollama', label: 'Ollama'},
+]
+
+// Its own component so the tab starts from the current provider each time the popup opens
+const ChooseModelForm = ({provider, selected, selectedProfileId = null, onSelect, onSelectProfile, onClose}: Omit<ChooseModelPopupProps, 'open'>) => {
+    const navigate = useNavigate()
+    const [tab, setTab] = useState(provider === 'ollama' ? 'ollama' : 'llama-cpp')
+
+    return (
+        <>
+            <Div className="models__tabs">
+                {TABS.map((t) => (
+                    <Button key={t.id} variant={t.id === tab ? 'primary' : 'secondary'} text={t.label} onClicked={() => setTab(t.id)}/>
+                ))}
+            </Div>
+            {tab === 'ollama' ? (
+                <OllamaModelList selected={provider === 'ollama' ? selected : null} onSelect={onSelect}/>
+            ) : (
+                <ProfilePicker selectedProfileId={selectedProfileId} onSelect={onSelectProfile}/>
+            )}
+            <Div className="popup__actions">
+                <Button variant="secondary" text="Manage models…" onClicked={() => {
+                    onClose()
+                    navigate('/models')
+                }}/>
+            </Div>
+        </>
+    )
+}
+
+/** Pick a model: one tab per provider, the same kind of list in each. Adding, downloading and tuning
+ * models happens on the Models page, one button away. */
+export const ChooseModelPopup = ({open, onClose, ...rest}: ChooseModelPopupProps) => (
     <Popup open={open} onClose={onClose} title="Choose model" width={460}>
-        <ModelPicker selected={selected} onSelect={onSelect}/>
+        <ChooseModelForm {...rest} onClose={onClose}/>
     </Popup>
 );

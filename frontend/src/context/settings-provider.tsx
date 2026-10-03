@@ -31,7 +31,11 @@ export const SettingsProvider = ({children}: { children: ReactNode }) => {
 
     const setSettings = async (update: SettingsUpdate) => {
         await setSettingsApi(update)
-        setSettingsState((prev) => (prev ? {...prev, ...update} : prev))
+        // The token is never kept in state: only whether one is set
+        const {hf_token, ...rest} = update
+        setSettingsState((prev) => (prev
+            ? {...prev, ...rest, ...(hf_token !== undefined ? {has_hf_token: hf_token.trim() !== ''} : {})}
+            : prev))
     }
 
     return (

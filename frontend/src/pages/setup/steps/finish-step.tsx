@@ -1,9 +1,14 @@
 import {useNavigate} from 'react-router-dom'
+import {completeSetup} from '../../../api/runtime/setup'
 import {Div, Label} from '../../../components/primitives'
+import {useAuth} from '../../../context/use-auth.ts'
+import {useSetup} from '../../../context/use-setup.ts'
 import type {StepDef} from '../types.ts'
 
 export const useFinishStep = (): StepDef => {
     const navigate = useNavigate()
+    const {token} = useAuth()
+    const {refresh} = useSetup()
 
     return {
         key: 'social',
@@ -11,6 +16,8 @@ export const useFinishStep = (): StepDef => {
         primaryLabel: 'Finish',
         canNext: true,
         onNext: async () => {
+            // Best effort: a failure only means the update prompt shows again
+            if (token) await completeSetup().then(refresh).catch(() => undefined)
             navigate('/', {replace: true})
             return true
         },

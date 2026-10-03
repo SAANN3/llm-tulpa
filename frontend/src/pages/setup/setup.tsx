@@ -1,5 +1,5 @@
 import {useRef, useState, type CSSProperties} from 'react'
-import {Navigate} from 'react-router-dom'
+import {Navigate, useMatch} from 'react-router-dom'
 import '../../styles/setup.scss'
 import {Button, Div} from '../../components/primitives'
 import {TypewriterLabel} from '../../components/typewriter-label.tsx'
@@ -11,6 +11,7 @@ import {useDatabaseStep} from './steps/database-step.tsx'
 import {useFinishStep} from './steps/finish-step.tsx'
 import {useModelSteps} from './steps/model-step.tsx'
 import {useNotificationsStep} from './steps/notifications-step.tsx'
+import {useRebindStep} from './steps/rebind-step.tsx'
 import {useOwnerSteps} from './steps/owner-step.tsx'
 import {useThemeStep} from './steps/theme-step.tsx'
 import {useTimezoneStep} from './steps/timezone-step.tsx'
@@ -53,20 +54,25 @@ const Setup = () => {
     const database = useDatabaseStep(ctx)
     const owner = useOwnerSteps(ctx, {language: welcome.language, timezoneText: timezone.timezoneText})
     const model = useModelSteps(ctx)
+    const rebind = useRebindStep(model.llamaProfileId)
+    // `/setup/update`: an install that is already set up going through what a newer release added
+    const upgrade = useMatch('/setup/update') != null
     const theme = useThemeStep(ctx)
     const notifications = useNotificationsStep(ctx)
     const finish = useFinishStep()
 
-    const steps: StepDef[] = [
-        welcome.step,
-        timezone.step,
-        ...(needsDb ? [database] : []),
-        ...(needsOwner ? owner : []),
-        ...model,
-        theme,
-        notifications,
-        finish,
-    ]
+    const steps: StepDef[] = upgrade
+        ? [...model.steps, ...(model.llamaProfileId != null ? [rebind] : []), finish]
+        : [
+            welcome.step,
+            timezone.step,
+            ...(needsDb ? [database] : []),
+            ...(needsOwner ? owner : []),
+            ...model.steps,
+            theme,
+            notifications,
+            finish,
+        ]
 
     const current = steps[Math.min(step, steps.length - 1)]
     const isFirst = step === 0
