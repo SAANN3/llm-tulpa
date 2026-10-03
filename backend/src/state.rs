@@ -12,6 +12,7 @@ use crate::services::{
     hf_library::HfLibrary,
     llama_install::LlamaInstaller,
     llama_runtime::LlamaRuntime,
+    model_folder::ModelFolder,
     llm::{LlmProviders, OllamaService},
     model_library::ModelLibrary,
     tools::ToolService,
@@ -23,6 +24,8 @@ pub struct AppState {
     /// Everything that runs a model goes through here; Ollama's own library (catalog, pull,
     /// import) is `library`, which holds the Ollama client it needs.
     pub providers: LlmProviders,
+    /// The Ollama client itself, for changing where it points (providers hold it as a trait object)
+    pub ollama: Arc<OllamaService>,
     pub tools: Arc<ToolService>,
     /// The llama-server the backend runs itself: which profile it has loaded, its log, who holds it.
     pub runtime: Arc<LlamaRuntime>,
@@ -31,6 +34,8 @@ pub struct AppState {
     pub shutdown: tokio_util::sync::CancellationToken,
     /// Downloads llama.cpp (or records the user's own build) for `runtime` to run
     pub installer: Arc<LlamaInstaller>,
+    /// Where the model files live; the owner can change it while the backend runs
+    pub model_folder: Arc<ModelFolder>,
     /// What the backend broadcasts to connected frontends (`GET /api/events`). Needs no
     /// database, so it lives here rather than in `AppServices`; the job store and the agent
     /// get a handle to it when the services are built.
@@ -80,17 +85,20 @@ impl AppState {
         tools: Arc<ToolService>,
         events: Arc<EventBus>,
         runtime: Arc<LlamaRuntime>,
+        model_folder: Arc<ModelFolder>,
     ) -> Self {
         let installer = LlamaInstaller::new(runtime.clone(), config.llama_cpp.resolved_dir());
         Self {
             auth: AuthService::new(&config.jwt_secret),
-            library: Arc::new(ModelLibrary::new(ollama.clone(), config.model_dir.clone())),
-            hf: Arc::new(HfLibrary::new(config.model_dir.clone())),
+            library: Arc::new(ModelLibrary::new(ollama.clone(), model_folder.clone())),
+            ollama,
+            hf: Arc::new(HfLibrary::new(model_folder.clone())),
             config: Arc::new(RwLock::new(config)),
             providers,
             tools,
             events,
             installer,
+            model_folder,
             shutdown: tokio_util::sync::CancellationToken::new(),
             runtime,
             services: Arc::new(RwLock::new(None)),
@@ -141,7 +149,7 @@ impl AppState {
             self.events.clone(),
             config.agent_history_len,
             config.ollama.context_length,
-            config.model_dir.clone(),
+            self.model_folder.clone(),
             self.runtime.clone(),
         )
         .await

@@ -34,7 +34,8 @@ pub const PROVIDER: &str = "ollama";
 /// app never has to know Ollama's wire format.
 pub struct OllamaService {
     client: reqwest::Client,
-    base_url: String,
+    /// Where Ollama answers; the owner can change it while the backend runs (see `set_base`)
+    base_url: std::sync::RwLock<String>,
     /// The model's context window (`ollama.context_length` in `settings.json`) — the ceiling
     /// each request's `num_predict` cap is computed under (see `OutputBudget`). Ollama defaults
     /// `num_predict` to unlimited when it's omitted, so without a cap a model that never emits a
@@ -56,11 +57,50 @@ impl OllamaService {
                 .timeout(budget.default_timeout())
                 .build()
                 .expect("failed to build ollama http client"),
-            base_url: base_url.into(),
+            base_url: std::sync::RwLock::new(base_url.into()),
             budget,
             prefix_watch: PrefixWatch::default(),
             llama: std::sync::OnceLock::new(),
         }
+    }
+
+    pub fn base(&self) -> String {
+        self.base_url.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Points the client somewhere else from the next request on.
+    pub fn set_base(&self, url: String) {
+        *self.base_url.write().unwrap_or_else(|p| p.into_inner()) = url;
+    }
+
+    /// The address as it is stored: trimmed, without a trailing slash, an http(s) URL with a host.
+    pub fn normalize_url(url: &str) -> Result<String, ErrorService> {
+        let trimmed = url.trim().trim_end_matches('/');
+        let parsed = reqwest::Url::parse(trimmed).map_err(|_| ErrorService::new(axum::http::StatusCode::BAD_REQUEST, "that is not a web address (try http://localhost:11434)"))?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() || parsed.path() != "/" && !parsed.path().is_empty() || parsed.query().is_some() {
+            return Err(ErrorService::new(axum::http::StatusCode::BAD_REQUEST, "the address must be an http or https address with a host and port only, like http://localhost:11434"));
+        }
+        Ok(trimmed.to_string())
+    }
+
+    /// How many models the Ollama at `url` has installed, or why it can't be reached. A fresh,
+    /// short-lived request: nothing of this client's own is changed.
+    pub async fn probe(url: &str) -> Result<usize, String> {
+        let res = reqwest::Client::new()
+            .get(format!("{url}/api/tags"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| format!("nothing answers there ({})", e.without_url()))?;
+        if !res.status().is_success() {
+            return Err(format!("it answered with status {}", res.status()));
+        }
+        #[derive(Deserialize)]
+        struct Tags {
+            #[serde(default)]
+            models: Vec<Value>,
+        }
+        res.json::<Tags>().await.map(|t| t.models.len()).map_err(|_| "that is not an Ollama (its answer isn't what Ollama sends)".to_string())
     }
 
     /// Tells this client about the managed llama.cpp it shares the GPU with.
@@ -73,19 +113,19 @@ impl OllamaService {
     /// someone who only uses llama.cpp.
     pub async fn unload_all(&self) {
         let probe = Duration::from_secs(2);
-        let Ok(res) = self.client.get(format!("{}/api/ps", self.base_url)).timeout(probe).send().await else { return };
+        let Ok(res) = self.client.get(format!("{}/api/ps", self.base())).timeout(probe).send().await else { return };
         let Ok(running) = res.json::<RunningModels>().await else { return };
         for model in running.models {
             tracing::info!("unloading Ollama's {} to free the GPU for llama.cpp", model.name);
             let body = serde_json::json!({"model": model.name, "keep_alive": 0});
-            let _ = self.client.post(format!("{}/api/generate", self.base_url)).timeout(Duration::from_secs(30)).json(&body).send().await;
+            let _ = self.client.post(format!("{}/api/generate", self.base())).timeout(Duration::from_secs(30)).json(&body).send().await;
         }
     }
     /// The given `model`'s raw Jinja chat template, straight from Ollama's `/api/show`
     /// — see `thinking_capability` for why that's the real template and why it's read
     /// fresh every time.
     async fn chat_template(&self, model: &str) -> Result<String, LlmErrors> {
-        let url = format!("{}/api/show", self.base_url);
+        let url = format!("{}/api/show", self.base());
         let body = serde_json::json!({ "model": model });
 
         let res = self.client.post(&url).json(&body).send().await.map_err(|e| {
@@ -158,7 +198,7 @@ impl LlmProvider for OllamaService {
         model: &str,
         params: &CallParams,
     ) -> Result<GenerateResponse, LlmErrors> {
-        let url = format!("{}/api/generate", self.base_url);
+        let url = format!("{}/api/generate", self.base());
         let num_predict = self.budget.for_generate(&prompt, params.context_length);
         let body = OllamaGenerateRequest {
             model: model.to_string(),
@@ -214,7 +254,7 @@ impl LlmProvider for OllamaService {
         known_prompt_tokens: Option<u64>,
         params: &CallParams,
     ) -> Result<ChatResponse, LlmErrors> {
-        let url = format!("{}/api/chat", self.base_url);
+        let url = format!("{}/api/chat", self.base());
 
         let definitions = tool_definitions(tools);
 
@@ -312,7 +352,7 @@ impl LlmProvider for OllamaService {
     /// fields (`details.parameter_size`/`quantization_level`) are passed straight through
     /// so the client can show/estimate requirements without a second round trip.
     async fn list_local_models(&self) -> Result<Vec<LocalModel>, LlmErrors> {
-        let url = format!("{}/api/tags", self.base_url);
+        let url = format!("{}/api/tags", self.base());
 
         let res = self.client.get(&url).send().await.map_err(|e| {
             tracing::error!(error = %e, "ollama /api/tags request failed");
@@ -348,7 +388,7 @@ impl LlmProvider for OllamaService {
     }
 
     async fn running_models(&self) -> Result<RunningModels, LlmErrors> {
-        let url = format!("{}/api/ps", self.base_url);
+        let url = format!("{}/api/ps", self.base());
 
         let res = self.client.get(&url).send().await.map_err(|e| {
             tracing::error!(error = %e, "ollama /api/ps request failed");
@@ -557,6 +597,17 @@ impl From<OllamaChatWire> for ChatResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn addresses_are_checked_and_tidied() {
+        let ok = |url: &str| OllamaService::normalize_url(url).ok();
+        assert_eq!(ok(" http://localhost:11434/ "), Some("http://localhost:11434".to_string()));
+        assert_eq!(ok("https://ollama.example.org"), Some("https://ollama.example.org".to_string()));
+        assert_eq!(ok("localhost:11434"), None, "no scheme");
+        assert_eq!(ok("ftp://localhost:11434"), None);
+        assert_eq!(ok("http://localhost:11434/api/tags"), None, "a path isn't an address");
+        assert_eq!(ok("http://"), None);
+    }
 
     #[test]
     fn test_ollama_chat_response_deserialization() {

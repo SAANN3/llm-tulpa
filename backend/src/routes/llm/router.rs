@@ -13,6 +13,9 @@ use super::generate::*;
 use super::import::*;
 use super::local_files::*;
 use super::models::*;
+use super::ollama_get::*;
+use super::ollama_set::*;
+use super::ollama_test::*;
 use super::pull::*;
 use super::tasks::*;
 use super::thinking_capability::*;
@@ -22,6 +25,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/generate", post(generate))
         .route("/thinking_capability", get(thinking_capability))
         .route("/models", get(models))
+        .route("/ollama", get(get_ollama_settings).post(set_ollama_settings))
+        .route("/ollama/test", post(test_ollama))
         .route("/catalog", get(catalog))
         .route("/local_files", get(local_files))
         .route("/pull", post(pull))
@@ -31,8 +36,12 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(generate, thinking_capability, models, catalog, local_files, pull, import, tasks),
+    paths(generate, thinking_capability, models, get_ollama_settings, set_ollama_settings, test_ollama, catalog, local_files, pull, import, tasks),
     components(schemas(
+        OllamaSettingsOut,
+        SetOllamaRequest,
+        TestOllamaRequest,
+        TestOllamaOut,
         GenerateRequest,
         GenerateResponse,
         PullRequest,

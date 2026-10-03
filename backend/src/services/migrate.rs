@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBacken
 /// `if current < N { ... }` block to `run_migrations` that alters the existing tables in place
 /// (inside the same transaction) and bump this constant. A database *newer* than this build is
 /// refused rather than "fixed", so an older binary can't damage data a newer one wrote.
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 /// Bumped when a release changes what the setup wizard configures. An install whose
 /// `schema_meta.setup_revision` is behind is offered the wizard again, with its current answers kept.
@@ -218,6 +218,12 @@ const LEGACY_TABLES: [&str; 8] = [
     "jobs",
 ];
 
+/// What version 11 added on top of version 10: the launch profile a user picked as their default, which
+/// new chats start on (their default model's first profile when it is empty).
+const V11_ADDITIONS: &str = "
+    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS active_profile_id BIGINT REFERENCES launch_profiles (id) ON DELETE SET NULL;
+";
+
 /// Ensures the schema exists at `SCHEMA_VERSION`. Idempotent: at the current version it does
 /// nothing. Run once at bootstrap against a connection already pointed at the target database.
 ///
@@ -226,7 +232,7 @@ const LEGACY_TABLES: [&str; 8] = [
 ///   `user_id`) → its tables are *moved*, not dropped, into a `legacy` schema and the new schema
 ///   is created next to them. There's no user to own that data yet, so it stays there until the
 ///   owner account is created, at which point `adopt_legacy_data` copies it in.
-/// - **Version 2, 3, 4, 5, 6, 7, 8, or 9** → upgraded in place to the current version, nothing dropped.
+/// - **Version 2, 3, 4, 5, 6, 7, 8, 9 or 10** → upgraded in place to the current version, nothing dropped.
 /// - **Any other version** → refused with an error; nothing is touched.
 ///
 /// The whole thing runs in one transaction (Postgres DDL is transactional), so a failure leaves
@@ -251,14 +257,15 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     match current {
         Some(SCHEMA_VERSION) => return Ok(()),
-        Some(2) => return upgrade_v2_to_v10(db).await,
-        Some(3) => return upgrade_v3_to_v10(db).await,
-        Some(4) => return upgrade_v4_to_v10(db).await,
-        Some(5) => return upgrade_v5_to_v10(db).await,
-        Some(6) => return upgrade_v6_to_v10(db).await,
-        Some(7) => return upgrade_v7_to_v10(db).await,
-        Some(8) => return upgrade_v8_to_v10(db).await,
-        Some(9) => return upgrade_v9_to_v10(db).await,
+        Some(2) => return upgrade_v2_to_v11(db).await,
+        Some(3) => return upgrade_v3_to_v11(db).await,
+        Some(4) => return upgrade_v4_to_v11(db).await,
+        Some(5) => return upgrade_v5_to_v11(db).await,
+        Some(6) => return upgrade_v6_to_v11(db).await,
+        Some(7) => return upgrade_v7_to_v11(db).await,
+        Some(8) => return upgrade_v8_to_v11(db).await,
+        Some(9) => return upgrade_v9_to_v11(db).await,
+        Some(10) => return upgrade_v10_to_v11(db).await,
         Some(other) => {
             return Err(DbErr::Custom(format!(
                 "the database is at schema version {other}, but this build understands version {SCHEMA_VERSION}; \
@@ -283,10 +290,10 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// Version 2 → 10, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
+/// Version 2 → 11, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
 /// `user_settings.system_prompt`, the `folders` table, `chats.parent_chat_id`,
-/// `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, and what version 10 added. One transaction.
-async fn upgrade_v2_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added and what version 11 added. One transaction.
+async fn upgrade_v2_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V3_ADDITIONS).await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
@@ -296,15 +303,16 @@ async fn upgrade_v2_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 3 → 10, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
+/// Version 3 → 11, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
 /// `messages.eval_tokens`, `user_settings.system_prompt`, the `folders` table,
-/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, and what version 10 added.
-async fn upgrade_v3_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added and what version 11 added.
+async fn upgrade_v3_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
@@ -313,14 +321,15 @@ async fn upgrade_v3_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 4 → 10, in place: adds the per-user `system_prompt` column, the `folders` table,
-/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, and what version 10 added.
-async fn upgrade_v4_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 4 → 11, in place: adds the per-user `system_prompt` column, the `folders` table,
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added and what version 11 added.
+async fn upgrade_v4_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
@@ -328,65 +337,80 @@ async fn upgrade_v4_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 5 → 10, in place: adds chat folders, `chats.parent_chat_id`, `user_settings.auto_confirm`,
-/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, and what version 10 added.
-async fn upgrade_v5_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 5 → 11, in place: adds chat folders, `chats.parent_chat_id`, `user_settings.auto_confirm`,
+/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added and what version 11 added.
+async fn upgrade_v5_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 6 → 10, in place: adds `chats.parent_chat_id`, `user_settings.auto_confirm`, and
-/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, and what version 10 added.
-async fn upgrade_v6_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 6 → 11, in place: adds `chats.parent_chat_id`, `user_settings.auto_confirm`, and
+/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added and what version 11 added.
+async fn upgrade_v6_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 7 → 10, in place: adds `jobs.kind`/`jobs.agent_chat_id` the per-reply timing columns, and what version 10 added.
-async fn upgrade_v7_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 7 → 11, in place: adds `jobs.kind`/`jobs.agent_chat_id` the per-reply timing columns, what version 10 added and what version 11 added.
+async fn upgrade_v7_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 9 → 10, in place: adds the managed llama.cpp provider, launch profiles, sampling presets and
+/// Version 10 → 11, in place: adds `user_settings.active_profile_id`.
+async fn upgrade_v10_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
+    txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
+        .await?;
+    txn.commit().await
+}
+
+/// Version 9 → 11, in place: adds the managed llama.cpp provider, launch profiles, sampling presets and
 /// their choices, `chats.launch_profile_id`, `llm_models.display_name`, `user_settings.hf_token` and
 /// `schema_meta.setup_revision`.
-async fn upgrade_v9_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn upgrade_v9_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 8 → 10, in place: adds the per-reply timing columns on `messages`, and what version 10 added.
-async fn upgrade_v8_to_v10(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 8 → 11, in place: adds the per-reply timing columns on `messages`,, what version 10 added and what version 11 added.
+async fn upgrade_v8_to_v11(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -575,6 +599,7 @@ async fn create_schema(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
+    txn.execute_unprepared(V11_ADDITIONS).await?;
     Ok(())
 }
 

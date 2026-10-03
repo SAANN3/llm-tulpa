@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::services::error::ErrorService;
 use crate::services::gguf::{read_gguf_info, GgufInfo, GgufKind};
 use crate::services::llm::{ImportProgress, LlmProvider, OllamaService};
+use crate::services::model_folder::ModelFolder;
 
 /// How long a fetched catalog is reused. The library changes slowly, and opening the model
 /// picker shouldn't cost a round trip to ollama.com every time.
@@ -138,7 +139,7 @@ pub struct ImportRequest {
 /// `OllamaService`; works without a database, so it lives beside `AppState`, not `AppServices`.
 pub struct ModelLibrary {
     ollama: Arc<OllamaService>,
-    model_dir: Option<PathBuf>,
+    model_dir: Arc<ModelFolder>,
     /// Parsed GGUF headers by path, valid while the file's size and modification time match —
     /// listing the folder shouldn't re-read a dozen multi-megabyte headers every time.
     headers: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, Result<GgufInfo, String>)>>>,
@@ -148,7 +149,7 @@ pub struct ModelLibrary {
 }
 
 impl ModelLibrary {
-    pub fn new(ollama: Arc<OllamaService>, model_dir: Option<PathBuf>) -> Self {
+    pub fn new(ollama: Arc<OllamaService>, model_dir: Arc<ModelFolder>) -> Self {
         Self {
             ollama,
             model_dir,
@@ -193,7 +194,7 @@ impl ModelLibrary {
     /// every model's compatible projectors worked out. Reads file headers, so it runs on the
     /// blocking pool.
     pub async fn local_files(&self) -> LocalFiles {
-        let Some(root) = self.model_dir.clone() else {
+        let Some(root) = self.model_dir.get() else {
             return LocalFiles { configured: false, files: Vec::new() };
         };
         let headers = self.headers.clone();
@@ -235,8 +236,8 @@ impl ModelLibrary {
         let bad = |why: &str| ErrorService::new(StatusCode::BAD_REQUEST, format!("'{relative}': {why}"));
         let root = self
             .model_dir
-            .as_ref()
-            .ok_or_else(|| ErrorService::new(StatusCode::CONFLICT, "no model directory is configured (model_dir in settings.json)"))?;
+            .get()
+            .ok_or_else(|| ErrorService::new(StatusCode::CONFLICT, "no model folder is set: choose one on the Models page"))?;
 
         let candidate = Path::new(relative);
         if candidate.is_absolute() || candidate.components().any(|c| !matches!(c, Component::Normal(_))) {

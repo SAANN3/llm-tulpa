@@ -78,6 +78,7 @@ impl SettingsStore {
                 .map(|m| m.provider.clone())
                 .unwrap_or_else(|| DEFAULT_PROVIDER.to_string()),
             active_model: active.map(|m| m.name),
+            launch_profile_id: row.active_profile_id,
         })
     }
 
@@ -151,6 +152,10 @@ impl SettingsStore {
         }
         if let Some(id) = active_model_id {
             model.active_model_id = Set(Some(id));
+            // The profile belongs to the model it was chosen for; a new model starts on its first
+            model.active_profile_id = Set(update.launch_profile_id);
+        } else if let Some(profile_id) = update.launch_profile_id {
+            model.active_profile_id = Set(Some(profile_id));
         }
 
         model.update(&self.db).await?;
@@ -209,6 +214,8 @@ pub struct Settings {
     /// The provider of the active model (`ollama` until one is picked).
     pub llm_provider: String,
     pub active_model: Option<String>,
+    /// The launch profile of that model new chats start on; `None` means its first profile.
+    pub launch_profile_id: Option<i64>,
 }
 
 /// A partial settings update — every `None` field is left unchanged.
@@ -224,6 +231,9 @@ pub struct SettingsUpdate {
     pub hf_token: Option<String>,
     pub llm_provider: Option<String>,
     pub active_model: Option<String>,
+    /// The launch profile of `active_model` new chats start on. A new `active_model` without one clears
+    /// the choice, since a profile belongs to the model it was made for.
+    pub launch_profile_id: Option<i64>,
 }
 
 /// The user's custom system prompt alongside the built-in default, for the settings page's

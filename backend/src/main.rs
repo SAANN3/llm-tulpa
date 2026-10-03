@@ -9,13 +9,13 @@ mod tools;
 
 use std::sync::Arc;
 
-use axum::http::{HeaderValue, Method};
+use axum::http::{header, HeaderValue, Method};
 use axum::middleware::from_fn_with_state;
 use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa_swagger_ui::SwaggerUi;
 
-use services::{event_bus::EventBus, llama_runtime::LlamaRuntime, llm::{LlamaCppProvider, LlmProviders, OllamaService}, tools::ToolService};
+use services::{event_bus::EventBus, model_folder::ModelFolder, llama_runtime::LlamaRuntime, llm::{LlamaCppProvider, LlmProviders, OllamaService}, tools::ToolService};
 use state::AppState;
 use tools::base::Tool;
 use tools::temperature::TemperatureTool;
@@ -47,6 +47,7 @@ async fn main() {
     tool_list.extend(tools::chat::collect());
     let tools = Arc::new(ToolService::new(tool_list));
 
+    let model_folder = ModelFolder::new(config.model_dir.clone());
     let events = Arc::new(EventBus::new());
     let runtime = LlamaRuntime::new(config.llama_cpp.clone(), events.clone());
     ollama.share_gpu_with(runtime.clone());
@@ -57,10 +58,10 @@ async fn main() {
             Box::pin(async move { ollama.unload_all().await })
         }
     });
-    let llama_cpp = Arc::new(LlamaCppProvider::new(runtime.clone(), config.model_dir.clone(), config.llama_cpp.base_url(), config.ollama.context_length));
+    let llama_cpp = Arc::new(LlamaCppProvider::new(runtime.clone(), model_folder.clone(), config.llama_cpp.base_url(), config.ollama.context_length));
     let providers = LlmProviders::new(llama_cpp, vec![ollama.clone()]);
 
-    let state = Arc::new(AppState::new(config, ollama, providers, tools, events, runtime.clone()));
+    let state = Arc::new(AppState::new(config, ollama, providers, tools, events, runtime.clone(), model_folder));
     let shutdown = state.shutdown.clone();
 
     // No database configured (first run) or an unreachable one: start in setup mode, and let
@@ -78,7 +79,8 @@ async fn main() {
                 .is_ok_and(|origin| origin.starts_with("http://") && origin.ends_with(":5173"))
         }))
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        .allow_headers(tower_http::cors::Any);
+        // Named, not `*`: a wildcard doesn't cover `Authorization`, which browsers are about to enforce
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT]);
 
     let protected = routes::router::router().layer(from_fn_with_state(state.clone(), routes::auth::require_auth));
     let api = Router::new().merge(protected).merge(routes::router::public_router());

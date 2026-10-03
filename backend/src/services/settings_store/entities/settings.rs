@@ -16,6 +16,9 @@ pub struct Model {
     /// The model this user's new chats default to (`llm_models.id`). The provider is
     /// reached through the model, not stored here.
     pub active_model_id: Option<i64>,
+    /// The launch profile (`launch_profiles.id`) of that model new chats start on; `NULL` means the
+    /// model's first profile.
+    pub active_profile_id: Option<i64>,
     /// The user's own system prompt, replacing the built-in default for their chats —
     /// `NULL` means the hardcoded default applies.
     pub system_prompt: Option<String>,

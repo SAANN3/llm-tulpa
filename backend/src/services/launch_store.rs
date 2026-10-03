@@ -190,6 +190,20 @@ impl LaunchStore {
             .ok_or(LaunchStoreErrors::NotFound)
     }
 
+    /// The profile new work on `model_id` starts on: the one a user picked (`chosen`) when it is really
+    /// one of this model's, else the model's oldest.
+    pub async fn start_profile(&self, model_id: i64, chosen: Option<i64>) -> Result<Option<LaunchProfile>, LaunchStoreErrors> {
+        if let Some(id) = chosen {
+            match self.get(id).await {
+                Ok(profile) if profile.model_id == model_id => return Ok(Some(profile)),
+                // A profile that is gone or belongs to another model is no choice at all
+                Ok(_) | Err(LaunchStoreErrors::NotFound) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        self.default_for_model(model_id).await
+    }
+
     /// The profile a model starts with when nothing says which: its oldest one.
     pub async fn default_for_model(&self, model_id: i64) -> Result<Option<LaunchProfile>, LaunchStoreErrors> {
         Ok(launch_profiles::Entity::find()

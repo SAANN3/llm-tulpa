@@ -47,7 +47,7 @@ impl OllamaService {
     pub async fn pull_streaming(&self, name: &str, mut on_event: impl FnMut(PullEvent)) -> Result<(), LlmErrors> {
         let mut res = self
             .client
-            .post(format!("{}/api/pull", self.base_url))
+            .post(format!("{}/api/pull", self.base()))
             .timeout(TRANSFER_TIMEOUT)
             .json(&serde_json::json!({ "model": name, "stream": true }))
             .send()
@@ -89,7 +89,7 @@ impl OllamaService {
     async fn blob_exists(&self, digest: &str) -> Result<bool, LlmErrors> {
         let res = self
             .client
-            .head(format!("{}/api/blobs/{digest}", self.base_url))
+            .head(format!("{}/api/blobs/{digest}", self.base()))
             .send()
             .await
             .map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
@@ -114,7 +114,7 @@ impl OllamaService {
 
         let res = self
             .client
-            .post(format!("{}/api/blobs/{digest}", self.base_url))
+            .post(format!("{}/api/blobs/{digest}", self.base()))
             .timeout(TRANSFER_TIMEOUT)
             .body(reqwest::Body::wrap_stream(counted))
             .send()
@@ -161,7 +161,7 @@ impl OllamaService {
         progress.set_phase("creating");
         let res = self
             .client
-            .post(format!("{}/api/create", self.base_url))
+            .post(format!("{}/api/create", self.base()))
             .timeout(TRANSFER_TIMEOUT)
             .json(&serde_json::json!({ "model": name, "files": blobs, "stream": false }))
             .send()

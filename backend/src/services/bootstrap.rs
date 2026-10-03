@@ -11,6 +11,7 @@ use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
 use crate::plugins::messaging::telegram::TelegramProvider;
+use crate::services::model_folder::ModelFolder;
 use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::services::{
@@ -166,7 +167,7 @@ pub async fn bootstrap(
     events: Arc<EventBus>,
     agent_history_len: u64,
     ollama_context_length: u64,
-    model_dir: Option<PathBuf>,
+    model_dir: Arc<ModelFolder>,
     runtime: Arc<LlamaRuntime>,
 ) -> Result<AppServices, BootstrapError> {
     if !is_plain_identifier(db_name) {

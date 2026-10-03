@@ -572,7 +572,8 @@ impl ChatStore {
     /// `Model(NoModel)` when no model exists at all.
     async fn binding_for_new_chat(&self, user_id: i64) -> Result<(ModelRef, Option<i64>), ChatStoreErrors> {
         let model = self.models.resolve_default(user_id).await?;
-        let profile = self.launch.default_for_model(model.id).await?.map(|p| p.id);
+        let chosen = self.models.chosen_profile(user_id).await?;
+        let profile = self.launch.start_profile(model.id, chosen).await?.map(|p| p.id);
         Ok((model, profile))
     }
 
@@ -699,7 +700,7 @@ impl ChatStore {
             user_id: Set(owner),
             name: Set(name),
             model_id: Set(model.id),
-            launch_profile_id: Set(self.launch.default_for_model(model.id).await?.map(|p| p.id)),
+            launch_profile_id: Set(self.launch.start_profile(model.id, self.models.chosen_profile(owner).await?).await?.map(|p| p.id)),
             ..Default::default()
         }
         .insert(&self.db)

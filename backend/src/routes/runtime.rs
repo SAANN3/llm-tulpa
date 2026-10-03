@@ -1,4 +1,5 @@
 mod devices;
+mod folder;
 mod hardware;
 mod install;
 mod install_status;
@@ -7,6 +8,7 @@ mod logs;
 mod models;
 mod rebind_chats;
 mod register;
+mod server_settings;
 mod setup_complete;
 pub mod router;
 mod status;

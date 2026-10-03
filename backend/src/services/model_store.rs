@@ -161,6 +161,12 @@ impl ModelStore {
             .and_then(|(model, provider)| provider.map(|p| Self::to_ref(model, p))))
     }
 
+    /// The launch profile the user picked for their default model, when they did; the caller checks it
+    /// still belongs to the model it is used with.
+    pub async fn chosen_profile(&self, user_id: i64) -> Result<Option<i64>, ModelStoreErrors> {
+        Ok(active_model::Entity::find_by_id(user_id).one(&self.db).await?.and_then(|settings| settings.active_profile_id))
+    }
+
     /// `default_for_user`, erroring `NoModel` when nothing has been picked yet.
     pub async fn resolve_default(&self, user_id: i64) -> Result<ModelRef, ModelStoreErrors> {
         self.default_for_user(user_id).await?.ok_or(ModelStoreErrors::NoModel)

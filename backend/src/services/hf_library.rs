@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
 
 use super::error::ErrorService;
+use super::model_folder::ModelFolder;
 
 const API: &str = "https://huggingface.co/api/models";
 const FINISHED_TASK_TTL: Duration = Duration::from_secs(30 * 60);
@@ -57,7 +58,7 @@ pub struct HfTask {
 
 pub struct HfLibrary {
     http: reqwest::Client,
-    model_dir: Option<PathBuf>,
+    model_dir: Arc<ModelFolder>,
     tasks: Arc<Mutex<Vec<HfTask>>>,
     next_id: std::sync::atomic::AtomicU64,
 }
@@ -103,7 +104,7 @@ fn failed(status: StatusCode, message: impl Into<String>) -> ErrorService {
 }
 
 impl HfLibrary {
-    pub fn new(model_dir: Option<PathBuf>) -> Self {
+    pub fn new(model_dir: Arc<ModelFolder>) -> Self {
         Self {
             http: reqwest::Client::new(),
             model_dir,
@@ -177,7 +178,7 @@ impl HfLibrary {
     }
 
     pub async fn start(self: &Arc<Self>, repo: &str, file: &str, token: Option<String>) -> Result<HfTask, ErrorService> {
-        let root = self.model_dir.clone().ok_or_else(|| failed(StatusCode::CONFLICT, "no model directory is configured (model_dir in settings.json)"))?;
+        let root = self.model_dir.get().ok_or_else(|| failed(StatusCode::CONFLICT, "no model folder is set: choose one on the Models page"))?;
         if !safe_segments(repo) || !safe_segments(file) || !file.to_lowercase().ends_with(".gguf") {
             return Err(failed(StatusCode::BAD_REQUEST, "that is not a .gguf file of a repository"));
         }

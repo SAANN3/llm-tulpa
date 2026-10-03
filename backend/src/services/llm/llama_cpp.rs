@@ -19,7 +19,6 @@
 //!   - `timings.{prompt,predicted}_ms` (float milliseconds) become nanosecond durations.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -40,6 +39,7 @@ use super::types::{
 use crate::services::error::ErrorService;
 use crate::services::gguf::read_gguf_info;
 use crate::services::llama_runtime::{CallGuard, LlamaRuntime};
+use crate::services::model_folder::ModelFolder;
 use crate::tools::base::Tool;
 
 /// The name this provider is registered under (`llm_providers.name`) and labels its errors with.
@@ -49,7 +49,7 @@ pub struct LlamaCppProvider {
     runtime: Arc<LlamaRuntime>,
     /// Where the model files are, so a model's chat template can be read from its own header without
     /// the server running.
-    model_dir: Option<PathBuf>,
+    model_dir: Arc<ModelFolder>,
     client: reqwest::Client,
     base_url: String,
     budget: OutputBudget,
@@ -59,7 +59,7 @@ pub struct LlamaCppProvider {
 impl LlamaCppProvider {
     /// `default_context` is the context window used to cap a reply when a call doesn't name the
     /// model's own (`CallParams::context_length`).
-    pub fn new(runtime: Arc<LlamaRuntime>, model_dir: Option<PathBuf>, base_url: impl Into<String>, default_context: u64) -> Self {
+    pub fn new(runtime: Arc<LlamaRuntime>, model_dir: Arc<ModelFolder>, base_url: impl Into<String>, default_context: u64) -> Self {
         Self {
             runtime,
             model_dir,
@@ -128,7 +128,7 @@ impl LlamaCppProvider {
     /// `None` is an answer too: a readable file that carries no template has none, whatever a
     /// server would say.
     async fn template(&self, model: &str) -> Result<Option<String>, LlmErrors> {
-        if let Some(dir) = &self.model_dir {
+        if let Some(dir) = self.model_dir.get() {
             let path = dir.join(model);
             let from_file = tokio::task::spawn_blocking(move || read_gguf_info(&path).ok().map(|info| info.chat_template))
                 .await

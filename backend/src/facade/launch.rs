@@ -2,7 +2,6 @@
 //! asked to run — the join between the stores that know the pieces and the runtime that starts a
 //! process from them.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -10,6 +9,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::services::{
+    model_folder::ModelFolder,
     error::ErrorService,
     launch_store::LaunchStore,
     llama_runtime::LlamaRuntime,
@@ -27,7 +27,7 @@ pub struct LaunchFacade {
     launch: Arc<LaunchStore>,
     models: Arc<ModelStore>,
     users: Arc<UserStore>,
-    model_dir: Option<PathBuf>,
+    model_dir: Arc<ModelFolder>,
 }
 
 impl LaunchFacade {
@@ -37,7 +37,7 @@ impl LaunchFacade {
         launch: Arc<LaunchStore>,
         models: Arc<ModelStore>,
         users: Arc<UserStore>,
-        model_dir: Option<PathBuf>,
+        model_dir: Arc<ModelFolder>,
     ) -> Self {
         Self { providers, runtime, launch, models, users, model_dir }
     }
@@ -52,7 +52,7 @@ impl LaunchFacade {
 
     /// The same for a model already in hand.
     pub async fn request_for_model(&self, user_id: i64, model: &ModelRef, profile_id: Option<i64>) -> Result<Option<LaunchRequest>, ErrorService> {
-        let (Some(dir), true) = (&self.model_dir, model.provider == MANAGED_PROVIDER) else { return Ok(None) };
+        let (Some(dir), true) = (self.model_dir.get(), model.provider == MANAGED_PROVIDER) else { return Ok(None) };
         let profile = match profile_id {
             Some(id) => self.launch.get(id).await?,
             None => match self.launch.default_for_model(model.id).await? {
@@ -139,7 +139,9 @@ impl LaunchFacade {
     /// What `user_id`'s default model would run under.
     pub async fn default_request_for(&self, user_id: i64) -> Result<Option<LaunchRequest>, ErrorService> {
         let Some(model) = self.models.default_for_user(user_id).await? else { return Ok(None) };
-        self.request_for_model(user_id, &model, None).await
+        let chosen = self.models.chosen_profile(user_id).await?;
+        let profile = self.launch.start_profile(model.id, chosen).await?.map(|p| p.id);
+        self.request_for_model(user_id, &model, profile).await
     }
 }
 

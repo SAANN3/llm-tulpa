@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::{watch, Mutex as AsyncMutex};
@@ -39,6 +39,8 @@ const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 pub struct LlamaRuntime {
     config: LlamaCppConfig,
+    /// The settings the owner can change while the backend runs (see `set_tuning`)
+    tuning: Mutex<Tuning>,
     events: Arc<EventBus>,
     http: reqwest::Client,
     inner: Arc<Mutex<Inner>>,
@@ -88,6 +90,34 @@ struct Loaded {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     /// Flips to true when the process is gone
     exited: watch::Receiver<bool>,
+}
+
+/// What the owner can change about the server without restarting the backend.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct Tuning {
+    /// Stop the server after this many idle minutes, freeing the GPU; 0 never stops it
+    pub idle_unload_minutes: u64,
+    /// Load the default model when the backend starts (read at startup; changing it applies from the next start)
+    pub autostart: bool,
+    /// How long to wait for a model to finish loading, in seconds
+    pub load_timeout_secs: u64,
+}
+
+impl Tuning {
+    pub fn of(config: &LlamaCppConfig) -> Self {
+        Self { idle_unload_minutes: config.idle_unload_minutes, autostart: config.autostart, load_timeout_secs: config.load_timeout_secs }
+    }
+
+    /// Refuses what would make no sense: a load timeout too short for any model, an idle time of years.
+    pub fn validate(&self) -> Result<(), ErrorService> {
+        if self.idle_unload_minutes > 10_080 {
+            return Err(ErrorService::new(StatusCode::BAD_REQUEST, "the idle time can be at most a week (10080 minutes); 0 never unloads"));
+        }
+        if !(10..=3600).contains(&self.load_timeout_secs) {
+            return Err(ErrorService::new(StatusCode::BAD_REQUEST, "the load timeout must be between 10 and 3600 seconds"));
+        }
+        Ok(())
+    }
 }
 
 /// A running turn's claim on the server. Dropping it ends the claim and counts as activity for the
@@ -150,6 +180,8 @@ pub struct RuntimeStatus {
     /// How many requests are waiting for the model to be free of those turns
     pub queued: usize,
     pub facts: LoadFacts,
+    /// Whether the loaded model is really on the GPU; filled in by the route that serves the status
+    pub placement: Option<crate::facade::placement::Placement>,
     pub binary: Option<String>,
     pub version: Option<String>,
 }
@@ -200,6 +232,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 impl LlamaRuntime {
     pub fn new(config: LlamaCppConfig, events: Arc<EventBus>) -> Arc<Self> {
         let runtime = Arc::new(Self {
+            tuning: Mutex::new(Tuning::of(&config)),
             config,
             events,
             http: reqwest::Client::new(),
@@ -213,6 +246,15 @@ impl LlamaRuntime {
         });
         runtime.clone().spawn_idle_watcher();
         runtime
+    }
+
+    pub fn tuning(&self) -> Tuning {
+        lock(&self.tuning).clone()
+    }
+
+    /// Applies new settings at once: the idle watcher and the next load read them afresh.
+    pub fn set_tuning(&self, tuning: Tuning) {
+        *lock(&self.tuning) = tuning;
     }
 
     /// Registers what runs before every start of the server (see `before_start`).
@@ -255,7 +297,7 @@ impl LlamaRuntime {
     /// is loaded right away when `autostart` is on.
     pub fn remember_default(self: &Arc<Self>, request: LaunchRequest) {
         lock(&self.fallback).get_or_insert_with(|| request.clone());
-        if self.config.autostart && !self.is_external() {
+        if self.tuning().autostart && !self.is_external() {
             let runtime = self.clone();
             tokio::spawn(async move {
                 if let Err(e) = runtime.load(&request).await {
@@ -325,6 +367,13 @@ impl LlamaRuntime {
             }
         };
         build_args(&self.config, request, has_mtp)
+    }
+
+    /// The launch that is loaded and ready, with the server's process id
+    pub fn loaded_launch(&self) -> Option<(LaunchRequest, u32)> {
+        let inner = lock(&self.inner);
+        let loaded = inner.loaded.as_ref()?;
+        matches!(inner.state, State::Ready).then(|| (loaded.request.clone(), loaded.pid))
     }
 
     fn running_request(&self) -> Option<LaunchRequest> {
@@ -625,14 +674,15 @@ impl LlamaRuntime {
     }
 
     async fn wait_ready(&self, mut exited: watch::Receiver<bool>) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(self.config.load_timeout_secs);
+        let load_timeout_secs = self.tuning().load_timeout_secs;
+        let deadline = Instant::now() + Duration::from_secs(load_timeout_secs);
         let health = format!("{}/health", self.config.base_url());
         loop {
             if *exited.borrow_and_update() {
                 return Err(self.failure_reason("llama-server exited while loading the model"));
             }
             if Instant::now() > deadline {
-                return Err(self.failure_reason(&format!("the model didn't finish loading in {} seconds", self.config.load_timeout_secs)));
+                return Err(self.failure_reason(&format!("the model didn't finish loading in {load_timeout_secs} seconds")));
             }
             let ok = self.http.get(&health).timeout(Duration::from_secs(2)).send().await.is_ok_and(|r| r.status().is_success());
             if ok {
@@ -679,13 +729,18 @@ impl LlamaRuntime {
     }
 
     fn spawn_idle_watcher(self: Arc<Self>) {
-        if self.config.idle_unload_minutes == 0 || self.is_external() {
+        if self.is_external() {
             return;
         }
-        let limit = Duration::from_secs(self.config.idle_unload_minutes * 60);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(IDLE_CHECK).await;
+                // Read afresh every round: the owner can change it, or turn it on, while the backend runs
+                let minutes = self.tuning().idle_unload_minutes;
+                if minutes == 0 {
+                    continue;
+                }
+                let limit = Duration::from_secs(minutes * 60);
                 let idle = {
                     let inner = lock(&self.inner);
                     matches!(inner.state, State::Ready)
@@ -693,7 +748,7 @@ impl LlamaRuntime {
                         && inner.last_activity.is_some_and(|at| at.elapsed() >= limit)
                 };
                 if idle {
-                    tracing::info!("unloading the model after {} idle minutes", self.config.idle_unload_minutes);
+                    tracing::info!("unloading the model after {minutes} idle minutes");
                     // Somebody claiming it between the check and the stop is turned away by `stop`.
                     let _ = self.stop().await;
                 }
@@ -715,6 +770,7 @@ impl LlamaRuntime {
                 holders: Vec::new(),
                 queued: 0,
                 facts,
+                placement: None,
                 binary: None,
                 version: None,
             };
@@ -741,6 +797,7 @@ impl LlamaRuntime {
             holders,
             queued: inner.waiting,
             facts,
+            placement: None,
             binary: binary.is_file().then(|| binary.display().to_string()),
             version: None,
         }
@@ -927,6 +984,16 @@ mod tests {
         let mut none = profile();
         none.mmproj_gpu = false;
         assert!(!build_args(&LlamaCppConfig::default(), &request(none), false).join(" ").contains("--no-mmproj-offload"));
+    }
+
+    #[test]
+    fn server_settings_are_range_checked() {
+        let ok = Tuning { idle_unload_minutes: 5, autostart: false, load_timeout_secs: 300 };
+        assert!(ok.validate().is_ok());
+        assert!(Tuning { idle_unload_minutes: 0, ..ok.clone() }.validate().is_ok(), "0 means never");
+        assert!(Tuning { idle_unload_minutes: 10_081, ..ok.clone() }.validate().is_err());
+        assert!(Tuning { load_timeout_secs: 5, ..ok.clone() }.validate().is_err());
+        assert!(Tuning { load_timeout_secs: 3601, ..ok }.validate().is_err());
     }
 
     #[test]

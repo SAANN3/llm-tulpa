@@ -17,6 +17,12 @@ use crate::tools::storage::{check_file_scope, normalize};
 const DEFAULT_PROMPT: &str = "Describe this image in detail: what it shows, any text visible in \
      it, and anything else that seems relevant.";
 
+/// Added to what goes wrong reaching the file. A model that was shown an image in the conversation
+/// can still call this tool for it, naming a path or address it made up; the failure is where it can
+/// be told that the image is already in front of it.
+const ATTACHED_HINT: &str = " If you meant an image the user attached to their message, you can already see it: \
+     look at it directly instead of calling this tool.";
+
 pub struct ReadImageTool;
 
 #[derive(Deserialize, ToolParams)]
@@ -68,11 +74,17 @@ impl Tool for ReadImageTool {
 
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: ReadImageArgs = serde_json::from_value(data)?;
+        if args.path.starts_with("http://") || args.path.starts_with("https://") {
+            return Err(ToolError::FailedUnknown(format!(
+                "'{}' is an address, not a file path: download it first (web.download_file) and pass the path it was saved to.{ATTACHED_HINT}",
+                args.path
+            )));
+        }
         let path = normalize(std::path::Path::new(&args.path));
 
         let bytes = tokio::fs::read(&path)
             .await
-            .map_err(|e| ToolError::FailedUnknown(format!("couldn't read '{}': {e}", path.display())))?;
+            .map_err(|e| ToolError::FailedUnknown(format!("couldn't read '{}': {e}.{ATTACHED_HINT}", path.display())))?;
 
         let prompt = args
             .prompt
