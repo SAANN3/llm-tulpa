@@ -24,6 +24,14 @@ export interface LocalFile {
     compatible_projectors: string[]
     /** For a model: the projector to preselect, when there's a clear answer */
     suggested_projector: string | null
+    /** For a model: whether the file carries an MTP draft head */
+    has_mtp: boolean
+    /** For a model: the context length it was trained for */
+    trained_context: number | null
+    /** For a model: how many layers it has */
+    block_count: number | null
+    /** For a model: its quantization, when the file says */
+    quantization: string | null
 }
 
 export interface LocalFiles {

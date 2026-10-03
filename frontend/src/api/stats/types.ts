@@ -115,6 +115,10 @@ export interface LlamaServer {
 
 export interface ServerStats {
     reachable: boolean
+    /** For the managed llama.cpp when it isn't answering: stopped, starting, failed or not_installed */
+    state: 'stopped' | 'starting' | 'failed' | 'not_installed' | null
+    /** Why, when it failed or is missing */
+    detail: string | null
     models: RunningModel[]
     llama_server: LlamaServer | null
 }

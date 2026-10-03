@@ -5,6 +5,7 @@ import {getToken} from '../utils/auth-token'
 export type ServerEvent =
     | { type: 'job_finished'; chat_id: number; job_id: number }
     | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null }
+    | { type: 'model_state'; state: 'loading' | 'ready' | 'stopped' | 'failed' | 'queued'; profile_id: number | null; model: string | null; detail: string | null }
 
 type Listener = (event: ServerEvent) => void
 

@@ -13,8 +13,9 @@ export interface LocalModel {
     details?: LocalModelDetails | null
 }
 
-/** The models installed in the connected Ollama instance right now */
-export const listModels = async (): Promise<LocalModel[]> => {
-    const {data} = await axios.get<LocalModel[]>(`${BACKEND_URL}/api/llm/models`)
+/** The models a provider offers right now: what is installed in Ollama, or the files registered to run on
+ * the backend's own llama.cpp. Ollama unless another provider is named. */
+export const listModels = async (provider = 'ollama'): Promise<LocalModel[]> => {
+    const {data} = await axios.get<LocalModel[]>(`${BACKEND_URL}/api/llm/models`, {params: {provider}})
     return data
 };

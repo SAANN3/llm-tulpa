@@ -1,0 +1,153 @@
+@use 'tokens' as *;
+
+.models {
+  gap: $space-5;
+}
+
+.models__title {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.models__panel {
+  width: min(860px, calc(100vw - #{$space-8}));
+}
+
+.models__body {
+  display: flex;
+  flex-direction: column;
+  gap: $space-4;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+}
+
+.models__tabs,
+.models__toolbar,
+.models__runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $space-2;
+}
+
+.models__section {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+}
+
+.models__runtime {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  padding: $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.models__runtime-head,
+.models__model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
+.models__state--ready {
+  color: var(--color-tertiary);
+}
+
+.models__state--failed,
+.models__state--not_installed {
+  color: var(--color-danger);
+}
+
+.models__meta {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.models__error {
+  color: var(--color-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.models__heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: $space-2;
+}
+
+.models__model {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.models__model-name {
+  font-weight: bold;
+}
+
+.models__profile,
+.models__preset,
+.models__file {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.models__profile--active {
+  border-color: var(--color-tertiary);
+}
+
+.models__profile-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.models__profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2;
+}
+
+.models__pre,
+.models__log {
+  margin: 0;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  font-size: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.models__log {
+  max-height: 50vh;
+}
+
+.models__log-line {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+
+// Fields side by side: each takes an equal share of the row
+.models__fields {
+  display: flex;
+  align-items: flex-end;
+  gap: $space-3;
+
+  > .field {
+    flex: 1;
+    min-width: 0;
+  }
+}

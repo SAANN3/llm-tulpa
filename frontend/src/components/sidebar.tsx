@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Analytics, Search} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
@@ -79,6 +79,7 @@ export const Sidebar = () => {
         {label: 'Settings', path: '/settings', icon: <Settings2 width={16} height={16}/>, action: () => navigate('/settings')},
         {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>, action: () => navigate('/folders')},
         {label: 'Usage', path: '/stats', icon: <Analytics width={16} height={16}/>, action: () => navigate('/stats')},
+        {label: 'Models', path: '/models', icon: <Cpu width={16} height={16}/>, action: () => navigate('/models')},
         ...(user?.role === 'owner' ? [
             {label: 'Plugins', path: '/plugins', icon: <Plug width={16} height={16}/>, action: () => navigate('/plugins')},
             {label: 'Users', path: '/users', icon: <User width={16} height={16}/>, action: () => navigate('/users')},
@@ -121,6 +122,7 @@ export const Sidebar = () => {
                 <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} onClicked={() => navigate('/settings')}/>
                 <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} onClicked={() => navigate('/folders')}/>
                 <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} onClicked={() => navigate('/stats')}/>
+                <ChatEntry label="Models" selected={location.pathname.startsWith('/models')} icon={<Cpu width={18} height={18}/>} onClicked={() => navigate('/models')}/>
                 {user?.role === 'owner' ? (
                     <>
                         <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} onClicked={() => navigate('/plugins')}/>

@@ -56,7 +56,13 @@ export const ServerTab = () => {
     return (
         <>
             <Label text="Model backend"/>
-            {!server.reachable ? (
+            {server.state === 'stopped' ? (
+                <Label variant="secondary" text="The model server is stopped; it starts when a chat needs it."/>
+            ) : server.state === 'starting' ? (
+                <Label variant="secondary" text="The model server is loading a model."/>
+            ) : server.state === 'failed' || server.state === 'not_installed' ? (
+                <Label variant="secondary" text={server.detail ?? 'The model server is not available.'}/>
+            ) : !server.reachable ? (
                 <Label variant="secondary" text="The model backend isn't answering."/>
             ) : server.models.length === 0 ? (
                 <Label variant="secondary" text="Online, with no model loaded right now."/>

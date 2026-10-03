@@ -17,7 +17,8 @@ import {Button, Checkbox, Div, Input, Label, Select} from './primitives'
 
 export interface ModelPickerProps {
     selected?: string | null
-    onSelect: (name: string) => void
+    /** Called when a model is chosen; without it the picker only manages models (no Select buttons) */
+    onSelect?: (name: string) => void
 }
 
 const NO_PROJECTOR = 'no vision'
@@ -57,7 +58,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
                 setLocal(list)
                 if (task.state === 'done' && selectWhenDone.current === task.id) {
                     const installed = list.find((m) => m.name === task.model || m.name === `${task.model}:latest`)
-                    if (installed) onSelect(installed.name)
+                    if (installed) onSelect?.(installed.name)
                 }
             })
             .catch(() => setError('Could not reach Ollama.'))
@@ -179,7 +180,7 @@ export const ModelPicker = ({selected, onSelect}: ModelPickerProps) => {
                                 <Label variant="secondary" className="model-picker__meta"
                                        text={modelRequirements(m) || 'installed'}/>
                             </Div>
-                            {isSelected ? (
+                            {!onSelect ? null : isSelected ? (
                                 <Label variant="secondary" className="model-picker__active-tag" text="active"/>
                             ) : (
                                 <Button variant="secondary" text="Select" onClicked={() => onSelect(m.name)}/>
