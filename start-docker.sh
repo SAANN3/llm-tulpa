@@ -9,6 +9,14 @@ if [ ! -f backend/data/settings.json ]; then
   cp backend/data/settings.docker.example.json backend/data/settings.json
 fi
 
+# A backend started by ./start-native.sh would clash with the container (same port, same bots): it has to
+# be stopped first, by hand, since it is a process of yours in a terminal.
+for pid in $(ss -ltnp 2>/dev/null | grep -E ':3000\b' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+  case "$(readlink "/proc/$pid/exe" 2>/dev/null)" in
+    "$PWD"/backend/target/*) echo "A native backend is running (pid $pid): stop it first (Ctrl-C in the terminal it runs in), then run this again." >&2; exit 1 ;;
+  esac
+done
+
 # Which GPU the backend container gets, so the llama.cpp it runs can use it. Picked from the
 # PCI vendor of the display devices the kernel lists (AMD 0x1002, NVIDIA 0x10de, anything else
 # under /dev/dri), or forced with LLM_GPU=amd|nvidia|dri|none in the environment or the root

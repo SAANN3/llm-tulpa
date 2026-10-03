@@ -7,5 +7,8 @@ include:
 
 # What the services reach each other over (postgres, searxng, ollama and the frontend; the backend runs
 # on the host network, see backend/compose.yaml).
+# No service restarts by itself after a reboot: the stack comes up together with `./start-docker.sh`
+# (or `docker compose up -d`). With some services restarting and the database not, the backend came
+# up without Postgres and the frontend sent the user to the setup page.
 networks:
   app-net:

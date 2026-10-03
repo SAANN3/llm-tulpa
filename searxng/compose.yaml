@@ -23,7 +23,6 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-    restart: unless-stopped
 
   # Sits in front of `searxng` purely to rate-limit calls into it (see
   # nginx.conf) — spacing out web.search_query calls so a burst of them doesn't
@@ -42,4 +41,3 @@ services:
     network_mode: host
     depends_on:
       - searxng
-    restart: unless-stopped

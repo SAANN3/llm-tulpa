@@ -109,4 +109,3 @@ services:
       searxng:
         condition: service_started
         required: true
-    restart: unless-stopped

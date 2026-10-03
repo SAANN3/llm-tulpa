@@ -5,3 +5,5 @@ target/
 
 # Local configuration (holds the JWT secret and database password); the *.example.json files beside it are tracked
 data/settings.json
+# The native backend's own settings (start-native.sh) — same secrets
+data-native/
