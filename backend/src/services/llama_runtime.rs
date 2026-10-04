@@ -617,6 +617,11 @@ impl LlamaRuntime {
                 if let Some(mut exited) = exited {
                     let _ = tokio::time::timeout(STOP_GRACE + Duration::from_secs(5), exited.wait_for(|gone| *gone)).await;
                 }
+                // Said before the server's own words: it is what the owner can act on
+                let reason = match memory_hint(&reason, &request.model_file) {
+                    Some(hint) => format!("{hint} The server said: {reason}"),
+                    None => reason,
+                };
                 {
                     let mut inner = lock(&self.inner);
                     inner.loaded = None;
@@ -860,6 +865,35 @@ fn terminate(pid: u32) {
 
 /// The `llama-server` command line for a launch. Pure, so what a profile turns into can be tested
 /// and shown to the user.
+/// Whether a failed load's log says the memory ran out, rather than something else going wrong.
+fn is_memory_failure(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    ["out of memory", "unable to allocate", "failed to allocate", "cannot allocate"].iter().any(|s| reason.contains(s))
+}
+
+/// What to tell the owner when the model didn't fit: its size against what the card has, and what to change.
+fn memory_hint(reason: &str, model_file: &Path) -> Option<String> {
+    if !is_memory_failure(reason) {
+        return None;
+    }
+    let model_mib = std::fs::metadata(model_file).ok().map(|m| m.len() / (1024 * 1024));
+    Some(describe_memory_failure(model_mib, crate::services::gpu_memory::biggest_card()))
+}
+
+fn describe_memory_failure(model_mib: Option<u64>, card: Option<(u64, u64)>) -> String {
+    // Decimal gigabytes, like every other size the app shows
+    let gb = |mib: u64| format!("{:.1} GB", (mib * 1024 * 1024) as f64 / 1e9);
+    let sizes = match (model_mib, card) {
+        (Some(model), Some((total, free))) => format!("The model file is {} and the card has {} free of {}.", gb(model), gb(free), gb(total)),
+        (Some(model), None) => format!("The model file is {}.", gb(model)),
+        _ => String::new(),
+    };
+    format!(
+        "The model doesn't fit in the GPU's memory. {sizes} Lower \"Layers on the GPU\" in its launch profile, use a smaller quantization, or shrink the context or the KV cache.",
+    )
+    .replace("  ", " ")
+}
+
 pub fn build_args(config: &LlamaCppConfig, request: &LaunchRequest, has_mtp: bool) -> Vec<String> {
     let profile: &LaunchProfile = &request.profile;
     let mut args: Vec<String> = Vec::new();
@@ -932,6 +966,23 @@ fn parse_fact(facts: &mut LoadFacts, line: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_load_is_told_apart_by_what_the_server_says() {
+        assert!(is_memory_failure("E ggml_backend_cuda_buffer_type_alloc_buffer: cudaMalloc failed: out of memory"));
+        assert!(is_memory_failure("E llama_model_load: error loading model: unable to allocate ROCm0 buffer"));
+        assert!(!is_memory_failure("error while loading shared libraries: libhipblas.so.2: cannot open shared object file"));
+    }
+
+    #[test]
+    fn the_hint_gives_the_sizes_when_they_are_known() {
+        let hint = describe_memory_failure(Some(22_320), Some((16_368, 14_300)));
+        assert!(hint.contains("23.4 GB") && hint.contains("15.0 GB free of 17.2 GB"), "{hint}");
+        assert!(hint.contains("Layers on the GPU"));
+        let without_card = describe_memory_failure(Some(22_320), None);
+        assert!(without_card.contains("The model file is 23.4 GB.") && !without_card.contains("free of"), "{without_card}");
+        assert!(!describe_memory_failure(None, None).contains("  "));
+    }
 
     fn profile() -> LaunchProfile {
         LaunchProfile {

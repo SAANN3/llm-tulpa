@@ -51,7 +51,10 @@ export const HardwarePanel = ({status}: HardwarePanelProps) => {
                             ) : null}
                             {status.placement.memory ? (
                                 <Label variant="secondary" className="models__meta"
-                                       text={`Held by the server: ${status.placement.memory.vram_mib} MiB on the GPU, ${status.placement.memory.system_mib} MiB of system memory used by the GPU · model file ${status.placement.model_mib} MiB`}/>
+                                       text={`Held by the server: ${status.placement.memory.vram_mib} MiB on the GPU, ${status.placement.memory.system_mib} MiB of system memory the GPU maps` +
+                                           (status.placement.memory.card_free_mib != null && status.placement.memory.card_total_mib != null
+                                               ? ` · the card has ${status.placement.memory.card_free_mib} MiB free of ${status.placement.memory.card_total_mib}` : '') +
+                                           ` · model file ${status.placement.model_mib} MiB`}/>
                             ) : null}
                         </>
                     ) : null}

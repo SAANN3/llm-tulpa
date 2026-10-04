@@ -16,8 +16,9 @@ export interface Placement {
     layers_requested: number | null
     layers_total: number | null
     model_mib: number
-    /** What the server holds on the GPU itself and in system memory the GPU uses, when the system reports it */
-    memory: { vram_mib: number; system_mib: number } | null
+    /** What the server holds on the GPU itself and in system memory the GPU maps, and the card's own memory
+     * and how much of it is free (amdgpu only), when the system reports them */
+    memory: { vram_mib: number; system_mib: number; card_total_mib: number | null; card_free_mib: number | null } | null
 }
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'failed' | 'not_installed' | 'external'

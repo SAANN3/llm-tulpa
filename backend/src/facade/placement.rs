@@ -16,6 +16,13 @@ const MIB: u64 = 1024 * 1024;
 /// A model's weights below this don't tell a GPU from a CPU by memory use (a test model, say)
 const MEASURABLE_MODEL_MIB: u64 = 256;
 
+/// System memory the GPU maps below this is ordinary: drivers keep host-visible buffers there
+const ORDINARY_SYSTEM_MIB: u64 = 256;
+
+/// A card with less than this free (or under 5% of its memory) is full, and what no longer fits on it
+/// goes to system memory
+const FULL_CARD_FREE_MIB: u64 = 512;
+
 #[derive(Clone, Serialize, ToSchema)]
 pub struct Placement {
     /// `gpu`, `partial` (some of the model runs on the CPU or in system memory), `cpu`, or `unknown`
@@ -85,16 +92,32 @@ fn judge(gpu_layers: u32, layers_total: Option<u32>, model_mib: u64, memory: Opt
             ),
         );
     }
-    if model_mib >= MEASURABLE_MODEL_MIB && held.system_mib > (model_mib / 10).max(512) {
+    // System memory used by the GPU is only a spill when the card has no room left: with room, it is
+    // host-visible buffers the driver keeps there anyway (Vulkan does, for a few hundred MiB)
+    let card_is_full = match (held.card_free_mib, held.card_total_mib) {
+        (Some(free), Some(total)) => Some(free < (total / 20).max(FULL_CARD_FREE_MIB)),
+        _ => None,
+    };
+    if model_mib >= MEASURABLE_MODEL_MIB && held.system_mib > ORDINARY_SYSTEM_MIB && card_is_full == Some(true) {
         return make(
             "partial",
             format!(
-                "Spilled into system memory: {} MiB of what the GPU uses is in RAM, because the card's own {} MiB is full. It works but is slower; a smaller context or KV cache keeps it on the card.",
-                held.system_mib, held.vram_mib
+                "Spilled into system memory: {} MiB of what the GPU uses is in RAM, because the card is full ({} MiB free of {}). It works but is slower; a smaller context or KV cache keeps it on the card.",
+                held.system_mib,
+                held.card_free_mib.unwrap_or_default(),
+                held.card_total_mib.unwrap_or_default()
             ),
         );
     }
-    make("gpu", format!("Fully on the GPU: {} MiB of GPU memory in use.", held.vram_mib))
+    let mut summary = format!("Fully on the GPU: {} MiB of GPU memory in use", held.vram_mib);
+    if held.system_mib > ORDINARY_SYSTEM_MIB {
+        summary.push_str(&match held.card_free_mib {
+            Some(free) => format!(", plus {} MiB of system memory the GPU maps (host-visible buffers; the card still has {free} MiB free)", held.system_mib),
+            None => format!(", plus {} MiB of system memory the GPU maps (this system can't say whether the card is full)", held.system_mib),
+        });
+    }
+    summary.push('.');
+    make("gpu", summary)
 }
 
 #[cfg(test)]
@@ -102,7 +125,11 @@ mod tests {
     use super::*;
 
     fn mem(vram: u64, system: u64) -> Option<GpuMemory> {
-        Some(GpuMemory { vram_mib: vram, system_mib: system })
+        card(vram, system, Some(2_000))
+    }
+
+    fn card(vram: u64, system: u64, free: Option<u64>) -> Option<GpuMemory> {
+        Some(GpuMemory { vram_mib: vram, system_mib: system, card_total_mib: free.map(|_| 16_368), card_free_mib: free })
     }
 
     #[test]
@@ -119,8 +146,18 @@ mod tests {
     #[test]
     fn memory_tells_a_full_card_from_a_spilled_one_and_a_cpu_run() {
         assert_eq!(judge(99, Some(40), 12_000, mem(14_000, 80)).verdict, "gpu");
-        assert_eq!(judge(99, Some(40), 12_000, mem(11_000, 3_000)).verdict, "partial");
+        assert_eq!(judge(99, Some(40), 12_000, card(11_000, 3_000, Some(100))).verdict, "partial");
         assert_eq!(judge(99, Some(40), 12_000, mem(40, 0)).verdict, "cpu");
+    }
+
+    #[test]
+    fn system_memory_on_a_card_with_room_is_not_a_spill() {
+        // A 1.3 GB model on a 16 GB card with 13 GB free: Vulkan keeps ~600 MiB of host-visible buffers in system memory
+        let placement = judge(99, Some(36), 1_313, card(1_641, 612, Some(13_322)));
+        assert_eq!(placement.verdict, "gpu");
+        assert!(placement.summary.contains("host-visible"), "{}", placement.summary);
+        // Without a way to read the card's free memory nothing is claimed either
+        assert_eq!(judge(99, Some(40), 12_000, card(11_000, 3_000, None)).verdict, "gpu");
     }
 
     #[test]

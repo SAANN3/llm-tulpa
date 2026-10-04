@@ -14,9 +14,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
 
 use super::error::ErrorService;
-use super::model_folder::ModelFolder;
+use super::model_folder::{self, ModelFolder};
 
 const API: &str = "https://huggingface.co/api/models";
+/// Left free on the disk after a download, so the system around it isn't starved
+const DISK_MARGIN_BYTES: u64 = 512 * 1024 * 1024;
 const FINISHED_TASK_TTL: Duration = Duration::from_secs(30 * 60);
 
 pub const GATED_MESSAGE: &str = "this model is gated by Hugging Face, to download it you need to set up your token in the settings";
@@ -195,6 +197,18 @@ impl HfLibrary {
         let expected = item.lfs.map(|l| l.oid);
 
         let local = format!("{repo}/{file}");
+        // What is still to be written: a resumed download already has its first part on disk. Refused up
+        // front, since a download that fills the disk halfway leaves the whole system short of space.
+        let already = std::fs::metadata(format!("{}.part", root.join(&local).display())).map(|m| m.len()).unwrap_or(0);
+        let needed = item.size.saturating_sub(already);
+        if let Some(free) = model_folder::free_bytes(&root) {
+            if needed.saturating_add(DISK_MARGIN_BYTES) > free {
+                return Err(failed(
+                    StatusCode::CONFLICT,
+                    format!("not enough free space in the model folder: {} needed, {} free", gb(needed), gb(free)),
+                ));
+            }
+        }
         let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let task = HfTask {
             id, repo: repo.into(), file: file.into(), state: "running".into(), phase: "starting".into(),
@@ -300,4 +314,9 @@ mod tests {
         assert!(!safe_segments("a//b"));
         assert!(!safe_segments("a/b?x=1"));
     }
+}
+
+/// Bytes as "12.3 GB" (decimal, as the app shows sizes everywhere) for an error message
+fn gb(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / 1e9)
 }

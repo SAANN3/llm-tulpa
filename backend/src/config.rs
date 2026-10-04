@@ -87,7 +87,8 @@ impl Default for OllamaConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LlamaCppConfig {
     /// The folder holding the llama.cpp release (`llama-server` and its libraries). Unset: the
-    /// app's own folder, `~/.llm-tulpa/llama`, where the setup step downloads it.
+    /// app's own folder, `~/.llm-tulpa/llama` (`~/.llm-tulpa/llama-docker` inside a container), where
+    /// the setup step downloads it.
     #[serde(default)]
     pub dir: Option<PathBuf>,
     /// The port the managed `llama-server` listens on (loopback only).
@@ -136,14 +137,24 @@ impl LlamaCppConfig {
     }
 
     /// `dir` if set, else `~/.llm-tulpa/llama`. Panics without a home directory, like
-    /// `AppConfig::resolved_files_dir`.
+    /// `AppConfig::resolved_files_dir`. A container gets its own folder: its home is the host's (the
+    /// image mounts `/home`), and a build downloaded for the container (Vulkan, which its libraries
+    /// can run) would otherwise replace the one a native backend uses (ROCm or CUDA), or the other
+    /// way round.
     pub fn resolved_dir(&self) -> PathBuf {
         self.dir.clone().unwrap_or_else(|| {
+            let folder = if in_container() { "llama-docker" } else { "llama" };
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `llama_cpp.dir` in settings.json"))
-                .join(".llm-tulpa/llama")
+                .join(".llm-tulpa")
+                .join(folder)
         })
     }
+}
+
+/// Whether this process runs inside a container (Docker or Podman).
+fn in_container() -> bool {
+    std::path::Path::new("/.dockerenv").exists() || std::path::Path::new("/run/.containerenv").exists()
 }
 
 /// Everything the backend is configured with, read from `settings.json` at startup. The

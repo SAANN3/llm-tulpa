@@ -60,6 +60,34 @@ pub fn check(path: &str) -> Result<CheckedFolder, ErrorService> {
     Ok(CheckedFolder { path: canonical, writable })
 }
 
+/// The mount whose path is the longest prefix of `path`: the disk the path lives on.
+fn mount_of<'a>(path: &Path, mounts: &'a [(PathBuf, u64)]) -> Option<&'a (PathBuf, u64)> {
+    mounts.iter().filter(|(mount, _)| path.starts_with(mount)).max_by_key(|(mount, _)| mount.as_os_str().len())
+}
+
+/// How many bytes can still be written on the disk `path` is on, when the system says. A path that does
+/// not exist yet counts as the nearest folder above it that does.
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    let mut existing = path;
+    while !existing.exists() {
+        existing = existing.parent()?;
+    }
+    let canonical = std::fs::canonicalize(existing).ok()?;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mounts: Vec<(PathBuf, u64)> = disks.list().iter().map(|d| (d.mount_point().to_path_buf(), d.available_space())).collect();
+    let (mount, free) = mount_of(&canonical, &mounts)?;
+    // `Disks` leaves some filesystems out (tmpfs, say), so the deepest mount it lists may be a different
+    // disk than the one the path is on: then nothing is said, rather than the wrong disk's space
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if std::fs::metadata(&canonical).ok()?.dev() != std::fs::metadata(mount).ok()?.dev() {
+            return None;
+        }
+    }
+    Some(*free)
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct FolderEntry {
     pub name: String,
@@ -126,5 +154,13 @@ mod tests {
         assert!(folder.get().is_none());
         folder.set(PathBuf::from("/x"));
         assert_eq!(folder.get(), Some(PathBuf::from("/x")));
+    }
+
+    #[test]
+    fn a_path_belongs_to_the_deepest_mount_that_holds_it() {
+        let mounts = vec![(PathBuf::from("/"), 10), (PathBuf::from("/games"), 20), (PathBuf::from("/games/llm"), 30), (PathBuf::from("/gamesx"), 99)];
+        assert_eq!(mount_of(Path::new("/games/llm/Qwen/x.gguf"), &mounts).map(|m| m.1), Some(30));
+        assert_eq!(mount_of(Path::new("/games/other"), &mounts).map(|m| m.1), Some(20));
+        assert_eq!(mount_of(Path::new("/home/me"), &mounts).map(|m| m.1), Some(10));
     }
 }

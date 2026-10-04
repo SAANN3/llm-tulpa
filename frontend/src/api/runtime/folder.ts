@@ -8,6 +8,8 @@ export interface ModelFolder {
     writable: boolean | null
     /** Registered models whose file is not in the folder */
     missing_models: string[]
+    /** How many bytes can still be written on the disk the folder is on, when the system says */
+    free_bytes: number | null
 }
 
 export interface BrowsedFolders {

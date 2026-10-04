@@ -1,7 +1,7 @@
 import {useEffect, useState, type CSSProperties} from 'react'
 import '../../styles/model-picker.scss'
 import '../../styles/models.scss'
-import {getModelFolder} from '../../api/runtime/folder'
+import {getModelFolder, type ModelFolder} from '../../api/runtime/folder'
 import {startHfDownload} from '../../api/hf/download'
 import {listHfFiles} from '../../api/hf/files'
 import {searchHf} from '../../api/hf/search'
@@ -25,6 +25,9 @@ const SEARCH_DEBOUNCE_MS = 400
 
 const POLL_MS = 1500
 
+/** Left free on the disk after a download; the backend refuses a download that would eat into it */
+const DISK_MARGIN_BYTES = 512 * 1024 * 1024
+
 /** Searches Hugging Face for GGUF models and downloads their files into the model folder. A gated
  * repository is hidden until asked for, and says what it needs (a token in the settings). */
 export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the Models tab', onRunningChange}: HfPanelProps) => {
@@ -36,19 +39,25 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
     const [files, setFiles] = useState<HfFile[]>([])
     const [tasks, setTasks] = useState<HfTask[]>([])
     const [error, setError] = useState<string | null>(null)
-    const [folder, setFolder] = useState<string | null>(null)
+    const [folder, setFolder] = useState<ModelFolder | null>(null)
     // Files whose download was just requested, until the task list shows them: stops a second press
     const [starting, setStarting] = useState<string[]>([])
 
+    // The free space changes as files arrive, so it is read again whenever a download ends or starts
+    const refreshFolder = () => getModelFolder().then(setFolder).catch(() => setFolder(null))
+
     const refreshTasks = () => listHfTasks().then((next) => {
         setTasks((prev) => {
-            if (prev.some((t) => t.state === 'running') && next.every((t) => t.state !== 'running')) onDownloaded()
+            if (prev.some((t) => t.state === 'running') && next.every((t) => t.state !== 'running')) {
+                onDownloaded()
+                void refreshFolder()
+            }
             return next
         })
     }).catch(() => undefined)
 
     useEffect(() => {
-        getModelFolder().then((f) => setFolder(f.path)).catch(() => setFolder(null))
+        void refreshFolder()
         void refreshTasks()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -108,6 +117,7 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
         try {
             await startHfDownload(repo, file)
             await refreshTasks()
+            void refreshFolder()
         } catch (e) {
             setError(errorReason(e, 'Could not start the download.'))
         } finally {
@@ -123,6 +133,9 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
             return <Button variant="secondary" disabled onClicked={() => undefined} text={fraction == null ? 'Downloading…' : `Downloading ${fraction}%`}/>
         }
         if (task?.state === 'done') return <Button variant="secondary" disabled onClicked={() => undefined} text="Downloaded"/>
+        if (folder?.free_bytes != null && f.size_bytes + DISK_MARGIN_BYTES > folder.free_bytes) {
+            return <Button variant="secondary" disabled onClicked={() => undefined} text={`${size}: not enough space`}/>
+        }
         return <Button variant="secondary" text={`Download ${size}`} onClicked={() => void download(repo, f.path)}/>
     }
 
@@ -155,9 +168,10 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
                        placeholder="Search Hugging Face for GGUF models"/>
                 {tasks.filter((t) => t.state === 'running').map((t) => taskRow(t))}
             </Div>
-            {folder ? (
+            {folder?.path ? (
                 <Label variant="secondary" className="models__meta"
-                       text={`Saved to ${folder}, in a folder per repository (${folder}/<owner>/<repository>/).`}/>
+                       text={`Saved to ${folder.path}, in a folder per repository (${folder.path}/<owner>/<repository>/).` +
+                           (folder.free_bytes != null ? ` ${formatBytes(folder.free_bytes)} free on that disk.` : '')}/>
             ) : null}
             {!query.trim() && repos != null ? <Label variant="secondary" className="models__meta" text="Most downloaded"/> : null}
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}

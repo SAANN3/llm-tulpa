@@ -25,6 +25,8 @@ pub(crate) struct FolderOut {
     writable: Option<bool>,
     /// Registered models whose file is not in the folder (after a change of folder)
     missing_models: Vec<String>,
+    /// How many bytes can still be written on the disk the folder is on, when the system says
+    free_bytes: Option<u64>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -41,7 +43,7 @@ pub(crate) struct BrowseQuery {
 
 async fn describe(state: &AppState) -> Result<FolderOut, ErrorService> {
     let Some(path) = state.model_folder.get() else {
-        return Ok(FolderOut { path: None, writable: None, missing_models: Vec::new() });
+        return Ok(FolderOut { path: None, writable: None, missing_models: Vec::new(), free_bytes: None });
     };
     let checked = model_folder::check(&path.display().to_string()).ok();
     let missing_models = match state.services().await {
@@ -56,7 +58,14 @@ async fn describe(state: &AppState) -> Result<FolderOut, ErrorService> {
         // No database yet (the wizard before its database step): nothing is registered
         Err(_) => Vec::new(),
     };
-    Ok(FolderOut { path: Some(path.display().to_string()), writable: checked.map(|c| c.writable), missing_models })
+    let free_bytes = tokio::task::spawn_blocking({
+        let path = path.clone();
+        move || model_folder::free_bytes(&path)
+    })
+    .await
+    .ok()
+    .flatten();
+    Ok(FolderOut { path: Some(path.display().to_string()), writable: checked.map(|c| c.writable), missing_models, free_bytes })
 }
 
 /// Owner-only. The folder the model files live in, and which registered models aren't in it.
