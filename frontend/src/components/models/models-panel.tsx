@@ -6,6 +6,7 @@ import type {LaunchProfile, LaunchProfileIn} from '../../api/profiles/types'
 import {updateProfile} from '../../api/profiles/update'
 import {loadProfile} from '../../api/runtime/load'
 import {registerModel} from '../../api/runtime/register'
+import {removeModel} from '../../api/runtime/remove'
 import {runSpeedTest} from '../../api/runtime/test'
 import type {ManagedModel, RuntimeStatus, SpeedTest} from '../../api/runtime/types'
 import {errorReason} from '../../utils/error-reason.ts'
@@ -15,6 +16,7 @@ import {ModelFolderField} from './model-folder-field.tsx'
 import {ServerSettingsField} from './server-settings-field.tsx'
 import {ConfirmPopup} from '../popups/base/confirm-popup.tsx'
 import {ProfileEditorPopup} from '../popups/profile-editor-popup.tsx'
+import {RemoveModelPopup} from '../popups/remove-model-popup.tsx'
 import {Button, Div, Label, Select} from '../primitives'
 
 export interface ModelsPanelProps {
@@ -46,6 +48,8 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
     const [message, setMessage] = useState<{ profileId: number; text: string; bad?: boolean } | null>(null)
     const [editing, setEditing] = useState<{ model: ManagedModel; profile: LaunchProfile | null } | null>(null)
     const [removing, setRemoving] = useState<LaunchProfile | null>(null)
+    const [removingModel, setRemovingModel] = useState<ManagedModel | null>(null)
+    const [note, setNote] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [projectors, setProjectors] = useState<Record<string, string>>({})
 
@@ -88,6 +92,15 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
         onChanged()
     }
 
+    const onRemoveModel = async (model: ManagedModel, deleteFile: boolean) => {
+        setError(null)
+        const result = await removeModel(model.id, deleteFile)
+        setNote(`Removed ${model.display_name ?? model.file}` + (result.file_deleted ? ' and its file' : '') +
+            `. ${result.chats_moved} chat${result.chats_moved === 1 ? '' : 's'} moved to the default model` +
+            (result.presets_kept ? `, ${result.presets_kept} sampling preset${result.presets_kept === 1 ? '' : 's'} kept for any model` : '') + '.')
+        onChanged()
+    }
+
     const onRegister = async (file: LocalFile) => {
         setError(null)
         const projector = projectors[file.path] ?? file.suggested_projector ?? NO_PROJECTOR
@@ -123,6 +136,7 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
             {isOwner ? <ModelFolderField onChanged={onChanged}/> : null}
             {isOwner ? <ServerSettingsField/> : null}
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
+            {note ? <Label variant="secondary" className="models__meta" text={note}/> : null}
 
             {models.length === 0 ? (
                 <Label variant="secondary"
@@ -138,10 +152,12 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                             <Label className="models__model-name" text={model.display_name ?? model.file}/>
                             {isOwner ? <Button variant="secondary" text="New profile"
                                                onClicked={() => setEditing({model, profile: null})}/> : null}
+                            {isOwner ? <Button variant="secondary" text="Remove" onClicked={() => setRemovingModel(model)}/> : null}
                         </Div>
                         <Label variant="secondary" className="models__meta"
                                text={[model.display_name ? model.file : null, file?.quantization, file ? formatBytes(file.size_bytes) : null,
                                    file?.has_mtp ? 'has MTP head' : null].filter(Boolean).join(' · ')}/>
+                        {model.file_missing ? <Label variant="secondary" className="models__error" text="Missing file: it is no longer in the model folder"/> : null}
                         {own.map((profile) => {
                             const active = status?.profile_id === profile.id && status.state === 'ready'
                             return (
@@ -175,7 +191,7 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                     <Label variant="secondary" className="models__heading" text="Model files"/>
                     {files && !files.configured ? (
                         <Label variant="secondary" className="models__meta"
-                               text="No model folder is configured — set model_dir in the backend's settings.json."/>
+                               text="No model folder is chosen yet — choose one above."/>
                     ) : addable.length === 0 ? (
                         <Label variant="secondary" className="models__meta" text="Every .gguf file in the model folder is added."/>
                     ) : null}
@@ -207,6 +223,13 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                 trainedContext={editedFile?.trained_context ?? null}
                 onSave={save}
                 onClose={() => setEditing(null)}
+            />
+            <RemoveModelPopup
+                open={removingModel != null}
+                name={removingModel?.display_name ?? removingModel?.file ?? ''}
+                fileMissing={removingModel?.file_missing ?? false}
+                onRemove={(deleteFile) => (removingModel ? onRemoveModel(removingModel, deleteFile) : Promise.resolve())}
+                onClose={() => setRemovingModel(null)}
             />
             <ConfirmPopup
                 open={removing != null}

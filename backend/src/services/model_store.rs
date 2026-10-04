@@ -82,6 +82,37 @@ impl ModelStore {
             .collect())
     }
 
+    /// Whether a model other than `excluding` is registered, under any provider.
+    pub async fn others_exist(&self, excluding: i64) -> Result<bool, ModelStoreErrors> {
+        Ok(llm_models::Entity::find().filter(llm_models::Column::Id.ne(excluding)).one(&self.db).await?.is_some())
+    }
+
+    /// The model a user's new chats would start on if `excluding` did not exist: their chosen default
+    /// unless that is `excluding`, else the oldest other model. `None` when there is no other model.
+    pub async fn fallback_for_user(&self, user_id: i64, excluding: i64) -> Result<Option<ModelRef>, ModelStoreErrors> {
+        let chosen = active_model::Entity::find_by_id(user_id).one(&self.db).await?.and_then(|s| s.active_model_id);
+        if let Some(id) = chosen.filter(|id| *id != excluding) {
+            if let Some(model) = self.get_many(&[id]).await?.remove(&id) {
+                return Ok(Some(model));
+            }
+        }
+        Ok(llm_models::Entity::find()
+            .find_also_related(llm_providers::Entity)
+            .filter(llm_models::Column::Id.ne(excluding))
+            .order_by_asc(llm_models::Column::Id)
+            .one(&self.db)
+            .await?
+            .and_then(|(model, provider)| provider.map(|p| Self::to_ref(model, p))))
+    }
+
+    /// Deletes a model. Its launch profiles and every user's choices of it go with it, and a user who
+    /// had it as their default has none until they pick another; a chat still bound to it makes the
+    /// database refuse, so the chats have to be moved first.
+    pub async fn remove(&self, id: i64) -> Result<(), ModelStoreErrors> {
+        llm_models::Entity::delete_by_id(id).exec(&self.db).await?;
+        Ok(())
+    }
+
     /// Sets (or, with `None`, clears) the name the UI shows for a model.
     pub async fn set_display_name(&self, id: i64, display_name: Option<String>) -> Result<(), ModelStoreErrors> {
         llm_models::Entity::update_many()

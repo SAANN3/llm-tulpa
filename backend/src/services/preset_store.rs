@@ -18,6 +18,8 @@ pub struct PresetStore {
     db: DatabaseConnection,
 }
 
+/// The longest name a preset may have
+const MAX_NAME_CHARS: usize = 80;
 const NAME_UNIQUE: &str = "sampling_presets_name_unique";
 
 #[derive(Clone, Debug)]
@@ -27,6 +29,8 @@ pub struct SamplingPreset {
     pub model_id: Option<i64>,
     pub name: String,
     pub sampling: Sampling,
+    /// The name of the model this preset was made for, when that model has been removed
+    pub removed_model: Option<String>,
 }
 
 impl From<sampling_presets::Model> for SamplingPreset {
@@ -35,6 +39,7 @@ impl From<sampling_presets::Model> for SamplingPreset {
             id: m.id,
             model_id: m.model_id,
             name: m.name,
+            removed_model: m.removed_model,
             sampling: Sampling {
                 temperature: m.temperature,
                 top_p: m.top_p,
@@ -61,7 +66,7 @@ impl PresetInput {
     pub fn validate(&self) -> Result<(), PresetStoreErrors> {
         let invalid = |why: &str| Err(PresetStoreErrors::Invalid(why.to_string()));
         let s = &self.sampling;
-        if self.name.trim().is_empty() || self.name.chars().count() > 80 {
+        if self.name.trim().is_empty() || self.name.chars().count() > MAX_NAME_CHARS {
             return invalid("a preset needs a name of up to 80 characters");
         }
         if s.temperature.is_some_and(|v| !(0.0..=5.0).contains(&v)) {
@@ -179,6 +184,43 @@ impl PresetStore {
         Ok(row.into())
     }
 
+    /// Keeps every preset made for `model_id` when that model is removed: each becomes a preset for any
+    /// model that says which model it was made for. A name the user already has among their any-model
+    /// presets gets a number added, since two presets of one user can't share a name. Returns how many
+    /// presets were kept.
+    pub async fn detach_model(&self, model_id: i64, model_name: &str) -> Result<u64, PresetStoreErrors> {
+        let rows = sampling_presets::Entity::find()
+            .filter(sampling_presets::Column::ModelId.eq(model_id))
+            .order_by_asc(sampling_presets::Column::Id)
+            .all(&self.db)
+            .await?;
+        let mut kept = 0;
+        for row in rows {
+            let taken: std::collections::HashSet<String> = sampling_presets::Entity::find()
+                .filter(sampling_presets::Column::UserId.eq(row.user_id))
+                .filter(sampling_presets::Column::ModelId.is_null())
+                .all(&self.db)
+                .await?
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+            let name = unused_name(&row.name, &taken);
+            sampling_presets::ActiveModel {
+                id: Set(row.id),
+                model_id: Set(None),
+                name: Set(name),
+                removed_model: Set(Some(model_name.to_string())),
+                updated_at: Set(chrono::Utc::now()),
+                ..Default::default()
+            }
+            .update(&self.db)
+            .await
+            .map_err(map_write_error)?;
+            kept += 1;
+        }
+        Ok(kept)
+    }
+
     /// Deletes a preset; a choice of it goes with it.
     pub async fn delete(&self, user_id: i64, id: i64) -> Result<(), PresetStoreErrors> {
         let deleted = sampling_presets::Entity::delete_many()
@@ -279,6 +321,22 @@ impl From<PresetStoreErrors> for ErrorService {
     }
 }
 
+/// `base`, or `base` with " 2", " 3"... added until it is a name nobody has; kept within the length a
+/// preset name may have.
+fn unused_name(base: &str, taken: &std::collections::HashSet<String>) -> String {
+    if !taken.contains(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| {
+            let suffix = format!(" {n}");
+            let room = MAX_NAME_CHARS - suffix.chars().count();
+            format!("{}{suffix}", base.chars().take(room).collect::<String>())
+        })
+        .find(|candidate| !taken.contains(candidate))
+        .expect("an unbounded range always yields an unused name")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +362,17 @@ mod tests {
         assert!(input(Sampling { presence_penalty: Some(3.0), ..Default::default() }).validate().is_err());
         assert!(input(Sampling::default()).validate().is_ok());
         assert!(PresetInput { name: "  ".into(), ..input(Sampling::default()) }.validate().is_err());
+    }
+
+    #[test]
+    fn a_taken_name_gets_a_number_and_stays_short_enough() {
+        let taken: std::collections::HashSet<String> = ["Coding", "Coding 2"].into_iter().map(String::from).collect();
+        assert_eq!(unused_name("Chat", &taken), "Chat");
+        assert_eq!(unused_name("Coding", &taken), "Coding 3");
+        let long = "x".repeat(MAX_NAME_CHARS);
+        let taken: std::collections::HashSet<String> = [long.clone()].into_iter().collect();
+        let renamed = unused_name(&long, &taken);
+        assert_eq!(renamed.chars().count(), MAX_NAME_CHARS);
+        assert!(renamed.ends_with(" 2"));
     }
 }

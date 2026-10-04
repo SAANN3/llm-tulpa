@@ -644,6 +644,36 @@ impl ChatStore {
         Ok(result.rows_affected)
     }
 
+    /// Moves every chat bound to `model_id` (the ones in the bin too, and sub-agents' and plugins') onto what
+    /// its owner's new chats would start on without that model: their default model and its launch
+    /// profile. Done before the model is removed, which the database refuses while a chat is bound to it.
+    /// Returns how many chats moved; errs `Model(NoModel)` when a chat's owner has no other model to go to.
+    pub async fn move_off_model(&self, model_id: i64) -> Result<u64, ChatStoreErrors> {
+        let owners: Vec<i64> = chats::Entity::find()
+            .filter(chats::Column::ModelId.eq(model_id))
+            .select_only()
+            .column(chats::Column::UserId)
+            .distinct()
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        let mut moved = 0;
+        for user_id in owners {
+            let target = self.models.fallback_for_user(user_id, model_id).await?.ok_or(ModelStoreErrors::NoModel)?;
+            let chosen = self.models.chosen_profile(user_id).await?;
+            let profile = self.launch.start_profile(target.id, chosen).await?.map(|p| p.id);
+            let result = chats::Entity::update_many()
+                .col_expr(chats::Column::ModelId, sea_orm::sea_query::Expr::value(target.id))
+                .col_expr(chats::Column::LaunchProfileId, sea_orm::sea_query::Expr::value(profile))
+                .filter(chats::Column::ModelId.eq(model_id))
+                .filter(chats::Column::UserId.eq(user_id))
+                .exec(&self.db)
+                .await?;
+            moved += result.rows_affected;
+        }
+        Ok(moved)
+    }
+
     /// Rebinds a chat to a launch profile, and so to the profile's model, from its next turn.
     /// Ownership is the caller's responsibility.
     pub async fn set_launch_profile(&self, chat_id: i64, profile_id: i64) -> Result<(), ChatStoreErrors> {

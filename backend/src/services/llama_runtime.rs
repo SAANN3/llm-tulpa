@@ -312,6 +312,12 @@ impl LlamaRuntime {
         *lock(&self.fallback) = Some(request);
     }
 
+    /// The default model is gone (removed) and nothing replaces it yet: a call that names no launch
+    /// runs on whatever is loaded, or fails until a model is chosen.
+    pub fn clear_default(&self) {
+        *lock(&self.fallback) = None;
+    }
+
     /// Makes sure the server runs `request` (or whatever is loaded, for `None`) and claims it for the
     /// caller until the guard is dropped.
     pub async fn acquire(self: &Arc<Self>, request: Option<&LaunchRequest>) -> Result<CallGuard, ErrorService> {

@@ -62,4 +62,6 @@ export interface ManagedModel {
     file: string
     display_name: string | null
     profile_ids: number[]
+    /** Its file is no longer in the model folder */
+    file_missing: boolean
 }

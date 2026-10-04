@@ -232,6 +232,12 @@ impl ModelLibrary {
     /// inside it. The client is trusted with *which* file, not with reaching outside the
     /// directory: absolute paths and `..` are refused outright, and the canonical result must
     /// still sit under the canonical root (which also rules out symlinks pointing elsewhere).
+    /// Whether a registered model's file is gone from the model folder. `false` while no folder is
+    /// chosen, since then nothing can be said about any file.
+    pub fn is_missing(&self, relative: &str) -> bool {
+        self.model_dir.get().is_some_and(|root| std::fs::symlink_metadata(root.join(relative)).is_err())
+    }
+
     pub fn resolve_local(&self, relative: &str) -> Result<PathBuf, ErrorService> {
         let bad = |why: &str| ErrorService::new(StatusCode::BAD_REQUEST, format!("'{relative}': {why}"));
         let root = self

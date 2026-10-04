@@ -18,6 +18,7 @@ use super::logs::*;
 use super::models::*;
 use super::rebind_chats::*;
 use super::register::*;
+use super::remove::*;
 use super::server_settings::*;
 use super::setup_complete::*;
 use super::status::*;
@@ -37,14 +38,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/hardware", get(hardware))
         .route("/install", get(install_status).post(install))
         .route("/test", post(test))
-        .route("/models", get(models).post(register))
+        .route("/models", get(models).post(register).delete(remove_model))
         .route("/setup-complete", post(setup_complete))
         .route("/rebind-chats", post(rebind_chats))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(status, load, stop, logs, devices, get_server_settings, set_server_settings, get_folder, set_folder, browse_folders, hardware, install_status, install, test, models, register, setup_complete, rebind_chats),
+    paths(status, load, stop, logs, devices, get_server_settings, set_server_settings, get_folder, set_folder, browse_folders, hardware, install_status, install, test, models, register, remove_model, setup_complete, rebind_chats),
     components(schemas(
         LoadRequest,
         LogsOut,
@@ -55,6 +56,7 @@ pub fn router() -> Router<Arc<AppState>> {
         RegisterRequest,
         RegisterOut,
         crate::services::llama_runtime::RuntimeStatus,
+        crate::facade::model_removal::RemovedModel,
         crate::services::llama_runtime::LoadFacts,
         crate::services::llama_runtime::MemoryBuffer,
         crate::facade::placement::Placement,

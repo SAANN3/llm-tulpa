@@ -21,6 +21,8 @@ pub(crate) struct PresetOut {
     pub(crate) repeat_penalty: Option<f32>,
     pub(crate) presence_penalty: Option<f32>,
     pub(crate) seed: Option<i64>,
+    /// The name of the model it was made for, when that model has since been removed
+    pub(crate) removed_model: Option<String>,
 }
 
 impl From<SamplingPreset> for PresetOut {
@@ -36,6 +38,7 @@ impl From<SamplingPreset> for PresetOut {
             repeat_penalty: p.sampling.repeat_penalty,
             presence_penalty: p.sampling.presence_penalty,
             seed: p.sampling.seed,
+            removed_model: p.removed_model,
         }
     }
 }

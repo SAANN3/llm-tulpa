@@ -71,6 +71,6 @@ pub async fn register(
     }
     Ok((
         StatusCode::CREATED,
-        Json(RegisterOut { model: ManagedModelOut { id: model.id, file: model.name, display_name, profile_ids } }),
+        Json(RegisterOut { model: ManagedModelOut { id: model.id, file_missing: false, file: model.name, display_name, profile_ids } }),
     ))
 }

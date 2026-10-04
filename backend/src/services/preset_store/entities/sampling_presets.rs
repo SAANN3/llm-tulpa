@@ -16,6 +16,8 @@ pub struct Model {
     pub repeat_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
     pub seed: Option<i64>,
+    /// The model this preset was made for, by name, once that model was removed (`model_id` is then NULL)
+    pub removed_model: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

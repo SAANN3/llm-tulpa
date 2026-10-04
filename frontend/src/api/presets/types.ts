@@ -11,10 +11,12 @@ export interface Preset {
     repeat_penalty: number | null
     presence_penalty: number | null
     seed: number | null
+    /** The name of the model it was made for, when that model has since been removed */
+    removed_model: string | null
 }
 
 /** What a request sets on a preset: replaced as a whole */
-export type PresetIn = Omit<Preset, 'id'>
+export type PresetIn = Omit<Preset, 'id' | 'removed_model'>
 
 export interface ExportedPreset extends Omit<PresetIn, 'model_id'> {
     model: { provider: string; name: string } | null

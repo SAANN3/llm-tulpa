@@ -198,7 +198,7 @@ export const ModelPicker = ({selected, onSelect, onDeselect}: ModelPickerProps) 
                         <Label variant="secondary" className="model-picker__section" text="Local files"/>
                         {!files.configured ? (
                             <Label variant="secondary" className="model-picker__meta"
-                                   text="No model folder configured — set model_dir in the backend's settings.json to import .gguf files."/>
+                                   text="No model folder is chosen yet — choose one on the Models tab to import .gguf files."/>
                         ) : filteredFiles.length === 0 ? (
                             <Label variant="secondary" className="model-picker__meta"
                                    text={modelFiles.length === 0 ? 'No .gguf files in the model folder.' : 'No file matches.'}/>

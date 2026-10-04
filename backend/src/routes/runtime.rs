@@ -8,6 +8,7 @@ mod logs;
 mod models;
 mod rebind_chats;
 mod register;
+mod remove;
 mod server_settings;
 mod setup_complete;
 pub mod router;

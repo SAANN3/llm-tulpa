@@ -32,6 +32,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
     const [downloadView, setDownloadView] = useState(false)
     const [downloading, setDownloading] = useState(false)
     const [ollamaModel, setOllamaModel] = useState<string | null>(null)
+    const [ollamaError, setOllamaError] = useState<string | null>(null)
     // Bumped when Ollama's address changes, so its list of models is read again from the new one
     const [ollamaKey, setOllamaKey] = useState(0)
 
@@ -62,7 +63,15 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
             title: 'Model',
             canNext: ollamaModel != null,
             onNext: async () => {
-                if (ollamaModel) await persist({llm_provider: 'ollama', active_model: ollamaModel})
+                setOllamaError(null)
+                try {
+                    if (ollamaModel) await persist({llm_provider: 'ollama', active_model: ollamaModel})
+                } catch (e) {
+                    // The backend refuses a model Ollama doesn't have; staying on the step with the reason
+                    // beats a Next button that silently does nothing
+                    setOllamaError(errorReason(e, 'Could not save the chosen model.'))
+                    return false
+                }
                 return true
             },
             body: (active) => (
@@ -70,6 +79,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
                     <Label className="setup__lead" text="Pick the model to chat with — pull one if you don't have it yet."/>
                     {active ? <OllamaAddressField onSaved={() => setOllamaKey((k) => k + 1)}/> : null}
                     {active ? <ModelPicker key={ollamaKey} selected={ollamaModel} onSelect={setOllamaModel} onDeselect={() => setOllamaModel(null)}/> : null}
+                    {ollamaError ? <Label className="model-picker__error" text={ollamaError}/> : null}
                 </Div>
             ),
         }]}
@@ -114,7 +124,12 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
                     setLlamaError(errorReason(e, 'Could not add the chosen models.'))
                     return false
                 }
-                await persist({llm_provider: 'llama-cpp', active_model: llamaPicks[0].file})
+                try {
+                    await persist({llm_provider: 'llama-cpp', active_model: llamaPicks[0].file})
+                } catch (e) {
+                    setLlamaError(errorReason(e, 'Could not save the default model.'))
+                    return false
+                }
                 return true
             },
             body: (active) => {

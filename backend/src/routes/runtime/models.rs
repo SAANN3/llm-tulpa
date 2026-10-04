@@ -14,6 +14,8 @@ pub(crate) struct ManagedModelOut {
     pub(crate) display_name: Option<String>,
     /// Its launch profiles' ids
     pub(crate) profile_ids: Vec<i64>,
+    /// The file is no longer in the model folder (false while no folder is chosen)
+    pub(crate) file_missing: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -39,6 +41,7 @@ pub async fn models(State(state): State<Arc<AppState>>, _auth: AuthUser) -> Resu
         .into_iter()
         .map(|model| ManagedModelOut {
             profile_ids: profiles.iter().filter(|p| p.model_id == model.id).map(|p| p.id).collect(),
+            file_missing: state.library.is_missing(&model.name),
             id: model.id,
             file: model.name,
             display_name: model.display_name,

@@ -39,6 +39,10 @@ const summary = (p: Preset): string =>
 /** The starting point that fills nothing in */
 const EMPTY = 'Empty'
 
+/** A preset's name, with what it applies to when that isn't just the model on screen */
+const presetTitle = (p: Preset): string =>
+    p.removed_model ? `${p.name} (deleted model: ${p.removed_model})` : p.model_id == null ? `${p.name} (any model)` : p.name
+
 const label = (m: ManagedModel): string => m.display_name ?? m.file
 
 /**
@@ -157,7 +161,7 @@ export const PresetsPanel = ({models, loadedModelId}: PresetsPanelProps) => {
             {shown.map((preset) => (
                 <Div key={preset.id} className={`models__preset${chosen === preset.id ? ' models__profile--active' : ''}`}>
                     <Div className="models__profile-main">
-                        <Label className="models__profile-name" text={preset.model_id == null ? `${preset.name} (any model)` : preset.name}/>
+                        <Label className="models__profile-name" text={presetTitle(preset)}/>
                         <Label variant="secondary" className="models__meta" text={summary(preset)}/>
                     </Div>
                     <Div className="models__profile-actions">
