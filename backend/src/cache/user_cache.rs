@@ -48,13 +48,14 @@ impl<T> PerUser<T> {
 
 /// Per-user, on-demand cache of the LLM-generated landing-page content (greeting +
 /// input-example placeholders) that would otherwise sit on a request's critical path.
-/// Keyed by user id, so each user sees content generated from their own name/timezone/model.
+/// Keyed by user id, so each user sees content generated from their own name and timezone.
 ///
 /// There is deliberately no background refresh loop: a loop per user would generate every
 /// user's content every hour whether or not they ever open the app, on a GPU shared with real
 /// chat turns. Content is generated the first time it's asked for and again once it's an hour
 /// old; `warm` (called at sign-in) hides that first wait, and `invalidate` (called when a user
-/// changes name, timezone or model) drops content that no longer reflects them.
+/// changes their name or timezone, what the content is written from; a different default model
+/// does not drop it) drops content that no longer reflects them.
 pub struct UserCacheService {
     settings: Arc<SettingsStore>,
     prompt: PromptFacade,

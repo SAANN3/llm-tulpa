@@ -427,7 +427,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     })}
                     {sending ? <PendingAssistantMessage tokens={turnTokens}/> : null}
                 </LazyList>
-                <ModelStateBanner/>
+                <ModelStateBanner watching={sending}/>
                 {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm}/> : null}
                 {turnError ? (
                     <Div className="chat__error">

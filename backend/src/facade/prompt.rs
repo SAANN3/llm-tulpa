@@ -89,6 +89,7 @@ impl PromptFacade {
                 .to_string(),
         );
 
+        let fallback = fallback_chat_name(&content);
         let result = self
             .providers
             .get(&model.provider)?
@@ -103,8 +104,11 @@ impl PromptFacade {
             )
             .await?;
 
+        // A small or heavily quantized model can answer with nothing, and a chat without a name is
+        // unreadable in the list: the start of what was written does instead
+        let response = if result.message.content.trim().is_empty() { fallback } else { result.message.content };
         Ok(GreetOut {
-            response: result.message.content,
+            response,
             model: result.model,
             created_at: result.created_at,
             thinking: result.message.thinking,
@@ -184,4 +188,28 @@ pub struct GreetOut {
     pub model: String,
     pub created_at: String,
     pub thinking: Option<String>,
+}
+
+/// A name for a chat made from its first message: the first few words, or "New chat" when there are none
+/// (an image sent alone).
+fn fallback_chat_name(content: &str) -> String {
+    let words: Vec<&str> = content.split_whitespace().take(5).collect();
+    let name: String = words.join(" ").chars().take(40).collect();
+    if name.is_empty() {
+        "New chat".to_string()
+    } else {
+        name
+    }
+}
+
+#[cfg(test)]
+mod chat_name_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_label_is_made_from_the_first_words() {
+        assert_eq!(fallback_chat_name("  read this   image bro, what does it say about everything\n"), "read this image bro, what");
+        assert_eq!(fallback_chat_name(""), "New chat");
+        assert_eq!(fallback_chat_name(&"x".repeat(100)).chars().count(), 40);
+    }
 }

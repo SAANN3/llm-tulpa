@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useState} from 'react'
 import {CHAT_FOLDER_CHANGED_EVENT} from '../api/chats/set-folder'
-import {createChat as createChatApi} from '../api/chats/create'
+import {createChat as createChatApi, type ChatStart} from '../api/chats/create'
 import {deleteChat as deleteChatApi} from '../api/chats/delete'
 import {getChats} from '../api/chats/get'
 import {renameChat as renameChatApi} from '../api/chats/rename'
@@ -53,8 +53,8 @@ export const useChats = (onLoaded?: () => void, folderId?: number) => {
         }
     }
 
-    const createChat = async (name: string) => {
-        const created = await createChatApi(name)
+    const createChat = async (name: string, start?: ChatStart) => {
+        const created = await createChatApi(name, start)
         setChats((prev) => [...prev, created])
         setTotal((t) => t + 1)
         return created

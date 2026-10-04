@@ -16,6 +16,11 @@ pub(crate) struct ThinkingCapabilityQuery {
     /// The chat whose bound model to inspect. Without it, the caller's own default model
     /// is used (the composer on the home page has no chat yet).
     chat_id: Option<i64>,
+    /// A model to inspect instead, for a chat that doesn't exist yet (the home page's composer with a
+    /// model picked for the new chat). Ignored when `chat_id` is given.
+    model: Option<String>,
+    /// The provider of `model`; llama.cpp when left out
+    provider: Option<String>,
 }
 
 /// What a model actually supports for `think` — a graded set of effort levels
@@ -50,10 +55,13 @@ pub async fn thinking_capability(
             let chat = services.chat_store.owned_chat(auth.id, chat_id).await?;
             (chat.provider, chat.model)
         }
-        None => {
-            let model = services.settings_store.effective_model(auth.id).await?;
-            (model.provider, model.name)
-        }
+        None => match query.model {
+            Some(model) => (query.provider.unwrap_or_else(|| crate::facade::launch::MANAGED_PROVIDER.to_string()), model),
+            None => {
+                let model = services.settings_store.effective_model(auth.id).await?;
+                (model.provider, model.name)
+            }
+        },
     };
 
     let result = state.providers.get(&provider)?.thinking_capability(&model).await?;

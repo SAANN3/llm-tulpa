@@ -3,14 +3,26 @@ import {useEffect, useRef, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/home.scss'
 import type {ThinkChoice} from '../api/agent/types'
+import type {LaunchProfile} from '../api/profiles/types'
 import {Mark} from '../components/mark.tsx'
-import {Div, Label} from '../components/primitives'
+import {ChooseModelPopup} from '../components/popups/choose-model-popup.tsx'
+import {Button, Div, Label} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {UserInput} from '../components/user-input.tsx'
+import {useSettings} from '../context/use-settings.ts'
 import {useChats} from '../hooks/use-chats.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {usePrompts} from '../hooks/use-prompts.ts'
+import {useRuntime} from '../hooks/use-runtime.ts'
 import {setPendingPrompt} from '../utils/pending-prompt.ts'
+
+/** A model picked for the chat about to be started, instead of the user's default */
+interface StartOn {
+    provider: string
+    model: string
+    /** The launch profile, for a model the backend runs itself; null for an Ollama model */
+    profileId: number | null
+}
 
 const Home = () => {
     useDocumentTitle('Llm-tulpa')
@@ -18,10 +30,19 @@ const Home = () => {
     const [searchParams] = useSearchParams()
     const {greet, inputExample, chatName} = usePrompts()
     const {createChat} = useChats()
+    const {settings} = useSettings()
     const [greeting, setGreeting] = useState('')
     const [greetingLoading, setGreetingLoading] = useState(true)
     const [placeholder, setPlaceholder] = useState('')
     const [creating, setCreating] = useState(false)
+    // For this chat only: the default model in the settings is not touched
+    const [startOn, setStartOn] = useState<StartOn | null>(null)
+    const [picking, setPicking] = useState(false)
+
+    const pickProfile = (profile: LaunchProfile) => {
+        setStartOn({provider: profile.provider, model: profile.model, profileId: profile.id})
+        setPicking(false)
+    }
 
     // A prompt handed over by the launcher (extensions/launcher) as /?prompt=..., already percent-decoded
     const launchPrompt = searchParams.get('prompt')?.trim() || null
@@ -31,7 +52,9 @@ const Home = () => {
         setCreating(true)
         try {
             const name = await chatName(prompt, images)
-            const chat = await createChat(name)
+            const chat = await createChat(name, startOn
+                ? (startOn.profileId != null ? {launchProfileId: startOn.profileId} : {model: startOn.model, provider: startOn.provider})
+                : undefined)
             setPendingPrompt(chat.id, prompt, think, images, fileIds)
             navigate(`/chat?id=${chat.id}`, {replace})
         } finally {
@@ -82,6 +105,15 @@ const Home = () => {
     }, [inputExample])
 
     const loading = greetingLoading || creating
+    // While something here waits on the model server, what it is doing: a model loading is a long wait
+    const {status} = useRuntime(loading)
+    const statusText = status?.queued
+        ? 'Waiting for the model'
+        : status?.state === 'starting'
+            ? `Loading ${status.model ?? 'the model'}`
+            : creating ? 'Starting a chat' : 'Thinking'
+    const shownModel = startOn?.model ?? settings?.active_model ?? null
+    const shownProvider = startOn?.provider ?? settings?.llm_provider ?? 'llama-cpp'
 
     return (
         <Div className="page">
@@ -90,8 +122,7 @@ const Home = () => {
                 <Div className="center vbox home__stage">
                     <Mark spinning={loading}/>
                     {loading ? (
-                        <Label className="status-line home__status" variant="secondary"
-                               text={creating ? 'Starting a chat' : 'Thinking'}/>
+                        <Label className="status-line home__status" variant="secondary" text={statusText}/>
                     ) : null}
                     {!greetingLoading && greeting ? (
                         <Label className="greeting home__greeting" text={greeting}/>
@@ -102,6 +133,27 @@ const Home = () => {
                         onSended={onSend}
                         placeholder={placeholder || undefined}
                         clearOnSend={false}
+                        startModel={startOn ? {model: startOn.model, provider: startOn.provider} : null}
+                        footerStart={(
+                            <Div className="home__model">
+                                <Button variant="secondary" className="home__model-button" disabled={creating}
+                                        text={`Model: ${shownModel ?? 'none'}${startOn ? ' (this chat)' : ''}`}
+                                        onClicked={() => setPicking(true)}/>
+                                {startOn ? <Button variant="secondary" className="home__model-reset" text="Default" disabled={creating} onClicked={() => setStartOn(null)}/> : null}
+                            </Div>
+                        )}
+                    />
+                    <ChooseModelPopup
+                        open={picking}
+                        provider={shownProvider}
+                        selected={shownProvider === 'ollama' ? shownModel : null}
+                        selectedProfileId={startOn ? startOn.profileId : settings?.launch_profile_id ?? null}
+                        onSelect={(model) => {
+                            setStartOn({provider: 'ollama', model, profileId: null})
+                            setPicking(false)
+                        }}
+                        onSelectProfile={pickProfile}
+                        onClose={() => setPicking(false)}
                     />
                 </Div>
             </Div>

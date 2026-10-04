@@ -8,9 +8,11 @@ const POLL_MS = 1500
 /**
  * What the model server is doing, kept fresh: every state change the backend announces refreshes it,
  * and while a model is loading it also polls, so a dropped event can't leave the page showing
- * "loading" for ever.
+ * "loading" for ever. `watching` polls regardless, for a page about to start something that loads a
+ * model: its event connection may open after the backend announced the load, and an event that came
+ * before it was listening is never repeated.
  */
-export const useRuntime = () => {
+export const useRuntime = (watching = false) => {
     const [status, setStatus] = useState<RuntimeStatus | null>(null)
 
     const refresh = useCallback(async () => {
@@ -27,12 +29,13 @@ export const useRuntime = () => {
 
     useServerEvent('model_state', () => void refresh())
 
-    const loading = status?.state === 'starting'
+    const polling = watching || status?.state === 'starting'
     useEffect(() => {
-        if (!loading) return
+        if (!polling) return
+        void refresh()
         const id = setInterval(() => void refresh(), POLL_MS)
         return () => clearInterval(id)
-    }, [loading, refresh])
+    }, [polling, refresh])
 
     return {status, refresh}
 };

@@ -11,10 +11,21 @@ use super::get::ChatOut;
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateChatRequest {
     name: String,
+    /// Start the chat on this launch profile, and so on its model, instead of the default
+    #[serde(default)]
+    launch_profile_id: Option<i64>,
+    /// Start the chat on this model (for one that has no launch profiles, such as an Ollama model)
+    /// instead of the default; ignored when `launch_profile_id` is given
+    #[serde(default)]
+    model: Option<String>,
+    /// The provider of `model`; llama.cpp when left out
+    #[serde(default)]
+    provider: Option<String>,
 }
 
 /// Creates a new chat with the given name and returns its info. The chat is bound to the
-/// user's active model (else the first registered one) at creation.
+/// user's active model (else the first registered one) at creation, or to the launch profile or model
+/// the request names (a model for this chat only: the default is untouched).
 #[utoipa::path(
     post,
     path = "/api/chats",
@@ -22,6 +33,8 @@ pub(crate) struct CreateChatRequest {
     request_body = CreateChatRequest,
     responses(
         (status = 200, description = "Chat created", body = ChatOut),
+        (status = 400, description = "A model that isn't installed", body = crate::services::error::ErrorBody),
+        (status = 404, description = "No such launch profile", body = crate::services::error::ErrorBody),
         (status = 409, description = "No model has been selected yet", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
@@ -32,7 +45,40 @@ pub async fn create_chat(
     Json(body): Json<CreateChatRequest>,
 ) -> Result<Json<ChatOut>, ErrorService> {
     let services = state.services().await?;
-    let chat = services.chat_store.create_chat(auth.id, body.name).await?;
+
+    // What the chat is to start on instead of the default, checked before the chat exists
+    enum Start {
+        Default,
+        Profile(i64),
+        Model(i64),
+    }
+    let start = match (body.launch_profile_id, &body.model) {
+        (Some(profile_id), _) => {
+            services.launch_store.get(profile_id).await?;
+            Start::Profile(profile_id)
+        }
+        (None, Some(model)) => {
+            let provider = body.provider.as_deref().unwrap_or(crate::facade::launch::MANAGED_PROVIDER);
+            state.require_installed_model(&services, provider, model).await?;
+            Start::Model(services.model_store.ensure(provider, model).await?.id)
+        }
+        (None, None) => Start::Default,
+    };
+
+    let mut chat = services.chat_store.create_chat(auth.id, body.name).await?;
+    let applied = match start {
+        Start::Default => Ok(()),
+        Start::Profile(profile_id) => services.chat_store.set_launch_profile(chat.id, profile_id).await,
+        Start::Model(model_id) => services.chat_store.set_model(chat.id, model_id).await,
+    };
+    match applied {
+        Ok(()) => chat = services.chat_store.chat(chat.id).await?,
+        Err(e) => {
+            // A chat that didn't get the model asked for would silently run on another one
+            let _ = services.chat_store.delete_chat(chat.id).await;
+            return Err(e.into());
+        }
+    }
     let contexts = services.launches.contexts(services.context_length).await?;
 
     Ok(Json(ChatOut {

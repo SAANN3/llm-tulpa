@@ -55,7 +55,10 @@ pub async fn set_settings(
     // Name and timezone are what the greeting and placeholders are written from. Changing the
     // default model deliberately doesn't regenerate them: what's cached still reads fine, and
     // it's replaced by itself when it ages out.
-    let affects_generated_content = body.name.is_some() || body.timezone.is_some();
+    // Only an actual change: the settings page sends the name and timezone with every save
+    let current = services.settings_store.settings(auth.id).await?;
+    let affects_generated_content = body.name.as_ref().is_some_and(|name| current.name.as_ref() != Some(name))
+        || body.timezone.is_some_and(|timezone| current.timezone != Some(timezone));
     let changed_model = body.active_model.is_some() || body.launch_profile_id.is_some();
     services.settings_store.update(auth.id, body).await?;
 
