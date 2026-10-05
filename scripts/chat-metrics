@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Context-use numbers for one chat, read straight from Postgres (read-only).
+
+usage: scripts/chat-metrics CHAT_ID [--container NAME] [--db NAME] [--json]
+
+Reports what a context-management change should move: characters per category (tool results,
+thinking, assistant text, user text), the prompt size per turn and its peak, folds (a prompt
+that shrinks by a third or more between two replies), prefill time, and the re-read rate of
+`storage.read_file` (a repeat of the same path and offset or line range). Needs docker and the
+database container up (default llm-tulpa-postgres-1, user postgres).
+"""
+import argparse, json, subprocess, sys
+from collections import Counter
+
+ap = argparse.ArgumentParser()
+ap.add_argument("chat_id", type=int)
+ap.add_argument("--container", default="llm-tulpa-postgres-1")
+ap.add_argument("--db", default="llm_tulpa")
+ap.add_argument("--json", action="store_true")
+args = ap.parse_args()
+
+QUERY = """select coalesce(json_agg(row_to_json(t) order by t.id), '[]') from (
+  select m.id, m.role, m.tool_name, m.created_at, length(m.content) as content_chars,
+    coalesce(length(m.thinking), 0) as thinking_chars, m.prompt_tokens, m.prompt_processed_tokens,
+    m.prompt_eval_duration_ms, m.eval_tokens, m.eval_duration_ms,
+    (select json_agg(json_build_object('name', tc.tool_name, 'args', tc.arguments) order by tc.position)
+       from tool_calls tc where tc.message_id = m.id) as calls
+  from messages m where m.chat_id = %d) t""" % args.chat_id
+
+out = subprocess.run(
+    ["docker", "exec", "-i", args.container, "psql", "-U", "postgres", "-d", args.db, "-At", "-c", QUERY],
+    capture_output=True, text=True)
+if out.returncode != 0:
+    sys.exit(out.stderr.strip() or "psql failed")
+rows = json.loads(out.stdout.strip() or "[]")
+if not rows:
+    sys.exit("no messages for that chat")
+
+chars = Counter()
+for r in rows:
+    if r["role"] == "tool":
+        chars["tool results"] += r["content_chars"]
+    elif r["role"] == "assistant":
+        chars["assistant text"] += r["content_chars"]
+        chars["assistant thinking"] += r["thinking_chars"]
+    elif r["role"] == "user":
+        chars["user"] += r["content_chars"]
+    else:
+        chars[r["role"]] += r["content_chars"]
+
+replies = [r for r in rows if r["role"] == "assistant" and r["prompt_tokens"]]
+prompts = [r["prompt_tokens"] for r in replies]
+folds = sum(1 for a, b in zip(prompts, prompts[1:]) if b <= a * 2 / 3)
+prefill_ms = sum(r["prompt_eval_duration_ms"] or 0 for r in replies)
+processed = sum(r["prompt_processed_tokens"] or 0 for r in replies)
+gen_ms = sum(r["eval_duration_ms"] or 0 for r in replies)
+
+reads = []
+tool_counts = Counter()
+for r in rows:
+    for call in r["calls"] or []:
+        tool_counts[call["name"]] += 1
+        if call["name"] == "storage.read_file":
+            a = call["args"] or {}
+            reads.append((a.get("path"), a.get("offset"), a.get("start_line"), a.get("end_line")))
+repeats = len(reads) - len(set(reads))
+by_file = Counter(path for path, *_ in reads)
+
+result = {
+    "chat_id": args.chat_id,
+    "messages": len(rows),
+    "chars": dict(chars),
+    "replies": len(replies),
+    "peak_prompt_tokens": max(prompts, default=0),
+    "last_prompt_tokens": prompts[-1] if prompts else 0,
+    "folds": folds,
+    "prefill_seconds": round(prefill_ms / 1000, 1),
+    "prompt_tokens_processed": processed,
+    "generation_seconds": round(gen_ms / 1000, 1),
+    "tool_calls": dict(tool_counts),
+    "reads": len(reads),
+    "distinct_reads": len(set(reads)),
+    "exact_repeat_reads": repeats,
+    "re_read_rate": round(repeats / len(reads), 3) if reads else 0.0,
+    "most_read_file": by_file.most_common(1)[0] if by_file else None,
+}
+if args.json:
+    print(json.dumps(result, indent=2))
+else:
+    total = sum(chars.values()) or 1
+    print(f"chat {args.chat_id}: {len(rows)} messages, {len(replies)} model replies")
+    for name, n in chars.most_common():
+        print(f"  {name:20s} {n:>10,} chars  {100 * n / total:4.1f}%")
+    print(f"peak prompt {result['peak_prompt_tokens']:,} tokens, last {result['last_prompt_tokens']:,}, folds {folds}")
+    print(f"prefill {result['prefill_seconds']}s over {processed:,} processed prompt tokens; generation {result['generation_seconds']}s")
+    print("tool calls:", ", ".join(f"{k} {v}" for k, v in tool_counts.most_common()) or "none")
+    print(f"read_file: {len(reads)} reads, {len(set(reads))} distinct, re-read rate {result['re_read_rate']:.0%}"
+          + (f", most read {result['most_read_file'][0]} x{result['most_read_file'][1]}" if by_file else ""))

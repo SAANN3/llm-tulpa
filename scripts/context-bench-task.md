@@ -1,0 +1,5 @@
+Work only inside /tmp/tulpa-bench/work, a checkout of this project's repository. Do not change or create anything outside that folder.
+
+I want to understand, from the code itself, what happens in the backend (backend/src) between a request to POST /api/agent/chat and the request that goes out to the model, and again between a tool result being stored and the next model request. Follow these in order and read the real code rather than guessing: the route handlers under routes/agent, then Agent::chat, advance, advance_once, use_tool, continue_chat, ollama_history, and the compaction path (maybe_compact, compact, pick_compaction_boundary, summarize, extract_facts) in facade/agent.rs, plus whatever chat_store methods they call.
+
+Write the result to /tmp/tulpa-bench/work/BENCH-OUT.md with, for each function above, its file and line, what it reads and writes in the database (name the store method), and what can go wrong. End with three concrete weaknesses in the compaction design that you found by reading, each with the lines that show it.
