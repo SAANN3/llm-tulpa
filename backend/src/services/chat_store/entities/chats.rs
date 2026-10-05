@@ -30,6 +30,16 @@ pub struct Model {
     /// The launch profile this chat runs on (`launch_profiles.id`), which implies its model; NULL for
     /// a chat on a model that has none.
     pub launch_profile_id: Option<i64>,
+    /// The agent's own working notes (`chat.write_notes`), kept across compaction folds; NULL until written.
+    pub notes: Option<String>,
+    /// What `chat.write_notes` saved since the last compaction. It stays out of the prompt (the text is in the
+    /// tool call the model made) and replaces `notes` at the next compaction; changing the notes in the prompt
+    /// would make the model server read the whole prompt again.
+    pub notes_pending: Option<String>,
+    /// Tool results up to and including this message id are shown as one-line stubs; NULL when none are.
+    pub cleared_up_to_message_id: Option<i64>,
+    /// Thinking traces up to and including this message id are replayed as their tail only; NULL when none are.
+    pub thinking_trimmed_up_to_message_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

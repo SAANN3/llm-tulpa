@@ -196,6 +196,10 @@ impl ChatStore {
             folder_id: row.folder_id,
             parent_chat_id: row.parent_chat_id,
             launch_profile_id: row.launch_profile_id,
+            notes: row.notes,
+            notes_pending: row.notes_pending,
+            cleared_up_to_message_id: row.cleared_up_to_message_id,
+            thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
         }
     }
 
@@ -916,6 +920,10 @@ impl ChatStore {
                         summary: Set(None),
                         summary_up_to_message_id: Set(None),
                         key_facts: Set(None),
+                        notes: Set(None),
+                        notes_pending: Set(None),
+                        cleared_up_to_message_id: Set(None),
+                        thinking_trimmed_up_to_message_id: Set(None),
                         ..Default::default()
                     }
                     .update(txn)
@@ -1075,6 +1083,17 @@ pub struct Chat {
     /// The launch profile the chat runs on, which implies its model. `None` for a chat on a model
     /// that has no launch profiles (an Ollama model, whose server decides how it runs).
     pub launch_profile_id: Option<i64>,
+    /// The agent's own working notes, written with `chat.write_notes` and sent with every request
+    /// after the compaction summary; never summarized. NULL until written.
+    pub notes: Option<String>,
+    /// Notes written since the last compaction, not in the prompt yet (see `set_pending_notes`).
+    pub notes_pending: Option<String>,
+    /// Tool results up to and including this message id go out as one-line stubs (see
+    /// `facade::clearing`); NULL when none are cleared.
+    pub cleared_up_to_message_id: Option<i64>,
+    /// Thinking traces up to and including this message id are replayed as their tail only (see
+    /// `facade::clearing`); NULL when none are.
+    pub thinking_trimmed_up_to_message_id: Option<i64>,
 }
 
 /// The list view's content preview: whitespace collapsed to single spaces and cut at
