@@ -882,6 +882,27 @@ impl ChatStore {
         Ok(())
     }
 
+    /// Moves the boundaries up to which tool results go out as stubs and old thinking as its
+    /// tail (`None` leaves a boundary where it is). Also drops the stored prompt-token count,
+    /// since the next prompt is a different size.
+    pub async fn set_context_boundaries(
+        &self,
+        chat_id: i64,
+        cleared_up_to: Option<i64>,
+        thinking_trimmed_up_to: Option<i64>,
+    ) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+        let mut update = chats::ActiveModel { id: Set(chat_id), last_prompt_tokens: Set(None), ..Default::default() };
+        if let Some(id) = cleared_up_to {
+            update.cleared_up_to_message_id = Set(Some(id));
+        }
+        if let Some(id) = thinking_trimmed_up_to {
+            update.thinking_trimmed_up_to_message_id = Set(Some(id));
+        }
+        update.update(&self.db).await?;
+        Ok(())
+    }
+
     /// Sets the ground-truth evaluated prompt token count for this chat.
     pub async fn set_last_prompt_tokens(&self, chat_id: i64, tokens: Option<i64>) -> Result<(), ChatStoreErrors> {
         chats::ActiveModel {

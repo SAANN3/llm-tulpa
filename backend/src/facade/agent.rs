@@ -28,9 +28,12 @@ use crate::tools::llm::return_agent::ReturnAgentTool;
 use crate::tools::subagent::{self, SubagentHandle};
 use crate::tools::ui::attach_file::AttachFileTool;
 
+mod clearing;
 mod notes;
 mod pinned;
 mod subagent_run;
+
+use clearing::CLEARED_ENOUGH_FRACTION;
 
 
 /// `trigger_tokens`/`keep_chars` (below) are derived from the
@@ -66,6 +69,8 @@ mod subagent_run;
 /// tens of thousands of tokens of growth away.
 const TRIGGER_FRACTION: f64 = 0.70;
 const KEEP_CHARS_PER_TOKEN: f64 = 0.6;
+/// After a failed fold, the prompt has to grow by this fraction of the window before the next try.
+const COMPACTION_RETRY_GROWTH: f64 = 0.05;
 
 /// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
 /// call (see `advance`), applying to every conversation. One entry per rule, so
@@ -582,6 +587,10 @@ pub struct Agent {
     /// its final reply, across the tool runs and permission prompts between model calls — see
     /// `hold_turn`.
     turn_holds: Arc<Mutex<HashMap<i64, TurnHold>>>,
+    /// Chats whose last fold failed, with the prompt size it failed at: `maybe_compact` leaves them alone
+    /// until the prompt has grown by `COMPACTION_RETRY_GROWTH` of the window. Without it a summarizer that
+    /// keeps being refused would cost a notes request and two summary calls on every single turn.
+    compaction_backoff: Arc<Mutex<HashMap<i64, u64>>>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
     /// for both than running back to back.
@@ -665,6 +674,7 @@ impl Agent {
             running_tools: Arc::new(Mutex::new(HashSet::new())),
             live_subagents: Arc::new(Mutex::new(HashSet::new())),
             turn_holds: Arc::new(Mutex::new(HashMap::new())),
+            compaction_backoff: Arc::new(Mutex::new(HashMap::new())),
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }
@@ -1446,13 +1456,21 @@ impl Agent {
                     system_content.push_str(&notes);
                 }
 
+                let mut recent = recent;
+                clearing::stub_cleared(&mut recent, chat.cleared_up_to_message_id);
                 let mut history = vec![ChatMessage::system(system_content)];
                 history.extend(recent.into_iter().rev().map(Self::to_ollama_message));
                 Ok(history)
             }
             _ => {
-                let (history, _) = self.chat_store.messages(chat_id, self.history_len, 0).await?;
-                Ok(history.into_iter().rev().map(Self::to_ollama_message).collect())
+                let mut history = self.chat_store.messages_after(chat_id, 0).await?;
+                clearing::stub_cleared(&mut history, chat.cleared_up_to_message_id);
+                let mut messages: Vec<ChatMessage> = history.into_iter().map(|m| to_model(m)).collect();
+                // No summary yet, but notes written early still have to reach the model
+                if let Some(notes) = Self::notes_section(chat.notes.as_deref()) {
+                    messages.insert(0, ChatMessage::system(notes));
+                }
+                Ok(messages)
             }
         }
     }
@@ -1475,6 +1493,11 @@ impl Agent {
         if prompt_eval_count.unwrap_or(0) < trigger_tokens {
             return;
         }
+        // A fold that just failed is not retried until the prompt has grown some, see `compaction_backoff`
+        let failed_at = self.compaction_backoff.lock().unwrap().get(&chat_id).copied();
+        if failed_at.is_some_and(|at| prompt_eval_count.unwrap_or(0) < at + (context as f64 * COMPACTION_RETRY_GROWTH) as u64) {
+            return;
+        }
 
         tracing::info!(
             chat_id,
@@ -1483,11 +1506,47 @@ impl Agent {
             "compaction triggered for chat_id {chat_id}"
         );
 
-        if let Err(e) = self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize).await {
-            tracing::warn!(
-                "history compaction failed for chat {chat_id}: {}",
+        // Dropping old tool results is cheaper than a model-written summary and loses nothing the
+        // model can't fetch again; fold only when that wasn't enough
+        let mut notes_saved = false;
+        match self.plan_clearing(chat_id, context).await {
+            Ok(Some(plan)) => {
+                // The notes are asked for while the prompt is still the one the model server holds:
+                // applying the plan rewrites it, and the request would be a cold read of the whole history
+                self.save_notes_before_fold(chat_id, think.clone(), prompt_eval_count).await;
+                notes_saved = true;
+                let freed_chars = plan.freed_chars();
+                match self.chat_store.set_context_boundaries(chat_id, plan.cleared_up_to, plan.thinking_trimmed_up_to).await {
+                    Ok(()) => {
+                        let estimated = prompt_eval_count.unwrap_or(0).saturating_sub(clearing::estimate_tokens(freed_chars));
+                        let target = (context as f64 * CLEARED_ENOUGH_FRACTION) as u64;
+                        if estimated < target {
+                            tracing::info!(chat_id, freed_chars, estimated, "old tool results cleared, no fold needed");
+                            return;
+                        }
+                        tracing::info!(chat_id, freed_chars, estimated, "old tool results cleared, still above the target: folding");
+                    }
+                    Err(e) => tracing::warn!("clearing old tool results failed for chat {chat_id}: {e:?}"),
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                "clearing old tool results failed for chat {chat_id}: {}",
                 e.message.as_deref().unwrap_or("unknown error")
-            );
+            ),
+        }
+
+        match self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize, notes_saved, think, prompt_eval_count).await {
+            Ok(()) => {
+                self.compaction_backoff.lock().unwrap().remove(&chat_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "history compaction failed for chat {chat_id}: {}",
+                    e.message.as_deref().unwrap_or("unknown error")
+                );
+                self.compaction_backoff.lock().unwrap().insert(chat_id, prompt_eval_count.unwrap_or(0));
+            }
         }
     }
 
@@ -1500,11 +1559,10 @@ impl Agent {
         let chat = self.chat_store.chat(chat_id).await?;
         let after_id = chat.summary_up_to_message_id.unwrap_or(0);
 
-        let mut messages = self
-            .chat_store
-            .messages_after(chat_id, after_id, self.history_len)
-            .await?;
-        messages.reverse(); // oldest first, easier to reason about a boundary over
+        // Oldest first: easier to reason about a boundary over
+        let mut messages = self.chat_store.messages_after(chat_id, after_id).await?;
+        // What stays in the prompt is judged at its real size, stubs included
+        clearing::stub_cleared(&mut messages, chat.cleared_up_to_message_id);
 
         let sizes: Vec<usize> = messages
             .iter()
