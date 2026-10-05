@@ -36,12 +36,6 @@ fn notes_reply(message: &ChatMessage, markers: &[String]) -> Option<String> {
 }
 
 impl Agent {
-    /// The notes as the block that goes after the summary in the system message, or `None` when the
-    /// model has written none.
-    pub(super) fn notes_section(notes: Option<&str>) -> Option<String> {
-        let notes = notes?.trim();
-        (!notes.is_empty()).then(|| format!("{}\n\n{notes}", prompts::NOTES_HEADER))
-    }
 
     /// Asks the model to rewrite its working notes right before a fold drops the plans from
     /// the history, as a plain reply (no tool call) to one extra user message that is never
@@ -75,8 +69,8 @@ impl Agent {
                 .map(|t| t.as_ref())
                 .filter(|t| subagent::available_to(t.function_name(), false))
                 .collect();
-            let mut history = self.ollama_history(chat_id).await?;
-            let system_prompt = self.system_prompt_for(&chat, &mut history).await?;
+            let mut history = self.history.for_chat(chat_id).await?;
+            let system_prompt = self.history.system_prompt(&chat, &mut history).await?;
             let mut messages = vec![ChatMessage::system(system_prompt)];
             messages.extend(history);
             let response = provider
@@ -133,12 +127,5 @@ mod tests {
         assert_eq!(notes_reply(&reply(""), &markers), None);
         assert_eq!(notes_reply(&reply("<tool_call><function=x>"), &markers), None);
         assert_eq!(notes_reply(&reply(&"n".repeat(MAX_NOTES_CHARS + 1)), &markers), None);
-    }
-
-    #[test]
-    fn notes_section_is_absent_without_notes() {
-        assert_eq!(Agent::notes_section(None), None);
-        assert_eq!(Agent::notes_section(Some("  \n")), None);
-        assert!(Agent::notes_section(Some("plan: a")).unwrap().ends_with("plan: a"));
     }
 }

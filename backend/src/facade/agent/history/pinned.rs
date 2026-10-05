@@ -5,18 +5,7 @@
 //! ask is the message most likely to be stale (the summary and the key facts carry the goal), and
 //! what the user said last is what the next turn needs.
 
-use super::{prompts, Agent};
-use crate::services::error::ErrorService;
-
-impl Agent {
-    /// The block of the user's own folded-away messages as it goes into the system message (header
-    /// included) for a chat folded up to `boundary_id`, or `None` when there are none. Built from the
-    /// stored messages each time, so it only changes when a fold moves the boundary.
-    pub(super) async fn pinned_section(&self, chat_id: i64, boundary_id: i64) -> Result<Option<String>, ErrorService> {
-        let user_texts = self.chat_store.user_texts_up_to(chat_id, boundary_id).await?;
-        Ok(with_header(&user_texts))
-    }
-}
+use super::super::prompts;
 
 /// How much of the user's folded-away words ride along verbatim after a fold (~1.5k tokens).
 const PINNED_USER_CHARS: usize = 6_000;
@@ -25,8 +14,8 @@ const PINNED_MESSAGE_CHARS: usize = 1_500;
 /// How many ids of the left-out messages are named in the block.
 const PINNED_LISTED_IDS: usize = 10;
 
-/// The block with its header, or `None` when there are no messages.
-fn with_header(messages: &[(i64, String)]) -> Option<String> {
+/// The block as it goes into the system message, header included, or `None` when there are no messages.
+pub(super) fn section(messages: &[(i64, String)]) -> Option<String> {
     pin_user_messages(messages).map(|block| format!("{}{block}", prompts::PINNED_HEADER))
 }
 
@@ -87,14 +76,14 @@ mod tests {
     fn nothing_to_pin_gives_no_block() {
         assert_eq!(pin_user_messages(&[]), None);
         assert_eq!(pin_user_messages(&[(1, "  ".to_string())]), None);
-        assert_eq!(with_header(&[]), None);
+        assert_eq!(section(&[]), None);
     }
 
     #[test]
     fn a_few_short_messages_are_all_kept_in_order() {
         let few = vec![(1, "fix the bug".to_string()), (2, "also the test".to_string())];
         assert_eq!(pin_user_messages(&few).unwrap(), "- fix the bug\n- also the test");
-        assert!(with_header(&few).unwrap().starts_with(prompts::PINNED_HEADER));
+        assert!(section(&few).unwrap().starts_with(prompts::PINNED_HEADER));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::services::{
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
     job_store::{JobKind, JobRecord, JobStatus, JobStore},
-    llm::{CallParams, ChatMessage, LaunchRequest, ChatResponse, LlmProvider, LlmProviders, ThinkChoice, ModelToolCall, ModelToolCallFunction},
+    llm::{CallParams, ChatMessage, LaunchRequest, ChatResponse, LlmProvider, LlmProviders, ThinkChoice},
     permission_store::{PermissionStore, PermissionStoreErrors},
     preset_store::PresetStore,
     settings_store::SettingsStore,
@@ -26,16 +26,16 @@ use crate::facade::one_shot::OneShot;
 use crate::services::llama_runtime::CallGuard;
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
 use crate::tools::subagent::{self, SubagentHandle};
-use crate::tools::ui::attach_file::AttachFileTool;
 
 mod clearing;
+mod history;
 mod notes;
-mod pinned;
 mod prompts;
 mod subagent_run;
 
 use clearing::CLEARED_ENOUGH_FRACTION;
-use prompts::{command_preview, job_notice_text, subagent_system_prompt, with_attached_files_note, SubagentEnd, INTERRUPTED_TOOL_MESSAGE};
+use history::History;
+use prompts::{command_preview, job_notice_text, with_attached_files_note, SubagentEnd, INTERRUPTED_TOOL_MESSAGE};
 pub use prompts::default_system_prompt;
 
 
@@ -123,45 +123,6 @@ fn pick_compaction_boundary(sizes: &[usize], keep_chars: usize) -> usize {
     split_at
 }
 
-/// Maximum number of characters of reasoning (`message.thinking`) preserved when
-/// replaying an assistant message back to the model in `to_ollama_message`.
-///
-/// Qwen 3.8 and similar models produce rich reasoning traces that are critical for
-/// avoiding amnesia and repetitive exploration loops across turns. However, an
-/// anomalous run-away reasoning turn could single-handedly consume the uncompacted
-/// history budget (`keep_chars`). Capping at 10,000 characters (~2,500–3,000
-/// tokens) preserves several turns of deep reasoning while preventing pathological
-/// budget exhaustion.
-const MAX_REPLAYED_THINKING_CHARS: usize = 10_000;
-
-/// Truncates reasoning trace to at most `MAX_REPLAYED_THINKING_CHARS`, keeping the
-/// *tail* (most recent reasoning) rather than the head: final conclusions, plan
-/// adjustments, and next-step decisions are reached toward the end of a thought block.
-///
-/// Ensures strict UTF-8 char boundary safety, aligns to a newline boundary where
-/// reasonable to avoid splitting mid-word, and prepends a clear truncation notice so
-/// the model understands it is viewing the tail of its previous thoughts.
-fn cap_replayed_thinking(thinking: &str, max_chars: usize) -> String {
-    if thinking.len() <= max_chars {
-        return thinking.to_string();
-    }
-
-    let mut start = thinking.len() - max_chars;
-    while start < thinking.len() && !thinking.is_char_boundary(start) {
-        start += 1;
-    }
-
-    // If there is a newline within the first 500 characters after the raw cut,
-    // advance past it to start on a clean line of reasoning rather than mid-sentence.
-    let clean_start = thinking[start..]
-        .find('\n')
-        .map(|idx| start + idx + 1)
-        .filter(|&idx| idx - start <= 500 && idx < thinking.len())
-        .unwrap_or(start);
-
-    format!("... [earlier thinking truncated] ...\n{}", &thinking[clean_start..])
-}
-
 /// What Ollama reported about the time the call behind `response` took, for storing with its message
 fn timings_of(response: &ChatResponse) -> MessageTimings {
     MessageTimings {
@@ -230,53 +191,6 @@ impl Regenerations {
 const INLINED_RESULT_FRACTION: f64 = 0.15;
 const INLINED_RESULT_CHARS_PER_TOKEN: f64 = 3.0;
 
-/// Threshold of consecutive read-only tool calls without editing or writing files
-/// before injecting a dynamic circuit-breaker notice into the prompt.
-const READ_ONLY_STREAK_THRESHOLD: usize = 5;
-
-fn read_only_streak_notice(messages: &[ChatMessage]) -> Option<String> {
-    let mut streak = 0;
-    for msg in messages.iter().rev() {
-        if msg.role == "user" {
-            break;
-        }
-        if let Some(ref name) = msg.tool_name {
-            match name.as_str() {
-                "storage.write_file" | "storage.replace_str" | "storage.delete_file" => break,
-                "storage.read_file" | "storage.list_directory" | "storage.detect_file_type" => {
-                    streak += 1;
-                }
-                _ => {}
-            }
-        } else if let Some(ref calls) = msg.tool_calls {
-            let has_write = calls.iter().any(|c| {
-                matches!(
-                    c.function.name.as_str(),
-                    "storage.write_file" | "storage.replace_str" | "storage.delete_file"
-                )
-            });
-            if has_write {
-                break;
-            }
-        }
-    }
-
-    if streak >= READ_ONLY_STREAK_THRESHOLD {
-        tracing::info!(streak, "read-only tool streak threshold reached, injecting circuit breaker notice");
-        Some(format!(
-            "\n\n[Notice: You have made {streak} consecutive read-only tool calls without editing \
-             or writing any files. If you already know which file(s) to change and what the code \
-             should do, stop reading and make the edit now. If you're trying to verify an API \
-             signature or external interface before writing code, write your best-guess implementation \
-             and run the project's native build, compiler, type-checker, or test tool to verify it. \
-             If there is a genuinely essential piece of information you still need, state it \
-             specifically before your next tool call.]"
-        ))
-    } else {
-        None
-    }
-}
-
 /// Facade over the model providers, `ChatStore`, and `ToolService` — where the actual
 /// "fetch history, call Ollama, persist the result, run tool calls" sequencing lives,
 /// rather than in route handlers or inside any one of the services it composes. Holds
@@ -304,6 +218,8 @@ struct TurnHold {
 #[derive(Clone)]
 pub struct Agent {
     providers: LlmProviders,
+    /// What the model is sent for a chat: the system message and the messages after it.
+    history: History,
     /// One-shot calls (the compaction summary and the key facts), on the same providers.
     one_shot: OneShot,
     presets: Arc<PresetStore>,
@@ -402,6 +318,7 @@ impl Agent {
             };
         Self {
             one_shot: OneShot::new(providers.clone()),
+            history: History::new(chat_store.clone(), settings_store.clone()),
             providers,
             presets,
             launch,
@@ -501,7 +418,7 @@ impl Agent {
     ) -> Result<ChatOut, ErrorService> {
         let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
         self.maybe_compact(chat_id, last_prompt_tokens, think.clone()).await;
-        let messages = self.ollama_history(chat_id).await?;
+        let messages = self.history.for_chat(chat_id).await?;
 
         for &file_id in &file_ids {
             self.tool_context.file_store.attach_to_chat(file_id, chat_id).await?;
@@ -556,7 +473,7 @@ impl Agent {
         let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
         self.maybe_compact(chat_id, last_prompt_tokens, think.clone()).await;
         let notices = self.flush_job_notices(chat_id).await?;
-        let messages = self.ollama_history(chat_id).await?;
+        let messages = self.history.for_chat(chat_id).await?;
         self.advance(chat_id, messages, None, think, notices, true).await
     }
 
@@ -601,7 +518,7 @@ impl Agent {
             return Err(not_regenerable("it is already folded into the chat's summary"));
         }
 
-        let mut messages = self.ollama_history(chat_id).await?;
+        let mut messages = self.history.for_chat(chat_id).await?;
         messages.pop();
 
         let out = self.advance(chat_id, messages, None, think, vec![], true).await?;
@@ -768,27 +685,6 @@ impl Agent {
         Ok(())
     }
 
-    /// The one system message a request to the model starts with: the user's own system prompt
-    /// (or the built-in one), the sub-agent addendum for a sub-agent's chat, and, when the history
-    /// leads with one, that message (the compaction summary and notes) — taken out of `messages`.
-    /// Shared by every request built for a chat so they all share the same prefix.
-    async fn system_prompt_for(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
-        let mut system_prompt = match self.settings_store.system_prompt(chat.user_id).await? {
-            Some(custom) => custom,
-            None => default_system_prompt(),
-        };
-        if chat.parent_chat_id.is_some() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&subagent_system_prompt());
-        }
-        if messages.first().is_some_and(|message| message.role == "system") {
-            let summary_message = messages.remove(0);
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&summary_message.content);
-        }
-        Ok(system_prompt)
-    }
-
     async fn advance_once(
         &self,
         chat_id: i64,
@@ -829,7 +725,7 @@ impl Agent {
         let model = chat.model.clone();
         let known_prompt_tokens = chat.last_prompt_tokens.map(|t| t as u64);
 
-        // `ollama_history` leads with its own system message (the compaction summary)
+        // `History::for_chat` leads with its own system message (the compaction summary)
         // once a chat has one — folded into this same system message rather than sent
         // as a second one, since some chat templates (e.g. Qwen's) reject more than one
         // system-role message anywhere but position 0 ("System message must be at the
@@ -841,13 +737,13 @@ impl Agent {
         // The user's own system prompt, if they set one — fetched once per turn, the same
         // as the chat row above, so a change (or reset) takes effect from the next turn,
         // exactly like a model switch. A user without one gets the built-in default.
-        let system_prompt = self.system_prompt_for(&chat, &mut messages).await?;
+        let system_prompt = self.history.system_prompt(&chat, &mut messages).await?;
 
         // Collected now, while `messages` still holds this turn's history, so it
         // survives the `extend` below. Only actually used once we know this response
         // has no further tool calls of its own — see the `stored` message below.
-        let attached_files = Self::pending_attached_files(&messages);
-        let streak_note = read_only_streak_notice(&messages);
+        let attached_files = History::attached_files(&messages);
+        let streak_note = History::streak_notice(&messages);
 
         let mut messages_with_system = vec![ChatMessage::system(system_prompt)];
         messages_with_system.extend(messages);
@@ -973,7 +869,7 @@ impl Agent {
                 // preventing Ollama's "Cannot have 2 or more assistant messages at the end" error.
                 // `notice` (not `user`) so this renders as the same muted, backend-written marker a
                 // finished-job notice does, not a fake chat bubble the user never actually typed —
-                // `to_ollama_message` already sends any `notice` to Ollama as a `user` turn either way.
+                // `History::to_message` already sends any `notice` to Ollama as a `user` turn either way.
                 let continuation_text = prompts::CUT_OFF_CONTINUATION.to_string();
                 self.chat_store
                     .new_message(NewMessage {
@@ -994,7 +890,7 @@ impl Agent {
                     })
                     .await?;
 
-                let fresh_messages = self.ollama_history(chat_id).await?;
+                let fresh_messages = self.history.for_chat(chat_id).await?;
                 return Box::pin(self.advance(chat_id, fresh_messages, None, think, notices, false)).await;
             }
 
@@ -1150,82 +1046,11 @@ impl Agent {
         message.content.trim().is_empty().then_some(ReplyProblem::Empty)
     }
 
-    /// A chat's message history mapped into Ollama's wire format, oldest first. Once a
-    /// chat has a compaction summary (`Chat::summary`/`summary_up_to_message_id` — see
-    /// `compact`), that replaces everything up to the boundary as a single system
-    /// message, prefixed with key facts (if any). Only what's newer is sent verbatim;
-    /// otherwise this is the whole history, same as before compaction existed.
-    async fn ollama_history(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
-        let chat = self.chat_store.chat(chat_id).await?;
-        // With old thinking trimmed (the user's choice), each trace is replayed at the cap its
-        // place relative to the stored boundary gives; otherwise every trace at the default cap
-        let trim_thinking = self.settings_store.trim_old_thinking(chat.user_id).await?;
-        let to_model = |message: Message| {
-            if trim_thinking {
-                let cap = clearing::thinking_cap(message.id, chat.thinking_trimmed_up_to_message_id);
-                Self::to_ollama_message_capped(message, cap)
-            } else {
-                Self::to_ollama_message(message)
-            }
-        };
-
-        match (&chat.summary, chat.summary_up_to_message_id) {
-            (Some(summary), Some(boundary_id)) => {
-                let recent = self
-                    .chat_store
-                    .messages_after(chat_id, boundary_id)
-                    .await?;
-
-                let mut system_content = String::from(prompts::FOLD_HEADER);
-
-                // Prepend key facts (goal + list) if available. Facts are durable —
-                // they persist across folds and don't get rewritten.
-                if let Some(ref key_facts) = chat.key_facts {
-                    system_content.push_str("\n\nKey facts (durable; still in effect unless a later message contradicts them):");
-                    if let Some(ref goal) = key_facts.goal {
-                        system_content.push_str(&format!("\nGoal: {goal}"));
-                    }
-                    for fact in &key_facts.facts {
-                        system_content.push_str(&format!("\n- {fact}"));
-                    }
-                }
-
-                if let Some(pinned) = self.pinned_section(chat_id, boundary_id).await? {
-                    system_content.push_str("\n\n");
-                    system_content.push_str(&pinned);
-                }
-
-                system_content.push_str("\n\nSummary of everything before this point:\n\n");
-                system_content.push_str(summary);
-                if let Some(notes) = Self::notes_section(chat.notes.as_deref()) {
-                    system_content.push_str("\n\n");
-                    system_content.push_str(&notes);
-                }
-
-                let mut recent = recent;
-                clearing::stub_cleared(&mut recent, chat.cleared_up_to_message_id);
-                let mut history = vec![ChatMessage::system(system_content)];
-                history.extend(recent.into_iter().map(|m| to_model(m)));
-                Ok(history)
-            }
-            _ => {
-                let mut history = self.chat_store.messages_after(chat_id, 0).await?;
-                clearing::stub_cleared(&mut history, chat.cleared_up_to_message_id);
-                let mut messages: Vec<ChatMessage> = history.into_iter().map(|m| to_model(m)).collect();
-                // No summary yet, but notes written early still have to reach the model
-                if let Some(notes) = Self::notes_section(chat.notes.as_deref()) {
-                    messages.insert(0, ChatMessage::system(notes));
-                }
-                Ok(messages)
-            }
-        }
-    }
-
     /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over
     /// `trigger_tokens` and, if so, compacts older history into
     /// `Chat::summary` before returning — so the *next* request (a fresh turn, or
     /// another `continue_chat` later in the same tool-calling round) builds a smaller
-    /// prompt via `ollama_history`. Best-effort: a failure here doesn't fail the turn
+    /// prompt via `History::for_chat`. Best-effort: a failure here doesn't fail the turn
     /// that already succeeded, it just means history stays as big as it is and gets
     /// another chance to trigger this again.
     async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>) {
@@ -1855,87 +1680,6 @@ impl Agent {
         })
     }
 
-    /// Scans back through this turn's already-loaded history for `ui.attach_file`
-    /// results, collecting their `file_id`s. Stops at the last `user`-role message
-    /// (or the start of history), since that's where the current turn began — any
-    /// `tool`/`assistant` messages before it belong to an earlier turn, whose own
-    /// attach results were already attached to *that* turn's final reply when it was
-    /// generated. Everything from here to the end of history is this turn's own
-    /// tool-calling rounds (`assistant` messages requesting tools, `tool` messages
-    /// with their results), so no other role needs to stop the scan.
-    fn pending_attached_files(messages: &[ChatMessage]) -> Vec<i64> {
-        let attach_file_name = AttachFileTool.function_name();
-        let mut file_ids: Vec<i64> = messages
-            .iter()
-            .rev()
-            .take_while(|message| message.role != "user")
-            .filter(|message| message.role == "tool" && message.tool_name.as_deref() == Some(attach_file_name))
-            .filter_map(|message| serde_json::from_str::<Value>(&message.content).ok())
-            .filter_map(|value| value.get("file_id").and_then(Value::as_i64))
-            .collect();
-        file_ids.reverse();
-        file_ids
-    }
-
-    /// Maps a persisted `Message` back into the shape Ollama's `/api/chat` expects for
-    /// history. `ModelToolCall::id` is left empty — we never persisted Ollama's
-    /// original per-call id (only `function.name`/`arguments`, which is all replaying
-    /// history needs), and it's not yet confirmed whether Ollama expects/uses `id` at
-    /// all on the *outgoing* (request) side versus just returning it in responses.
-    ///
-    /// Preserving reasoning context across turns:
-    /// For each message with non-empty `thinking`, the reasoning trace is prepended to
-    /// `content` wrapped in `<think>\n{thinking}\n</think>\n\n{content}`. The wrapping
-    /// happens AFTER `with_attached_files_note` so any file annotations remain inside
-    /// `content` under the `<think>` block.
-    ///
-    /// We deliberately keep `ChatMessage::thinking` as `None` rather than passing a
-    /// separate field: upstream chat templates and API proxies (such as OpenAI-compatible
-    /// endpoints like `llama-mtp`) do not consistently support or forward a separate
-    /// reasoning input field on prior turns, whereas textual concatenation inside `content` is
-    /// universally rendered by all chat templates and models.
-    ///
-    /// Replayed thinking is capped at `MAX_REPLAYED_THINKING_CHARS` (keeping the freshest tail)
-    /// to prevent an anomalous reasoning turn from consuming the uncompacted context budget.
-    fn to_ollama_message(message: Message) -> ChatMessage {
-        Self::to_ollama_message_capped(message, MAX_REPLAYED_THINKING_CHARS)
-    }
-
-    /// `to_ollama_message` with the replayed thinking capped at `thinking_cap` characters instead of the default.
-    fn to_ollama_message_capped(message: Message, thinking_cap: usize) -> ChatMessage {
-        let tool_calls: Vec<ModelToolCall> = message
-            .tool_calls
-            .into_iter()
-            .enumerate()
-            .map(|(index, call)| ModelToolCall {
-                id: String::new(),
-                function: ModelToolCallFunction {
-                    index: Some(index as u32),
-                    name: call.tool_name,
-                    arguments: call.arguments,
-                },
-            })
-            .collect();
-
-        let mut content = with_attached_files_note(message.content, &message.file_ids);
-        if let Some(thinking) = message.thinking.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-            let capped = cap_replayed_thinking(thinking, thinking_cap);
-            content = format!("<think>\n{capped}\n</think>\n\n{content}");
-        }
-
-        ChatMessage {
-            // A `notice` is the backend telling the model something (a job finished) —
-            // chat templates only know system/user/assistant/tool, and it reads as
-            // something said to the model, so it goes out as a `user` message.
-            role: if message.role == "notice" { "user".to_string() } else { message.role },
-            content,
-            tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
-            tool_name: message.tool_name,
-            thinking: None,
-            images: (!message.images.is_empty()).then_some(message.images),
-        }
-    }
-
     /// Deterministic merge of existing facts with a fresh extraction.
     ///
     /// - goal: keep existing.goal if set and non-empty, else take new_goal (if non-empty).
@@ -2152,139 +1896,7 @@ pub struct UseToolOut {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::chat_store::{Message, ToolCallOut};
-    use chrono::Utc;
     use serde_json::json;
-
-    fn make_test_message(role: &str, content: &str, thinking: Option<&str>, file_ids: Vec<i64>) -> Message {
-        Message {
-            id: 1,
-            chat_id: 1,
-            role: role.to_string(),
-            content: content.to_string(),
-            tool_name: None,
-            created_at: Utc::now(),
-            thinking: thinking.map(String::from),
-            thought_duration_ms: None,
-            tool_success: None,
-            tool_denied: false,
-            tool_calls: vec![],
-            images: vec![],
-            file_ids,
-            prompt_tokens: None,
-            eval_tokens: None,
-        }
-    }
-
-    #[test]
-    fn test_to_ollama_message_without_thinking() {
-        let msg = make_test_message("assistant", "Hello world", None, vec![]);
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert_eq!(ollama_msg.role, "assistant");
-        assert_eq!(ollama_msg.content, "Hello world");
-        assert!(ollama_msg.thinking.is_none());
-    }
-
-    #[test]
-    fn test_to_ollama_message_with_thinking() {
-        let msg = make_test_message(
-            "assistant",
-            "Here is the plan.",
-            Some("Let me reason step by step.\n1. Inspect codebase.\n2. Fix issue."),
-            vec![],
-        );
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert_eq!(ollama_msg.role, "assistant");
-        assert_eq!(
-            ollama_msg.content,
-            "<think>\nLet me reason step by step.\n1. Inspect codebase.\n2. Fix issue.\n</think>\n\nHere is the plan."
-        );
-        assert!(ollama_msg.thinking.is_none());
-    }
-
-    #[test]
-    fn test_to_ollama_message_with_thinking_and_empty_content() {
-        let mut msg = make_test_message("assistant", "", Some("Deciding which tool to call..."), vec![]);
-        msg.tool_calls.push(ToolCallOut {
-            tool_name: "storage.read_file".to_string(),
-            arguments: json!({"path": "src/main.rs"}),
-        });
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert_eq!(ollama_msg.role, "assistant");
-        assert_eq!(
-            ollama_msg.content,
-            "<think>\nDeciding which tool to call...\n</think>\n\n"
-        );
-        assert!(ollama_msg.thinking.is_none());
-        assert!(ollama_msg.tool_calls.is_some());
-    }
-
-    #[test]
-    fn test_to_ollama_message_with_attached_files_and_thinking() {
-        let msg = make_test_message(
-            "assistant",
-            "Checking attachments",
-            Some("I see the user mentioned an attachment."),
-            vec![42, 99],
-        );
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert!(ollama_msg.content.starts_with("<think>\nI see the user mentioned an attachment.\n</think>\n\n[This message has file(s) attached: id 42, id 99."));
-        assert!(ollama_msg.content.ends_with("]\nChecking attachments"));
-        assert!(ollama_msg.thinking.is_none());
-    }
-
-    #[test]
-    fn test_to_ollama_message_whitespace_thinking_ignored() {
-        let msg = make_test_message("assistant", "No real thinking here", Some("   \n\t  "), vec![]);
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert_eq!(ollama_msg.content, "No real thinking here");
-        assert!(ollama_msg.thinking.is_none());
-    }
-
-    #[test]
-    fn test_to_ollama_message_notice_role_mapped_to_user() {
-        let msg = make_test_message("notice", "Job finished: output 42", None, vec![]);
-        let ollama_msg = Agent::to_ollama_message(msg);
-        assert_eq!(ollama_msg.role, "user");
-        assert_eq!(ollama_msg.content, "Job finished: output 42");
-    }
-
-    #[test]
-    fn test_cap_replayed_thinking_short() {
-        let short = "Step 1: Check tests.\nStep 2: Done.";
-        assert_eq!(cap_replayed_thinking(short, MAX_REPLAYED_THINKING_CHARS), short);
-    }
-
-    #[test]
-    fn test_cap_replayed_thinking_truncation() {
-        let line = "Thinking iteration about complex logic...\n";
-        let repeat_count = (MAX_REPLAYED_THINKING_CHARS / line.len()) + 50;
-        let mut long_thinking = String::new();
-        for i in 0..repeat_count {
-            long_thinking.push_str(&format!("{i}: {line}"));
-        }
-        long_thinking.push_str("FINAL CONCLUSION: Solution reached.");
-
-        let capped = cap_replayed_thinking(&long_thinking, MAX_REPLAYED_THINKING_CHARS);
-        assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
-        assert!(capped.ends_with("FINAL CONCLUSION: Solution reached."));
-        assert!(capped.len() <= MAX_REPLAYED_THINKING_CHARS + 100);
-    }
-
-    #[test]
-    fn test_cap_replayed_thinking_utf8_safety() {
-        let cyrillic_thought = "Проверяем многобайтовые символы Юникода для безопасности границ среза.\n";
-        let repeat_count = (MAX_REPLAYED_THINKING_CHARS / cyrillic_thought.len()) + 50;
-        let mut long_thinking = String::new();
-        for _ in 0..repeat_count {
-            long_thinking.push_str(cyrillic_thought);
-        }
-        long_thinking.push_str("Финальный вывод: тест пройден успешно.");
-
-        let capped = cap_replayed_thinking(&long_thinking, MAX_REPLAYED_THINKING_CHARS);
-        assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
-        assert!(capped.ends_with("Финальный вывод: тест пройден успешно."));
-    }
 
     #[test]
     fn test_pick_compaction_boundary_logic() {
