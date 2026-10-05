@@ -353,12 +353,12 @@ const MAX_REPLAYED_THINKING_CHARS: usize = 10_000;
 /// Ensures strict UTF-8 char boundary safety, aligns to a newline boundary where
 /// reasonable to avoid splitting mid-word, and prepends a clear truncation notice so
 /// the model understands it is viewing the tail of its previous thoughts.
-fn cap_replayed_thinking(thinking: &str) -> String {
-    if thinking.len() <= MAX_REPLAYED_THINKING_CHARS {
+fn cap_replayed_thinking(thinking: &str, max_chars: usize) -> String {
+    if thinking.len() <= max_chars {
         return thinking.to_string();
     }
 
-    let mut start = thinking.len() - MAX_REPLAYED_THINKING_CHARS;
+    let mut start = thinking.len() - max_chars;
     while start < thinking.len() && !thinking.is_char_boundary(start) {
         start += 1;
     }
@@ -1418,6 +1418,17 @@ impl Agent {
     /// existed.
     async fn ollama_history(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
+        // With old thinking trimmed (the user's choice), each trace is replayed at the cap its
+        // place relative to the stored boundary gives; otherwise every trace at the default cap
+        let trim_thinking = self.settings_store.trim_old_thinking(chat.user_id).await?;
+        let to_model = |message: Message| {
+            if trim_thinking {
+                let cap = clearing::thinking_cap(message.id, chat.thinking_trimmed_up_to_message_id);
+                Self::to_ollama_message_capped(message, cap)
+            } else {
+                Self::to_ollama_message(message)
+            }
+        };
 
         match (&chat.summary, chat.summary_up_to_message_id) {
             (Some(summary), Some(boundary_id)) => {
@@ -1459,7 +1470,7 @@ impl Agent {
                 let mut recent = recent;
                 clearing::stub_cleared(&mut recent, chat.cleared_up_to_message_id);
                 let mut history = vec![ChatMessage::system(system_content)];
-                history.extend(recent.into_iter().rev().map(Self::to_ollama_message));
+                history.extend(recent.into_iter().map(|m| to_model(m)));
                 Ok(history)
             }
             _ => {
@@ -1564,11 +1575,17 @@ impl Agent {
         // What stays in the prompt is judged at its real size, stubs included
         clearing::stub_cleared(&mut messages, chat.cleared_up_to_message_id);
 
+        let trim_thinking = self.settings_store.trim_old_thinking(chat.user_id).await?;
         let sizes: Vec<usize> = messages
             .iter()
             .map(|message| {
+                let thinking = message.thinking.as_deref().map_or(0, str::len);
                 message.content.len()
-                    + message.thinking.as_deref().map_or(0, str::len)
+                    + if trim_thinking {
+                        thinking.min(clearing::thinking_cap(message.id, chat.thinking_trimmed_up_to_message_id))
+                    } else {
+                        thinking
+                    }
                     + message.images.iter().map(String::len).sum::<usize>()
             })
             .collect();
@@ -2287,6 +2304,11 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// Replayed thinking is capped at `MAX_REPLAYED_THINKING_CHARS` (keeping the freshest tail)
     /// to prevent an anomalous reasoning turn from consuming the uncompacted context budget.
     fn to_ollama_message(message: Message) -> ChatMessage {
+        Self::to_ollama_message_capped(message, MAX_REPLAYED_THINKING_CHARS)
+    }
+
+    /// `to_ollama_message` with the replayed thinking capped at `thinking_cap` characters instead of the default.
+    fn to_ollama_message_capped(message: Message, thinking_cap: usize) -> ChatMessage {
         let tool_calls: Vec<ModelToolCall> = message
             .tool_calls
             .into_iter()
@@ -2303,7 +2325,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
 
         let mut content = with_attached_files_note(message.content, &message.file_ids);
         if let Some(thinking) = message.thinking.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-            let capped = cap_replayed_thinking(thinking);
+            let capped = cap_replayed_thinking(thinking, thinking_cap);
             content = format!("<think>\n{capped}\n</think>\n\n{content}");
         }
 
@@ -2636,7 +2658,7 @@ mod tests {
     #[test]
     fn test_cap_replayed_thinking_short() {
         let short = "Step 1: Check tests.\nStep 2: Done.";
-        assert_eq!(cap_replayed_thinking(short), short);
+        assert_eq!(cap_replayed_thinking(short, MAX_REPLAYED_THINKING_CHARS), short);
     }
 
     #[test]
@@ -2649,7 +2671,7 @@ mod tests {
         }
         long_thinking.push_str("FINAL CONCLUSION: Solution reached.");
 
-        let capped = cap_replayed_thinking(&long_thinking);
+        let capped = cap_replayed_thinking(&long_thinking, MAX_REPLAYED_THINKING_CHARS);
         assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
         assert!(capped.ends_with("FINAL CONCLUSION: Solution reached."));
         assert!(capped.len() <= MAX_REPLAYED_THINKING_CHARS + 100);
@@ -2665,7 +2687,7 @@ mod tests {
         }
         long_thinking.push_str("Финальный вывод: тест пройден успешно.");
 
-        let capped = cap_replayed_thinking(&long_thinking);
+        let capped = cap_replayed_thinking(&long_thinking, MAX_REPLAYED_THINKING_CHARS);
         assert!(capped.starts_with("... [earlier thinking truncated] ...\n"));
         assert!(capped.ends_with("Финальный вывод: тест пройден успешно."));
     }

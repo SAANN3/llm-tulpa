@@ -72,6 +72,7 @@ impl SettingsStore {
             theme: row.theme,
             language: row.language,
             auto_confirm: row.auto_confirm,
+            trim_old_thinking: row.trim_old_thinking,
             has_hf_token: row.hf_token.is_some(),
             llm_provider: active
                 .as_ref()
@@ -146,6 +147,9 @@ impl SettingsStore {
         if let Some(auto_confirm) = update.auto_confirm {
             model.auto_confirm = Set(auto_confirm);
         }
+        if let Some(trim) = update.trim_old_thinking {
+            model.trim_old_thinking = Set(trim);
+        }
         if let Some(token) = update.hf_token {
             // An empty token clears it
             model.hf_token = Set(Some(token.trim().to_string()).filter(|t| !t.is_empty()));
@@ -170,6 +174,11 @@ impl SettingsStore {
     /// Whether the user has tool-permission prompts approved automatically.
     pub async fn auto_confirm(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
         Ok(self.row(user_id).await?.auto_confirm)
+    }
+
+    /// Whether old thinking traces are shortened in this user's long chats.
+    pub async fn trim_old_thinking(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.trim_old_thinking)
     }
 
     /// The user's custom system prompt — `None` while the built-in default applies. Like the
@@ -209,6 +218,9 @@ pub struct Settings {
     pub language: String,
     /// Tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
+    /// In a long chat, thinking traces from earlier turns are shortened to their tail when the
+    /// context nears its limit, and the newest traces are replayed in more of their length.
+    pub trim_old_thinking: bool,
     /// Whether a Hugging Face token is set (the token itself is never sent back).
     pub has_hf_token: bool,
     /// The provider of the active model (`ollama` until one is picked).
@@ -227,6 +239,7 @@ pub struct SettingsUpdate {
     pub theme: Option<String>,
     pub language: Option<String>,
     pub auto_confirm: Option<bool>,
+    pub trim_old_thinking: Option<bool>,
     /// A Hugging Face access token; empty clears it
     pub hf_token: Option<String>,
     pub llm_provider: Option<String>,

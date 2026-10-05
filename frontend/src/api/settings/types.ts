@@ -7,6 +7,8 @@ export interface Settings {
     language: string
     /** Tool-permission prompts are approved automatically instead of waiting for the user. */
     auto_confirm: boolean
+    /** Old thinking traces are shortened to their tail in a long chat, and the newest are replayed longer. */
+    trim_old_thinking: boolean
     /** Whether a Hugging Face token is set (the token itself is never sent back) */
     has_hf_token: boolean
     llm_provider: string
@@ -22,6 +24,7 @@ export interface SettingsUpdate {
     theme?: string
     language?: string
     auto_confirm?: boolean
+    trim_old_thinking?: boolean
     /** A Hugging Face access token; empty clears it */
     hf_token?: string
     llm_provider?: string

@@ -148,3 +148,23 @@ export const AutoConfirmField = ({enabled, onToggle}: AutoConfirmFieldProps) => 
         />
     </Div>
 );
+
+export interface TrimOldThinkingFieldProps {
+    enabled: boolean
+    onToggle: (enabled: boolean) => void
+}
+
+/** Trim-old-thinking toggle — saved with the rest of the user's settings */
+export const TrimOldThinkingField = ({enabled, onToggle}: TrimOldThinkingFieldProps) => (
+    <Div className="field">
+        <Div className="field__row">
+            <Label className="field__row-label" text="Shorten old thinking in long chats"/>
+            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+        </Div>
+        <FieldHelp
+            text="When a long chat nears the model's context limit, the model's earlier reasoning is cut to its last lines and the newest reasoning is kept longer. This frees room without summarizing, but the model may re-check things it had already worked out."
+            accent={enabled}
+            wide
+        />
+    </Div>
+);

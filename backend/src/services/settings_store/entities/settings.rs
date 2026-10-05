@@ -24,6 +24,8 @@ pub struct Model {
     pub system_prompt: Option<String>,
     /// Whether tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
+    /// Whether old thinking traces in a long chat are shortened to their tail at the compaction trigger.
+    pub trim_old_thinking: bool,
     /// The user's Hugging Face access token, for downloading gated models.
     pub hf_token: Option<String>,
 }

@@ -5,6 +5,7 @@ import {Button, Div, Label} from '../components/primitives'
 import {
     ActiveModelField,
     AutoConfirmField,
+    TrimOldThinkingField,
     NameTimezoneFields,
     NotificationsField,
     HfTokenField,
@@ -26,6 +27,7 @@ const Settings = () => {
     const [timezoneText, setTimezoneText] = useState(String(settings?.timezone ?? browserTimezoneOffsetHours()))
     const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications_enabled ?? false)
     const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(settings?.auto_confirm ?? false)
+    const [trimOldThinking, setTrimOldThinking] = useState(settings?.trim_old_thinking ?? false)
 
     const onToggleNotifications = async (enabled: boolean) => {
         if (!enabled) {
@@ -46,7 +48,7 @@ const Settings = () => {
         if (saveDisabled) return
 
         const timezone = Number(timezoneText)
-        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled})
+        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled, trim_old_thinking: trimOldThinking})
         navigate('/')
     }
 
@@ -75,6 +77,7 @@ const Settings = () => {
                     <HfTokenField hasToken={settings?.has_hf_token ?? false} onSave={(hf_token) => setSettings({hf_token})}/>
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>
                     <AutoConfirmField enabled={autoConfirmEnabled} onToggle={setAutoConfirmEnabled}/>
+                    <TrimOldThinkingField enabled={trimOldThinking} onToggle={setTrimOldThinking}/>
                     <Div className="settings__actions">
                         <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>
                         <Button className="settings__action" text="Save" onClicked={onSave} disabled={saveDisabled}/>
