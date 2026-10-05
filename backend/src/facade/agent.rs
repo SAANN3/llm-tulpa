@@ -28,6 +28,7 @@ use crate::tools::llm::return_agent::ReturnAgentTool;
 use crate::tools::subagent::{self, SubagentHandle};
 use crate::tools::ui::attach_file::AttachFileTool;
 
+mod pinned;
 mod subagent_run;
 
 
@@ -1417,6 +1418,11 @@ impl Agent {
                     for fact in &key_facts.facts {
                         system_content.push_str(&format!("\n- {fact}"));
                     }
+                }
+
+                if let Some(pinned) = self.pinned_section(chat_id, boundary_id).await? {
+                    system_content.push_str("\n\n");
+                    system_content.push_str(&pinned);
                 }
 
                 system_content.push_str("\n\nSummary of everything before this point:\n\n");

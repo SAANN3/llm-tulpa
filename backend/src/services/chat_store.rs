@@ -242,6 +242,23 @@ impl ChatStore {
         self.hydrate_messages(rows).await
     }
 
+    /// The user's own messages up to and including `up_to_message_id`, oldest first, as
+    /// `(id, text)` — what a compaction summary replaced, for pinning the user's words verbatim.
+    pub async fn user_texts_up_to(
+        &self,
+        chat_id: i64,
+        up_to_message_id: i64,
+    ) -> Result<Vec<(i64, String)>, ChatStoreErrors> {
+        let rows = messages::Entity::find()
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .filter(messages::Column::Role.eq("user"))
+            .filter(messages::Column::Id.lte(up_to_message_id))
+            .order_by_asc(messages::Column::Id)
+            .all(&self.db)
+            .await?;
+        Ok(rows.into_iter().map(|row| (row.id, row.content)).collect())
+    }
+
     /// A page of a chat's `user`/`assistant` messages, newest first — the list view
     /// the `chat.*` tools build on: each entry is an id, who wrote it, when, and the
     /// start of what it says. `role` filters to one writer, `limit`/`skip` page
