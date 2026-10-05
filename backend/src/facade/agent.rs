@@ -71,6 +71,9 @@ const TRIGGER_FRACTION: f64 = 0.70;
 const KEEP_CHARS_PER_TOKEN: f64 = 0.6;
 /// After a failed fold, the prompt has to grow by this fraction of the window before the next try.
 const COMPACTION_RETRY_GROWTH: f64 = 0.05;
+/// How many of a chat's newest messages `pending_tool_calls` looks through: it walks back over the
+/// tool results of the last reply, a handful at most.
+const PENDING_TOOL_CALLS_LOOKBACK: u64 = 500;
 
 /// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
 /// call (see `advance`), applying to every conversation. One entry per rule, so
@@ -565,13 +568,6 @@ pub struct Agent {
     /// Per-user settings — consulted once per turn for the user's custom system prompt
     /// (a user without one gets the built-in default instead).
     settings_store: Arc<SettingsStore>,
-    /// How many of a chat's most recent messages to pull back for a single
-    /// `chat`/`use_tool` call — both the conversation history sent to Ollama and the
-    /// window `pending_tool_calls` scans backward through to find unresolved tool
-    /// calls. A configuration knob rather than a constant for the same reason a model's
-    /// context length is — how much history is worth paying for is a deployment
-    /// decision, not something this code should hardcode.
-    history_len: u64,
     /// The configured context window: what a chat with no launch profile runs under, and what a
     /// sub-agent's inlined result is sized against.
     context_length: u64,
@@ -637,7 +633,6 @@ impl Agent {
         settings_store: Arc<SettingsStore>,
         presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
-        history_len: u64,
         context_length: u64,
     ) -> Self {
         // `chat_id: 0` here is a placeholder — never read as-is, always replaced via
@@ -667,7 +662,6 @@ impl Agent {
             job_store,
             permission_store,
             settings_store,
-            history_len,
             context_length,
             max_inlined_result_bytes: (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN)
                 as u64,
@@ -1414,8 +1408,7 @@ impl Agent {
     /// chat has a compaction summary (`Chat::summary`/`summary_up_to_message_id` — see
     /// `compact`), that replaces everything up to the boundary as a single system
     /// message, prefixed with key facts (if any). Only what's newer is sent verbatim;
-    /// otherwise this is the full history up to `history_len`, same as before compaction
-    /// existed.
+    /// otherwise this is the whole history, same as before compaction existed.
     async fn ollama_history(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         // With old thinking trimmed (the user's choice), each trace is replayed at the cap its
@@ -1434,7 +1427,7 @@ impl Agent {
             (Some(summary), Some(boundary_id)) => {
                 let recent = self
                     .chat_store
-                    .messages_after(chat_id, boundary_id, self.history_len)
+                    .messages_after(chat_id, boundary_id)
                     .await?;
 
                 let mut system_content = String::from(
@@ -2224,7 +2217,7 @@ Existing goal: {}\n\nConversation excerpt:\n\n{transcript}",
     /// `user` message always wins even if older unresolved tool calls sit further back,
     /// since the user talking again supersedes them.
     async fn pending_tool_calls(&self, chat_id: i64) -> Result<Vec<ToolCallOut>, ErrorService> {
-        let (messages, _) = self.chat_store.messages(chat_id, self.history_len, 0).await?;
+        let (messages, _) = self.chat_store.messages(chat_id, PENDING_TOOL_CALLS_LOOKBACK, 0).await?;
 
         let resolved = messages.iter().take_while(|message| message.role == "tool").count();
 

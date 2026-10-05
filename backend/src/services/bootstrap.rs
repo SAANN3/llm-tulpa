@@ -165,7 +165,6 @@ pub async fn bootstrap(
     providers: LlmProviders,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
-    agent_history_len: u64,
     ollama_context_length: u64,
     model_dir: Arc<ModelFolder>,
     runtime: Arc<LlamaRuntime>,
@@ -233,7 +232,6 @@ pub async fn bootstrap(
         settings_store.clone(),
         preset_store.clone(),
         launches.clone(),
-        agent_history_len,
         ollama_context_length,
     ));
     agent.bind_subagent_runner();
@@ -262,7 +260,6 @@ pub async fn bootstrap(
         settings_store.clone(),
         preset_store.clone(),
         launches.clone(),
-        agent_history_len,
         ollama_context_length,
     ));
 

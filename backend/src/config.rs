@@ -177,9 +177,6 @@ pub struct AppConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub llama_cpp: LlamaCppConfig,
-    /// How many of a chat's most recent messages get pulled into a single turn.
-    #[serde(default = "default_agent_history_len")]
-    pub agent_history_len: u64,
     /// Where uploaded files are stored. Defaults to `~/.llm-tulpa/files`.
     #[serde(default)]
     pub files_dir: Option<PathBuf>,
@@ -208,10 +205,6 @@ fn default_bind_addr() -> String {
     "127.0.0.1:3000".to_string()
 }
 
-fn default_agent_history_len() -> u64 {
-    2000
-}
-
 fn default_job_log_retention_days() -> u64 {
     7
 }
@@ -228,7 +221,6 @@ impl AppConfig {
             bind_addr: default_bind_addr(),
             ollama: OllamaConfig::default(),
             llama_cpp: LlamaCppConfig::default(),
-            agent_history_len: default_agent_history_len(),
             files_dir: None,
             jobs_dir: None,
             job_log_retention_days: default_job_log_retention_days(),

@@ -226,20 +226,16 @@ impl ChatStore {
         Ok((self.hydrate_messages(rows).await?, total))
     }
 
-    /// Every message after `after_message_id` (exclusive), newest first, up to `limit`.
-    pub async fn messages_after(
-        &self,
-        chat_id: i64,
-        after_message_id: i64,
-        limit: u64,
-    ) -> Result<Vec<Message>, ChatStoreErrors> {
+    /// Every message after `after_message_id` (exclusive), oldest first, all of them. No limit: what the
+    /// model is sent and what a fold reads are bounded by compaction (by tokens), and a row limit here
+    /// would drop the oldest of them without a word. `0` is the whole chat.
+    pub async fn messages_after(&self, chat_id: i64, after_message_id: i64) -> Result<Vec<Message>, ChatStoreErrors> {
         self.chat(chat_id).await?;
 
         let rows = messages::Entity::find()
             .filter(messages::Column::ChatId.eq(chat_id))
             .filter(messages::Column::Id.gt(after_message_id))
-            .order_by_desc(messages::Column::CreatedAt)
-            .limit(limit)
+            .order_by_asc(messages::Column::Id)
             .all(&self.db)
             .await?;
 

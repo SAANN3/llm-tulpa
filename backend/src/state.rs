@@ -147,7 +147,6 @@ impl AppState {
             self.providers.clone(),
             self.tools.clone(),
             self.events.clone(),
-            config.agent_history_len,
             config.ollama.context_length,
             self.model_folder.clone(),
             self.runtime.clone(),

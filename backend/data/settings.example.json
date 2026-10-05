@@ -12,7 +12,6 @@
     "load_timeout_secs": 300,
     "external_url": null
   },
-  "agent_history_len": 2000,
   "searxng_url": "http://localhost:8090",
   "files_dir": null,
   "jobs_dir": null,
