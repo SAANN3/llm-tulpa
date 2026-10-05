@@ -40,7 +40,7 @@ Prompts ──► History ──► Compaction ──┐
 ```
 Dependencies point one way. A component never holds `Agent`. The only cycle (sub-agents start turns, turns can start sub-agents) is cut with the trait and `Weak` that already exist.
 
-One more piece sits a level up, because `PromptFacade` needs it too: `facade/one_shot.rs`, a helper for "system instruction, untrusted data as its own user message, thinking off, no tools, validate the reply, one retry with a sharper closing, fallback". The summary, the facts and the notes request use it, and so do `chat_name`, `folder_name` and `greet`.
+One more piece sits a level up, because `PromptFacade` needs it too: `facade/one_shot.rs`, a helper for "system instruction, untrusted data as its own user message, thinking off, no tools, validate the reply, one retry with a sharper closing, fallback". The summary and the facts use it, and so do `chat_name` and `folder_name`. (`greet` and the input examples use the plain `generate` call and stay as they are. The notes request is not a one-shot: it extends the live prompt, so it belongs to `Compaction` and `ModelCall`.)
 
 ## One step of a turn
 1. `Turn` loads the chat and settings, asks `Tools` for the tool set, `History` for the messages, `ModelCall` for the provider and cap.
@@ -104,6 +104,9 @@ Backend first, the frontend after it, and the frontend is not touched while the 
 6. `Turn` as steps; `Agent` becomes the facade.
 7. `TurnRunner`, events, the new endpoints (the old ones removed); sub-agents move onto it. The current UI cannot run turns from here until phase 8, so nothing is released in between.
 8. Frontend, in one switch: the loop and its hooks removed, the page driven by the events, a stop button, the permission prompt from `GET /turn` and `POST /answer`.
+
+## Found while building
+- A tool result that makes the *next* request exceed the window fails with a 502 and leaves the chat stuck: the compaction check at the start of a continue uses the prompt size measured *before* the result arrived, so nothing triggers, and every retry fails the same way. Seen at a 16k window with a 100-entry `chat.list_messages` result. The `Turn` step should check the size of the request it is about to send (last measured size plus the new messages) and compact first.
 
 ## Decided in review
 - The last step at the step limit keeps the same tool list, so the model server's cached prompt still serves it, and any tool call in that reply is refused while its text is kept.

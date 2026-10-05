@@ -5,7 +5,7 @@
 //! ask is the message most likely to be stale (the summary and the key facts carry the goal), and
 //! what the user said last is what the next turn needs.
 
-use super::Agent;
+use super::{prompts, Agent};
 use crate::services::error::ErrorService;
 
 impl Agent {
@@ -25,13 +25,9 @@ const PINNED_MESSAGE_CHARS: usize = 1_500;
 /// How many ids of the left-out messages are named in the block.
 const PINNED_LISTED_IDS: usize = 10;
 
-/// Said in front of the block, in the system message.
-const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
-                              these are the words):\n";
-
 /// The block with its header, or `None` when there are no messages.
 fn with_header(messages: &[(i64, String)]) -> Option<String> {
-    pin_user_messages(messages).map(|block| format!("{PINNED_HEADER}{block}"))
+    pin_user_messages(messages).map(|block| format!("{}{block}", prompts::PINNED_HEADER))
 }
 
 /// The user's folded-away messages as one block, in the order they were written: the newest ones that
@@ -98,7 +94,7 @@ mod tests {
     fn a_few_short_messages_are_all_kept_in_order() {
         let few = vec![(1, "fix the bug".to_string()), (2, "also the test".to_string())];
         assert_eq!(pin_user_messages(&few).unwrap(), "- fix the bug\n- also the test");
-        assert!(with_header(&few).unwrap().starts_with(PINNED_HEADER));
+        assert!(with_header(&few).unwrap().starts_with(prompts::PINNED_HEADER));
     }
 
     #[test]

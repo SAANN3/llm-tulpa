@@ -6,7 +6,7 @@
 //! saves them as pending (changing the front of the prompt would make the model server read the whole
 //! conversation again); they join the prompt at the next compaction.
 
-use super::Agent;
+use super::{prompts, Agent};
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ThinkChoice};
 use crate::tools::base::Tool;
@@ -18,23 +18,6 @@ use crate::tools::subagent;
 /// and below ~6k a model that thinks first runs out of room (measured at a 49k window with 10k free: 4,096 tokens, 150 s,
 /// no notes).
 const NOTES_ASK_MIN_ROOM_TOKENS: u64 = 16_000;
-
-/// Said in front of the notes, in the system message.
-const NOTES_HEADER: &str = "Your own working notes for this chat, written earlier with chat.write_notes. They are \
-                            yours, not the user's, and a compaction fold never shortens them; keep them current:";
-
-/// The request itself, as the one extra user message at the end of the live prompt.
-fn notes_ask() -> String {
-    format!(
-        "The older part of this conversation is about to be compacted into a summary, which keeps \
-         findings but drops plans and next steps. Rewrite your working notes now so they hold what you \
-         will need after that: the goal as the user stated it, the plan and where you are in it, \
-         decisions made, file paths and function names you will need again, and what you already \
-         read or ruled out. Keep what is still true in your current notes. At most {MAX_NOTES_CHARS} characters. \
-         Reply with the notes text only, no tool call. If the current notes already say all of that, \
-         reply with exactly UNCHANGED."
-    )
-}
 
 /// The notes a pre-fold reply carries, or `None` when it carries none to store: an empty reply,
 /// UNCHANGED, a tool call (a real one or the model's own tags in the text), or text over the
@@ -57,7 +40,7 @@ impl Agent {
     /// model has written none.
     pub(super) fn notes_section(notes: Option<&str>) -> Option<String> {
         let notes = notes?.trim();
-        (!notes.is_empty()).then(|| format!("{NOTES_HEADER}\n\n{notes}"))
+        (!notes.is_empty()).then(|| format!("{}\n\n{notes}", prompts::NOTES_HEADER))
     }
 
     /// Asks the model to rewrite its working notes right before a fold drops the plans from
@@ -97,7 +80,7 @@ impl Agent {
             let mut messages = vec![ChatMessage::system(system_prompt)];
             messages.extend(history);
             let response = provider
-                .chat(messages, Some(ChatMessage::user(notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params)
+                .chat(messages, Some(ChatMessage::user(prompts::notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params)
                 .await?;
             let markers = provider.tool_call_markers(&chat.model).await;
             Ok(notes_reply(&response.message, &markers))
@@ -157,10 +140,5 @@ mod tests {
         assert_eq!(Agent::notes_section(None), None);
         assert_eq!(Agent::notes_section(Some("  \n")), None);
         assert!(Agent::notes_section(Some("plan: a")).unwrap().ends_with("plan: a"));
-    }
-
-    #[test]
-    fn the_request_names_the_limit() {
-        assert!(notes_ask().contains("At most 8000 characters"));
     }
 }

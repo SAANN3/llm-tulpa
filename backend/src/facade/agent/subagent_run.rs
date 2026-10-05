@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 use serde_json::Value;
 
-use super::{Agent, AgentToolPermission};
+use super::{prompts, Agent, AgentToolPermission};
 use crate::services::chat_store::{MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
 use crate::services::job_store::AgentJobEnd;
@@ -134,7 +134,7 @@ impl Agent {
                 // handed over as it stands.
                 if let Some(failed) = &failed_return {
                     if reminded {
-                        return Ok(SubagentResult::Incomplete(unreturned_result(failed, &reply.content)));
+                        return Ok(SubagentResult::Incomplete(prompts::subagent_never_returned(&failed.error, &failed.attempt, &reply.content)));
                     }
                     reminded = true;
                     self.remind_to_return(sub_chat_id, &failed.error).await?;
@@ -158,11 +158,7 @@ impl Agent {
             }
 
             if model_calls >= MAX_MODEL_CALLS {
-                let mut message = format!("the sub-agent used all {MAX_MODEL_CALLS} of its model calls without finishing");
-                if !reply.content.trim().is_empty() {
-                    message.push_str(&format!("; its last message was: {}", reply.content.trim()));
-                }
-                return Ok(SubagentResult::Incomplete(message));
+                return Ok(SubagentResult::Incomplete(prompts::subagent_out_of_calls(MAX_MODEL_CALLS, &reply.content)));
             }
 
             reply = self.continue_chat(sub_chat_id, think.clone()).await?;
@@ -178,11 +174,7 @@ impl Agent {
             .new_message(NewMessage {
                 chat_id,
                 role: "notice".to_string(),
-                content: format!(
-                    "[System note: {} failed ({error}). Your run is not finished until it succeeds — call it \
-                     again with your result in the `output` argument.]",
-                    ReturnAgentTool::NAME
-                ),
+                content: prompts::return_reminder(error),
                 tool_name: None,
                 thinking: None,
                 thought_duration_ms: None,
@@ -246,25 +238,6 @@ impl Agent {
             }
         }
     }
-}
-
-/// What a sub-agent that never managed to call `llm.return_agent` successfully hands back: the
-/// message it wrote when it tried (usually the answer itself) and its last message, since neither
-/// is reliably the answer on its own.
-fn unreturned_result(failed: &FailedReturn, last_message: &str) -> String {
-    let mut text = format!(
-        "the sub-agent never managed to hand its result back — {} kept failing ({}).",
-        ReturnAgentTool::NAME,
-        failed.error
-    );
-    let (attempt, last) = (failed.attempt.trim(), last_message.trim());
-    if !attempt.is_empty() {
-        text.push_str(&format!("\nWhat it wrote when it tried:\n{attempt}"));
-    }
-    if !last.is_empty() && last != attempt {
-        text.push_str(&format!("\nIts last message:\n{last}"));
-    }
-    text
 }
 
 /// The name of a sub-agent's chat: its prompt, flattened to one line and cut short.
