@@ -848,6 +848,40 @@ impl ChatStore {
         Ok(())
     }
 
+    /// Replaces the notes the prompt carries (`None` or blank clears them) and drops what was
+    /// pending, since this is the newest word. Bookkeeping like `set_summary`: no message row changes.
+    pub async fn set_notes(&self, chat_id: i64, notes: Option<String>) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+        let notes = notes.filter(|text| !text.trim().is_empty());
+        chats::ActiveModel { id: Set(chat_id), notes: Set(notes), notes_pending: Set(None), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Saves notes the model wrote with `chat.write_notes` without changing the prompt: the
+    /// system message is the front of every request, so a change there makes the model server
+    /// read the whole conversation again. They go into the prompt at the next compaction
+    /// (`apply_pending_notes`).
+    pub async fn set_pending_notes(&self, chat_id: i64, notes: String) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+        // An empty text is kept as it is: pending, it clears the notes when applied (`set_notes` turns it into NULL)
+        chats::ActiveModel { id: Set(chat_id), notes_pending: Set(Some(notes)), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Makes the pending notes (if any) the notes the prompt carries. Run when the prompt is being
+    /// rewritten anyway (a compaction), after the notes request that read the old prompt.
+    pub async fn apply_pending_notes(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
+        let chat = self.chat(chat_id).await?;
+        if let Some(pending) = chat.notes_pending {
+            self.set_notes(chat_id, Some(pending)).await?;
+        }
+        Ok(())
+    }
+
     /// Sets the ground-truth evaluated prompt token count for this chat.
     pub async fn set_last_prompt_tokens(&self, chat_id: i64, tokens: Option<i64>) -> Result<(), ChatStoreErrors> {
         chats::ActiveModel {

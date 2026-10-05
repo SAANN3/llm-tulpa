@@ -28,6 +28,7 @@ use crate::tools::llm::return_agent::ReturnAgentTool;
 use crate::tools::subagent::{self, SubagentHandle};
 use crate::tools::ui::attach_file::AttachFileTool;
 
+mod notes;
 mod pinned;
 mod subagent_run;
 
@@ -87,6 +88,10 @@ const SYSTEM_PROMPT: &[&str] = &[
      chat — or when you're unsure what they originally asked for or agreed to — check it with \
      chat.list_messages and chat.get_messages; older messages can be out of your view but are \
      still stored.",
+    "Before you start a task that will take many tool calls, and again when its plan changes, \
+     check whether chat.write_notes holds the plan and what you've already read or ruled out. \
+     A plan that lives only in your reasoning is gone after the conversation is compacted, and \
+     the notes are what you get back.",
     "A declined tool call only concerns that one call and its exact arguments — it's never \
      a permanent ban on the tool. If the user asks you to retry, try different arguments, \
      or says they'll grant permission, go ahead and call it again; whether it's actually \
@@ -742,7 +747,7 @@ impl Agent {
         think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
         let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
-        self.maybe_compact(chat_id, last_prompt_tokens).await;
+        self.maybe_compact(chat_id, last_prompt_tokens, think.clone()).await;
         let messages = self.ollama_history(chat_id).await?;
 
         for &file_id in &file_ids {
@@ -796,7 +801,7 @@ impl Agent {
     /// rest of an in-flight batch first would just be busywork).
     pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
         let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
-        self.maybe_compact(chat_id, last_prompt_tokens).await;
+        self.maybe_compact(chat_id, last_prompt_tokens, think.clone()).await;
         let notices = self.flush_job_notices(chat_id).await?;
         let messages = self.ollama_history(chat_id).await?;
         self.advance(chat_id, messages, None, think, notices, true).await
@@ -1013,6 +1018,27 @@ impl Agent {
         Ok(())
     }
 
+    /// The one system message a request to the model starts with: the user's own system prompt
+    /// (or the built-in one), the sub-agent addendum for a sub-agent's chat, and, when the history
+    /// leads with one, that message (the compaction summary and notes) — taken out of `messages`.
+    /// Shared by every request built for a chat so they all share the same prefix.
+    async fn system_prompt_for(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
+        let mut system_prompt = match self.settings_store.system_prompt(chat.user_id).await? {
+            Some(custom) => custom,
+            None => default_system_prompt(),
+        };
+        if chat.parent_chat_id.is_some() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&subagent_system_prompt());
+        }
+        if messages.first().is_some_and(|message| message.role == "system") {
+            let summary_message = messages.remove(0);
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&summary_message.content);
+        }
+        Ok(system_prompt)
+    }
+
     async fn advance_once(
         &self,
         chat_id: i64,
@@ -1050,7 +1076,7 @@ impl Agent {
         let provider = self.providers.get(&chat.provider)?;
         let params = self.call_params(&chat).await?;
         self.hold_turn(&chat, provider.as_ref(), params.launch.as_ref()).await?;
-        let model = chat.model;
+        let model = chat.model.clone();
         let known_prompt_tokens = chat.last_prompt_tokens.map(|t| t as u64);
 
         // `ollama_history` leads with its own system message (the compaction summary)
@@ -1065,19 +1091,7 @@ impl Agent {
         // The user's own system prompt, if they set one — fetched once per turn, the same
         // as the chat row above, so a change (or reset) takes effect from the next turn,
         // exactly like a model switch. A user without one gets the built-in default.
-        let mut system_prompt = match self.settings_store.system_prompt(chat.user_id).await? {
-            Some(custom) => custom,
-            None => default_system_prompt(),
-        };
-        if is_subagent {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&subagent_system_prompt());
-        }
-        if messages.first().is_some_and(|message| message.role == "system") {
-            let summary_message = messages.remove(0);
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&summary_message.content);
-        }
+        let system_prompt = self.system_prompt_for(&chat, &mut messages).await?;
 
         // Collected now, while `messages` still holds this turn's history, so it
         // survives the `extend` below. Only actually used once we know this response
@@ -1202,7 +1216,7 @@ impl Agent {
 
                 // Check compaction against total tokens (prompt + generated thoughts), not just prompt_eval_count,
                 // so compaction frees headroom BEFORE the recursive continuation turn if context is full.
-                self.maybe_compact(chat_id, total_tokens).await;
+                self.maybe_compact(chat_id, total_tokens, think.clone()).await;
 
                 // Persist the continuation prompt into the chat store so the database message
                 // sequence is strictly alternating (assistant -> notice -> assistant),
@@ -1328,7 +1342,7 @@ impl Agent {
         };
 
         let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
-        self.maybe_compact(chat_id, total_tokens).await;
+        self.maybe_compact(chat_id, total_tokens, think.clone()).await;
 
         Ok(out)
     }
@@ -1427,6 +1441,10 @@ impl Agent {
 
                 system_content.push_str("\n\nSummary of everything before this point:\n\n");
                 system_content.push_str(summary);
+                if let Some(notes) = Self::notes_section(chat.notes.as_deref()) {
+                    system_content.push_str("\n\n");
+                    system_content.push_str(&notes);
+                }
 
                 let mut history = vec![ChatMessage::system(system_content)];
                 history.extend(recent.into_iter().rev().map(Self::to_ollama_message));
@@ -1446,7 +1464,7 @@ impl Agent {
     /// prompt via `ollama_history`. Best-effort: a failure here doesn't fail the turn
     /// that already succeeded, it just means history stays as big as it is and gets
     /// another chance to trigger this again.
-    async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>) {
+    async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>) {
         // The thresholds follow the window the chat's own model runs under (its launch profile's
         // context), not one global number. A failed lookup is a reason to skip this check, not to fail.
         let context = match self.context_of(chat_id).await {
@@ -1478,7 +1496,7 @@ impl Agent {
     /// rather than discarding it. No-ops if everything already fits — that means
     /// `trigger_tokens` fired on a single outsized turn rather than a long
     /// history, which folding can't help with.
-    async fn compact(&self, chat_id: i64, keep_chars: usize) -> Result<(), ErrorService> {
+    async fn compact(&self, chat_id: i64, keep_chars: usize, notes_saved: bool, think: Option<ThinkChoice>, known_prompt_tokens: Option<u64>) -> Result<(), ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         let after_id = chat.summary_up_to_message_id.unwrap_or(0);
 
@@ -1518,6 +1536,13 @@ impl Agent {
             had_prior_summary = chat.summary.is_some(),
             "calling summarize for chat_id {chat_id}"
         );
+
+        // Best-effort, and before the fold: when nothing was cleared first, the prompt the model
+        // server holds is still the one about to be folded, so asking for the notes costs almost
+        // nothing. (After a clearing pass they were already asked for, ahead of it.)
+        if !notes_saved {
+            self.save_notes_before_fold(chat_id, think.clone(), known_prompt_tokens).await;
+        }
 
         let summary = self.summarize(chat.summary.clone(), to_fold, &chat.provider, &chat.model).await?;
         let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.provider, &chat.model).await;
@@ -2596,6 +2621,7 @@ mod tests {
         let split_all = pick_compaction_boundary(&sizes, 15000);
         assert_eq!(split_all, 0);
     }
+
     fn reply(content: &str) -> ChatMessage {
         ChatMessage {
             role: "assistant".to_string(),

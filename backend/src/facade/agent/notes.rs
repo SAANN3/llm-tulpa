@@ -1,0 +1,166 @@
+//! The model's own notes for a chat: where they go in the prompt, and the request that asks for them
+//! right before a compaction fold drops the plans from the history.
+//!
+//! A summary keeps findings and leaves out plans and next steps (deliberately, see `summarize`), so a
+//! plan survives a fold only in the notes. The model writes them with `chat.write_notes`, which
+//! saves them as pending (changing the front of the prompt would make the model server read the whole
+//! conversation again); they join the prompt at the next compaction.
+
+use super::Agent;
+use crate::services::error::ErrorService;
+use crate::services::llm::{ChatMessage, ThinkChoice};
+use crate::tools::base::Tool;
+use crate::tools::chat::write_notes::MAX_NOTES_CHARS;
+use crate::tools::subagent;
+
+/// The notes request is only made with at least this many tokens of the window free: the reply cap is what the window
+/// leaves after the measured prompt, a margin and the tool definitions (counted again on top of the measured size, ~9k),
+/// and below ~6k a model that thinks first runs out of room (measured at a 49k window with 10k free: 4,096 tokens, 150 s,
+/// no notes).
+const NOTES_ASK_MIN_ROOM_TOKENS: u64 = 16_000;
+
+/// Said in front of the notes, in the system message.
+const NOTES_HEADER: &str = "Your own working notes for this chat, written earlier with chat.write_notes. They are \
+                            yours, not the user's, and a compaction fold never shortens them; keep them current:";
+
+/// The request itself, as the one extra user message at the end of the live prompt.
+fn notes_ask() -> String {
+    format!(
+        "The older part of this conversation is about to be compacted into a summary, which keeps \
+         findings but drops plans and next steps. Rewrite your working notes now so they hold what you \
+         will need after that: the goal as the user stated it, the plan and where you are in it, \
+         decisions made, file paths and function names you will need again, and what you already \
+         read or ruled out. Keep what is still true in your current notes. At most {MAX_NOTES_CHARS} characters. \
+         Reply with the notes text only, no tool call. If the current notes already say all of that, \
+         reply with exactly UNCHANGED."
+    )
+}
+
+/// The notes a pre-fold reply carries, or `None` when it carries none to store: an empty reply,
+/// UNCHANGED, a tool call (a real one or the model's own tags in the text), or text over the
+/// notes limit (the old notes stay rather than a cut-off new one).
+fn notes_reply(message: &ChatMessage, markers: &[String]) -> Option<String> {
+    let text = message.content.trim();
+    if text.is_empty()
+        || text.eq_ignore_ascii_case("unchanged")
+        || message.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty())
+        || markers.iter().any(|marker| text.contains(marker.as_str()))
+        || text.chars().count() > MAX_NOTES_CHARS
+    {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+impl Agent {
+    /// The notes as the block that goes after the summary in the system message, or `None` when the
+    /// model has written none.
+    pub(super) fn notes_section(notes: Option<&str>) -> Option<String> {
+        let notes = notes?.trim();
+        (!notes.is_empty()).then(|| format!("{NOTES_HEADER}\n\n{notes}"))
+    }
+
+    /// Asks the model to rewrite its working notes right before a fold drops the plans from
+    /// the history, as a plain reply (no tool call) to one extra user message that is never
+    /// stored. The request is the live one — same system prompt, tools and history — so the
+    /// model server's cached prompt serves it and only the question is new. A failure or an
+    /// unusable reply leaves the notes as they were: the fold still goes ahead, the plan just
+    /// isn't saved this time. `think` is the chat's own choice, not a cheaper one: with thinking on the
+    /// Qwen template starts the system prompt with a reasoning-effort line, so asking with thinking off
+    /// changes the prompt from its first token and the server reuses none of its cache (measured: 0 of
+    /// 35k prompt tokens, against all but a few with the same setting).
+    pub(super) async fn save_notes_before_fold(&self, chat_id: i64, think: Option<ThinkChoice>, known_prompt_tokens: Option<u64>) {
+        let outcome: Result<Option<String>, ErrorService> = async {
+            let chat = self.chat_store.chat(chat_id).await?;
+            if chat.parent_chat_id.is_some() {
+                // A sub-agent's chat ends with its result; nobody reads its notes later
+                return Ok(None);
+            }
+            // With thinking on the model reasons before it writes the notes, and a reply that runs out of room
+            // mid-reasoning is thrown away after minutes of generation (measured: two requests of 4,096 tokens,
+            // 170 s each, no notes). Too little room left in the window: leave the notes to the model's own writes.
+            let context = self.context_of(chat_id).await?;
+            if known_prompt_tokens.is_some_and(|known| context.saturating_sub(known) < NOTES_ASK_MIN_ROOM_TOKENS) {
+                tracing::info!(chat_id, "notes request skipped: not enough room left in the window to think and write");
+                return Ok(None);
+            }
+            let provider = self.providers.get(&chat.provider)?;
+            let params = self.call_params(&chat).await?;
+            let tools_snapshot = self.tools.snapshot_tools().await;
+            let tools: Vec<&dyn Tool> = tools_snapshot
+                .iter()
+                .map(|t| t.as_ref())
+                .filter(|t| subagent::available_to(t.function_name(), false))
+                .collect();
+            let mut history = self.ollama_history(chat_id).await?;
+            let system_prompt = self.system_prompt_for(&chat, &mut history).await?;
+            let mut messages = vec![ChatMessage::system(system_prompt)];
+            messages.extend(history);
+            let response = provider
+                .chat(messages, Some(ChatMessage::user(notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params)
+                .await?;
+            let markers = provider.tool_call_markers(&chat.model).await;
+            Ok(notes_reply(&response.message, &markers))
+        }
+        .await;
+
+        match outcome {
+            Ok(Some(notes)) => {
+                if let Err(e) = self.chat_store.set_notes(chat_id, Some(notes)).await {
+                    tracing::warn!(chat_id, "couldn't save the notes before a fold: {e:?}");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                chat_id,
+                "asking for notes before a fold failed: {}",
+                e.message.as_deref().unwrap_or("unknown error")
+            ),
+        }
+        // What the model wrote with `chat.write_notes` since the last compaction joins the prompt
+        // now: the prompt is rewritten right after this anyway, and the request above has
+        // already read the old one (a no-op when that request just replaced the notes)
+        if let Err(e) = self.chat_store.apply_pending_notes(chat_id).await {
+            tracing::warn!(chat_id, "couldn't apply the pending notes: {e:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_name: None,
+            thinking: None,
+            images: None,
+        }
+    }
+
+    #[test]
+    fn notes_reply_takes_plain_text_only() {
+        let markers = vec!["<tool_call>".to_string()];
+        assert_eq!(notes_reply(&reply("  Goal: x\nPlan: y "), &markers).as_deref(), Some("Goal: x\nPlan: y"));
+        assert_eq!(notes_reply(&reply("UNCHANGED"), &markers), None);
+        assert_eq!(notes_reply(&reply("unchanged\n"), &markers), None);
+        assert_eq!(notes_reply(&reply(""), &markers), None);
+        assert_eq!(notes_reply(&reply("<tool_call><function=x>"), &markers), None);
+        assert_eq!(notes_reply(&reply(&"n".repeat(MAX_NOTES_CHARS + 1)), &markers), None);
+    }
+
+    #[test]
+    fn notes_section_is_absent_without_notes() {
+        assert_eq!(Agent::notes_section(None), None);
+        assert_eq!(Agent::notes_section(Some("  \n")), None);
+        assert!(Agent::notes_section(Some("plan: a")).unwrap().ends_with("plan: a"));
+    }
+
+    #[test]
+    fn the_request_names_the_limit() {
+        assert!(notes_ask().contains("At most 8000 characters"));
+    }
+}
