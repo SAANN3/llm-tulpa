@@ -56,13 +56,13 @@ impl Agent {
             // With thinking on the model reasons before it writes the notes, and a reply that runs out of room
             // mid-reasoning is thrown away after minutes of generation (measured: two requests of 4,096 tokens,
             // 170 s each, no notes). Too little room left in the window: leave the notes to the model's own writes.
-            let context = self.context_of(chat_id).await?;
+            let context = self.model.context_of(&chat).await?;
             if known_prompt_tokens.is_some_and(|known| context.saturating_sub(known) < NOTES_ASK_MIN_ROOM_TOKENS) {
                 tracing::info!(chat_id, "notes request skipped: not enough room left in the window to think and write");
                 return Ok(None);
             }
-            let provider = self.providers.get(&chat.provider)?;
-            let params = self.call_params(&chat).await?;
+            let provider = self.model.provider(&chat)?;
+            let params = self.model.params(&chat).await?;
             let tools_snapshot = self.tools.snapshot_tools().await;
             let tools: Vec<&dyn Tool> = tools_snapshot
                 .iter()

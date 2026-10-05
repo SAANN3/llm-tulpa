@@ -198,7 +198,7 @@ impl Agent {
     /// reports that.
     async fn subagent_think(&self, sub_chat_id: i64) -> Result<Option<ThinkChoice>, ErrorService> {
         let chat = self.chat_store.chat(sub_chat_id).await?;
-        let provider = self.providers.get(&chat.provider)?;
+        let provider = self.model.provider(&chat)?;
         Ok(match provider.thinking_capability(&chat.model).await {
             Ok(ThinkingCapability::Unsupported) => Some(ThinkChoice::Enabled(false)),
             _ => None,
