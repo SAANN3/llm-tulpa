@@ -21,6 +21,8 @@ trait Tool: Send + Sync {
 
 **A call cut short is never run again on its own.** A call the chat's grants already allow runs the moment the model asks for it, so one that is still unresolved when nothing is executing — the backend restarted mid-command — was interrupted. Reading the turn state of a chat with no run (`GET /api/agent/turn`) records it as a failed `tool` message telling the model it may have run only partly and was not repeated, instead of re-running it. A call waiting for the user's confirmation is left pending, as are the calls queued behind it. While a call is executing, a second one for the same chat is refused (409) and nothing is reported as pending, so a reload or second tab can't start the same command twice. (A chat's run is the only thing that runs its tools; see *The turn runner* in [`AGENT-DESIGN.md`](./AGENT-DESIGN.md).)
 
+**A chat without tools.** `chats.tools_enabled` (the user's `use_tools` setting is its default for new chats; `POST /api/chats/tools` changes one chat) sends the model no tool definitions: `Turn` empties the tool list, the built-in system prompt is the short `default_system_prompt_without_tools` (a custom one is sent as written), the fold and pinned-message headers leave out the `chat.*` references, and no notes request is made. The tool definitions are about 9,000 tokens of every request, so a window under about 32k with them on spends most of itself on them: at 16k the system prompt and tools alone were 11,100 tokens, past the compaction trigger, and nothing could be folded to get under it.
+
 ## Adding a tool
 [`src/tools/temperature.rs`](./src/tools/temperature.rs) is the smallest real example:
 
