@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{clearing, prompts};
+use super::compaction::clearing;
+use super::prompts;
 use crate::services::chat_store::{Chat, ChatStore, Message};
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ModelToolCall, ModelToolCallFunction};

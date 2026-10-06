@@ -6,7 +6,8 @@
 //! saves them as pending (changing the front of the prompt would make the model server read the whole
 //! conversation again); they join the prompt at the next compaction.
 
-use super::{prompts, Agent};
+use super::super::prompts;
+use super::Compaction;
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ThinkChoice};
 use crate::tools::base::Tool;
@@ -35,7 +36,7 @@ fn notes_reply(message: &ChatMessage, markers: &[String]) -> Option<String> {
     Some(text.to_string())
 }
 
-impl Agent {
+impl Compaction {
 
     /// Asks the model to rewrite its working notes right before a fold drops the plans from
     /// the history, as a plain reply (no tool call) to one extra user message that is never

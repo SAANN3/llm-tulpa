@@ -4,7 +4,7 @@
 //! already used the old ones; the stub says how to get one back. The same mechanism shortens old
 //! thinking traces to their tail, for users who chose that, and lets the newest ones through longer.
 //!
-//! The logic is pure functions over messages; `Agent::plan_clearing` is the one way in that reads the
+//! The logic is pure functions over messages; `Compaction::plan_clearing` is the one way in that reads the
 //! chat and uses them. Each boundary is stored on the chat (`cleared_up_to_message_id`,
 //! `thinking_trimmed_up_to_message_id`) and only moves forward in one batch, when the context
 //! passes the compaction trigger: clearing a little every turn would rewrite the prompt from the
@@ -15,12 +15,12 @@ use std::collections::VecDeque;
 
 use serde_json::Value;
 
-use super::Agent;
+use super::Compaction;
 use crate::services::chat_store::{Message, ToolCallOut};
 use crate::services::error::ErrorService;
 
 /// After old tool results were cleared at the trigger, no fold is needed when the prompt is
-/// estimated to be under this fraction of the window (see `Agent::maybe_compact`).
+/// estimated to be under this fraction of the window (see `Compaction::maybe_compact`).
 pub(super) const CLEARED_ENOUGH_FRACTION: f64 = 0.60;
 
 /// What one clearing pass would change: the new boundaries (`None` leaves one where it is) and the
@@ -38,7 +38,7 @@ impl ClearPlan {
     }
 }
 
-impl Agent {
+impl Compaction {
     /// Where the chat's cleared-results and trimmed-thinking boundaries would move, without moving
     /// them: `None` when there is nothing to clear.
     pub(super) async fn plan_clearing(&self, chat_id: i64, context: u64) -> Result<Option<ClearPlan>, ErrorService> {
@@ -109,7 +109,7 @@ fn fresh_thinking_budget_chars(context_tokens: u64) -> usize {
 }
 
 /// The cap one assistant message's thinking is replayed at when old thinking is trimmed.
-pub(super) fn thinking_cap(message_id: i64, trimmed_up_to: Option<i64>) -> usize {
+pub(in crate::facade::agent) fn thinking_cap(message_id: i64, trimmed_up_to: Option<i64>) -> usize {
     if trimmed_up_to.is_some_and(|boundary| message_id <= boundary) {
         TRIMMED_THINKING_CHARS
     } else {
@@ -188,7 +188,7 @@ fn pick_boundary(messages: &[Message], already: Option<i64>, budget_chars: usize
 /// Replaces the content of every large tool result up to and including `cleared_up_to` with its
 /// stub. `messages` is oldest first, so a tool result can be matched to the call that asked for it
 /// (the n-th result after an assistant message answers its n-th call).
-pub(super) fn stub_cleared(messages: &mut [Message], cleared_up_to: Option<i64>) {
+pub(in crate::facade::agent) fn stub_cleared(messages: &mut [Message], cleared_up_to: Option<i64>) {
     let Some(limit) = cleared_up_to else { return };
     let mut calls: VecDeque<ToolCallOut> = VecDeque::new();
     for message in messages.iter_mut() {
