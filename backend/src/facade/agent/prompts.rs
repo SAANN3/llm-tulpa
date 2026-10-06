@@ -175,7 +175,7 @@ pub fn default_system_prompt() -> String {
 /// tool); `rules_without_tools_name_no_tool` checks that none is left in. The rest (what this instance is,
 /// how to talk to the user, the date) is the same text, word for word.
 pub(super) fn default_system_prompt_without_tools() -> String {
-    const TOOL_WORDS: [&str; 7] = ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attached"];
+    const TOOL_WORDS: [&str; 7] = ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attach"];
     SYSTEM_PROMPT
         .iter()
         .filter(|rule| !TOOL_WORDS.iter().any(|word| rule.contains(word)))
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn rules_without_tools_name_no_tool() {
         let without = default_system_prompt_without_tools();
-        for word in ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attached"] {
+        for word in ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attach"] {
             assert!(!without.contains(word), "{word} is still in the prompt without tools");
         }
         // What stays: the instance, the tone, the date
