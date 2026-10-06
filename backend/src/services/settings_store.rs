@@ -15,6 +15,8 @@ const DEFAULT_PROVIDER: &str = "llama-cpp";
 /// The largest custom system prompt accepted — it's sent to the model on every single turn,
 /// so its size is a recurring context cost, and an unbounded one would eat the budget whole.
 const MAX_SYSTEM_PROMPT_CHARS: usize = 100_000;
+/// The most a user can set the turn step limit to: past this it is a limit in name only.
+const MAX_TURN_STEPS_LIMIT: i32 = 10_000;
 
 /// Owns per-user settings (the `user_settings` table, 1:1 with `users`). A user's row is
 /// created empty the first time it's needed (see `row`) and filled in over the setup wizard. The active model lives in the `llm_models` table and
@@ -73,6 +75,7 @@ impl SettingsStore {
             language: row.language,
             auto_confirm: row.auto_confirm,
             trim_old_thinking: row.trim_old_thinking,
+            max_turn_steps: row.max_turn_steps,
             has_hf_token: row.hf_token.is_some(),
             llm_provider: active
                 .as_ref()
@@ -150,6 +153,13 @@ impl SettingsStore {
         if let Some(trim) = update.trim_old_thinking {
             model.trim_old_thinking = Set(trim);
         }
+        if let Some(steps) = update.max_turn_steps {
+            if !(0..=MAX_TURN_STEPS_LIMIT).contains(&steps) {
+                return Err(SettingsStoreErrors::InvalidTurnSteps(steps));
+            }
+            // 0 removes the limit
+            model.max_turn_steps = Set(Some(steps).filter(|s| *s > 0));
+        }
         if let Some(token) = update.hf_token {
             // An empty token clears it
             model.hf_token = Set(Some(token.trim().to_string()).filter(|t| !t.is_empty()));
@@ -179,6 +189,11 @@ impl SettingsStore {
     /// Whether old thinking traces are shortened in this user's long chats.
     pub async fn trim_old_thinking(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
         Ok(self.row(user_id).await?.trim_old_thinking)
+    }
+
+    /// How many model calls one of the user's turns may make, `None` for no limit.
+    pub async fn max_turn_steps(&self, user_id: i64) -> Result<Option<u32>, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.max_turn_steps.map(|s| s as u32))
     }
 
     /// The user's custom system prompt — `None` while the built-in default applies. Like the
@@ -221,6 +236,9 @@ pub struct Settings {
     /// In a long chat, thinking traces from earlier turns are shortened to their tail when the
     /// context nears its limit, and the newest traces are replayed in more of their length.
     pub trim_old_thinking: bool,
+    /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
+    /// `None` for no limit.
+    pub max_turn_steps: Option<i32>,
     /// Whether a Hugging Face token is set (the token itself is never sent back).
     pub has_hf_token: bool,
     /// The provider of the active model (`ollama` until one is picked).
@@ -240,6 +258,8 @@ pub struct SettingsUpdate {
     pub language: Option<String>,
     pub auto_confirm: Option<bool>,
     pub trim_old_thinking: Option<bool>,
+    /// The turn step limit, 0 for none
+    pub max_turn_steps: Option<i32>,
     /// A Hugging Face access token; empty clears it
     pub hf_token: Option<String>,
     pub llm_provider: Option<String>,
@@ -273,6 +293,8 @@ pub enum SettingsStoreErrors {
     Model(ModelStoreErrors),
     /// A custom system prompt past `MAX_SYSTEM_PROMPT_CHARS`.
     SystemPromptTooLarge(usize),
+    /// A turn step limit outside `0..=MAX_TURN_STEPS_LIMIT`.
+    InvalidTurnSteps(i32),
 }
 
 impl From<DbErr> for SettingsStoreErrors {
@@ -302,6 +324,10 @@ impl From<SettingsStoreErrors> for ErrorService {
                 format!("timezone offset {tz} is out of range (-12..=14)"),
             ),
             SettingsStoreErrors::Model(e) => e.into(),
+            SettingsStoreErrors::InvalidTurnSteps(steps) => ErrorService::new(
+                StatusCode::BAD_REQUEST,
+                format!("the turn step limit {steps} is out of range (0 for none, at most {MAX_TURN_STEPS_LIMIT})"),
+            ),
             SettingsStoreErrors::SystemPromptTooLarge(max) => ErrorService::new(
                 StatusCode::BAD_REQUEST,
                 format!("a custom system prompt may be at most {max} characters"),

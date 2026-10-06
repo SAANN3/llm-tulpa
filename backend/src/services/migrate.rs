@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBacken
 /// `if current < N { ... }` block to `run_migrations` that alters the existing tables in place
 /// (inside the same transaction) and bump this constant. A database *newer* than this build is
 /// refused rather than "fixed", so an older binary can't damage data a newer one wrote.
-const SCHEMA_VERSION: i32 = 13;
+const SCHEMA_VERSION: i32 = 14;
 
 /// Bumped when a release changes what the setup wizard configures. An install whose
 /// `schema_meta.setup_revision` is behind is offered the wizard again, with its current answers kept.
@@ -243,6 +243,12 @@ const V13_ADDITIONS: &str = "
     ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS trim_old_thinking BOOLEAN NOT NULL DEFAULT FALSE;
 ";
 
+/// What version 14 added on top of version 13: how many model calls a turn may make before it is
+/// stopped at the user's request, `NULL` for no limit.
+const V14_ADDITIONS: &str = "
+    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_turn_steps INT CHECK (max_turn_steps IS NULL OR max_turn_steps > 0);
+";
+
 /// Ensures the schema exists at `SCHEMA_VERSION`. Idempotent: at the current version it does
 /// nothing. Run once at bootstrap against a connection already pointed at the target database.
 ///
@@ -251,7 +257,7 @@ const V13_ADDITIONS: &str = "
 ///   `user_id`) → its tables are *moved*, not dropped, into a `legacy` schema and the new schema
 ///   is created next to them. There's no user to own that data yet, so it stays there until the
 ///   owner account is created, at which point `adopt_legacy_data` copies it in.
-/// - **Version 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 or 12** → upgraded in place to the current version, nothing dropped.
+/// - **Version 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 or 13** → upgraded in place to the current version, nothing dropped.
 /// - **Any other version** → refused with an error; nothing is touched.
 ///
 /// The whole thing runs in one transaction (Postgres DDL is transactional), so a failure leaves
@@ -276,17 +282,18 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     match current {
         Some(SCHEMA_VERSION) => return Ok(()),
-        Some(2) => return upgrade_v2_to_v13(db).await,
-        Some(3) => return upgrade_v3_to_v13(db).await,
-        Some(4) => return upgrade_v4_to_v13(db).await,
-        Some(5) => return upgrade_v5_to_v13(db).await,
-        Some(6) => return upgrade_v6_to_v13(db).await,
-        Some(7) => return upgrade_v7_to_v13(db).await,
-        Some(8) => return upgrade_v8_to_v13(db).await,
-        Some(9) => return upgrade_v9_to_v13(db).await,
-        Some(10) => return upgrade_v10_to_v13(db).await,
-        Some(11) => return upgrade_v11_to_v13(db).await,
-        Some(12) => return upgrade_v12_to_v13(db).await,
+        Some(2) => return upgrade_v2_to_v14(db).await,
+        Some(3) => return upgrade_v3_to_v14(db).await,
+        Some(4) => return upgrade_v4_to_v14(db).await,
+        Some(5) => return upgrade_v5_to_v14(db).await,
+        Some(6) => return upgrade_v6_to_v14(db).await,
+        Some(7) => return upgrade_v7_to_v14(db).await,
+        Some(8) => return upgrade_v8_to_v14(db).await,
+        Some(9) => return upgrade_v9_to_v14(db).await,
+        Some(10) => return upgrade_v10_to_v14(db).await,
+        Some(11) => return upgrade_v11_to_v14(db).await,
+        Some(12) => return upgrade_v12_to_v14(db).await,
+        Some(13) => return upgrade_v13_to_v14(db).await,
         Some(other) => {
             return Err(DbErr::Custom(format!(
                 "the database is at schema version {other}, but this build understands version {SCHEMA_VERSION}; \
@@ -311,19 +318,29 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-/// Version 12 → 13, in place: adds `chats.notes`, `chats.notes_pending`, `chats.cleared_up_to_message_id`, `chats.thinking_trimmed_up_to_message_id` and `user_settings.trim_old_thinking`. One transaction.
-async fn upgrade_v12_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 13 → 14, in place: adds `user_settings.max_turn_steps`. One transaction.
+async fn upgrade_v13_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
-    txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 2 → 13, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
+/// Version 12 → 14, in place: adds `chats.notes`, `chats.notes_pending`, `chats.cleared_up_to_message_id`, `chats.thinking_trimmed_up_to_message_id` and `user_settings.trim_old_thinking`, and what version 14 added. One transaction.
+async fn upgrade_v12_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
+    txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
+        .await?;
+    txn.commit().await
+}
+
+/// Version 2 → 14, in place: adds `chats.key_facts`, `jobs` table, version 4 token columns,
 /// `user_settings.system_prompt`, the `folders` table, `chats.parent_chat_id`,
-/// `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added. One transaction.
-async fn upgrade_v2_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added. One transaction.
+async fn upgrade_v2_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V3_ADDITIONS).await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
@@ -336,15 +353,16 @@ async fn upgrade_v2_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 3 → 13, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
+/// Version 3 → 14, in place: adds `chats.last_prompt_tokens`, `messages.prompt_tokens`,
 /// `messages.eval_tokens`, `user_settings.system_prompt`, the `folders` table,
-/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v3_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v3_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V4_ADDITIONS).await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
@@ -356,14 +374,15 @@ async fn upgrade_v3_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 4 → 13, in place: adds the per-user `system_prompt` column, the `folders` table,
-/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v4_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 4 → 14, in place: adds the per-user `system_prompt` column, the `folders` table,
+/// `chats.parent_chat_id`, `user_settings.auto_confirm`, `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v4_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V5_ADDITIONS).await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
@@ -374,14 +393,15 @@ async fn upgrade_v4_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 5 → 13, in place: adds chat folders, `chats.parent_chat_id`, `user_settings.auto_confirm`,
-/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v5_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 5 → 14, in place: adds chat folders, `chats.parent_chat_id`, `user_settings.auto_confirm`,
+/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v5_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V6_ADDITIONS).await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
@@ -391,14 +411,15 @@ async fn upgrade_v5_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 6 → 13, in place: adds `chats.parent_chat_id`, `user_settings.auto_confirm`, and
-/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v6_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 6 → 14, in place: adds `chats.parent_chat_id`, `user_settings.auto_confirm`, and
+/// `jobs.kind`/`jobs.agent_chat_id`, the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v6_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V7_ADDITIONS).await?;
     txn.execute_unprepared(V8_ADDITIONS).await?;
@@ -407,13 +428,14 @@ async fn upgrade_v6_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 7 → 13, in place: adds `jobs.kind`/`jobs.agent_chat_id` the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v7_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 7 → 14, in place: adds `jobs.kind`/`jobs.agent_chat_id` the per-reply timing columns, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v7_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V8_ADDITIONS).await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
@@ -421,54 +443,59 @@ async fn upgrade_v7_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 11 → 13, in place: adds `sampling_presets.removed_model` and what version 13 added.
-async fn upgrade_v11_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 11 → 14, in place: adds `sampling_presets.removed_model` what version 13 added and what version 14 added.
+async fn upgrade_v11_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 10 → 13, in place: adds `user_settings.active_profile_id` and `sampling_presets.removed_model`, and what version 13 added.
-async fn upgrade_v10_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 10 → 14, in place: adds `user_settings.active_profile_id` and `sampling_presets.removed_model`, what version 13 added and what version 14 added.
+async fn upgrade_v10_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 9 → 13, in place: adds the managed llama.cpp provider, launch profiles, sampling presets and
+/// Version 9 → 14, in place: adds the managed llama.cpp provider, launch profiles, sampling presets and
 /// their choices, `chats.launch_profile_id`, `llm_models.display_name`, `user_settings.hf_token` and
 /// `schema_meta.setup_revision`.
-async fn upgrade_v9_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn upgrade_v9_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
 }
 
-/// Version 8 → 13, in place: adds the per-reply timing columns on `messages`,, what version 10 added, what version 11 added, what version 12 added and what version 13 added.
-async fn upgrade_v8_to_v13(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// Version 8 → 14, in place: adds the per-reply timing columns on `messages`,, what version 10 added, what version 11 added, what version 12 added, what version 13 added and what version 14 added.
+async fn upgrade_v8_to_v14(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V9_ADDITIONS).await?;
     txn.execute_unprepared(V10_ADDITIONS).await?;
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -660,6 +687,7 @@ async fn create_schema(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_unprepared(V11_ADDITIONS).await?;
     txn.execute_unprepared(V12_ADDITIONS).await?;
     txn.execute_unprepared(V13_ADDITIONS).await?;
+    txn.execute_unprepared(V14_ADDITIONS).await?;
     Ok(())
 }
 

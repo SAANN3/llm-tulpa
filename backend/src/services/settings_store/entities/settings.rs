@@ -26,6 +26,8 @@ pub struct Model {
     pub auto_confirm: bool,
     /// Whether old thinking traces in a long chat are shortened to their tail at the compaction trigger.
     pub trim_old_thinking: bool,
+    /// How many model calls one turn may make before it is stopped; `NULL` for no limit.
+    pub max_turn_steps: Option<i32>,
     /// The user's Hugging Face access token, for downloading gated models.
     pub hf_token: Option<String>,
 }
