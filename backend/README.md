@@ -24,7 +24,7 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 | `bind_addr` | `127.0.0.1:3000` | What the HTTP server binds to. Loopback-only by default; `0.0.0.0:3000` makes it reachable from other machines. |
 | `ollama.url` | `http://localhost:11434` | Where to reach Ollama. The owner can change it in the app (the wizard's Ollama step or the Models page's Ollama tab, with a Test button); it applies at once and is saved here (`GET`/`POST /api/llm/ollama`, `POST /api/llm/ollama/test`). |
 | `llama_cpp.dir` | unset | The folder holding the llama.cpp release (`llama-server` and its libraries). Unset: `~/.llm-tulpa/llama`, where the setup step downloads it; inside the Docker image `~/.llm-tulpa/llama-docker`, because its home is yours and a container's Vulkan build must not replace the ROCm or CUDA one a native backend uses. |
-| `llama_cpp.port` | `18080` | The port the backend's own `llama-server` listens on (loopback only). |
+| `llama_cpp.port` | `18080` | The port the backend's own `llama-server` listens on (loopback only). A `llama-server` already started for this port (one an earlier backend left behind) is stopped before the backend starts its own; another program on the port makes the load fail with a message. |
 | `llama_cpp.autostart` | `false` | Load the default model when the backend starts. Off: it loads on the first request. |
 | `llama_cpp.idle_unload_minutes` | `0` | Stop the server after this many idle minutes, freeing the GPU for something else. `0` never stops it. |
 | `llama_cpp.load_timeout_secs` | `300` | How long to wait for a model to finish loading. |

@@ -34,6 +34,8 @@ const STOP_GRACE: Duration = Duration::from_secs(10);
 /// How long a request needing another profile waits for the turns on the loaded one before it is
 /// refused with a 423.
 const QUEUE_LIMIT: Duration = Duration::from_secs(15 * 60);
+/// How long to wait after a stopped server is gone for its graphics memory to be given back.
+const GPU_MEMORY_SETTLE: Duration = Duration::from_secs(2);
 /// How often the idle watcher looks.
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
@@ -529,6 +531,36 @@ impl LlamaRuntime {
         self.publish(ModelStateKind::Stopped, Some(&request), None);
     }
 
+    /// Makes sure nothing is in the way of the server's port: a `llama-server` started for it (the one an
+    /// earlier backend left behind, or one started by hand) is stopped, and what still holds the port after
+    /// that is reported. `Err` is what to tell the owner.
+    async fn clear_port(&self) -> Result<(), String> {
+        let port = self.config.port;
+        let pids = tokio::task::spawn_blocking(move || llama_servers_on(port)).await.unwrap_or_default();
+        if !pids.is_empty() {
+            tracing::warn!("llama-server (pid {pids:?}) for port {port} is running and this backend didn't start it: stopping it");
+            for &pid in &pids {
+                terminate(pid);
+            }
+            if !wait_until_gone(&pids, STOP_GRACE).await {
+                for &pid in &pids {
+                    kill_hard(pid);
+                }
+                if !wait_until_gone(&pids, Duration::from_secs(5)).await {
+                    return Err(format!("a llama-server (pid {pids:?}) for port {port} would not stop. Stop it by hand and try again."));
+                }
+            }
+            // The graphics memory is given back a moment after the process is gone; a load that starts now can find it still taken
+            tokio::time::sleep(GPU_MEMORY_SETTLE).await;
+        }
+        if !wait_for_port(port, Duration::from_secs(3)).await {
+            return Err(format!(
+                "port {port} is already used by another program, so llama-server can't start. Stop that program, or change `llama_cpp.port` in settings.json."
+            ));
+        }
+        Ok(())
+    }
+
     async fn start(self: &Arc<Self>, request: &LaunchRequest, args: Vec<String>) -> Result<(), RuntimeErrors> {
         let binary = self.binary_path();
         if !binary.is_file() {
@@ -547,6 +579,14 @@ impl LlamaRuntime {
         let hook = lock(&self.before_start).clone();
         if let Some(hook) = hook {
             hook().await;
+        }
+        // A server left on the port by a backend that died without stopping it (a kill, an out-of-memory
+        // kill, a power cut: `kill_on_drop` only works on a clean exit) holds the GPU memory and the port;
+        // a second one would fail at once and the backend would go on talking to the old one
+        if let Err(reason) = self.clear_port().await {
+            lock(&self.inner).state = State::Failed(reason.clone());
+            self.publish(ModelStateKind::Failed, Some(request), Some(reason.clone()));
+            return Err(RuntimeErrors::LoadFailed(reason));
         }
         tracing::info!("starting llama-server: {} {}", binary.display(), args.join(" "));
 
@@ -863,6 +903,90 @@ fn terminate(pid: u32) {
     }
 }
 
+/// Kills the process outright, for one that ignored the request to exit.
+fn kill_hard(pid: u32) {
+    use sysinfo::{Pid, ProcessesToUpdate, System};
+    let mut system = System::new();
+    let pid = Pid::from_u32(pid);
+    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    if let Some(process) = system.process(pid) {
+        process.kill();
+    }
+}
+
+/// Waits until none of the processes exists any more (one that has exited and is waiting to be reaped counts as gone), or `limit` has passed.
+async fn wait_until_gone(pids: &[u32], limit: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        let wanted = pids.to_vec();
+        let alive = tokio::task::spawn_blocking(move || {
+            use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, System};
+            let ids: Vec<Pid> = wanted.iter().map(|pid| Pid::from_u32(*pid)).collect();
+            let mut system = System::new();
+            system.refresh_processes(ProcessesToUpdate::Some(&ids), true);
+            ids.iter().any(|id| system.process(*id).is_some_and(|process| process.status() != ProcessStatus::Zombie))
+        })
+        .await
+        .unwrap_or(false);
+        if !alive {
+            return true;
+        }
+        if start.elapsed() >= limit {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Whether the loopback port can be bound, which is what the server is about to do.
+fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Waits until the port can be bound, or `limit` has passed.
+async fn wait_for_port(port: u16, limit: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if port_is_free(port) {
+            return true;
+        }
+        if start.elapsed() >= limit {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Whether a process with this name and command line is a `llama-server` started for `port`.
+fn serves_port(name: &str, cmd: &[String], port: u16) -> bool {
+    if !name.to_ascii_lowercase().contains("llama-server") {
+        return false;
+    }
+    let wanted = port.to_string();
+    cmd.iter().enumerate().any(|(i, arg)| {
+        arg.strip_prefix("--port=").is_some_and(|p| p == wanted) || (arg == "--port" && cmd.get(i + 1).is_some_and(|p| *p == wanted))
+    })
+}
+
+/// The ids of the `llama-server` processes started for `port`, wherever they came from.
+fn llama_servers_on(port: u16) -> Vec<u32> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    // The command line is only read when asked for
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always));
+    system
+        .processes()
+        .values()
+        // Linux lists a process's threads as processes of their own
+        .filter(|process| process.thread_kind().is_none())
+        .filter(|process| {
+            let cmd: Vec<String> = process.cmd().iter().map(|arg| arg.to_string_lossy().into_owned()).collect();
+            serves_port(&process.name().to_string_lossy(), &cmd, port)
+        })
+        .map(|process| process.pid().as_u32())
+        .collect()
+}
+
 /// The `llama-server` command line for a launch. Pure, so what a profile turns into can be tested
 /// and shown to the user.
 /// Whether a failed load's log says the memory ran out, rather than something else going wrong.
@@ -966,6 +1090,17 @@ fn parse_fact(facts: &mut LoadFacts, line: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_llama_server_is_recognised_by_its_name_and_port() {
+        let cmd = |parts: &[&str]| parts.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        assert!(serves_port("llama-server", &cmd(&["llama-server", "-m", "x.gguf", "--port", "18080", "-ngl", "99"]), 18080));
+        assert!(serves_port("llama-server.exe", &cmd(&["llama-server.exe", "--port=18080"]), 18080));
+        // another port, another program, or a program that only mentions the port
+        assert!(!serves_port("llama-server", &cmd(&["llama-server", "--port", "18081"]), 18080));
+        assert!(!serves_port("python3", &cmd(&["python3", "-m", "http.server", "--port", "18080"]), 18080));
+        assert!(!serves_port("llama-server", &cmd(&["llama-server", "-m", "18080.gguf"]), 18080));
+    }
 
     #[test]
     fn a_failed_load_is_told_apart_by_what_the_server_says() {
