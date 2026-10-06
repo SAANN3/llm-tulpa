@@ -79,6 +79,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
     })
     // A run is going on, or waits for the user: the composer and the edit controls are off
     const busy = turn.status !== 'idle'
+    // How the last run ended, for one that ended without an answer (an answered run has nothing to say)
+    const endLine = !busy && turn.lastEnd ? describeRunEnd(turn.lastEnd, settings?.max_turn_steps ?? null) : null
 
     const [chatName, setChatName] = useState<string | null>(null)
     const [chatModel, setChatModel] = useState<string | null>(null)
@@ -406,9 +408,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         )
                     })}
                     {busy ? <RunStatus view={turn} onStop={() => void stop()}/> : null}
-                    {!busy && turn.lastEnd ? (
-                        <NoticeMessage content={describeRunEnd(turn.lastEnd, settings?.max_turn_steps ?? null) ?? ''}/>
-                    ) : null}
+                    {endLine != null ? <NoticeMessage content={endLine}/> : null}
                 </LazyList>
                 <ModelStateBanner watching={turn.status === 'running'}/>
                 {turn.status === 'waiting_for_permission' ? (
