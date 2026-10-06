@@ -55,6 +55,11 @@ impl Compaction {
                 // A sub-agent's chat ends with its result; nobody reads its notes later
                 return Ok(None);
             }
+            if !chat.tools_enabled {
+                // Notes are part of working with tools; a chat without them is a plain conversation, and the
+                // model it runs on is often too small to keep notes worth their cost
+                return Ok(None);
+            }
             // With thinking on the model reasons before it writes the notes, and a reply that runs out of room
             // mid-reasoning is thrown away after minutes of generation (measured: two requests of 4,096 tokens,
             // 170 s each, no notes). Too little room left in the window: leave the notes to the model's own writes.

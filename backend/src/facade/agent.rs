@@ -191,6 +191,11 @@ impl Agent {
         self.runner.stop(chat_id)
     }
 
+    /// Whether the chat has a run going on.
+    pub fn has_run(&self, chat_id: i64) -> bool {
+        self.runner.has_run(chat_id)
+    }
+
     /// What the chat's turn is doing: nothing, running (since when, how many tokens so far), or
     /// waiting at a permission prompt (which calls).
     pub async fn turn_state(&self, chat_id: i64) -> Result<TurnState, ErrorService> {

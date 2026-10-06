@@ -346,6 +346,11 @@ impl TurnRunner {
         Ok(())
     }
 
+    /// Whether the chat has a run going on.
+    pub(super) fn has_run(&self, chat_id: i64) -> bool {
+        self.runs.lock().unwrap().contains_key(&chat_id)
+    }
+
     /// Stops the chat's run: the model call in flight is dropped and nothing of it is stored. A tool that is
     /// already running finishes.
     pub(super) fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {

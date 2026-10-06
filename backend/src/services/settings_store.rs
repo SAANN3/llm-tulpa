@@ -75,6 +75,7 @@ impl SettingsStore {
             language: row.language,
             auto_confirm: row.auto_confirm,
             trim_old_thinking: row.trim_old_thinking,
+            use_tools: row.use_tools,
             max_turn_steps: row.max_turn_steps,
             has_hf_token: row.hf_token.is_some(),
             llm_provider: active
@@ -153,6 +154,9 @@ impl SettingsStore {
         if let Some(trim) = update.trim_old_thinking {
             model.trim_old_thinking = Set(trim);
         }
+        if let Some(use_tools) = update.use_tools {
+            model.use_tools = Set(use_tools);
+        }
         if let Some(steps) = update.max_turn_steps {
             if !(0..=MAX_TURN_STEPS_LIMIT).contains(&steps) {
                 return Err(SettingsStoreErrors::InvalidTurnSteps(steps));
@@ -189,6 +193,11 @@ impl SettingsStore {
     /// Whether old thinking traces are shortened in this user's long chats.
     pub async fn trim_old_thinking(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
         Ok(self.row(user_id).await?.trim_old_thinking)
+    }
+
+    /// Whether a new chat of this user sends the model its tools.
+    pub async fn use_tools(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.use_tools)
     }
 
     /// How many model calls one of the user's turns may make, `None` for no limit.
@@ -236,6 +245,9 @@ pub struct Settings {
     /// In a long chat, thinking traces from earlier turns are shortened to their tail when the
     /// context nears its limit, and the newest traces are replayed in more of their length.
     pub trim_old_thinking: bool,
+    /// New chats send the model its tools. Off for a model too small for them, or a window they would
+    /// mostly fill; a chat keeps the value it was created with and has its own switch.
+    pub use_tools: bool,
     /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
     /// `None` for no limit.
     pub max_turn_steps: Option<i32>,
@@ -258,6 +270,7 @@ pub struct SettingsUpdate {
     pub language: Option<String>,
     pub auto_confirm: Option<bool>,
     pub trim_old_thinking: Option<bool>,
+    pub use_tools: Option<bool>,
     /// The turn step limit, 0 for none
     pub max_turn_steps: Option<i32>,
     /// A Hugging Face access token; empty clears it

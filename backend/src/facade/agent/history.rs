@@ -99,7 +99,7 @@ impl History {
 
         match (&chat.summary, chat.summary_up_to_message_id) {
             (Some(summary), Some(_)) => {
-                let mut system_content = String::from(prompts::FOLD_HEADER);
+                let mut system_content = String::from(prompts::fold_header(chat.tools_enabled));
 
                 // Prepend key facts (goal + list) if available. Facts are durable —
                 // they persist across folds and don't get rewritten.
@@ -113,7 +113,7 @@ impl History {
                     }
                 }
 
-                if let Some(pinned) = pinned::section(&folded_user_texts) {
+                if let Some(pinned) = pinned::section(&folded_user_texts, chat.tools_enabled) {
                     system_content.push_str("\n\n");
                     system_content.push_str(&pinned);
                 }
@@ -154,11 +154,13 @@ impl History {
     pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
-        Ok(Self::compose_system_prompt(custom, chat.parent_chat_id.is_some(), leading))
+        Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
     }
 
-    fn compose_system_prompt(custom: Option<String>, is_subagent: bool, leading: Option<String>) -> String {
-        let mut system_prompt = custom.unwrap_or_else(prompts::default_system_prompt);
+    /// The user's own prompt is sent as written, tools or not: only the built-in one, which is ours, has a
+    /// version for a chat without tools.
+    fn compose_system_prompt(custom: Option<String>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
+        let mut system_prompt = custom.unwrap_or_else(|| if tools { prompts::default_system_prompt() } else { prompts::default_system_prompt_without_tools() });
         if is_subagent {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&prompts::subagent_system_prompt());
@@ -482,6 +484,7 @@ mod tests {
             notes_pending: None,
             cleared_up_to_message_id: None,
             thinking_trimmed_up_to_message_id: None,
+            tools_enabled: true,
         }
     }
 
@@ -585,9 +588,9 @@ mod tests {
 
     #[test]
     fn the_system_prompt_is_the_users_or_the_built_in_one_then_the_sub_agent_addendum_then_the_summary() {
-        let plain = History::compose_system_prompt(None, false, None);
+        let plain = History::compose_system_prompt(None, true, false, None);
         assert_eq!(plain, prompts::default_system_prompt());
-        let custom = History::compose_system_prompt(Some("mine".into()), true, Some("SUMMARY".into()));
+        let custom = History::compose_system_prompt(Some("mine".into()), true, true, Some("SUMMARY".into()));
         assert_eq!(custom, format!("mine\n\n{}\n\nSUMMARY", prompts::subagent_system_prompt()));
     }
 

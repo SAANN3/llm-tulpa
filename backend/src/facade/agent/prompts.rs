@@ -170,6 +170,20 @@ pub fn default_system_prompt() -> String {
     SYSTEM_PROMPT.join("\n")
 }
 
+/// The built-in system prompt for a chat that sends the model no tools: the rules that don't mention one.
+/// A rule is left out when it names a tool, a tool family or the attached-file mechanism (which is read with a
+/// tool); `rules_without_tools_name_no_tool` checks that none is left in. The rest (what this instance is,
+/// how to talk to the user, the date) is the same text, word for word.
+pub(super) fn default_system_prompt_without_tools() -> String {
+    const TOOL_WORDS: [&str; 7] = ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attached"];
+    SYSTEM_PROMPT
+        .iter()
+        .filter(|rule| !TOOL_WORDS.iter().any(|word| rule.contains(word)))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Added after whichever system prompt applies (the built-in or the user's own) in a sub-agent's
 /// chat only. Worded as checks to run rather than facts about what the sub-agent can do, like the
 /// rules above.
@@ -285,6 +299,15 @@ pub(super) const CUT_OFF_CONTINUATION: &str =
 pub(super) const FOLD_HEADER: &str = "Earlier parts of this conversation were summarized to keep it within \
                      the model's context window. The messages from before this point can be \
                      looked up with chat.list_messages and chat.get_messages.";
+
+/// `FOLD_HEADER` for a chat without tools: nothing to look the older messages up with.
+const FOLD_HEADER_NO_TOOLS: &str = "Earlier parts of this conversation were summarized to keep it within \
+                     the model's context window.";
+
+/// The line that opens the summary block of the system message.
+pub(super) fn fold_header(tools: bool) -> &'static str {
+    if tools { FOLD_HEADER } else { FOLD_HEADER_NO_TOOLS }
+}
 
 /// The summarizer's system message.
 pub(super) const SUMMARIZER_SYSTEM: &str = "Summarize the conversation excerpt that follows into concise continuity notes. \
@@ -528,6 +551,20 @@ pub(super) fn subagent_job_notice(job_id: i64, prompt_preview: &str, end: Subage
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_without_tools_name_no_tool() {
+        let without = default_system_prompt_without_tools();
+        for word in ["tool", "chat.", "storage.", "files.", "os.", "ui.", "attached"] {
+            assert!(!without.contains(word), "{word} is still in the prompt without tools");
+        }
+        // What stays: the instance, the tone, the date
+        assert!(without.contains("private, self-hosted instance"));
+        assert!(without.contains("current date/time"));
+        assert!(without.len() < default_system_prompt().len() / 2, "{} of {}", without.len(), default_system_prompt().len());
+        assert!(!fold_header(false).contains("chat."));
+        assert!(fold_header(true).contains("chat.get_messages"));
+    }
 
     #[test]
     fn the_step_limit_note_names_the_limit_and_asks_for_text_only() {

@@ -40,6 +40,9 @@ pub struct Model {
     pub cleared_up_to_message_id: Option<i64>,
     /// Thinking traces up to and including this message id are replayed as their tail only; NULL when none are.
     pub thinking_trimmed_up_to_message_id: Option<i64>,
+    /// Whether the model is sent its tools in this chat. A model too small for them, or a window the tool
+    /// definitions would mostly fill, runs without; a new chat takes the user's default.
+    pub tools_enabled: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

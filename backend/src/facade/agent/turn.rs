@@ -186,6 +186,8 @@ impl Turn {
             .into_iter()
             .filter(|t| subagent::available_to(t.function_name(), is_subagent))
             .collect();
+        // A chat without tools sends none: the definitions are most of what a small window has to spare
+        let tools = if chat.tools_enabled { tools } else { Vec::new() };
         let provider = self.model.provider(&chat)?;
         let params = self.model.params(&chat).await?;
         self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;

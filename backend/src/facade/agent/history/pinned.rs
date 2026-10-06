@@ -15,8 +15,8 @@ const PINNED_MESSAGE_CHARS: usize = 1_500;
 const PINNED_LISTED_IDS: usize = 10;
 
 /// The block as it goes into the system message, header included, or `None` when there are no messages.
-pub(super) fn section(messages: &[(i64, String)]) -> Option<String> {
-    pin_user_messages(messages).map(|block| format!("{}{block}", prompts::PINNED_HEADER))
+pub(super) fn section(messages: &[(i64, String)], tools: bool) -> Option<String> {
+    pin_user_messages(messages, tools).map(|block| format!("{}{block}", prompts::PINNED_HEADER))
 }
 
 /// The user's folded-away messages as one block, in the order they were written: the newest ones that
@@ -25,12 +25,14 @@ pub(super) fn section(messages: &[(i64, String)]) -> Option<String> {
 /// stays cached in between.
 ///
 /// Each entry is `(message id, text)`. A cut message, and the latest of the ones left out, say which
-/// ids to read with `chat.get_messages`, so nothing the user wrote is out of reach.
-fn pin_user_messages(messages: &[(i64, String)]) -> Option<String> {
+/// ids to read with `chat.get_messages`, so nothing the user wrote is out of reach. In a chat without
+/// tools (`tools` false) there is nothing to read them with, so the block only says that they are not shown.
+fn pin_user_messages(messages: &[(i64, String)], tools: bool) -> Option<String> {
     let cut = |id: i64, text: &str| -> String {
         let text = text.trim();
         match text.char_indices().nth(PINNED_MESSAGE_CHARS) {
-            Some((end, _)) => format!("{}… [cut; the whole message: chat.get_messages id {id}]", &text[..end]),
+            Some((end, _)) if tools => format!("{}… [cut; the whole message: chat.get_messages id {id}]", &text[..end]),
+            Some((end, _)) => format!("{}… [cut]", &text[..end]),
             None => text.to_string(),
         }
     };
@@ -56,13 +58,17 @@ fn pin_user_messages(messages: &[(i64, String)]) -> Option<String> {
     let mut lines = Vec::new();
     if !skipped.is_empty() {
         let latest = &skipped[skipped.len().saturating_sub(PINNED_LISTED_IDS)..];
-        let ids: Vec<String> = latest.iter().map(|(id, _)| id.to_string()).collect();
-        lines.push(format!(
-            "- [{} earlier message(s) not shown{} ids {}; chat.get_messages reads them, chat.list_messages lists them]",
-            skipped.len(),
-            if skipped.len() > latest.len() { ", the latest of them" } else { "," },
-            ids.join(", "),
-        ));
+        if tools {
+            let ids: Vec<String> = latest.iter().map(|(id, _)| id.to_string()).collect();
+            lines.push(format!(
+                "- [{} earlier message(s) not shown{} ids {}; chat.get_messages reads them, chat.list_messages lists them]",
+                skipped.len(),
+                if skipped.len() > latest.len() { ", the latest of them" } else { "," },
+                ids.join(", "),
+            ));
+        } else {
+            lines.push(format!("- [{} earlier message(s) not shown]", skipped.len()));
+        }
     }
     lines.extend(shown.iter().map(|(_, text)| format!("- {text}")));
     Some(lines.join("\n"))
@@ -74,22 +80,22 @@ mod tests {
 
     #[test]
     fn nothing_to_pin_gives_no_block() {
-        assert_eq!(pin_user_messages(&[]), None);
-        assert_eq!(pin_user_messages(&[(1, "  ".to_string())]), None);
-        assert_eq!(section(&[]), None);
+        assert_eq!(pin_user_messages(&[], true), None);
+        assert_eq!(pin_user_messages(&[(1, "  ".to_string())], true), None);
+        assert_eq!(section(&[], true), None);
     }
 
     #[test]
     fn a_few_short_messages_are_all_kept_in_order() {
         let few = vec![(1, "fix the bug".to_string()), (2, "also the test".to_string())];
-        assert_eq!(pin_user_messages(&few).unwrap(), "- fix the bug\n- also the test");
-        assert!(section(&few).unwrap().starts_with(prompts::PINNED_HEADER));
+        assert_eq!(pin_user_messages(&few, true).unwrap(), "- fix the bug\n- also the test");
+        assert!(section(&few, true).unwrap().starts_with(prompts::PINNED_HEADER));
     }
 
     #[test]
     fn only_the_newest_fit_and_the_latest_skipped_ids_are_named() {
         let many: Vec<(i64, String)> = (0..40).map(|i| (100 + i, format!("{i}:{}", "x".repeat(498)))).collect();
-        let block = pin_user_messages(&many).unwrap();
+        let block = pin_user_messages(&many, true).unwrap();
         // no place for the first message: the newest is there, the first is not
         assert!(block.contains("39:") && !block.contains("\n- 0:") && !block.starts_with("- 0:"), "{block}");
         // 6,000 characters of ~500 each: 11 kept, 29 left out, the latest ten of those named (119..=128)
@@ -98,15 +104,26 @@ mod tests {
         assert!(!block.contains("ids 100"), "{block}");
         assert!(block.chars().count() <= PINNED_USER_CHARS + 400);
         // Same input, same bytes: the prefix must not shift between turns.
-        assert_eq!(block, pin_user_messages(&many).unwrap());
+        assert_eq!(block, pin_user_messages(&many, true).unwrap());
     }
 
     #[test]
     fn short_messages_keep_sixty_and_a_long_one_is_cut_with_its_id() {
         let short: Vec<(i64, String)> = (0..100).map(|i| (i, "y".repeat(100))).collect();
-        let block = pin_user_messages(&short).unwrap();
+        let block = pin_user_messages(&short, true).unwrap();
         assert_eq!(block.lines().count(), 61, "60 messages and the line for the rest");
         let long = vec![(77, "z".repeat(5_000))];
-        assert!(pin_user_messages(&long).unwrap().ends_with("[cut; the whole message: chat.get_messages id 77]"));
+        assert!(pin_user_messages(&long, true).unwrap().ends_with("[cut; the whole message: chat.get_messages id 77]"));
+    }
+
+    #[test]
+    fn without_tools_nothing_points_at_a_tool() {
+        let many: Vec<(i64, String)> = (0..40).map(|i| (100 + i, format!("{i}:{}", "x".repeat(498)))).collect();
+        let block = pin_user_messages(&many, false).unwrap();
+        assert!(block.starts_with("- [29 earlier message(s) not shown]"), "{block}");
+        let long = vec![(77, "y".repeat(3_000))];
+        let cut = pin_user_messages(&long, false).unwrap();
+        assert!(cut.ends_with("… [cut]"), "{cut}");
+        assert!(!block.contains("chat.") && !cut.contains("chat."));
     }
 }

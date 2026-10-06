@@ -10,4 +10,5 @@ mod search;
 mod set_folder;
 mod set_model;
 mod set_profile;
+mod set_tools;
 pub mod router;

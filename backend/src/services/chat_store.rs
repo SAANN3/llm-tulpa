@@ -200,6 +200,7 @@ impl ChatStore {
             notes_pending: row.notes_pending,
             cleared_up_to_message_id: row.cleared_up_to_message_id,
             thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
+            tools_enabled: row.tools_enabled,
         }
     }
 
@@ -595,15 +596,16 @@ impl ChatStore {
     }
 
     /// Creates an ordinary (non-plugin) chat owned by `user_id`, on their default model (see
-    /// `binding_for_new_chat`). Errs `Model(NoModel)` when no model exists at all — a
+    /// `binding_for_new_chat`), with or without tools. Errs `Model(NoModel)` when no model exists at all — a
     /// chat can't be created without one.
-    pub async fn create_chat(&self, user_id: i64, name: String) -> Result<Chat, ChatStoreErrors> {
+    pub async fn create_chat(&self, user_id: i64, name: String, tools_enabled: bool) -> Result<Chat, ChatStoreErrors> {
         let (model, launch_profile_id) = self.binding_for_new_chat(user_id).await?;
         let row = chats::ActiveModel {
             user_id: Set(user_id),
             name: Set(name),
             model_id: Set(model.id),
             launch_profile_id: Set(launch_profile_id),
+            tools_enabled: Set(tools_enabled),
             ..Default::default()
         }
         .insert(&self.db)
@@ -630,6 +632,16 @@ impl ChatStore {
         .await?;
 
         self.to_chat(row).await
+    }
+
+    /// Sets whether the model is sent its tools in a chat, from the chat's next request on. Ownership is
+    /// the caller's responsibility.
+    pub async fn set_tools_enabled(&self, chat_id: i64, tools_enabled: bool) -> Result<(), ChatStoreErrors> {
+        self.chat(chat_id).await?;
+        chats::ActiveModel { id: Set(chat_id), tools_enabled: Set(tools_enabled), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
     }
 
     /// Rebinds a chat to another model, which takes effect from its next turn. Ownership is
@@ -1145,6 +1157,8 @@ pub struct Chat {
     /// Thinking traces up to and including this message id are replayed as their tail only (see
     /// `facade::clearing`); NULL when none are.
     pub thinking_trimmed_up_to_message_id: Option<i64>,
+    /// Whether the model is sent its tools in this chat (see `chats.tools_enabled`).
+    pub tools_enabled: bool,
 }
 
 /// The list view's content preview: whitespace collapsed to single spaces and cut at

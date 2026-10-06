@@ -48,6 +48,8 @@ pub(crate) struct ChatOut {
     /// The launch profile this chat runs on (which implies its model), or `null` for a chat on a
     /// model that has none.
     pub(crate) launch_profile_id: Option<i64>,
+    /// Whether the model is sent its tools in this chat.
+    pub(crate) tools_enabled: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -102,6 +104,7 @@ pub async fn get_chats(
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
+            tools_enabled: chat.tools_enabled,
         })));
     }
 
@@ -126,6 +129,7 @@ pub async fn get_chats(
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
+            tools_enabled: chat.tools_enabled,
         })
         .collect();
 

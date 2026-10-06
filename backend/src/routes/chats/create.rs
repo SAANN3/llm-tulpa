@@ -21,6 +21,9 @@ pub(crate) struct CreateChatRequest {
     /// The provider of `model`; llama.cpp when left out
     #[serde(default)]
     provider: Option<String>,
+    /// Whether the model is sent its tools in this chat; the user's default setting when left out
+    #[serde(default)]
+    tools_enabled: Option<bool>,
 }
 
 /// Creates a new chat with the given name and returns its info. The chat is bound to the
@@ -65,7 +68,11 @@ pub async fn create_chat(
         (None, None) => Start::Default,
     };
 
-    let mut chat = services.chat_store.create_chat(auth.id, body.name).await?;
+    let tools_enabled = match body.tools_enabled {
+        Some(enabled) => enabled,
+        None => services.settings_store.use_tools(auth.id).await?,
+    };
+    let mut chat = services.chat_store.create_chat(auth.id, body.name, tools_enabled).await?;
     let applied = match start {
         Start::Default => Ok(()),
         Start::Profile(profile_id) => services.chat_store.set_launch_profile(chat.id, profile_id).await,
@@ -93,5 +100,6 @@ pub async fn create_chat(
         folder_id: chat.folder_id,
         parent_chat_id: chat.parent_chat_id,
         launch_profile_id: chat.launch_profile_id,
+        tools_enabled: chat.tools_enabled,
     }))
 }
