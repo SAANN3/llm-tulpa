@@ -1,11 +1,12 @@
+use sea_orm::prelude::DateTimeUtc;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use utoipa::ToSchema;
 
 /// How many undelivered events a slow subscriber may fall behind by before it starts
-/// missing the oldest ones. Events are tiny and rare (one per finished background job),
-/// so this only ever matters for a connection stalled for a long time.
-const CHANNEL_CAPACITY: usize = 64;
+/// missing the oldest ones. Events are tiny and come a few at a time (a run's messages and tool
+/// calls, a finished background job), so this only ever matters for a connection stalled for a long time.
+const CHANNEL_CAPACITY: usize = 256;
 
 /// Something the backend tells every connected frontend about, outside any request it
 /// was asked to answer — see `GET /api/events`. Deliberately just a hint that something
@@ -38,6 +39,19 @@ pub enum ServerEvent {
     /// `eval_tokens` deltas for the duration of one turn but take `prompt_tokens` as-is
     /// (it's already cumulative, not a delta).
     TurnProgress { chat_id: i64, eval_tokens: u64, prompt_tokens: Option<u64> },
+    /// A run (the backend's loop of model calls and tool calls for one chat) started.
+    RunStarted {
+        chat_id: i64,
+        #[schema(value_type = String, format = "date-time")]
+        started_at: DateTimeUtc,
+    },
+    /// Messages were stored in the chat (the user's, a reply, a tool result, a notice): read the ones
+    /// newer than the last one the client has.
+    MessagesChanged { chat_id: i64 },
+    /// A tool call is about to run.
+    ToolStarted { chat_id: i64, tool_name: String },
+    /// The run on the chat ended, and why. For `waiting_for_permission`, `GET /api/agent/turn` says what is asked.
+    RunEnded { chat_id: i64, reason: RunEndReason, detail: Option<String> },
     /// The model server started loading, became ready, stopped or failed. Not about any one chat:
     /// everyone is told, so a page can say "the model is being applied, don't close it".
     ModelState {
@@ -49,6 +63,22 @@ pub enum ServerEvent {
         /// Why it failed or stopped, when there is something to say
         detail: Option<String>,
     },
+}
+
+/// Why a run ended.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunEndReason {
+    /// The model replied without asking for a tool.
+    Answered,
+    /// A model call or a store failed; `detail` says what.
+    Failed,
+    /// The user stopped it.
+    Stopped,
+    /// The user's step limit was reached and the model was asked to conclude.
+    StepLimit,
+    /// A tool call needs the user's permission; the run continues with their answer.
+    WaitingForPermission,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
@@ -71,6 +101,10 @@ impl ServerEvent {
         match self {
             ServerEvent::JobFinished { chat_id, .. } => Some(*chat_id),
             ServerEvent::TurnProgress { chat_id, .. } => Some(*chat_id),
+            ServerEvent::RunStarted { chat_id, .. } => Some(*chat_id),
+            ServerEvent::MessagesChanged { chat_id } => Some(*chat_id),
+            ServerEvent::ToolStarted { chat_id, .. } => Some(*chat_id),
+            ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
             ServerEvent::ModelState { .. } => None,
         }
     }

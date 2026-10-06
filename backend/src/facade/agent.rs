@@ -1,19 +1,18 @@
 use std::sync::Arc;
 
-use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::Semaphore;
+use tokio::sync::{broadcast, Semaphore};
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::{ChatStore, MessageTimings, NewMessage},
+    chat_store::ChatStore,
     error::ErrorService,
-    event_bus::EventBus,
+    event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
     job_store::JobStore,
-    llm::{ChatMessage, LlmProviders, ThinkChoice},
+    llm::{LlmProviders, ThinkChoice},
     permission_store::PermissionStore,
     preset_store::PresetStore,
     settings_store::SettingsStore,
@@ -29,6 +28,8 @@ mod history;
 mod model_call;
 mod notices;
 mod prompts;
+mod run_tracker;
+mod runner;
 mod subagent_run;
 mod tool_calls;
 mod turn;
@@ -37,9 +38,10 @@ use compaction::Compaction;
 use history::History;
 use notices::Notices;
 use tool_calls::ToolCalls;
-use turn::{Step, Turn};
+use turn::Turn;
+pub use runner::{Allowance, Decision, RunEnded, StartedTurn, TurnState, TurnStatus};
+use runner::TurnRunner;
 use model_call::ModelCall;
-use prompts::with_attached_files_note;
 pub use prompts::default_system_prompt;
 
 
@@ -58,23 +60,18 @@ const INLINED_RESULT_CHARS_PER_TOKEN: f64 = 3.0;
 /// used independently of any particular request's `State` extraction.
 #[derive(Clone)]
 pub struct Agent {
-    /// What the model is sent for a chat: the system message and the messages after it.
-    history: History,
     /// Provider, launch profile, call parameters and the turn's claim on the model server, and what
     /// is done with a reply that can't be used.
     model: ModelCall,
+    /// The loop of a turn, one run per chat.
+    runner: TurnRunner,
     chat_store: Arc<ChatStore>,
     /// The services the agent itself reaches (files, events), and the template `ToolCalls` makes each
     /// tool's real, per-call context from. See `ToolContext`'s own doc comment for why it isn't `AppState`.
     tool_context: ToolContext,
     /// The model's tool calls: which are pending, whether each is permitted, running them.
     tool_calls: ToolCalls,
-    /// One step of a turn: a request, the model's reply, what follows from it.
-    turn: Turn,
-    /// Finished background jobs and sub-agents, reported to the model as notices.
-    notices: Notices,
-    /// Per-user settings — consulted once per turn for the user's custom system prompt
-    /// (a user without one gets the built-in default instead).
+    /// Per-user settings: auto-confirm for a sub-agent's run.
     settings_store: Arc<SettingsStore>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
@@ -139,192 +136,100 @@ impl Agent {
         let notices = Notices::new(
             chat_store.clone(),
             job_store,
-            tool_calls.clone(),
             (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN) as u64,
         );
-        Self {
+        let runner = TurnRunner::new(
+            chat_store.clone(),
+            settings_store.clone(),
+            tool_context.file_store.clone(),
+            tool_context.events.clone(),
             history,
-            model,
-            tool_calls,
+            notices,
+            tool_calls.clone(),
             turn,
+        );
+        Self {
+            model,
+            runner,
+            tool_calls,
             chat_store,
             tool_context,
-            notices,
             settings_store,
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }
 
-    /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix —
-    /// and `file_ids`, if any) as a `user` message, then advances the chat same as
-    /// `continue_chat` does. The prompt is saved before the Ollama call, not after, so
-    /// a failed/slow Ollama call never loses what the user actually sent. `think` is
-    /// forwarded to Ollama as-is — see `OllamaService::chat` for its default.
-    /// `file_ids` are only persisted here, never sent to Ollama or otherwise read —
-    /// feeding a file's actual content into a turn is a separate, not-yet-built step —
-    /// but each one does get claimed for this chat first (`FileStore::attach_to_chat`):
-    /// a file can be uploaded before any chat exists to attach it to (the home page's
-    /// case, `chat_id: None` until now), and this is the moment it actually becomes
-    /// this chat's. A no-op for a file that was already uploaded with a real `chat_id`
-    /// (e.g. from an existing chat's own composer) — this just re-sets it to the same
-    /// value either way, cheaper than checking first.
-    pub async fn chat(
+    /// Stores `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix — and `file_ids`, if
+    /// any) as a `user` message and starts a run that answers it, returning at once: the loop of model
+    /// calls and tool calls goes on in the background (see `TurnRunner`). The prompt is saved before any
+    /// model call, so a failed or slow one never loses what the user sent. `think` is forwarded to the
+    /// model provider as-is. Refused with 409 while the chat has a run going on.
+    pub async fn start_turn(
         &self,
         chat_id: i64,
         prompt: String,
         images: Vec<String>,
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
+    ) -> Result<StartedTurn, ErrorService> {
+        self.runner.start_prompt(chat_id, prompt, images, file_ids, think).await
+    }
+
+    /// Has the model answer again where it answered last, in the background, and replaces that answer
+    /// with the new one — see `TurnRunner::start_regenerate` for what qualifies.
+    pub async fn start_regenerate(&self, chat_id: i64, message_id: i64, think: Option<ThinkChoice>) -> Result<(), ErrorService> {
+        self.runner.start_regenerate(chat_id, message_id, think).await
+    }
+
+    /// Answers the permission prompt a chat is waiting at and continues its turn in the background.
+    pub async fn answer(&self, chat_id: i64, decisions: Vec<Decision>, think: Option<ThinkChoice>) -> Result<(), ErrorService> {
+        self.runner.start_answer(chat_id, decisions, think).await
+    }
+
+    /// Stops the chat's run: the model call in flight is dropped. A tool already running finishes.
+    pub fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+        self.runner.stop(chat_id)
+    }
+
+    /// What the chat's turn is doing: nothing, running (since when, how many tokens so far), or
+    /// waiting at a permission prompt (which calls).
+    pub async fn turn_state(&self, chat_id: i64) -> Result<TurnState, ErrorService> {
+        self.runner.state(chat_id).await
+    }
+
+    /// Stores `prompt` and answers it with one model call and no tools: a messaging plugin's agent,
+    /// whose reply is sent back to the messaging app by its caller.
+    pub async fn reply(
+        &self,
+        chat_id: i64,
+        prompt: String,
+        images: Vec<String>,
+        think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
-        self.turn.make_room(chat_id, think.clone(), prompt.len()).await;
-        let messages = self.history.for_chat(chat_id).await?;
-
-        for &file_id in &file_ids {
-            self.tool_context.file_store.attach_to_chat(file_id, chat_id).await?;
-        }
-
-        let user_message = self
-            .chat_store
-            .new_message(NewMessage {
-                chat_id,
-                role: "user".to_string(),
-                content: prompt.clone(),
-                tool_name: None,
-                thinking: None,
-                thought_duration_ms: None,
-                tool_success: None,
-                tool_denied: false,
-                tool_calls: vec![],
-                images: images.clone(),
-                file_ids: file_ids.clone(),
-                prompt_tokens: None,
-                eval_tokens: None,
-                timings: MessageTimings::default(),
-            })
-            .await?;
-
-        let notices = self.notices.flush_job_notices(chat_id).await?;
-
-        // Everything newer than `messages`, oldest first: the user's prompt, then any
-        // job notices flushed just above (persisted after it, so this is also their
-        // order in the chat). The last of them is what the step sends as the newest
-        // message; the rest go in front of it as ordinary history.
-        let ollama_content = with_attached_files_note(prompt, &file_ids);
-        let mut tail = vec![ChatMessage::user_with_images(ollama_content, images)];
-        tail.extend(notices.iter().map(|notice| ChatMessage::user(notice.content.clone())));
-        let new_message = tail.pop();
-        let mut messages = messages;
-        messages.extend(tail);
-
-        let mut out = self.turn.step(Step { chat_id, messages, new_message, think, notices, can_auto_continue: true }).await?;
-        out.user_message_id = Some(user_message.id);
-        Ok(out)
+        self.runner.reply_once(chat_id, prompt, images, think).await
     }
 
-    /// Sends a chat's existing history to Ollama as-is and persists whatever it replies
-    /// with, without adding any new turn first. For continuing after tool results:
-    /// `use_tool` already persisted the tool's output as a message, so getting the
-    /// model's next response needs nothing more than asking again — no synthetic user
-    /// message, no requirement that every pending tool call has been resolved first (a
-    /// tool failing is a valid reason to continue too, and forcing the caller through the
-    /// rest of an in-flight batch first would just be busywork).
-    pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
-        self.turn.make_room(chat_id, think.clone(), 0).await;
-        let notices = self.notices.flush_job_notices(chat_id).await?;
-        let messages = self.history.for_chat(chat_id).await?;
-        self.turn.step(Step { chat_id, messages, new_message: None, think, notices, can_auto_continue: true }).await
-    }
-
-    /// Reports the background jobs (and sub-agents) that finished since the model was last told about
-    /// one, without calling the model — see `Notices::flush_notices`.
-    pub async fn flush_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
-        self.notices.flush_notices(chat_id).await
-    }
-
-    /// Has the model answer again where it answered last, and replaces that answer with the new
-    /// one. Only a plain final reply qualifies: the chat's newest message, from the assistant,
-    /// with no tool calls, straight after the user's own message (so no tool ran in between, which
-    /// would be run again or answered differently) and newer than the compaction boundary (an
-    /// older one is no longer part of the history the model is sent), in an ordinary chat — not a
-    /// sub-agent's and not a messaging plugin's. `message_id` is the reply
-    /// the caller is looking at, so a stale view of the chat can't replace a different message.
-    ///
-    /// The old reply is deleted only after the new one is stored: a model that is down or fails
-    /// leaves the chat as it was. The history sent is the stored one minus that reply, and job
-    /// notices are left for the next turn to flush — one flushed now would land between the old
-    /// and the new reply.
-    pub async fn regenerate(&self, chat_id: i64, message_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
-        let not_regenerable = |why: &str| ErrorService::new(StatusCode::CONFLICT, format!("that reply can't be regenerated: {why}"));
-
-        let chat = self.chat_store.chat(chat_id).await?;
-        // A sub-agent's chat is driven by the backend, and a plugin's reply has already gone out to
-        // the messaging app, where a replacement here would never arrive.
-        if chat.parent_chat_id.is_some() {
-            return Err(not_regenerable("a sub-agent's chat runs on its own"));
-        }
-        if self.chat_store.is_plugin_chat(chat_id).await? {
-            return Err(not_regenerable("its reply has already been sent to a messaging app"));
-        }
-        let (newest, _) = self.chat_store.messages(chat_id, 2, 0).await?;
-        let [reply, before] = newest.as_slice() else {
-            return Err(not_regenerable("it isn't a reply to a message"));
-        };
-        if reply.id != message_id {
-            return Err(not_regenerable("it isn't the newest message"));
-        }
-        if reply.role != "assistant" || !reply.tool_calls.is_empty() {
-            return Err(not_regenerable("only a plain reply can be"));
-        }
-        if before.role != "user" {
-            return Err(not_regenerable("it doesn't directly follow a message of yours"));
-        }
-        if chat.summary_up_to_message_id.is_some_and(|boundary| reply.id <= boundary) {
-            return Err(not_regenerable("it is already folded into the chat's summary"));
-        }
-
-        let mut messages = self.history.for_chat(chat_id).await?;
-        messages.pop();
-
-        let out = self.turn.step(Step { chat_id, messages, new_message: None, think, notices: vec![], can_auto_continue: true }).await?;
-        self.chat_store.delete_message(chat_id, message_id).await?;
-        Ok(out)
-    }
-
-    /// Runs the next pending tool call (in the order the model requested them) and
-    /// persists its result as a `tool`-role message, whether it succeeded, failed, or
-    /// was denied — the model needs to see all three outcomes to react sensibly on its
-    /// next turn, not just a silent gap. `scope`, if given, overrides whatever's
-    /// already stored for this chat/tool for this one call only — it's never
-    /// persisted (`allow_scope` is the only thing that persists a grant) — and doubles
-    /// as the caller's confirmation that it knows what it's asking for. With no
-    /// override, whatever's already stored (if anything) is used instead.
-    ///
-    /// A call the tool doesn't permit — `ToolPermission::Denied`, whether from no
-    /// scope being available at all or from a given/stored one not covering it — never
-    /// reaches `call_tool`. It's recorded the same way an execution failure is
-    /// (`success: false`, persisted as the `tool` message), but with `denied: true` so
-    /// a caller can tell "this needs permission" apart from "this tool actually broke"
-    /// without parsing `err`'s text.
-    ///
-    /// Errors only when there's nothing pending to run, which means the caller didn't
-    /// check `can_use_tool` first. Also reports the tool calls still left after this one,
-    /// same as `can_use_tool` would, so a caller can tell whether to run another `use_tool`
-    /// or move on without a separate round trip.
-    pub async fn use_tool(&self, chat_id: i64, scope: Option<Value>) -> Result<UseToolOut, ErrorService> {
-        self.tool_calls.run_next_tool(chat_id, scope, false).await
-    }
-
-    /// The tool calls the model has asked for that haven't been run yet, without
-    /// actually running them — lets a caller check each one's `permission` (and warn
-    /// about a `Denied` one) before committing to `use_tool`.
-    pub async fn can_use_tool(&self, chat_id: i64) -> Result<CanUseTool, ErrorService> {
-        self.tool_calls.can_use(chat_id).await
-    }
-
-    /// Persists a scope grant for a tool within a chat, so future calls to that tool (or any other
-    /// tool sharing one of its buckets) can be `Allowed` without asking again.
-    pub async fn allow_scope(&self, chat_id: i64, tool_name: String, scope: Value) -> Result<(), ErrorService> {
-        self.tool_calls.allow_scope(chat_id, tool_name, scope).await
+    /// Makes a finished background job (or sub-agent) start a run on its chat by itself, with no browser
+    /// open: its notice reaches the model and the model answers. Called once, for the agent whose chats
+    /// are the users' own (the messaging plugins' agent has no tools and so no jobs).
+    pub fn bind_job_waker(self: &Arc<Self>) {
+        let runner = self.runner.clone();
+        let mut events = self.tool_context.events.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(ServerEvent::JobFinished { chat_id, .. }) => {
+                        if let Err(e) = runner.wake(chat_id).await {
+                            tracing::warn!(chat_id, "couldn't start a run for a finished job: {}", e.message.as_deref().unwrap_or("unknown error"));
+                        }
+                    }
+                    // Events are hints (see `ServerEvent`): one that was missed only delays a notice until the
+                    // chat's next turn
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
     }
 }
 

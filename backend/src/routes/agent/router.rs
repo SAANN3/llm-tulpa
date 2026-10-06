@@ -5,45 +5,38 @@ use utoipa::OpenApi;
 
 use crate::state::AppState;
 
-use super::allow_scope::*;
-use super::can_use_tool::*;
-use super::chat::*;
-use super::continue_chat::*;
-use super::job_notices::*;
+use super::answer::*;
 use super::regenerate::*;
-use super::use_tool::*;
+use super::start_turn::*;
+use super::stop::*;
+use super::turn_state::*;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/chat", post(chat))
-        .route("/continue", post(continue_chat))
+        .route("/turn", post(start_turn).get(turn_state))
         .route("/regenerate", post(regenerate))
-        .route("/job_notices", post(job_notices))
-        .route("/can_use_tool", post(can_use_tool))
-        .route("/use_tool", post(use_tool))
-        .route("/allow_scope", post(allow_scope))
+        .route("/answer", post(answer))
+        .route("/stop", post(stop))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(chat, continue_chat, regenerate, job_notices, can_use_tool, use_tool, allow_scope),
+    paths(start_turn, turn_state, regenerate, answer, stop),
     components(schemas(
-        ChatRequest,
-        ContinueChatRequest,
+        StartTurnRequest,
+        StartTurnOut,
         RegenerateRequest,
-        JobNoticesRequest,
-        JobNoticesOut,
-        CanUseToolRequest,
-        UseToolRequest,
-        AllowScopeRequest,
-        AllowScopeOut,
-        crate::facade::agent::ChatOut,
-        crate::facade::agent::NoticeOut,
-        crate::facade::agent::CanUseTool,
-        crate::facade::agent::UseToolOut,
+        AnswerRequest,
+        StopRequest,
+        crate::facade::agent::TurnState,
+        crate::facade::agent::TurnStatus,
+        crate::facade::agent::RunEnded,
+        crate::facade::agent::Decision,
+        crate::facade::agent::Allowance,
         crate::facade::agent::AgentToolCall,
         crate::facade::agent::AgentToolPermission,
         crate::facade::agent::AgentScopeGrant,
+        crate::services::event_bus::RunEndReason,
     )),
 )]
 pub struct ApiDoc;

@@ -316,7 +316,7 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
         };
         // No messaging plugin has a way to attach an already-uploaded file yet — only
         // images (already decoded/normalized above), so this is always empty.
-        let reply = match agent.chat(chat.id, text, images, vec![], Some(ThinkChoice::Enabled(think))).await {
+        let reply = match agent.reply(chat.id, text, images, Some(ThinkChoice::Enabled(think))).await {
             Ok(reply) => reply,
             Err(err) => {
                 tracing::warn!(

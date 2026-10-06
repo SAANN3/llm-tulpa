@@ -444,6 +444,16 @@ pub(super) fn notes_ask() -> String {
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";
 
+/// What the model is told on the last step its user's step limit allows, added to the newest message of that
+/// request only: the turn ends after this reply, so it has to say where things stand.
+pub(super) fn step_limit_note(limit: u32) -> String {
+    format!(
+        "\n\n[This turn is at its limit of {limit} steps and is stopped after this reply, until the user continues. \
+         Write your conclusion now: what you found or did, and where you left off. This reply is text only: \
+         a tool call in it is not run.]"
+    )
+}
+
 /// Tells a sub-agent its `llm.return_agent` call was refused and it isn't done. Stored as a
 /// `notice`, the same way the continuation prompt after a cut-off thought is.
 pub(super) fn return_reminder(error: &str) -> String {
@@ -506,6 +516,13 @@ pub(super) fn subagent_job_notice(job_id: i64, prompt_preview: &str, end: Subage
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_step_limit_note_names_the_limit_and_asks_for_text_only() {
+        let note = step_limit_note(7);
+        assert!(note.contains("limit of 7 steps"));
+        assert!(note.contains("text only"));
+    }
 
     #[test]
     fn the_notes_request_names_the_limit() {

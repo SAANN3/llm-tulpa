@@ -9,6 +9,7 @@ use super::compaction::Compaction;
 use super::history::History;
 use super::model_call::{ModelCall, Regenerations, ReplyProblem};
 use super::prompts;
+use super::run_tracker::RunTracker;
 use super::tool_calls::ToolCalls;
 use super::{ChatOut, NoticeOut};
 use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, NewToolCall};
@@ -27,18 +28,39 @@ const RECENT_MESSAGES_LOOKBACK: u64 = 500;
 /// sends a request the window can't hold.
 const NEW_CONTENT_CHARS_PER_TOKEN: f64 = 3.0;
 
-/// What a step is given: the history to send, the newest message (when it isn't stored yet), and
-/// what to do around the model call.
+/// What a step is given: the history to send (every message is already stored; the newest is the one
+/// being answered), and what to do around the model call.
 pub(super) struct Step {
     pub(super) chat_id: i64,
     pub(super) messages: Vec<ChatMessage>,
-    pub(super) new_message: Option<ChatMessage>,
     pub(super) think: Option<ThinkChoice>,
     /// Job notices the caller stored just before this step, carried into its output so a client can
     /// show them ahead of the reply.
     pub(super) notices: Vec<NoticeOut>,
     /// Whether a reply cut off while still thinking may be stored and continued on its own: once per turn.
     pub(super) can_auto_continue: bool,
+    /// Set on the last step the user's step limit allows (the limit itself): the model is told the turn
+    /// is about to be stopped, and any tool call in its reply is refused while its text is kept. The
+    /// request still carries the same tools, so the model server's cached prompt serves it.
+    pub(super) step_limit: Option<u32>,
+    pub(super) run: RunTracker,
+}
+
+/// What a step came to.
+pub(super) enum StepOut {
+    Reply(ChatOut),
+    /// The run was stopped while the model call was in flight: nothing was stored.
+    Stopped,
+}
+
+impl StepOut {
+    /// The reply, for a caller whose run nobody can stop.
+    pub(super) fn into_reply(self) -> Result<ChatOut, ErrorService> {
+        match self {
+            StepOut::Reply(out) => Ok(out),
+            StepOut::Stopped => Err(ErrorService::internal("the turn was stopped")),
+        }
+    }
 }
 
 /// The request one step sends, built once and sent again if the reply has to be regenerated.
@@ -51,7 +73,6 @@ struct Request {
     tools: Vec<Arc<dyn Tool>>,
     /// System message first.
     messages: Vec<ChatMessage>,
-    new_message: Option<ChatMessage>,
     /// Files `ui.attach_file` queued in this turn: they land on the reply that ends it.
     attached_files: Vec<i64>,
 }
@@ -61,6 +82,7 @@ enum Asked {
     Reply(ChatResponse),
     /// Cut off by the token limit while still thinking, and this step may continue on its own.
     CutOff(ChatResponse),
+    Stopped,
 }
 
 #[derive(Clone)]
@@ -116,24 +138,27 @@ impl Turn {
 
     /// Runs one step. A reply that asks for tools means the turn goes on (the tools run, the model is
     /// called again): the model server stays claimed. Anything else ends it.
-    pub(super) async fn step(&self, step: Step) -> Result<ChatOut, ErrorService> {
+    pub(super) async fn step(&self, step: Step) -> Result<StepOut, ErrorService> {
         let chat_id = step.chat_id;
         let result = self.step_once(step).await;
-        if !result.as_ref().is_ok_and(|out| out.can_use_tools) {
+        if !matches!(&result, Ok(StepOut::Reply(out)) if out.can_use_tools) {
             self.model.release(chat_id);
         }
         result
     }
 
-    async fn step_once(&self, step: Step) -> Result<ChatOut, ErrorService> {
+    async fn step_once(&self, step: Step) -> Result<StepOut, ErrorService> {
         let request = self.prepare(&step).await?;
         // Times the whole model call, regenerations included: that is how long the reply really took
         let started_at = Instant::now();
         let asked = self.ask(&step, &request).await?;
         let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
         match asked {
+            Asked::Stopped => Ok(StepOut::Stopped),
             Asked::CutOff(response) => self.continue_after_cut_off(step, response, thought_duration_ms).await,
-            Asked::Reply(response) => self.store_reply(step, request.attached_files, response, thought_duration_ms).await,
+            Asked::Reply(response) => {
+                self.store_reply(step, request.attached_files, response, thought_duration_ms).await.map(StepOut::Reply)
+            }
         }
     }
 
@@ -188,11 +213,9 @@ impl Turn {
         let mut messages_with_system = vec![ChatMessage::system(system_prompt)];
         messages_with_system.extend(messages);
 
-        // Stamped onto whichever message is newest — `new_message` when there is one
-        // (`chat`'s fresh-turn path), otherwise the last entry already in
-        // `messages_with_system` (`continue_chat`'s path, where that's the tool result
-        // `use_tool` just persisted). Either way that's content this request sends to
-        // Ollama for the first time, so appending it here doesn't cost any additional
+        // Stamped onto the newest message (the user's prompt, or the tool result just stored).
+        // That's content this request sends to the model for the first time, so appending it
+        // here doesn't cost any additional
         // prompt-cache reuse — unlike baking it into `system_prompt` above (the old
         // approach), which changed every single call and, being the prompt's very
         // first tokens, invalidated the *entire* cached prefix on every turn (see
@@ -205,24 +228,13 @@ impl Turn {
             "\n\n[Current real date and time (UTC): {}]",
             chrono::Utc::now().format("%A, %B %-d, %Y %H:%M:%S UTC")
         );
-        let new_message = match step.new_message.clone() {
-            Some(mut msg) => {
-                msg.content.push_str(&now_note);
-                if let Some(ref note) = streak_note {
-                    msg.content.push_str(note);
-                }
-                Some(msg)
-            }
-            None => {
-                if let Some(last) = messages_with_system.last_mut() {
-                    last.content.push_str(&now_note);
-                    if let Some(ref note) = streak_note {
-                        last.content.push_str(note);
-                    }
-                }
-                None
-            }
-        };
+        // Like the date, the step-limit warning goes on the newest message only: the prompt in front of it
+        // is the one the server already holds.
+        let limit_note = step.step_limit.map(prompts::step_limit_note);
+        let notes = [Some(now_note), streak_note, limit_note];
+        if let Some(last) = messages_with_system.last_mut() {
+            notes.iter().flatten().for_each(|note| last.content.push_str(note));
+        }
 
         Ok(Request {
             provider,
@@ -231,7 +243,6 @@ impl Turn {
             known_prompt_tokens: chat.last_prompt_tokens.map(|t| t as u64),
             tools,
             messages: messages_with_system,
-            new_message,
             attached_files,
         })
     }
@@ -244,18 +255,25 @@ impl Turn {
         let tools: Vec<&dyn Tool> = request.tools.iter().map(|t| t.as_ref()).collect();
         let mut regenerations = Regenerations::default();
         loop {
-            let response = request
-                .provider
-                .chat(
-                    request.messages.clone(),
-                    request.new_message.clone(),
-                    &tools,
-                    step.think.clone(),
-                    &request.model,
-                    request.known_prompt_tokens,
-                    &request.params,
-                )
-                .await?;
+            step.run.call_started();
+            let call = request.provider.chat(
+                request.messages.clone(),
+                None,
+                &tools,
+                step.think.clone(),
+                &request.model,
+                request.known_prompt_tokens,
+                &request.params,
+            );
+            // A stop drops the call mid-flight: the request is closed and the server stops generating
+            let response = tokio::select! {
+                _ = step.run.stopped() => {
+                    step.run.call_abandoned();
+                    return Ok(Asked::Stopped);
+                }
+                response = call => response?,
+            };
+            step.run.call_finished(response.eval_count(), response.prompt_eval_count());
 
             // The live "thinking" indicator's spend hint (see `ServerEvent::TurnProgress`):
             // model calls are non-streaming, so a token count exists only at the moment one
@@ -306,7 +324,7 @@ impl Turn {
         step: Step,
         response: ChatResponse,
         thought_duration_ms: i64,
-    ) -> Result<ChatOut, ErrorService> {
+    ) -> Result<StepOut, ErrorService> {
         let chat_id = step.chat_id;
         let thought_trace = response
             .message
@@ -387,10 +405,11 @@ impl Turn {
         let next = Step {
             chat_id,
             messages: fresh_messages,
-            new_message: None,
             think: step.think,
             notices: step.notices,
             can_auto_continue: false,
+            step_limit: step.step_limit,
+            run: step.run,
         };
         Box::pin(self.step(next)).await
     }
@@ -413,7 +432,12 @@ impl Turn {
 
         let thinking = response.message.thinking.clone();
 
-        let requested_tool_calls = response.message.tool_calls.unwrap_or_default();
+        let mut requested_tool_calls = response.message.tool_calls.unwrap_or_default();
+        if step.step_limit.is_some() && !requested_tool_calls.is_empty() {
+            // The model was told this reply is text only; what it wrote is kept, what it tried to call is not
+            tracing::warn!(chat_id, calls = requested_tool_calls.len(), "tool calls in the reply at the step limit refused");
+            requested_tool_calls.clear();
+        }
         let new_tool_calls: Vec<NewToolCall> = requested_tool_calls
             .iter()
             .map(|call| NewToolCall {
