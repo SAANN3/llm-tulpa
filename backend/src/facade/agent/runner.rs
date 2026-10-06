@@ -457,7 +457,15 @@ impl TurnRunner {
             // The chat is free before the event goes out: a page that asks for the state on `RunEnded`
             // must not find the run still there
             drop(slot);
+            // A job that ended during the run's last model call found the chat busy and was not woken for:
+            // look again now that the chat is free (a wake-up with nothing to report ends at once)
+            let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
             runner.finish(chat_id, end);
+            if look_again {
+                if let Err(e) = runner.wake(chat_id).await {
+                    tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
+                }
+            }
         });
     }
 

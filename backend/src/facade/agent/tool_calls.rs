@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use serde_json::Value;
 
 use super::{AgentScopeGrant, AgentToolCall, AgentToolPermission, CanUseTool, UseToolOut};
+use super::model_call::ModelCall;
 use super::prompts::{self, INTERRUPTED_TOOL_MESSAGE};
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage, ToolCallOut};
 use crate::services::error::ErrorService;
@@ -16,6 +17,16 @@ use crate::services::permission_store::{PermissionStore, PermissionStoreErrors};
 use crate::services::tools::ToolService;
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
 use crate::tools::subagent;
+
+/// The most of the context window one tool result may take, as a fraction of it in tokens. A result past this
+/// is stored cut (head kept, with a line saying so): a message that is by itself bigger than the window can't
+/// be folded away, and leaves the chat unable to send anything. The tools' own limits (a file read stops at
+/// 40,000 characters) sit below this on a normal window, so this is the backstop for the ones without one.
+const RESULT_WINDOW_FRACTION: f64 = 0.25;
+/// Characters a token is counted as when turning that into a size: low on purpose, see `Turn`'s estimate.
+const RESULT_CHARS_PER_TOKEN: f64 = 3.0;
+/// A window so small that the fraction would cut results to nothing still lets this much through.
+const MIN_RESULT_CAP_CHARS: usize = 4_000;
 
 /// How many of a chat's newest messages `pending_tool_calls` looks through: it walks back over the
 /// tool results of the last reply, a handful at most.
@@ -50,6 +61,8 @@ pub(super) struct ToolCalls {
     /// context — its own `chat_id` is unused/meaningless (never itself handed to a
     /// tool). See `ToolContext`'s own doc comment for why it isn't `AppState`.
     tool_context: ToolContext,
+    /// Which context window a chat runs under, for the cap on a result.
+    model: ModelCall,
     /// Chats with a tool call executing right now. See `RunningToolGuard`.
     running: Arc<Mutex<HashSet<i64>>>,
     /// Sub-agent chats whose run is going on right now (from being started until it ends or is
@@ -64,12 +77,14 @@ impl ToolCalls {
         tools: Arc<ToolService>,
         permission_store: Arc<PermissionStore>,
         tool_context: ToolContext,
+        model: ModelCall,
     ) -> Self {
         Self {
             chat_store,
             tools,
             permission_store,
             tool_context,
+            model,
             running: Arc::new(Mutex::new(HashSet::new())),
             live_subagents: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -87,6 +102,23 @@ impl ToolCalls {
 
     pub(super) fn is_running(&self, chat_id: i64) -> bool {
         self.running.lock().unwrap().contains(&chat_id) || self.live_subagents.lock().unwrap().contains(&chat_id)
+    }
+
+    /// The most characters of one tool result that are stored for a chat on a window of `context` tokens.
+    fn result_cap_chars(context: u64) -> usize {
+        ((context as f64 * RESULT_WINDOW_FRACTION * RESULT_CHARS_PER_TOKEN) as usize).max(MIN_RESULT_CAP_CHARS)
+    }
+
+    /// What is stored for a tool's result: its JSON as it is, or, past `cap_chars`, the start of it as a JSON
+    /// string with the line `prompts::tool_result_cut` added. The caller still gets the whole result.
+    fn capped(content: &Value, cap_chars: usize) -> String {
+        let text = content.to_string();
+        let total = text.chars().count();
+        if total <= cap_chars {
+            return text;
+        }
+        let head: String = text.chars().take(cap_chars).collect();
+        Value::String(format!("{head}\n{}", prompts::tool_result_cut(cap_chars, total))).to_string()
     }
 
     /// Gives a sub-agent's chat the grants its parent chat has.
@@ -197,6 +229,8 @@ impl ToolCalls {
             }
         };
 
+        let result_cap = Self::result_cap_chars(self.model.context_of(&chat).await?);
+
         let permission = self
             .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, is_subagent)
             .await;
@@ -223,7 +257,7 @@ impl ToolCalls {
             .new_message(NewMessage {
                 chat_id,
                 role: "tool".to_string(),
-                content: content.to_string(),
+                content: Self::capped(&content, result_cap),
                 tool_name: Some(next.tool_name.clone()),
                 thinking: None,
                 thought_duration_ms: None,
@@ -482,4 +516,30 @@ fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
     }
 
     Value::Object(base)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_cap_follows_the_window_with_a_floor() {
+        assert_eq!(ToolCalls::result_cap_chars(100_000), 75_000);
+        assert_eq!(ToolCalls::result_cap_chars(16_384), 12_288);
+        assert_eq!(ToolCalls::result_cap_chars(2_000), MIN_RESULT_CAP_CHARS);
+    }
+
+    #[test]
+    fn a_result_within_the_cap_is_stored_as_it_is_and_a_larger_one_is_cut_with_a_note() {
+        let small = json!({"content": "short"});
+        assert_eq!(ToolCalls::capped(&small, 1_000), small.to_string());
+
+        let big = json!({"content": "é".repeat(5_000)});
+        let stored = ToolCalls::capped(&big, 1_000);
+        let Value::String(text) = serde_json::from_str::<Value>(&stored).unwrap() else { panic!("a cut result is a JSON string") };
+        assert!(text.starts_with("{\"content\":\"éé"));
+        assert!(text.contains("1000 of"));
+        assert!(text.chars().count() < 1_400);
+    }
 }

@@ -123,7 +123,7 @@ impl Agent {
             history.clone(),
             OneShot::new(providers),
         );
-        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone());
+        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone());
         let turn = Turn::new(
             chat_store.clone(),
             tools.clone(),

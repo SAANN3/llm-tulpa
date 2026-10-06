@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `POST /api/agent/stop` stops a run: the model call in flight is dropped and nothing of it is stored.
 - A per-user setting, `max_turn_steps` (none by default; `0` removes it): when a turn reaches it, the last model call is told the turn is about to be stopped and to write its conclusion, a tool call in that reply is refused with its text kept, and the run ends as `step_limit`. Needs schema version 14, applied in place at start.
 - A finished background job or sub-agent starts a run on its chat by itself, with no browser open. A chat waiting for permission keeps the notice until the user answers.
+- A tool result over a quarter of the context window is stored cut (its start, with a line saying how to ask for the rest), whatever the tool: a result bigger than the window can't be folded away and left the chat unable to send anything.
 - Before a request is sent, its size is estimated from the last measured prompt plus what was added since (a large tool result), and the chat is compacted first when that passes the trigger.
 
 ### Changed

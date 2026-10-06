@@ -444,13 +444,25 @@ pub(super) fn notes_ask() -> String {
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";
 
+/// The line after a tool result that was cut to fit the window: how much of it the model has, and that the
+/// rest comes from asking for less at a time.
+pub(super) fn tool_result_cut(shown: usize, total: usize) -> String {
+    format!(
+        "[This result was cut: the first {shown} of {total} characters are shown. Ask for a smaller part \
+         (a narrower range, a filter, a lower limit) to get the rest.]"
+    )
+}
+
 /// What the model is told on the last step its user's step limit allows, added to the newest message of that
-/// request only: the turn ends after this reply, so it has to say where things stand.
+/// request only: the turn ends after this reply, so it has to say where things stand. Worded as an instruction
+/// for this one reply (no tool, plain text, what is done and what is left) with the consequence last: measured
+/// against two other wordings on a task that asked for more tool calls than the limit allowed, this one was
+/// obeyed in 6 of 6 runs, the others in 0 of 6.
 pub(super) fn step_limit_note(limit: u32) -> String {
     format!(
-        "\n\n[This turn is at its limit of {limit} steps and is stopped after this reply, until the user continues. \
-         Write your conclusion now: what you found or did, and where you left off. This reply is text only: \
-         a tool call in it is not run.]"
+        "\n\n[Step limit reached ({limit} steps). Your next reply is your last for now: do not call any tool, \
+         write plain text only. Say what you have done and found so far, and what is still left to do, so the \
+         user can tell you to continue. Any tool call in this reply is discarded.]"
     )
 }
 
@@ -520,8 +532,8 @@ mod tests {
     #[test]
     fn the_step_limit_note_names_the_limit_and_asks_for_text_only() {
         let note = step_limit_note(7);
-        assert!(note.contains("limit of 7 steps"));
-        assert!(note.contains("text only"));
+        assert!(note.contains("(7 steps)"));
+        assert!(note.contains("plain text only"));
     }
 
     #[test]
