@@ -54,6 +54,17 @@ mod notes;
 /// tens of thousands of tokens of growth away.
 const TRIGGER_FRACTION: f64 = 0.70;
 const KEEP_CHARS_PER_TOKEN: f64 = 0.6;
+/// A key fact is cut to this many characters.
+const MAX_FACT_CHARS: usize = 400;
+/// The key facts of a chat are kept to this many entries and this many characters in all, oldest first out.
+const MAX_FACTS: usize = 60;
+const MAX_FACTS_CHARS: usize = 6_000;
+/// The first facts are the task's own rules and are never dropped for the bound.
+const KEEP_FIRST_FACTS: usize = 10;
+/// A fact shorter than this (its words joined by spaces) is never replaced by a longer one that contains it: short ones
+/// ("port 4711") sit inside unrelated longer facts by chance.
+const MIN_CONTAINED_FACT_CHARS: usize = 14;
+
 /// What the chat template adds around one message, as characters (about 40 tokens at 3 characters a token).
 const MESSAGE_OVERHEAD_CHARS: usize = 120;
 /// After a failed fold, the prompt has to grow by this fraction of the window before the next try.
@@ -227,8 +238,8 @@ impl Compaction {
         let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.provider, &chat.model).await;
         let existing_facts_count = chat.key_facts.as_ref().map_or(0, |f| f.facts.len());
         let merged = Self::merge_facts(chat.key_facts.clone().unwrap_or_default(), facts.goal, facts.facts);
-        // `merge_facts` only ever appends, so this can't underflow in practice — saturating
-        // anyway rather than trusting that invariant never breaks in the future.
+        // The list is bounded and a fuller fact replaces a shorter one, so it can end up no longer than before:
+        // saturating, not a subtraction that could underflow.
         let facts_added = merged.facts.len().saturating_sub(existing_facts_count);
 
         self.chat_store
@@ -435,9 +446,17 @@ impl Compaction {
     /// Deterministic merge of existing facts with a fresh extraction.
     ///
     /// - goal: keep existing.goal if set and non-empty, else take new_goal (if non-empty).
-    /// - facts: push each new fact, skipping empty/whitespace-only ones and any whose
-    ///   trimmed form case-insensitively equals an existing entry's trimmed form.
-    /// - Never reorder, never rewrite, never drop existing entries.
+    /// - facts: each new fact is cut to `MAX_FACT_CHARS`; one that says nothing an existing fact doesn't
+    ///   (same words ignoring case and punctuation, or contained in it) is skipped, and one that contains an
+    ///   existing fact replaces it in place, so the list keeps the fuller wording. The existing ones are
+    ///   never reordered or rewritten.
+    /// - the list is kept to `MAX_FACTS` entries and `MAX_FACTS_CHARS` characters: past that the oldest
+    ///   go, except the first `KEEP_FIRST_FACTS`, which are the rules the task started with.
+    ///
+    /// The list is rebuilt after every fold and rides in the system message on every request: without a
+    /// bound a long task adds a handful per fold forever (81 after a 100-item task, 158 on a small window).
+    /// Facts are the model's own wording, so what counts as saying the same thing is decided here by plain
+    /// text comparison and not asked of the model, which would sometimes merge two that differ.
     ///
     /// This is a pure function so it's unit-testable and independent of any service
     /// wiring — correctness-critical invariants are enforced here, not by the model.
@@ -449,19 +468,53 @@ impl Compaction {
 
         let mut facts = existing.facts;
         for new_fact in new_facts {
-            let trimmed = new_fact.trim().to_string();
-            if trimmed.is_empty() {
+            let new_fact = Self::cut_fact(new_fact.trim());
+            if new_fact.is_empty() {
                 continue;
             }
-            let exists = facts.iter().any(|existing_fact| {
-                existing_fact.trim().to_lowercase() == trimmed.to_lowercase()
-            });
-            if !exists {
-                facts.push(trimmed);
+            let words = Self::fact_words(&new_fact);
+            // Said already, by an existing fact that has all of it
+            if facts.iter().any(|old| Self::contains_words(&Self::fact_words(old), &words)) {
+                continue;
+            }
+            // Says more than an existing fact (and only that one is long enough to tell): it takes its place
+            match facts.iter().position(|old| {
+                let old_words = Self::fact_words(old);
+                old_words.join(" ").chars().count() >= MIN_CONTAINED_FACT_CHARS && Self::contains_words(&words, &old_words)
+            }) {
+                Some(index) => facts[index] = new_fact,
+                None => facts.push(new_fact),
             }
         }
 
+        Self::bound_facts(&mut facts);
         ChatFacts { goal, facts }
+    }
+
+    /// A fact cut to `MAX_FACT_CHARS` characters, with an ellipsis when it was longer.
+    fn cut_fact(fact: &str) -> String {
+        match fact.char_indices().nth(MAX_FACT_CHARS) {
+            Some((end, _)) => format!("{}…", fact[..end].trim_end()),
+            None => fact.to_string(),
+        }
+    }
+
+    /// The words of a fact: lower case, everything but letters and digits dropped between them.
+    fn fact_words(fact: &str) -> Vec<String> {
+        fact.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).map(String::from).collect()
+    }
+
+    /// Whether `needle` is `haystack` or a run of whole words in it ("item 1" is not in "item 11").
+    fn contains_words(haystack: &[String], needle: &[String]) -> bool {
+        !needle.is_empty() && haystack.windows(needle.len()).any(|run| run == needle)
+    }
+
+    /// Drops the oldest facts after the first `KEEP_FIRST_FACTS` until the list is within its count and size.
+    fn bound_facts(facts: &mut Vec<String>) {
+        let size = |facts: &[String]| facts.iter().map(|fact| fact.chars().count()).sum::<usize>();
+        while facts.len() > KEEP_FIRST_FACTS && (facts.len() > MAX_FACTS || size(facts) > MAX_FACTS_CHARS) {
+            facts.remove(KEEP_FIRST_FACTS);
+        }
     }
 }
 
@@ -538,6 +591,61 @@ mod tests {
         assert_eq!(Compaction::fixed_cost_chars(&message(vec![])), MESSAGE_OVERHEAD_CHARS);
         let call = ToolCallOut { tool_name: "storage.write_file".to_string(), arguments: serde_json::json!({"content": "x".repeat(1000)}) };
         assert!(Compaction::fixed_cost_chars(&message(vec![call])) > 1000 + MESSAGE_OVERHEAD_CHARS);
+    }
+
+    fn facts(list: &[&str]) -> ChatFacts {
+        ChatFacts { goal: None, facts: list.iter().map(|f| f.to_string()).collect() }
+    }
+
+    #[test]
+    fn a_fact_that_adds_nothing_is_skipped_and_a_fuller_one_takes_the_place_of_its_part() {
+        let merged = Compaction::merge_facts(
+            facts(&["The retry limit is 7.", "Backups run at 03:40 UTC"]),
+            None,
+            vec![
+                "the retry limit is 7".to_string(),             // same words
+                "Backups run at 03:40 UTC, every night".to_string(), // says more than an existing one
+                "port 4711".to_string(),                        // new
+                "  ".to_string(),
+            ],
+        );
+        assert_eq!(merged.facts, vec!["The retry limit is 7.", "Backups run at 03:40 UTC, every night", "port 4711"]);
+        // A short fact is not swallowed by a longer one that merely contains its words
+        let merged = Compaction::merge_facts(facts(&["port 4711"]), None, vec!["the staging port 4711 is closed on fridays".to_string()]);
+        assert_eq!(merged.facts.len(), 2);
+    }
+
+    #[test]
+    fn the_list_is_bounded_and_the_first_facts_stay() {
+        let many: Vec<String> = (0..80).map(|i| format!("fact number {i} about item {i}")).collect();
+        let merged = Compaction::merge_facts(ChatFacts::default(), None, many);
+        assert_eq!(merged.facts.len(), MAX_FACTS);
+        assert_eq!(merged.facts[0], "fact number 0 about item 0");
+        assert_eq!(merged.facts[KEEP_FIRST_FACTS - 1], "fact number 9 about item 9");
+        // the oldest after the first ten went, the newest stayed
+        assert_eq!(merged.facts[KEEP_FIRST_FACTS], "fact number 30 about item 30");
+        assert_eq!(merged.facts[MAX_FACTS - 1], "fact number 79 about item 79");
+
+        // The size bound works the same way
+        let long: Vec<String> = (0..30).map(|i| format!("{i}: {}", "x".repeat(390))).collect();
+        let merged = Compaction::merge_facts(ChatFacts::default(), None, long);
+        assert!(merged.facts.iter().map(|f| f.chars().count()).sum::<usize>() <= MAX_FACTS_CHARS);
+        assert_eq!(merged.facts[0], format!("0: {}", "x".repeat(390)));
+    }
+
+    #[test]
+    fn a_fact_is_contained_in_another_only_as_whole_words() {
+        let merged = Compaction::merge_facts(facts(&["item 1 hash is aaaaaaaaaaaa"]), None, vec!["item 11 hash is aaaaaaaaaaaa".to_string()]);
+        assert_eq!(merged.facts.len(), 2);
+        let merged = Compaction::merge_facts(ChatFacts::default(), None, vec!["0: same text".to_string(), "10: same text".to_string()]);
+        assert_eq!(merged.facts.len(), 2);
+    }
+
+    #[test]
+    fn a_long_fact_is_cut() {
+        let merged = Compaction::merge_facts(ChatFacts::default(), None, vec!["y".repeat(1_000)]);
+        assert_eq!(merged.facts[0].chars().count(), MAX_FACT_CHARS + 1);
+        assert!(merged.facts[0].ends_with('…'));
     }
 
     #[test]

@@ -445,8 +445,11 @@ impl TurnRunner {
         let slot = self.claim(chat_id)?;
         self.store_user_message(chat_id, prompt, vec![], vec![]).await?;
         let run = slot.run.clone();
-        let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run).await;
+        // A page that has the sub-agent's chat open follows it like any run
+        self.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
+        let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run.clone()).await;
         drop(slot);
+        self.finish(chat_id, &end, run.snapshot());
         match end {
             RunEnd::Subagent(result) => Ok(result),
             RunEnd::Failed(e) => Err(e),
@@ -486,7 +489,7 @@ impl TurnRunner {
             // A job that ended during the run's last model call found the chat busy and was not woken for:
             // look again now that the chat is free (a wake-up with nothing to report ends at once)
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
-            runner.finish(chat_id, end, run.snapshot());
+            runner.finish(chat_id, &end, run.snapshot());
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
@@ -509,7 +512,7 @@ impl TurnRunner {
     }
 
     /// Records how a run ended and tells whoever is watching.
-    fn finish(&self, chat_id: i64, end: RunEnd, run: RunSnapshot) {
+    fn finish(&self, chat_id: i64, end: &RunEnd, run: RunSnapshot) {
         let (reason, detail, status) = match end {
             RunEnd::Answered => (RunEndReason::Answered, None, None),
             RunEnd::StepLimit => (RunEndReason::StepLimit, None, None),
@@ -517,12 +520,18 @@ impl TurnRunner {
             RunEnd::WaitingForPermission => (RunEndReason::WaitingForPermission, None, None),
             RunEnd::Failed(e) => {
                 let status = e.http_code.as_u16();
-                let detail = e.message.unwrap_or_else(|| "the run failed".to_string());
+                let detail = e.message.clone().unwrap_or_else(|| "the run failed".to_string());
                 tracing::warn!(chat_id, "run failed: {detail}");
                 (RunEndReason::Failed, Some(detail), Some(status))
             }
+            RunEnd::Subagent(SubagentResult::Answer(_)) => (RunEndReason::Answered, None, None),
+            // It stopped without handing anything back (out of calls, never returned): shown as a failed run
+            RunEnd::Subagent(SubagentResult::Incomplete(text)) => {
+                let detail: String = text.chars().take(300).collect();
+                (RunEndReason::Failed, Some(detail), None)
+            }
             // Nothing happened, so there is nothing to report
-            RunEnd::NothingToDo | RunEnd::Subagent(_) => return,
+            RunEnd::NothingToDo => return,
         };
         let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens, status };
         self.last_ends.lock().unwrap().insert(chat_id, ended);
