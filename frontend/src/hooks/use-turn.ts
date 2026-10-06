@@ -70,12 +70,20 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
     const chatIdRef = useRef(chatId)
     chatIdRef.current = chatId
 
-    /** Reads the state from the backend: on opening the chat, after a wait for permission, and when the tab comes back */
-    const refresh = async () => {
+    // Bumped by every event: a state read that was started before an event and answered after it is out of date,
+    // and must not put back what the event just replaced (a run that failed quickly shown as running again)
+    const eventSeqRef = useRef(0)
+    const sawEvent = () => {
+        eventSeqRef.current += 1
+    }
+
+    /** Reads the state from the backend: on opening the chat, after a wait for permission, when the tab comes back and when the event stream (re)opens. `force` applies it even if an event came meanwhile */
+    const refresh = async (force = false) => {
         const forChatId = chatId
+        const seq = eventSeqRef.current
         try {
             const state = await getTurnState(forChatId)
-            if (chatIdRef.current === forChatId) setView(fromState(state))
+            if (chatIdRef.current === forChatId && (force || eventSeqRef.current === seq)) setView(fromState(state))
             return fromState(state)
         } catch {
             // The next event or refresh tries again
@@ -101,26 +109,40 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         return () => document.removeEventListener('visibilitychange', onVisible)
     }, [])
 
+    // The stream (re)opened: events sent while it was down are gone, so the state and the messages are read again
+    useServerEvent('stream_open', () => {
+        void refreshRef.current()
+        handlersRef.current.onMessagesChanged()
+    })
+
     useServerEvent('run_started', (event) => {
         if (event.chat_id !== chatId) return
+        sawEvent()
         setView({...IDLE, status: 'running', startedAt: Date.parse(event.started_at), callStartedAt: Date.now()})
-        // The step limit (and the exact state of a run that started a moment ago) is only in the state
-        void refreshRef.current()
+        // The step limit is only in the state: taken from it for a run that is still going, never replacing what
+        // events have said since
+        void getTurnState(chatId).then((state) => {
+            if (chatIdRef.current !== chatId) return
+            setView((prev) => (prev.status === 'running' ? {...prev, stepLimit: state.step_limit} : prev))
+        }, () => undefined)
     })
 
     useServerEvent('turn_progress', (event) => {
         if (event.chat_id !== chatId) return
+        sawEvent()
         // Events carry what one model call generated; the state read on opening has the total so far
         setView((prev) => ({...prev, evalTokens: prev.evalTokens + event.eval_tokens, step: Math.max(prev.step, event.step)}))
     })
 
     useServerEvent('tool_started', (event) => {
         if (event.chat_id !== chatId) return
+        sawEvent()
         setView((prev) => ({...prev, runningTool: event.tool_name, toolStartedAt: Date.now(), callStartedAt: null}))
     })
 
     useServerEvent('messages_changed', (event) => {
         if (event.chat_id !== chatId) return
+        sawEvent()
         // A tool's result was stored: the model is asked again, and its call starts about now
         setView((prev) => (prev.runningTool != null
             ? {...prev, runningTool: null, toolStartedAt: null, callStartedAt: Date.now()}
@@ -130,6 +152,7 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
 
     useServerEvent('run_ended', (event) => {
         if (event.chat_id !== chatId) return
+        sawEvent()
         const end: RunEnded = {
             reason: event.reason,
             detail: event.detail,
@@ -141,7 +164,7 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         handlersRef.current.onMessagesChanged()
         if (event.reason === 'waiting_for_permission') {
             // The calls waiting for an answer are read from the backend
-            void refreshRef.current().then((next) => handlersRef.current.onRunEnded(end, next ?? {...IDLE, lastEnd: end}))
+            void refreshRef.current(true).then((next) => handlersRef.current.onRunEnded(end, next ?? {...IDLE, lastEnd: end}))
             return
         }
         const next: TurnView = {...IDLE, lastEnd: end}

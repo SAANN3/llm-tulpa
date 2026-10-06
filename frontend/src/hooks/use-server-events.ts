@@ -6,6 +6,7 @@ import {getToken} from '../utils/auth-token'
 export type ServerEvent =
     | { type: 'job_finished'; chat_id: number; job_id: number }
     | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null; step: number }
+    | { type: 'stream_open' }
     | { type: 'run_started'; chat_id: number; started_at: string }
     | { type: 'messages_changed'; chat_id: number }
     | { type: 'tool_started'; chat_id: number; tool_name: string }
@@ -81,7 +82,12 @@ const connect = async (signal: AbortSignal) => {
                 headers: {Accept: 'text/event-stream', ...(token ? {Authorization: `Bearer ${token}`} : {})},
                 signal,
             })
-            if (response.ok) await readStream(response)
+            if (response.ok) {
+                // Told to every listener: what happened while the stream was down (or before it was first open)
+                // was never delivered, and each one reads what it needs again
+                dispatch(JSON.stringify({type: 'stream_open'}))
+                await readStream(response)
+            }
         } catch {
             if (signal.aborted) return
         }
