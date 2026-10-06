@@ -7,7 +7,7 @@ use sea_orm::prelude::DateTimeUtc;
 use tokio_util::sync::CancellationToken;
 
 /// The numbers a page restores "thinking for 1m 30s, N tokens" from after a reload.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct RunSnapshot {
     pub(super) started_at: DateTimeUtc,
     /// When the model call that is in flight started, `None` between calls (a tool is running, say).
@@ -17,6 +17,12 @@ pub(super) struct RunSnapshot {
     pub(super) eval_tokens: u64,
     /// The prompt size the last finished call measured.
     pub(super) prompt_tokens: Option<u64>,
+    /// The step the run is on (1 for the first model call), and the user's step limit when one is set.
+    pub(super) step: u32,
+    pub(super) step_limit: Option<u32>,
+    /// The tool call that is running and since when, `None` while no tool runs.
+    pub(super) running_tool: Option<String>,
+    pub(super) tool_started_at: Option<DateTimeUtc>,
 }
 
 #[derive(Clone)]
@@ -27,12 +33,41 @@ pub(super) struct RunTracker {
 
 impl RunTracker {
     pub(super) fn new() -> Self {
-        let info = RunSnapshot { started_at: chrono::Utc::now(), call_started_at: None, eval_tokens: 0, prompt_tokens: None };
+        let info = RunSnapshot {
+            started_at: chrono::Utc::now(),
+            call_started_at: None,
+            eval_tokens: 0,
+            prompt_tokens: None,
+            step: 0,
+            step_limit: None,
+            running_tool: None,
+            tool_started_at: None,
+        };
         Self { info: Arc::new(Mutex::new(info)), stop: CancellationToken::new() }
     }
 
     pub(super) fn snapshot(&self) -> RunSnapshot {
-        *self.info.lock().unwrap()
+        self.info.lock().unwrap().clone()
+    }
+
+    pub(super) fn set_step(&self, step: u32) {
+        self.info.lock().unwrap().step = step;
+    }
+
+    pub(super) fn set_step_limit(&self, limit: Option<u32>) {
+        self.info.lock().unwrap().step_limit = limit;
+    }
+
+    pub(super) fn tool_started(&self, tool_name: &str) {
+        let mut info = self.info.lock().unwrap();
+        info.running_tool = Some(tool_name.to_string());
+        info.tool_started_at = Some(chrono::Utc::now());
+    }
+
+    pub(super) fn tool_finished(&self) {
+        let mut info = self.info.lock().unwrap();
+        info.running_tool = None;
+        info.tool_started_at = None;
     }
 
     /// Tells the run to stop: the model call in flight is dropped (which closes its request, so the
@@ -85,6 +120,13 @@ mod tests {
         assert_eq!(snapshot.eval_tokens, 350);
         assert_eq!(snapshot.prompt_tokens, Some(12_000));
         assert!(snapshot.call_started_at.is_none());
+
+        run.set_step(3);
+        run.tool_started("os.execute_command");
+        assert_eq!(run.snapshot().running_tool.as_deref(), Some("os.execute_command"));
+        assert_eq!(run.snapshot().step, 3);
+        run.tool_finished();
+        assert!(run.snapshot().running_tool.is_none() && run.snapshot().tool_started_at.is_none());
 
         assert!(!run.is_stopped());
         run.clone().stop();

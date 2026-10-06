@@ -286,6 +286,7 @@ impl Turn {
                     chat_id,
                     eval_tokens,
                     prompt_tokens: response.prompt_eval_count(),
+                    step: step.run.snapshot().step,
                 });
             }
 

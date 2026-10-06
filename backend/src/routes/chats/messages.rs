@@ -15,6 +15,8 @@ pub(crate) struct GetMessagesQuery {
     chat_id: i64,
     limit: Option<u64>,
     skip: Option<u64>,
+    /// Only the messages newer than this message id
+    after_id: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -59,7 +61,9 @@ pub(crate) struct MessagesResponse {
 }
 
 /// A chat's messages, newest first — `skip` counts from the newest end, so `skip=0,
-/// limit=50` gets the latest 50 and `skip=50, limit=50` gets the next 50 older ones.
+/// limit=50` gets the latest 50 and `skip=50, limit=50` gets the next 50 older ones. With `after_id`
+/// every message newer than that id comes back instead (still newest first, `limit` and `skip` ignored):
+/// what a page that was told by an event that messages were stored asks for.
 /// Each message includes whatever tool calls it made, plus the total message count in
 /// the chat for pagination.
 #[utoipa::path(
@@ -83,7 +87,16 @@ pub async fn get_messages(
 
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, query.chat_id).await?;
-    let (messages, total) = services.chat_store.messages(query.chat_id, limit, skip).await?;
+    let (messages, total) = match query.after_id {
+        // Everything newer than a message the client already has, in the same newest-first order as a page
+        Some(after_id) => {
+            let (_, total) = services.chat_store.messages(query.chat_id, 0, 0).await?;
+            let mut newer = services.chat_store.messages_after(query.chat_id, after_id).await?;
+            newer.reverse();
+            (newer, total)
+        }
+        None => services.chat_store.messages(query.chat_id, limit, skip).await?,
+    };
 
     let messages = messages
         .into_iter()

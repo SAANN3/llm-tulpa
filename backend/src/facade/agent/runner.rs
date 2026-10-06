@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 
 use super::notices::Notices;
 use super::prompts;
-use super::run_tracker::RunTracker;
+use super::run_tracker::{RunSnapshot, RunTracker};
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
@@ -72,6 +72,10 @@ pub struct RunEnded {
     pub detail: Option<String>,
     #[schema(value_type = String, format = "date-time")]
     pub ended_at: DateTimeUtc,
+    /// When the run started and the tokens its model calls generated: "stopped after 2m 10s, 3.4k tokens".
+    #[schema(value_type = String, format = "date-time")]
+    pub started_at: DateTimeUtc,
+    pub eval_tokens: u64,
 }
 
 /// What a chat's turn is doing, for a page that was just opened or reloaded.
@@ -88,6 +92,13 @@ pub struct TurnState {
     pub eval_tokens: u64,
     /// The prompt size the run's last finished model call measured.
     pub prompt_tokens: Option<u64>,
+    /// The step the run is on (1 for the first model call) and the user's step limit, when one is set.
+    pub step: u32,
+    pub step_limit: Option<u32>,
+    /// The tool call that is running and since when; both `None` while a model call is in flight.
+    pub running_tool: Option<String>,
+    #[schema(value_type = Option<String>, format = "date-time")]
+    pub tool_started_at: Option<DateTimeUtc>,
     /// While waiting for permission: the tool calls the model asked for that are not run yet, in
     /// order, with what each needs. `Decision::index` points into this list.
     pub pending: Vec<AgentToolCall>,
@@ -376,6 +387,10 @@ impl TurnRunner {
                 call_started_at: snapshot.call_started_at,
                 eval_tokens: snapshot.eval_tokens,
                 prompt_tokens: snapshot.prompt_tokens,
+                step: snapshot.step,
+                step_limit: snapshot.step_limit,
+                running_tool: snapshot.running_tool,
+                tool_started_at: snapshot.tool_started_at,
                 pending: vec![],
                 last_end,
             });
@@ -390,6 +405,10 @@ impl TurnRunner {
             call_started_at: None,
             eval_tokens: 0,
             prompt_tokens: None,
+            step: 0,
+            step_limit: None,
+            running_tool: None,
+            tool_started_at: None,
             pending: if waiting { pending } else { vec![] },
             last_end,
         })
@@ -458,14 +477,14 @@ impl TurnRunner {
             if !matches!(start, Start::Wake) {
                 runner.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
             }
-            let end = runner.run_user_run(chat_id, think, start, policy, run).await;
+            let end = runner.run_user_run(chat_id, think, start, policy, run.clone()).await;
             // The chat is free before the event goes out: a page that asks for the state on `RunEnded`
             // must not find the run still there
             drop(slot);
             // A job that ended during the run's last model call found the chat busy and was not woken for:
             // look again now that the chat is free (a wake-up with nothing to report ends at once)
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
-            runner.finish(chat_id, end);
+            runner.finish(chat_id, end, run.snapshot());
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
@@ -481,11 +500,14 @@ impl TurnRunner {
         };
         let auto_confirm = self.settings_store.auto_confirm(user_id).await.unwrap_or(false);
         let max_steps = self.settings_store.max_turn_steps(user_id).await.unwrap_or(None);
+        if matches!(policy, Policy::Attended) {
+            run.set_step_limit(max_steps);
+        }
         self.run(chat_id, think, start, policy, auto_confirm, max_steps, run).await
     }
 
     /// Records how a run ended and tells whoever is watching.
-    fn finish(&self, chat_id: i64, end: RunEnd) {
+    fn finish(&self, chat_id: i64, end: RunEnd, run: RunSnapshot) {
         let (reason, detail) = match end {
             RunEnd::Answered => (RunEndReason::Answered, None),
             RunEnd::StepLimit => (RunEndReason::StepLimit, None),
@@ -499,8 +521,9 @@ impl TurnRunner {
             // Nothing happened, so there is nothing to report
             RunEnd::NothingToDo | RunEnd::Subagent(_) => return,
         };
-        self.last_ends.lock().unwrap().insert(chat_id, RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now() });
-        self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail });
+        let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens };
+        self.last_ends.lock().unwrap().insert(chat_id, ended);
+        self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens });
     }
 
     /// The loop. A step is a model call and what comes of it; after a reply that asks for tools the
@@ -581,6 +604,7 @@ impl TurnRunner {
                 Policy::Attended => max_steps.filter(|limit| steps + 1 >= *limit),
                 Policy::Subagent => None,
             };
+            run.set_step(steps + 1);
             let step = Step {
                 chat_id,
                 messages,
@@ -716,7 +740,10 @@ impl TurnRunner {
                 return Ok(ToolsOutcome::Stopped);
             }
             self.events.publish(ServerEvent::ToolStarted { chat_id, tool_name: views[index].name.clone() });
-            let out = self.tool_calls.run_next_tool(chat_id, one_time.remove(&index), unattended).await?;
+            run.tool_started(&views[index].name);
+            let result = self.tool_calls.run_next_tool(chat_id, one_time.remove(&index), unattended).await;
+            run.tool_finished();
+            let out = result?;
             self.events.publish(ServerEvent::MessagesChanged { chat_id });
 
             if out.tool_name == ReturnAgentTool::NAME {

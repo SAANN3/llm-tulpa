@@ -38,7 +38,7 @@ pub enum ServerEvent {
     /// non-streaming, so each jumps by a chunk each time a call returns. Clients sum the
     /// `eval_tokens` deltas for the duration of one turn but take `prompt_tokens` as-is
     /// (it's already cumulative, not a delta).
-    TurnProgress { chat_id: i64, eval_tokens: u64, prompt_tokens: Option<u64> },
+    TurnProgress { chat_id: i64, eval_tokens: u64, prompt_tokens: Option<u64>, step: u32 },
     /// A run (the backend's loop of model calls and tool calls for one chat) started.
     RunStarted {
         chat_id: i64,
@@ -51,7 +51,15 @@ pub enum ServerEvent {
     /// A tool call is about to run.
     ToolStarted { chat_id: i64, tool_name: String },
     /// The run on the chat ended, and why. For `waiting_for_permission`, `GET /api/agent/turn` says what is asked.
-    RunEnded { chat_id: i64, reason: RunEndReason, detail: Option<String> },
+    RunEnded {
+        chat_id: i64,
+        reason: RunEndReason,
+        detail: Option<String>,
+        /// When the run started, and the tokens its model calls generated: "stopped after 2m 10s, 3.4k tokens".
+        #[schema(value_type = String, format = "date-time")]
+        started_at: DateTimeUtc,
+        eval_tokens: u64,
+    },
     /// The model server started loading, became ready, stopped or failed. Not about any one chat:
     /// everyone is told, so a page can say "the model is being applied, don't close it".
     ModelState {
