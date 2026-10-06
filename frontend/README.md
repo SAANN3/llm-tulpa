@@ -24,7 +24,7 @@ npm run preview
 Or via Docker — see the repo root's `compose.yaml`.
 
 ## Structure
-Files and folders are kebab-case (`chat-entry.tsx`, `use-messages.ts`, `allow-scope.ts`); a component's name inside the file is PascalCase, a hook's is `useX`.
+Files and folders are kebab-case (`chat-entry.tsx`, `use-messages.ts`, `tool-confirmation.tsx`); a component's name inside the file is PascalCase, a hook's is `useX`.
 
 ```
 src/
