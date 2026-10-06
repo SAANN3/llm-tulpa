@@ -423,6 +423,17 @@ impl JobStore {
         Ok(claimed.into_iter().map(JobRecord::from).collect())
     }
 
+    /// Whether a finished job of the chat hasn't been reported yet, without claiming it.
+    pub async fn has_unnotified(&self, chat_id: i64) -> Result<bool, JobStoreErrors> {
+        let found = self
+            .returning(
+                "SELECT * FROM jobs WHERE chat_id = $1 AND notified = FALSE AND status IN ('exited', 'lost') LIMIT 1",
+                [chat_id.into()],
+            )
+            .await?;
+        Ok(!found.is_empty())
+    }
+
     /// Undoes `claim_unnotified` for one job whose notice couldn't be delivered.
     pub async fn unclaim(&self, id: i64) -> Result<(), JobStoreErrors> {
         self.execute("UPDATE jobs SET notified = FALSE WHERE id = $1", [id.into()]).await

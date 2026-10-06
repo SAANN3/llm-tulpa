@@ -24,6 +24,7 @@ pub(crate) struct DeleteChatQuery {
     responses(
         (status = 204, description = "Chat deleted"),
         (status = 404, description = "No such chat, or already deleted", body = crate::services::error::ErrorBody),
+        (status = 409, description = "The chat has a run going on", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
 )]
@@ -34,6 +35,9 @@ pub async fn delete_chat(
 ) -> Result<StatusCode, ErrorService> {
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, query.id).await?;
+    if services.agent.has_run(query.id) {
+        return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has a run going on"));
+    }
     services.chat_store.delete_chat(query.id).await?;
 
     Ok(StatusCode::NO_CONTENT)

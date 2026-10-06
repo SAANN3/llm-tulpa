@@ -23,6 +23,8 @@ pub(super) struct RunSnapshot {
     /// The tool call that is running and since when, `None` while no tool runs.
     pub(super) running_tool: Option<String>,
     pub(super) tool_started_at: Option<DateTimeUtc>,
+    /// The run is over and its end has been recorded: the chat is only waiting for the claim to be dropped.
+    pub(super) ended: bool,
 }
 
 #[derive(Clone)]
@@ -42,6 +44,7 @@ impl RunTracker {
             step_limit: None,
             running_tool: None,
             tool_started_at: None,
+            ended: false,
         };
         Self { info: Arc::new(Mutex::new(info)), stop: CancellationToken::new() }
     }
@@ -62,6 +65,10 @@ impl RunTracker {
         let mut info = self.info.lock().unwrap();
         info.running_tool = Some(tool_name.to_string());
         info.tool_started_at = Some(chrono::Utc::now());
+    }
+
+    pub(super) fn mark_ended(&self) {
+        self.info.lock().unwrap().ended = true;
     }
 
     pub(super) fn tool_finished(&self) {

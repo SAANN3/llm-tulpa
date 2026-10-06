@@ -472,6 +472,12 @@ pub(super) fn notes_ask() -> String {
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";
 
+/// The reply stored for the last step of a turn that hit the user's step limit when the model answered it
+/// with a tool call and no text.
+pub(super) fn step_limit_no_conclusion() -> String {
+    "[The step limit was reached before a conclusion was written.]".to_string()
+}
+
 /// The line after a tool result that was cut to fit the window: how much of it the model has, and that the
 /// rest comes from asking for less at a time.
 pub(super) fn tool_result_cut(shown: usize, total: usize) -> String {

@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 
 use super::notices::Notices;
 use super::prompts;
-use super::run_tracker::{RunSnapshot, RunTracker};
+use super::run_tracker::RunTracker;
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
@@ -210,6 +210,9 @@ pub(super) struct TurnRunner {
     /// finished job) uses the one the user last chose.
     thinks: Arc<Mutex<HashMap<i64, Option<ThinkChoice>>>>,
     last_ends: Arc<Mutex<HashMap<i64, RunEnded>>>,
+    /// The model calls a chat's turn has made so far, kept across a wait for permission: the user's step limit is
+    /// for the turn, and each answer starts a new run.
+    turn_steps: Arc<Mutex<HashMap<i64, u32>>>,
 }
 
 impl TurnRunner {
@@ -236,6 +239,7 @@ impl TurnRunner {
             runs: Arc::new(Mutex::new(HashMap::new())),
             thinks: Arc::new(Mutex::new(HashMap::new())),
             last_ends: Arc::new(Mutex::new(HashMap::new())),
+            turn_steps: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -352,6 +356,10 @@ impl TurnRunner {
         if chat.parent_chat_id.is_some() || self.chat_store.is_plugin_chat(chat_id).await? {
             return Ok(());
         }
+        // Nothing to report: not worth taking the chat from a prompt that arrives at the same moment
+        if !self.notices.has_pending(chat_id).await? {
+            return Ok(());
+        }
         let Ok(slot) = self.claim(chat_id) else { return Ok(()) };
         if self.waiting_for_permission(chat_id).await? {
             return Ok(());
@@ -383,7 +391,8 @@ impl TurnRunner {
     /// What the chat's turn is doing.
     pub(super) async fn state(&self, chat_id: i64) -> Result<TurnState, ErrorService> {
         let last_end = self.last_ends.lock().unwrap().get(&chat_id).cloned();
-        let run = self.runs.lock().unwrap().get(&chat_id).cloned();
+        // A run whose end is recorded is over, even in the instant before its claim on the chat is dropped
+        let run = self.runs.lock().unwrap().get(&chat_id).cloned().filter(|run| !run.snapshot().ended);
         if let Some(run) = run {
             let snapshot = run.snapshot();
             return Ok(TurnState {
@@ -451,8 +460,8 @@ impl TurnRunner {
         // A page that has the sub-agent's chat open follows it like any run
         self.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
         let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run.clone()).await;
+        self.finish(chat_id, &end, &run);
         drop(slot);
-        self.finish(chat_id, &end, run.snapshot());
         match end {
             RunEnd::Subagent(result) => Ok(result),
             RunEnd::Failed(e) => Err(e),
@@ -483,16 +492,34 @@ impl TurnRunner {
             let run = slot.run.clone();
             // A wake-up announces itself once it knows there is a notice to answer
             if !matches!(start, Start::Wake) {
+                // The previous run's ending is no longer news
+                runner.last_ends.lock().unwrap().remove(&chat_id);
+                if !matches!(start, Start::Answer { .. }) {
+                    runner.turn_steps.lock().unwrap().remove(&chat_id);
+                }
                 runner.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
             }
-            let end = runner.run_user_run(chat_id, think, start, policy, run.clone()).await;
-            // The chat is free before the event goes out: a page that asks for the state on `RunEnded`
-            // must not find the run still there
-            drop(slot);
+            // In a task of its own: a panic in the run ends it as a failure the page is told about, instead of
+            // freeing the chat in silence while every page keeps showing a run that is gone
+            let inner = {
+                let runner = runner.clone();
+                let run = run.clone();
+                tokio::spawn(async move { runner.run_user_run(chat_id, think, start, policy, run).await })
+            };
+            let end = match inner.await {
+                Ok(end) => end,
+                Err(e) => {
+                    tracing::error!(chat_id, "a run crashed: {e}");
+                    RunEnd::Failed(ErrorService::internal("the run crashed"))
+                }
+            };
             // A job that ended during the run's last model call found the chat busy and was not woken for:
-            // look again now that the chat is free (a wake-up with nothing to report ends at once)
+            // look again once the chat is free (a wake-up with nothing to report ends at once)
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
-            runner.finish(chat_id, &end, run.snapshot());
+            // The end is recorded and told before the chat is free, so a new run's start can't come first; the state
+            // already says idle (the run is marked ended), which is what a page asking on `RunEnded` needs
+            runner.finish(chat_id, &end, &run);
+            drop(slot);
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
@@ -515,7 +542,12 @@ impl TurnRunner {
     }
 
     /// Records how a run ended and tells whoever is watching.
-    fn finish(&self, chat_id: i64, end: &RunEnd, run: RunSnapshot) {
+    fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) {
+        // Only a wait for permission keeps the turn going (its claim on the model server and its step count)
+        if !matches!(end, RunEnd::WaitingForPermission) {
+            self.turn.release(chat_id);
+            self.turn_steps.lock().unwrap().remove(&chat_id);
+        }
         let (reason, detail, status) = match end {
             RunEnd::Answered => (RunEndReason::Answered, None, None),
             RunEnd::StepLimit => (RunEndReason::StepLimit, None, None),
@@ -534,7 +566,14 @@ impl TurnRunner {
                 (RunEndReason::Failed, Some(detail), None)
             }
             // Nothing happened, so there is nothing to report
-            RunEnd::NothingToDo => return,
+            RunEnd::NothingToDo => {
+                run.mark_ended();
+                return;
+            }
+        };
+        let run = {
+            run.mark_ended();
+            run.snapshot()
         };
         let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens, status };
         self.last_ends.lock().unwrap().insert(chat_id, ended);
@@ -574,6 +613,8 @@ impl TurnRunner {
         let mut first = true;
         let mut replace = None;
         let mut wake = false;
+        // An answer continues the turn it answers: the step limit counts the whole turn
+        let mut steps = if matches!(start, Start::Answer { .. }) { self.turn_steps.lock().unwrap().get(&chat_id).copied().unwrap_or(0) } else { 0 };
         match start {
             Start::Answer { decisions } => {
                 // The answers come first: the calls they are about run before the model is asked anything
@@ -588,7 +629,6 @@ impl TurnRunner {
             Start::Prompt | Start::Subagent => {}
         }
 
-        let mut steps = 0u32;
         let mut failed_return: Option<FailedReturn> = None;
         let mut reminded = false;
         loop {
@@ -596,7 +636,6 @@ impl TurnRunner {
                 return Ok(RunEnd::Stopped);
             }
 
-            self.turn.make_room(chat_id, think.clone(), 0).await;
             // A reply that replaces another is stored before the old one goes, and a notice flushed now would
             // land between them: it is left for the next step
             let notices = if replace.is_some() { vec![] } else { self.notices.flush_job_notices(chat_id).await? };
@@ -604,7 +643,13 @@ impl TurnRunner {
                 if notices.is_empty() {
                     return Ok(RunEnd::NothingToDo);
                 }
+                self.last_ends.lock().unwrap().remove(&chat_id);
                 self.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
+            }
+            // Not for a regenerate: its prompt is the one the old reply was made from, minus that reply, and
+            // folding now could fold the very reply (and its question) that is about to be replaced
+            if replace.is_none() {
+                self.turn.make_room(chat_id, think.clone(), 0).await;
             }
             if !notices.is_empty() {
                 self.events.publish(ServerEvent::MessagesChanged { chat_id });
@@ -634,6 +679,7 @@ impl TurnRunner {
                 StepOut::Reply(out) => out,
             };
             steps += 1;
+            self.turn_steps.lock().unwrap().insert(chat_id, steps);
             first = false;
             if let Some(old) = replace.take() {
                 self.chat_store.delete_message(chat_id, old).await?;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -31,7 +31,7 @@ pub(crate) struct RewindChatResponse {
     responses(
         (status = 200, description = "Messages removed", body = RewindChatResponse),
         (status = 404, description = "No such chat or message", body = crate::services::error::ErrorBody),
-        (status = 409, description = "That part of the chat can't be removed", body = crate::services::error::ErrorBody),
+        (status = 409, description = "That part of the chat can't be removed, or the chat has a run going on", body = crate::services::error::ErrorBody),
         (status = 500, description = "Database query failed", body = crate::services::error::ErrorBody),
     ),
 )]
@@ -42,6 +42,10 @@ pub async fn rewind_chat(
 ) -> Result<Json<RewindChatResponse>, ErrorService> {
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, body.chat_id).await?;
+    // The run is building on these messages: it would store its next reply after the gap
+    if services.agent.has_run(body.chat_id) {
+        return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has a run going on"));
+    }
     let deleted = services.chat_store.rewind_from(body.chat_id, body.message_id).await?;
 
     Ok(Json(RewindChatResponse { deleted }))

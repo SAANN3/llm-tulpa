@@ -28,6 +28,11 @@ impl Notices {
         Self { chat_store, job_store, max_inlined_result_bytes }
     }
 
+    /// Whether a finished job of the chat is waiting to be reported.
+    pub(super) async fn has_pending(&self, chat_id: i64) -> Result<bool, ErrorService> {
+        Ok(self.job_store.has_unnotified(chat_id).await?)
+    }
+
     /// Turns every background job of `chat_id` that has finished but not been reported
     /// into a persisted `notice` message, oldest first, and returns them. Called at the
     /// one point in every turn where appending is always safe — after the newest

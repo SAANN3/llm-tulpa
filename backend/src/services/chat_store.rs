@@ -638,7 +638,8 @@ impl ChatStore {
     /// the caller's responsibility.
     pub async fn set_tools_enabled(&self, chat_id: i64, tools_enabled: bool) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
-        chats::ActiveModel { id: Set(chat_id), tools_enabled: Set(tools_enabled), ..Default::default() }
+        // The measured prompt size (which has the tool definitions in it or not) no longer describes the next request
+        chats::ActiveModel { id: Set(chat_id), tools_enabled: Set(tools_enabled), last_prompt_tokens: Set(None), ..Default::default() }
             .update(&self.db)
             .await?;
         Ok(())

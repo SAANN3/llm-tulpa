@@ -109,6 +109,11 @@ impl Turn {
         Self { chat_store, tools, events, history, model, compaction, tool_calls }
     }
 
+    /// Lets go of the claim a turn has on the model server: the run is over.
+    pub(super) fn release(&self, chat_id: i64) {
+        self.model.release(chat_id);
+    }
+
     /// Compacts the chat first when the request about to be sent would not fit. The size is the one the
     /// model server measured for the last request plus what has been added since: a tool result can be
     /// bigger than everything before it, and a check made on the last measurement alone lets the next
@@ -441,6 +446,12 @@ impl Turn {
             tracing::warn!(chat_id, calls = requested_tool_calls.len(), "tool calls in the reply at the step limit refused");
             requested_tool_calls.clear();
         }
+        let content = if step.step_limit.is_some() && response.message.content.trim().is_empty() {
+            // The model answered the last step with a tool call only: say so instead of storing an empty reply
+            prompts::step_limit_no_conclusion()
+        } else {
+            response.message.content
+        };
         let new_tool_calls: Vec<NewToolCall> = requested_tool_calls
             .iter()
             .map(|call| NewToolCall {
@@ -460,7 +471,7 @@ impl Turn {
             .new_message(NewMessage {
                 chat_id,
                 role: response.message.role,
-                content: response.message.content,
+                content,
                 tool_name: None,
                 thinking: thinking.clone(),
                 thought_duration_ms: Some(thought_duration_ms),
