@@ -1,71 +1,65 @@
 import {useState} from 'react'
 import '../styles/tool-confirmation.scss'
-import type {DangerousToolCall, Decisions, PendingConfirmations} from '../hooks/use-messages.ts'
-import {ToolAllowance} from '../hooks/use-messages.ts'
+import type {AgentScopeGrant, AgentToolCall, Allowance, Decision} from '../api/agent/types.ts'
 import {Button, Div, Label} from './primitives'
 
 interface PendingCallRowProps {
-    call: DangerousToolCall
+    call: AgentToolCall
+    escalation: AgentScopeGrant
+    reason: string
     first: boolean
-    onDecide: (allowance: ToolAllowance) => void
+    onDecide: (allowance: Allowance) => void
 }
 
-/** One pending tool call's decision row, with buttons matching whatever it offers */
-const PendingCallRow = ({call, first, onDecide}: PendingCallRowProps) => (
+/** One pending tool call's decision row */
+const PendingCallRow = ({call, escalation, reason, first, onDecide}: PendingCallRowProps) => (
     <Div className={`vbox tool-confirm__row${first ? '' : ' tool-confirm__row--divided'}`}>
         <Div className="tool-confirm__head">
             <Label variant="secondary" className="tool-confirm__badge" text="PERMISSION NEEDED"/>
             <Label className="mono tool-confirm__name" text={call.name}/>
         </Div>
         <Label variant="secondary" className="mono tool-confirm__args" text={JSON.stringify(call.arguments)}/>
-        {call.escalation ? (
-            <>
-                <Label className="tool-confirm__message" text={call.escalation.ui_message}/>
-                <Label variant="secondary" className="tool-confirm__reason" text={call.reason}/>
-                <Div className="tool-confirm__actions">
-                    <Button variant="secondary" text="Don't allow"
-                            onClicked={() => onDecide(ToolAllowance.Forbid)}/>
-                    <Button variant="secondary" text="Always in this chat"
-                            onClicked={() => onDecide(ToolAllowance.Permanent)}/>
-                    <Button variant="primary" text="Allow once" onClicked={() => onDecide(ToolAllowance.OnlyNow)}/>
-                </Div>
-            </>
-        ) : (
-            <>
-                <Label variant="secondary" className="tool-confirm__reason"
-                       text="Can't be approved — nothing to grant."/>
-                <Div className="tool-confirm__actions">
-                    <Button variant="primary" text="OK" onClicked={() => onDecide(ToolAllowance.Forbid)}/>
-                </Div>
-            </>
-        )}
+        <Label className="tool-confirm__message" text={escalation.ui_message}/>
+        <Label variant="secondary" className="tool-confirm__reason" text={reason}/>
+        <Div className="tool-confirm__actions">
+            <Button variant="secondary" text="Don't allow" onClicked={() => onDecide('deny')}/>
+            <Button variant="secondary" text="Always in this chat" onClicked={() => onDecide('permanent')}/>
+            <Button variant="primary" text="Allow once" onClicked={() => onDecide('only_now')}/>
+        </Div>
     </Div>
 );
 
 export interface ToolConfirmationProps {
-    pending: PendingConfirmations
-    onConfirm: (decisions: Decisions) => void
+    /** The chat's pending tool calls, in order; a decision's `index` is a call's position in this list */
+    pending: AgentToolCall[]
+    onConfirm: (decisions: Decision[]) => void
 }
 
-/** Shown when a turn pauses on tool calls needing a decision */
+/**
+ * Shown when a run waits for permission. Only the calls the user could grant get a row: a call that
+ * is allowed runs, and one that can't be approved is refused for the model, whatever the user says.
+ */
 export const ToolConfirmation = ({pending, onConfirm}: ToolConfirmationProps) => {
-    const [decisions, setDecisions] = useState<Decisions>({})
+    const [decisions, setDecisions] = useState<Decision[]>([])
 
-    const decide = (index: number, allowance: ToolAllowance) => {
-        const next = {...decisions, [index]: allowance}
+    const asking = pending.flatMap((call, index) =>
+        call.permission.status === 'denied' && call.permission.escalation
+            ? [{index, call, escalation: call.permission.escalation, reason: call.permission.reason}]
+            : [])
+    const remaining = asking.filter(({index}) => !decisions.some((d) => d.index === index))
+
+    const decide = (index: number, allowance: Allowance) => {
+        const next = [...decisions, {index, allowance}]
         setDecisions(next)
-        if (Object.keys(pending).every((i) => next[Number(i)] !== undefined)) onConfirm(next)
+        if (asking.every((row) => next.some((d) => d.index === row.index))) onConfirm(next)
     }
-
-    const remaining = Object.entries(pending).filter(([indexStr]) => decisions[Number(indexStr)] === undefined)
 
     return (
         <Div className="vbox tool-confirm">
-            {remaining.map(([indexStr, call], i) => {
-                const index = Number(indexStr)
-                return <PendingCallRow key={index} call={call} first={i === 0}
-                                       onDecide={(allowance) => decide(index, allowance)}/>
-            })}
+            {remaining.map(({index, call, escalation, reason}, i) => (
+                <PendingCallRow key={index} call={call} escalation={escalation} reason={reason} first={i === 0}
+                                onDecide={(allowance) => decide(index, allowance)}/>
+            ))}
         </Div>
     )
 };

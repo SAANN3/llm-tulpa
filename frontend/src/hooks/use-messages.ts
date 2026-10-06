@@ -1,25 +1,7 @@
 import {useEffect, useRef, useState} from 'react'
-import {allowScope} from '../api/agent/allow-scope.ts'
-import {canUseTool} from '../api/agent/can-use-tool.ts'
-import {chat as sendChatMessage} from '../api/agent/chat'
-import {continueChat} from '../api/agent/continue-chat.ts'
-import {regenerateChat} from '../api/agent/regenerate-chat.ts'
 import {rewindChat} from '../api/chats/rewind.ts'
-import {jobNotices} from '../api/agent/job-notices.ts'
-import type {
-    AgentScopeGrant,
-    AgentToolCall,
-    ChatOut as AgentChatOut,
-    NoticeOut,
-    ThinkChoice,
-    UseToolOut
-} from '../api/agent/types'
-import {useTool as runNextTool} from '../api/agent/use-tool.ts'
 import {getMessages} from '../api/chats/messages'
 import type {MessageOut} from '../api/chats/types'
-import {useSettings} from '../context/use-settings.ts'
-import {useServerEvent} from './use-server-events.ts'
-import {notify} from '../utils/notifications'
 import {peekPendingPrompt} from '../utils/pending-prompt.ts'
 
 const MESSAGES_PAGE_SIZE = 30
@@ -47,13 +29,19 @@ export type DisplayMessage =
 }
     | { id?: number; role: 'notice'; content: string; created_at: string }
 
-/** Maps a fetched page of messages to display form, pairing each tool message with its call arguments */
-const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
-    let queuedArgs: Record<string, unknown>[] = []
+/**
+ * The arguments of the tool calls a page of messages made, handed to the tool messages that answer them
+ * in order. Kept between pages: a reply's calls can be in one fetch and their results in the next.
+ */
+interface ToolArgsQueue {
+    args: Record<string, unknown>[]
+}
 
+/** Maps a fetched page of messages (oldest first) to display form, pairing each tool message with its call arguments */
+const toDisplayMessages = (page: MessageOut[], queue: ToolArgsQueue = {args: []}): DisplayMessage[] => {
     return page.map((m) => {
         if (m.role === 'assistant' && m.tool_calls.length > 0) {
-            queuedArgs = m.tool_calls.map((call) => call.arguments)
+            queue.args = m.tool_calls.map((call) => call.arguments)
         }
         if (m.role === 'tool') {
             return {
@@ -62,7 +50,7 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
                 content: m.content,
                 tool_name: m.tool_name,
                 created_at: m.created_at,
-                arguments: queuedArgs.shift() ?? {},
+                arguments: queue.args.shift() ?? {},
             }
         }
         if (m.role === 'notice') {
@@ -83,225 +71,28 @@ const toDisplayMessages = (page: MessageOut[]): DisplayMessage[] => {
     })
 };
 
-const userMessage = (content: string, images: string[], fileIds: number[]): DisplayMessage => ({
-    role: 'user',
-    content,
-    created_at: new Date().toISOString(),
-    images,
-    file_ids: fileIds
-});
+/** The newest stored message's id, 0 for a chat with none: what `fetchNew` asks for the messages after */
+const lastStoredId = (list: DisplayMessage[]): number =>
+    list.reduce((max, m) => (m.id != null && m.id > max ? m.id : max), 0)
 
-const assistantMessage = (reply: AgentChatOut): DisplayMessage => ({
-    id: reply.id,
-    role: 'assistant',
-    content: reply.content,
-    created_at: reply.created_at,
-    thinking: reply.thinking,
-    thought_duration_ms: reply.thought_duration_ms,
-    file_ids: reply.file_ids,
-    prompt_tokens: reply.prompt_tokens,
-    eval_tokens: reply.eval_tokens,
-});
-
-const noticeMessage = (notice: NoticeOut): DisplayMessage => ({
-    role: 'notice',
-    content: notice.content,
-    created_at: notice.created_at,
-});
-
-/** Appends a reply as it was stored: the job notices persisted just before it, then the reply itself */
-const appendReply = (reply: AgentChatOut, onMessage: (message: DisplayMessage) => void) => {
-    reply.notices.forEach((notice) => onMessage(noticeMessage(notice)))
-    onMessage(assistantMessage(reply))
-};
-
-const toolMessage = (result: UseToolOut, args: Record<string, unknown>): DisplayMessage => ({
-    id: result.id,
-    role: 'tool',
-    content: result.content,
-    tool_name: result.tool_name,
-    created_at: result.created_at,
-    arguments: args
-});
-
-const NOTIFICATION_BODY_MAX_CHARS = 100
-
-const truncateForNotification = (text: string): string => {
-    const trimmed = text.trim()
-    if (trimmed.length <= NOTIFICATION_BODY_MAX_CHARS) return trimmed
-
-    return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_CHARS).trimEnd()}...`
-};
-
-export const ToolAllowance = {
-    Forbid: 'forbid',
-    OnlyNow: 'only_now',
-    Permanent: 'permanent',
-} as const
-export type ToolAllowance = (typeof ToolAllowance)[keyof typeof ToolAllowance]
-
-export interface DangerousToolCall {
-    name: string
-    arguments: Record<string, unknown>
-    reason: string
-    escalation: AgentScopeGrant | null
-}
-
-export type PendingConfirmations = Record<number, DangerousToolCall>
-
-export type Decisions = Record<number, ToolAllowance>
-
-export type TurnResult =
-    | { needsConfirmation: false; reply: AgentChatOut }
-    | { needsConfirmation: true; pending: PendingConfirmations; confirm: (decisions: Decisions) => Promise<TurnResult> }
-
-
-/** Picks out whichever tool calls were denied and still need a decision */
-const findPendingConfirmations = (toolCalls: AgentToolCall[]): PendingConfirmations => {
-    const pending: PendingConfirmations = {}
-
-    toolCalls.forEach((call, index) => {
-        if (call.permission.status === 'denied') {
-            pending[index] = {
-                name: call.name,
-                arguments: call.arguments,
-                reason: call.permission.reason,
-                escalation: call.permission.escalation,
-            }
-        }
-    })
-
-    return pending
-};
-
-/** Runs every remaining pending tool call for a chat, then asks the model to continue */
-const resolveToolCallsAndContinue = async (
-    chatId: number,
-    think: ThinkChoice,
-    decisions: Decisions,
-    pending: PendingConfirmations,
-    toolCalls: AgentToolCall[],
-    onMessage: (message: DisplayMessage) => void,
-): Promise<TurnResult> => {
-    for (const [indexStr, allowance] of Object.entries(decisions)) {
-        if (allowance !== ToolAllowance.Permanent) continue
-        const call = pending[Number(indexStr)]
-        if (call?.escalation) await allowScope(chatId, call.name, call.escalation.scope)
-    }
-
-    let index = 0
-    let toolsLeft = true
-    while (toolsLeft) {
-        const overrideScope = decisions[index] === ToolAllowance.OnlyNow ? pending[index]?.escalation?.scope : undefined
-
-        const result = await runNextTool(chatId, overrideScope)
-        onMessage(toolMessage(result, toolCalls[index]?.arguments ?? {}))
-        toolsLeft = result.tools.length > 0
-        index += 1
-    }
-
-    const reply = await continueChat(chatId, think)
-    appendReply(reply, onMessage)
-
-    return driveTurn(chatId, think, reply, onMessage)
-};
-
-/** Entry point for handling a reply that might carry tool calls */
-const driveTurn = async (
-    chatId: number,
-    think: ThinkChoice,
-    reply: AgentChatOut,
-    onMessage: (message: DisplayMessage) => void,
-): Promise<TurnResult> => {
-    if (!reply.can_use_tools) {
-        return {needsConfirmation: false, reply}
-    }
-
-    return driveToolCalls(chatId, think, reply.tool_calls, onMessage)
-};
-
-/** Runs tool calls straight through if already permitted, otherwise pauses for confirmation */
-const driveToolCalls = async (
-    chatId: number,
-    think: ThinkChoice,
-    toolCalls: AgentToolCall[],
-    onMessage: (message: DisplayMessage) => void,
-): Promise<TurnResult> => {
-    const pending = findPendingConfirmations(toolCalls)
-    if (Object.keys(pending).length === 0) {
-        return resolveToolCallsAndContinue(chatId, think, {}, pending, toolCalls, onMessage)
-    }
-
-    return {
-        needsConfirmation: true,
-        pending,
-        confirm: (decisions) => resolveToolCallsAndContinue(chatId, think, decisions, pending, toolCalls, onMessage),
-    }
-};
-
-/** A chat's message timeline, with loadOlder to page back and send to run a full turn */
+/** A chat's message timeline: pages of it, and the messages the backend stores while a run goes on */
 export const useMessages = (chatId: number, onAppended?: () => void) => {
-    const {settings} = useSettings()
     const [messages, setMessages] = useState<DisplayMessage[]>([])
     const [total, setTotal] = useState(0)
     // The chat whose first page `messages` holds: until it is this chat's, `messages` is still the
     // previous chat's (it is replaced when the fetch returns, not cleared on the switch)
     const [loadedChatId, setLoadedChatId] = useState<number | null>(null)
-    const [sendingChatId, setSendingChatId] = useState<number | null>(null)
-    const sending = sendingChatId === chatId
-    const [canContinue, setCanContinue] = useState(false)
     const onAppendedRef = useRef(onAppended)
     onAppendedRef.current = onAppended
 
-    // Tokens this chat has spent on the current turn so far — the sum of `turn_progress`
-    // events for it — shown by the live "thinking" indicator. Model calls are
-    // non-streaming, so the number jumps by a chunk each time one of them returns.
-    const [turnTokens, setTurnTokens] = useState(0)
-    const turnTokensRef = useRef(0)
-    const resetTurnTokens = () => {
-        turnTokensRef.current = 0
-        setTurnTokens(0)
-    }
-    useServerEvent('turn_progress', (event) => {
-        if (event.chat_id !== chatId) return
-        turnTokensRef.current += event.eval_tokens
-        setTurnTokens(turnTokensRef.current)
-    })
-
     const chatIdRef = useRef(chatId)
     chatIdRef.current = chatId
-    const liveAppendedSinceFetchRef = useRef<DisplayMessage[]>([])
     const trackedChatIdRef = useRef<number | null>(null)
     const skipInitialFetchRef = useRef(false)
     if (trackedChatIdRef.current !== chatId) {
         trackedChatIdRef.current = chatId
-        liveAppendedSinceFetchRef.current = []
         skipInitialFetchRef.current = peekPendingPrompt(chatId) != null
     }
-
-    useEffect(() => {
-        let cancelled = false
-        setCanContinue(false)
-
-        if (!skipInitialFetchRef.current) {
-            getMessages({chatId, limit: MESSAGES_PAGE_SIZE}).then((result) => {
-                if (cancelled) return
-                const historical = toDisplayMessages([...result.messages].reverse())
-                setMessages([...historical, ...liveAppendedSinceFetchRef.current])
-                setTotal(result.total + liveAppendedSinceFetchRef.current.length)
-                setLoadedChatId(chatId)
-                onAppendedRef.current?.()
-            })
-        }
-
-        canUseTool(chatId).then((status) => {
-            if (!cancelled) setCanContinue(status.can_use)
-        })
-
-        return () => {
-            cancelled = true
-        }
-    }, [chatId])
 
     // `loadOlder` is called from the list's top-reached event and from a search jump's own loop,
     // each holding the closure of the render it was created in: the in-flight flag and the page
@@ -311,6 +102,105 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
     messagesRef.current = messages
     const totalRef = useRef(total)
     totalRef.current = total
+    const queueRef = useRef<ToolArgsQueue>({args: []})
+    const readyRef = useRef(false)
+    const wantNewRef = useRef(false)
+    const fetchingNewRef = useRef(false)
+    const fetchAgainRef = useRef(false)
+    // Messages taken off the screen that the backend still holds for a moment (a reply being regenerated): `fetchNew` must not bring them back
+    const hiddenIdsRef = useRef(new Set<number>())
+
+    /** Reads the messages newer than the last one shown. Called when the backend says it stored some; calls that arrive while one is in flight make it look once more */
+    const fetchNew = async () => {
+        const forChatId = chatIdRef.current
+        // The chat's first page isn't here yet: it is read newest-first and would show these twice
+        if (!readyRef.current) {
+            wantNewRef.current = true
+            return
+        }
+        if (fetchingNewRef.current) {
+            fetchAgainRef.current = true
+            return
+        }
+        fetchingNewRef.current = true
+        try {
+            do {
+                fetchAgainRef.current = false
+                const result = await getMessages({chatId: forChatId, afterId: lastStoredId(messagesRef.current)})
+                if (chatIdRef.current !== forChatId) return
+                const known = new Set(messagesRef.current.map((m) => m.id))
+                const added = toDisplayMessages([...result.messages].reverse(), queueRef.current)
+                    .filter((m) => !known.has(m.id) && !(m.id != null && hiddenIdsRef.current.has(m.id)))
+                totalRef.current = result.total
+                setTotal(result.total)
+                if (added.length > 0) {
+                    messagesRef.current = [...messagesRef.current, ...added]
+                    setMessages(messagesRef.current)
+                    onAppendedRef.current?.()
+                }
+            } while (fetchAgainRef.current)
+        } finally {
+            fetchingNewRef.current = false
+        }
+    }
+    const fetchNewRef = useRef(fetchNew)
+    fetchNewRef.current = fetchNew
+
+    /** Reads the chat's newest page again, replacing what is shown: for when something stored was removed behind the page's back */
+    const reload = async () => {
+        const forChatId = chatIdRef.current
+        const result = await getMessages({chatId: forChatId, limit: MESSAGES_PAGE_SIZE})
+        if (chatIdRef.current !== forChatId) return
+        const queue: ToolArgsQueue = {args: []}
+        const shown = toDisplayMessages([...result.messages].reverse(), queue)
+        queueRef.current = queue
+        hiddenIdsRef.current.clear()
+        messagesRef.current = shown
+        totalRef.current = result.total
+        setMessages(shown)
+        setTotal(result.total)
+    }
+
+    useEffect(() => {
+        let cancelled = false
+        readyRef.current = false
+
+        if (!skipInitialFetchRef.current) {
+            getMessages({chatId, limit: MESSAGES_PAGE_SIZE}).then((result) => {
+                if (cancelled) return
+                const queue: ToolArgsQueue = {args: []}
+                const historical = toDisplayMessages([...result.messages].reverse(), queue)
+                queueRef.current = queue
+                messagesRef.current = historical
+                totalRef.current = result.total
+                setMessages(historical)
+                setTotal(result.total)
+                setLoadedChatId(chatId)
+                readyRef.current = true
+                onAppendedRef.current?.()
+                // What was stored while the page was being read
+                if (wantNewRef.current) {
+                    wantNewRef.current = false
+                    void fetchNewRef.current()
+                }
+            })
+        } else {
+            // A chat just made for the home page's prompt: nothing in it yet, its messages arrive as they are stored
+            queueRef.current = {args: []}
+            messagesRef.current = []
+            totalRef.current = 0
+            setMessages([])
+            setTotal(0)
+            setLoadedChatId(chatId)
+            readyRef.current = true
+        }
+
+        return () => {
+            cancelled = true
+            wantNewRef.current = false
+        }
+    }, [chatId])
+
     const loadOlder = async (): Promise<boolean> => {
         if (loadingMoreRef.current || messagesRef.current.length >= totalRef.current) return false
 
@@ -331,121 +221,13 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
         }
     }
 
-    const appendMessage = (message: DisplayMessage) => {
-        liveAppendedSinceFetchRef.current = [...liveAppendedSinceFetchRef.current, message]
-        setMessages((prev) => [...prev, message])
-        setTotal((t) => t + 1)
-        onAppendedRef.current?.()
-    }
-
-    const clearSending = (requestChatId: number) =>
-        setSendingChatId((current) => (current === requestChatId ? null : current))
-
-    const finishOrPause = (requestChatId: number, result: TurnResult): TurnResult => {
-        const isCurrent = () => chatIdRef.current === requestChatId
-
-        if (!result.needsConfirmation) {
-
-            if (isCurrent() && settings?.notifications_enabled && result.reply.content.trim().length > 0) {
-                notify('llm-tulpa', truncateForNotification(result.reply.content))
-            }
-            return result
-        }
-
-        if (isCurrent() && settings?.notifications_enabled && !settings.auto_confirm) {
-            const names = Object.values(result.pending)
-                .map((call) => call.name)
-                .join(', ')
-            notify('llm-tulpa', `Waiting on your OK to run: ${names}`)
-        }
-
-        return {
-            ...result,
-            confirm: async (decisions) => {
-                setSendingChatId(requestChatId)
-                try {
-                    return finishOrPause(requestChatId, await result.confirm(decisions))
-                } finally {
-                    clearSending(requestChatId)
-                }
-            },
-        }
-    }
-
-    /** Sends a prompt as a new turn, from an optimistic user message through any tool calls */
-    const send = async (prompt: string, think: ThinkChoice = true, images: string[] = [], fileIds: number[] = []): Promise<TurnResult> => {
-        const requestChatId = chatId
-        const guardedAppend = (message: DisplayMessage) => {
-            if (chatIdRef.current === requestChatId) appendMessage(message)
-        }
-
-        const shown = userMessage(prompt, images, fileIds)
-        guardedAppend(shown)
-        resetTurnTokens()
-        setSendingChatId(requestChatId)
-        try {
-            const reply = await sendChatMessage(chatId, prompt, think, images, fileIds)
-            // The message was shown before it had an id, and without one it can't be edited or deleted
-            if (reply.user_message_id != null && chatIdRef.current === requestChatId) {
-                const stored = {...shown, id: reply.user_message_id}
-                const swap = (list: DisplayMessage[]) => list.map((m) => (m === shown ? stored : m))
-                liveAppendedSinceFetchRef.current = swap(liveAppendedSinceFetchRef.current)
-                setMessages(swap)
-            }
-            appendReply(reply, guardedAppend)
-            return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
-        } finally {
-            clearSending(requestChatId)
-        }
-    }
-
-    /** Picks a chat back up when it has an unresolved tool call left from a prior session */
-    const resume = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
-        const requestChatId = chatId
-        const guardedAppend = (message: DisplayMessage) => {
-            if (chatIdRef.current === requestChatId) appendMessage(message)
-        }
-
-        const status = await canUseTool(chatId)
-        if (!status.can_use) return null
-
-        resetTurnTokens()
-        setSendingChatId(requestChatId)
-        try {
-            return finishOrPause(requestChatId, await driveToolCalls(chatId, think, status.tools, guardedAppend))
-        } finally {
-            clearSending(requestChatId)
-        }
-    }
-
-    /** Has the model answer again and swaps its last reply (`messageId`) for the new one, then drives that reply like any turn. The old reply leaves the screen at once and comes back if no new reply could be had, since the backend only deletes it once the new one is stored. */
-    const regenerate = async (messageId: number, think: ThinkChoice = true): Promise<TurnResult> => {
-        const requestChatId = chatId
-        const guardedAppend = (message: DisplayMessage) => {
-            if (chatIdRef.current === requestChatId) appendMessage(message)
-        }
-
-        const old = messagesRef.current.find((m) => m.id === messageId)
-        const removeOld = () => {
-            liveAppendedSinceFetchRef.current = liveAppendedSinceFetchRef.current.filter((m) => m.id !== messageId)
-            setMessages((prev) => prev.filter((m) => m.id !== messageId))
-            setTotal((t) => t - 1)
-        }
-
-        resetTurnTokens()
-        setSendingChatId(requestChatId)
-        if (chatIdRef.current === requestChatId) removeOld()
-        let replaced = false
-        try {
-            const reply = await regenerateChat(chatId, messageId, think)
-            replaced = true
-            appendReply(reply, guardedAppend)
-            return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
-        } finally {
-            // Only when the call itself failed: the chat is then exactly as it was
-            if (!replaced && old && chatIdRef.current === requestChatId) appendMessage(old)
-            clearSending(requestChatId)
-        }
+    /** Takes a message off the screen (not out of the chat): a reply the backend replaces once its new one is stored */
+    const hideMessage = (messageId: number) => {
+        hiddenIdsRef.current.add(messageId)
+        messagesRef.current = messagesRef.current.filter((m) => m.id !== messageId)
+        totalRef.current -= 1
+        setMessages(messagesRef.current)
+        setTotal((t) => t - 1)
     }
 
     /** Removes a message and everything after it, in the backend and on screen. Throws (with nothing removed) when the backend refuses, e.g. because a tool was used from there on. */
@@ -456,34 +238,11 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
 
         const start = messagesRef.current.findIndex((m) => m.id === messageId)
         if (start < 0) return
-        const removed = new Set(messagesRef.current.slice(start))
-        liveAppendedSinceFetchRef.current = liveAppendedSinceFetchRef.current.filter((m) => !removed.has(m))
-        setMessages((prev) => prev.slice(0, start))
+        messagesRef.current = messagesRef.current.slice(0, start)
+        totalRef.current -= deleted
+        setMessages(messagesRef.current)
         setTotal((t) => t - deleted)
     }
 
-    /** Shows the notices for finished background jobs the moment the backend has them, then has the model respond and drives its reply like any turn; null when there was nothing to report */
-    const runJobNotices = async (think: ThinkChoice = true): Promise<TurnResult | null> => {
-        const requestChatId = chatId
-        const guardedAppend = (message: DisplayMessage) => {
-            if (chatIdRef.current === requestChatId) appendMessage(message)
-        }
-
-        resetTurnTokens()
-        setSendingChatId(requestChatId)
-        try {
-            const notices = await jobNotices(chatId)
-            if (notices.length === 0) return null
-
-            // Shown now, not with the reply: the model call below can take a while.
-            notices.forEach((notice) => guardedAppend(noticeMessage(notice)))
-            const reply = await continueChat(chatId, think)
-            appendReply(reply, guardedAppend)
-            return finishOrPause(requestChatId, await driveTurn(chatId, think, reply, guardedAppend))
-        } finally {
-            clearSending(requestChatId)
-        }
-    }
-
-    return {messages, total, ready: loadedChatId === chatId, loadOlder, send, regenerate, rewind, resume, runJobNotices, sending, canContinue, turnTokens}
+    return {messages, total, ready: loadedChatId === chatId, loadOlder, fetchNew, reload, hideMessage, rewind}
 };

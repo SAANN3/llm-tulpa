@@ -1,0 +1,17 @@
+@use 'tokens' as *;
+
+.run-status {
+  align-items: flex-start;
+  gap: $space-1;
+}
+
+.run-status__line {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.run-status__label {
+  font-size: 12px;
+  opacity: 0.6;
+}

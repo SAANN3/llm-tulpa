@@ -6,6 +6,8 @@ import {
     ActiveModelField,
     AutoConfirmField,
     TrimOldThinkingField,
+    UseToolsField,
+    MaxTurnStepsField,
     NameTimezoneFields,
     NotificationsField,
     HfTokenField,
@@ -15,6 +17,7 @@ import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {requestNotificationPermission} from '../utils/notifications'
+import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
 const browserTimezoneOffsetHours = (): number => -new Date().getTimezoneOffset() / 60;
@@ -28,6 +31,8 @@ const Settings = () => {
     const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications_enabled ?? false)
     const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(settings?.auto_confirm ?? false)
     const [trimOldThinking, setTrimOldThinking] = useState(settings?.trim_old_thinking ?? false)
+    const [useTools, setUseTools] = useState(settings?.use_tools ?? true)
+    const [maxTurnStepsText, setMaxTurnStepsText] = useState(settings?.max_turn_steps != null ? String(settings.max_turn_steps) : '')
 
     const onToggleNotifications = async (enabled: boolean) => {
         if (!enabled) {
@@ -42,13 +47,14 @@ const Settings = () => {
 
     const tz = validateTimezone(timezoneText)
     const nameValid = name.trim().length > 0
-    const saveDisabled = !nameValid || !tz.valid
+    const steps = parseMaxTurnSteps(maxTurnStepsText)
+    const saveDisabled = !nameValid || !tz.valid || !steps.valid
 
     const onSave = async () => {
         if (saveDisabled) return
 
         const timezone = Number(timezoneText)
-        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled, trim_old_thinking: trimOldThinking})
+        await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled, trim_old_thinking: trimOldThinking, use_tools: useTools, max_turn_steps: steps.value})
         navigate('/')
     }
 
@@ -78,6 +84,8 @@ const Settings = () => {
                     <NotificationsField enabled={notificationsEnabled} onToggle={onToggleNotifications}/>
                     <AutoConfirmField enabled={autoConfirmEnabled} onToggle={setAutoConfirmEnabled}/>
                     <TrimOldThinkingField enabled={trimOldThinking} onToggle={setTrimOldThinking}/>
+                    <UseToolsField enabled={useTools} onToggle={setUseTools}/>
+                    <MaxTurnStepsField text={maxTurnStepsText} onChanged={setMaxTurnStepsText}/>
                     <Div className="settings__actions">
                         <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>
                         <Button className="settings__action" text="Save" onClicked={onSave} disabled={saveDisabled}/>

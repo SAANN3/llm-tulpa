@@ -7,6 +7,7 @@ import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
 import {setChatModel} from '../api/chats/set-model'
 import {setChatProfile} from '../api/chats/set-profile'
+import {setChatTools} from '../api/chats/set-tools'
 import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
 import type {LaunchProfile} from '../api/profiles/types'
@@ -44,6 +45,11 @@ export interface ChatHeaderProps {
     hasActiveHighlight: boolean
     /** Turns off the current search highlight */
     onClearHighlight: () => void
+    /** Whether the model is sent its tools in this chat */
+    toolsEnabled: boolean
+    onToolsChanged: (enabled: boolean) => void
+    /** The chat has a run going on: its tools can't be switched until it ends */
+    runActive: boolean
 }
 
 /** The bar above a chat's messages: its name, the model it's bound to (with a switcher popup),
@@ -63,6 +69,9 @@ export const ChatHeader = ({
     onSelectSearchResult,
     hasActiveHighlight,
     onClearHighlight,
+    toolsEnabled,
+    onToolsChanged,
+    runActive,
 }: ChatHeaderProps) => {
     const navigate = useNavigate()
     const [open, setOpen] = useState(false)
@@ -108,6 +117,11 @@ export const ChatHeader = ({
         setFolderOpen(false)
     }
 
+    const toggleTools = async () => {
+        await setChatTools(chatId, !toolsEnabled)
+        onToolsChanged(!toolsEnabled)
+    }
+
     const doRename = async (newName: string) => {
         await renameChat(chatId, newName)
     }
@@ -131,6 +145,14 @@ export const ChatHeader = ({
                 <span className="chat-header__model-label">model:</span>
                 <span className="chat-header__model-name">{profileLabel(models, profiles, launchProfileId) ?? model ?? '…'}</span>
             </Button>
+            {parentChatId == null ? (
+                <Button variant="secondary" className="chat-header__tools" disabled={runActive}
+                        title={toolsEnabled ? 'The model is sent its tools in this chat. Click to turn them off.' : 'The model has no tools in this chat. Click to turn them on.'}
+                        onClicked={() => void toggleTools()}>
+                    <span className="chat-header__model-label">tools:</span>
+                    <span className="chat-header__model-name">{toolsEnabled ? 'on' : 'off'}</span>
+                </Button>
+            ) : null}
             <Div className="chat-header__folder-group">
                 <Button variant="secondary" className="chat-header__folder" onClicked={() => setFolderOpen(true)}>
                     <Folder width={16} height={16}/>

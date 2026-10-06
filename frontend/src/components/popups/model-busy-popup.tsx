@@ -12,7 +12,7 @@ export interface ModelBusyPopupProps {
 export const ModelBusyPopup = ({reason, onClose}: ModelBusyPopupProps) => (
     <Popup open={reason != null} onClose={onClose} title="Model in use">
         <Label text={reason ?? ''}/>
-        <Label variant="secondary" text="Your message was not sent. Try again in a moment."/>
+        <Label variant="secondary" text="The model did not answer. Try again in a moment."/>
         <Div className="popup__actions">
             <Button text="OK" onClicked={onClose}/>
         </Div>

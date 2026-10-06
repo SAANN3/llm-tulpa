@@ -7,6 +7,8 @@ export interface ChatStart {
     launchProfileId?: number
     model?: string
     provider?: string
+    /** Whether the model is sent its tools in this chat; the user's default setting when left out */
+    toolsEnabled?: boolean
 }
 
 /** Creates a new chat with the given name, on the default model unless `start` names another */
@@ -16,6 +18,7 @@ export const createChat = async (name: string, start?: ChatStart): Promise<ChatO
         launch_profile_id: start?.launchProfileId,
         model: start?.model,
         provider: start?.provider,
+        tools_enabled: start?.toolsEnabled,
     })
     return data
 };

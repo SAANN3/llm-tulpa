@@ -14,35 +14,40 @@ import {ModelStateBanner} from '../components/model-state-banner.tsx'
 import {ConfirmPopup} from '../components/popups/base/confirm-popup.tsx'
 import {ModelBusyPopup} from '../components/popups/model-busy-popup.tsx'
 import {NoticeMessage} from '../components/notice-message.tsx'
-import {PendingAssistantMessage} from '../components/pending-assistant-message.tsx'
 import {Button, Div, Label} from '../components/primitives'
+import {RunStatus} from '../components/run-status.tsx'
 import {Sidebar} from '../components/sidebar.tsx'
 import {ToolConfirmation} from '../components/tool-confirmation.tsx'
 import {ToolMessage} from '../components/tool-message.tsx'
 import {UserInput} from '../components/user-input.tsx'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
-import type {Decisions, PendingConfirmations, TurnResult} from '../hooks/use-messages.ts'
-import {ToolAllowance, useMessages} from '../hooks/use-messages.ts'
+import {useMessages} from '../hooks/use-messages.ts'
+import type {TurnView} from '../hooks/use-turn.ts'
+import {useTurn} from '../hooks/use-turn.ts'
 import {useServerEvent} from '../hooks/use-server-events.ts'
 import {useSettings} from '../context/use-settings.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
 import {errorReason} from '../utils/error-reason.ts'
+import {notify} from '../utils/notifications'
+import {describeRunEnd} from '../utils/run-end.ts'
+import type {AgentToolCall, Decision, RunEnded} from '../api/agent/types'
 
-/** Auto-confirm's stand-in decision: grant the escalation, or acknowledge with nothing to grant */
-const autoConfirmDecisions = (pending: PendingConfirmations): Decisions => {
-    const decisions: Decisions = {}
-    for (const key of Object.keys(pending)) {
-        const index = Number(key)
-        decisions[index] = pending[index].escalation ? ToolAllowance.Permanent : ToolAllowance.Forbid
-    }
-    return decisions
+const NOTIFICATION_BODY_MAX_CHARS = 100
+
+const truncateForNotification = (text: string): string => {
+    const trimmed = text.trim()
+    if (trimmed.length <= NOTIFICATION_BODY_MAX_CHARS) return trimmed
+
+    return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_CHARS).trimEnd()}...`
 };
 
-interface PausedTurn {
-    pending: PendingConfirmations
-    confirm: (decisions: Decisions) => Promise<TurnResult>
-}
+/** The calls of a wait for permission that need an answer, by tool name */
+const askingToolNames = (pending: AgentToolCall[]): string =>
+    pending
+        .filter((call) => call.permission.status === 'denied' && call.permission.escalation)
+        .map((call) => call.name)
+        .join(', ')
 
 const LOAD_MORE_THRESHOLD = 80
 
@@ -60,14 +65,26 @@ const Chat = () => {
 const ChatView = ({chatId}: { chatId: number }) => {
     const {settings} = useSettings()
     const lazyListRef = useRef<LazyListHandle>(null)
-    const {messages, total, ready, loadOlder, send, regenerate, rewind, resume, runJobNotices, sending, canContinue, turnTokens} = useMessages(chatId, () =>
+    const {messages, total, ready, loadOlder, fetchNew, reload, hideMessage, rewind} = useMessages(chatId, () =>
         lazyListRef.current?.jumpToBottom(),
     )
+    const messagesRef = useRef(messages)
+    messagesRef.current = messages
+    const fetchNewRef = useRef(fetchNew)
+    fetchNewRef.current = fetchNew
+    const runEndedRef = useRef<(end: RunEnded, view: TurnView) => void>(() => undefined)
+    const {view: turn, send, regenerate, answer, stop} = useTurn(chatId, {
+        onMessagesChanged: () => void fetchNewRef.current(),
+        onRunEnded: (end, view) => runEndedRef.current(end, view),
+    })
+    // A run is going on, or waits for the user: the composer and the edit controls are off
+    const busy = turn.status !== 'idle'
 
     const [chatName, setChatName] = useState<string | null>(null)
     const [chatModel, setChatModel] = useState<string | null>(null)
     const [chatProvider, setChatProvider] = useState('ollama')
     const [chatProfileId, setChatProfileId] = useState<number | null>(null)
+    const [chatToolsEnabled, setChatToolsEnabled] = useState(true)
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
     const [folderId, setFolderId] = useState<number | null>(null)
@@ -91,6 +108,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatModel(result.model)
                 setChatProvider(result.provider)
                 setChatProfileId(result.launch_profile_id)
+                setChatToolsEnabled(result.tools_enabled)
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
                 setFolderId(result.folder_id)
@@ -123,7 +141,6 @@ const ChatView = ({chatId}: { chatId: number }) => {
         query: string
         matchedIn: string
     } | null>(null)
-    const [pausedTurn, setPausedTurn] = useState<PausedTurn | null>(null)
     const [turnError, setTurnError] = useState<string | null>(null)
     // Set when another user has the model server busy with a different model: that is a wait, not an error
     const [busyReason, setBusyReason] = useState<string | null>(null)
@@ -147,43 +164,40 @@ const ChatView = ({chatId}: { chatId: number }) => {
         else mutate()
     }
 
-    // Moves the context-usage bar during a turn, not just once it fully ends: a turn with
-    // tool calls makes several Ollama calls in sequence, each with its own context usage,
-    // but only the very last one reaches this component as a `TurnResult` (see
-    // `handleTurnResult` below) — `turn_progress` is the same per-call event the pending
-    // bubble already uses for its own live token count, just also carrying the running
-    // context size.
+    // Moves the context-usage bar during a run, not just once it ends: a run with tool calls makes several
+    // model calls in sequence, each with its own context usage, and `turn_progress` is the per-call event that
+    // carries the running context size.
     useServerEvent('turn_progress', (event) => {
         if (event.chat_id !== chatId || event.prompt_tokens == null) return
         setContextUsed(event.prompt_tokens + event.eval_tokens)
     })
 
-    const handleTurnResult = (forChatId: number, result: TurnResult) => {
-        if (chatIdRef.current !== forChatId) return
-        // Each segment of a turn carries the context usage right after it — the last
-        // segment's is the current one
-        if (!result.needsConfirmation && result.reply.prompt_tokens != null) {
-            setContextUsed(result.reply.prompt_tokens + (result.reply.eval_tokens ?? 0))
+    // Reacts to a run's end: a busy model server gets its popup, a regenerate that didn't produce its reply gets the old
+    // reply back, and a finished answer or a wait for permission can notify when the tab is in the background
+    const regeneratingRef = useRef(false)
+    runEndedRef.current = (end, view) => {
+        if (end.reason === 'failed' && end.status === 423) setBusyReason(end.detail ?? 'The model is in use by someone else.')
+        if (regeneratingRef.current) {
+            regeneratingRef.current = false
+            if (end.reason !== 'answered') void reload()
         }
-        if (result.needsConfirmation && settings?.auto_confirm) {
-            setPausedTurn(null)
-            result.confirm(autoConfirmDecisions(result.pending)).then(
-                (next) => handleTurnResult(forChatId, next),
-                (e) => turnFailed(forChatId, e, 'Something went wrong continuing that turn — try again.'),
-            )
-            return
+        if (!settings?.notifications_enabled) return
+        if (end.reason === 'waiting_for_permission' && !settings.auto_confirm) {
+            notify('llm-tulpa', `Waiting on your OK to run: ${askingToolNames(view.pending)}`)
+        } else if (end.reason === 'answered') {
+            void fetchNewRef.current().then(() => {
+                const reply = [...messagesRef.current].reverse().find((m) => m.role === 'assistant')
+                const text = reply != null && typeof reply.content === 'string' ? reply.content : ''
+                if (text.trim().length > 0) notify('llm-tulpa', truncateForNotification(text))
+            })
         }
-
-        setPausedTurn(result.needsConfirmation ? {pending: result.pending, confirm: result.confirm} : null)
     }
-    const handleConfirm = async (decisions: Decisions) => {
-        if (!pausedTurn) return
-        const {confirm} = pausedTurn
+
+    const handleConfirm = async (decisions: Decision[]) => {
         const forChatId = chatId
-        setPausedTurn(null)
         setTurnError(null)
         try {
-            handleTurnResult(forChatId, await confirm(decisions))
+            await answer(decisions, lastThinkRef.current)
         } catch (e) {
             turnFailed(forChatId, e, 'Something went wrong continuing that turn — try again.')
         }
@@ -209,7 +223,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
             setEditing(null)
         }
         try {
-            handleTurnResult(forChatId, await send(prompt, think, images, fileIds))
+            await send(prompt, think, images, fileIds)
         } catch (e) {
             turnFailed(forChatId, e, 'Something went wrong sending that — try again.')
         }
@@ -219,9 +233,15 @@ const ChatView = ({chatId}: { chatId: number }) => {
         const forChatId = chatId
         setTurnError(null)
         setSearchHighlight(null)
+        // The old reply leaves the screen at once; the backend deletes it once the new one is stored, and it comes
+        // back if the run ends without one
+        regeneratingRef.current = true
+        hideMessage(messageId)
         try {
-            handleTurnResult(forChatId, await regenerate(messageId, lastThinkRef.current))
+            await regenerate(messageId, lastThinkRef.current)
         } catch (e) {
+            regeneratingRef.current = false
+            void reload()
             turnFailed(forChatId, e, "Couldn't regenerate that reply — the chat is unchanged.")
         }
     }
@@ -241,16 +261,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
 
     const sendRef = useRef(handleSend)
     sendRef.current = handleSend
-    const resumeRef = useRef(resume)
-    resumeRef.current = resume
-    const runJobNoticesRef = useRef(runJobNotices)
-    runJobNoticesRef.current = runJobNotices
-    const handleTurnResultRef = useRef(handleTurnResult)
-    handleTurnResultRef.current = handleTurnResult
     const [initialThink] = useState(() => peekPendingPrompt(chatId)?.think !== false)
 
     useEffect(() => {
-        setPausedTurn(null)
         setExpandedTools({})
         setExpandedThinking({})
         setTurnError(null)
@@ -264,44 +277,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
         if (pending) sendRef.current(pending.prompt, pending.think, pending.images, pending.fileIds)
     }, [chatId])
 
-    // A finished job is only a hint and can arrive mid-turn, so it's recorded here and acted on
-    // once the chat is idle — deferred, never dropped
-    const [noticesWaiting, setNoticesWaiting] = useState(false)
-    useServerEvent('job_finished', (event) => {
-        if (event.chat_id === chatIdRef.current) setNoticesWaiting(true)
-    })
-
-    useEffect(() => {
-        if (!noticesWaiting || sending || pausedTurn) return
-        setNoticesWaiting(false)
-        const forChatId = chatId
-
-        runJobNoticesRef
-            .current(lastThinkRef.current)
-            .then((result) => {
-                if (result) handleTurnResultRef.current(forChatId, result)
-            })
-            .catch((e) => turnFailed(forChatId, e, 'Something went wrong reacting to a finished job — try again.'))
-    }, [noticesWaiting, sending, pausedTurn, chatId])
-
-    useEffect(() => {
-        // A sub-agent's chat is driven by the backend, never by this page — not even to finish a
-        // call it left unresolved — and until the chat is fetched it isn't known whether it is one.
-        if (!canContinue || parentChatId !== null) return
-        const forChatId = chatId
-
-        resumeRef
-            .current()
-            .then((result) => {
-                if (result) handleTurnResult(forChatId, result)
-            })
-            .catch((e) => turnFailed(forChatId, e, 'Something went wrong resuming that turn — try again.'))
-    }, [canContinue, chatId, parentChatId])
-
     // A search hit may live in a page that isn't loaded yet: load older pages until it's
     // mounted, then scroll to it.
-    const messagesRef = useRef(messages)
-    messagesRef.current = messages
     const totalRef = useRef(total)
     totalRef.current = total
     const loadOlderRef = useRef(loadOlder)
@@ -364,7 +341,10 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             parentChatId={parentChatId ?? null}
                             onSelectSearchResult={jumpToMessage}
                             hasActiveHighlight={searchHighlight != null}
-                            onClearHighlight={() => setSearchHighlight(null)}/>
+                            onClearHighlight={() => setSearchHighlight(null)}
+                            toolsEnabled={chatToolsEnabled}
+                            onToolsChanged={setChatToolsEnabled}
+                            runActive={busy}/>
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {
@@ -373,9 +353,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         // A message can be edited or deleted when nothing from it onward is anything but plain
                         // conversation (the backend checks the rest: the compaction boundary, plugin chats)
                         const plainFromHere = messages.slice(i).every((x) => x.id != null && (x.role === 'user' || x.role === 'assistant'))
-                        const canCut = plainFromHere && !sending && pausedTurn == null && parentChatId === null
+                        const canCut = plainFromHere && !busy && parentChatId === null
                         const canRegenerate = i === messages.length - 1 && m.role === 'assistant' && m.id != null
-                            && messages[i - 1]?.role === 'user' && !sending && pausedTurn == null && parentChatId === null
+                            && messages[i - 1]?.role === 'user' && !busy && parentChatId === null
                         const prev = messages[i - 1]
                         const showDate = !prev || !isSameDay(new Date(m.created_at), new Date(prev.created_at))
                         const isHit = m.id != null && searchHighlight?.messageId === m.id
@@ -425,10 +405,15 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             </Fragment>
                         )
                     })}
-                    {sending ? <PendingAssistantMessage tokens={turnTokens}/> : null}
+                    {busy ? <RunStatus view={turn} onStop={() => void stop()}/> : null}
+                    {!busy && turn.lastEnd ? (
+                        <NoticeMessage content={describeRunEnd(turn.lastEnd, settings?.max_turn_steps ?? null) ?? ''}/>
+                    ) : null}
                 </LazyList>
-                <ModelStateBanner watching={sending}/>
-                {pausedTurn ? <ToolConfirmation pending={pausedTurn.pending} onConfirm={handleConfirm}/> : null}
+                <ModelStateBanner watching={turn.status === 'running'}/>
+                {turn.status === 'waiting_for_permission' ? (
+                    <ToolConfirmation key={turn.lastEnd?.ended_at} pending={turn.pending} onConfirm={handleConfirm}/>
+                ) : null}
                 {turnError ? (
                     <Div className="chat__error">
                         <Label className="chat__error-text" text={turnError}/>
@@ -441,7 +426,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     </Div>
                 ) : (
                     <UserInput
-                        blocked={sending || pausedTurn != null}
+                        blocked={busy}
                         onSended={handleSend}
                         inputDisabled={false}
                         clearOnSend={editing == null}

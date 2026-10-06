@@ -3,6 +3,7 @@ import '../styles/settings-fields.scss'
 import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {useModelsData} from '../hooks/use-models-data.ts'
+import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 
 /** A field label in the small-caps style used above every input in this panel */
@@ -168,3 +169,46 @@ export const TrimOldThinkingField = ({enabled, onToggle}: TrimOldThinkingFieldPr
         />
     </Div>
 );
+
+export interface UseToolsFieldProps {
+    enabled: boolean
+    onToggle: (enabled: boolean) => void
+}
+
+/** Whether new chats send the model its tools — each chat has its own switch afterwards */
+export const UseToolsField = ({enabled, onToggle}: UseToolsFieldProps) => (
+    <Div className="field">
+        <Div className="field__row">
+            <Label className="field__row-label" text="Use tools in new chats"/>
+            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+        </Div>
+        <FieldHelp
+            text="Tools let the model read and write files, run commands and look things up. Their definitions take about 9,000 tokens of every request, so a small model or a small context window does better without them. Only new chats take this; a chat has its own switch in its header."
+            accent={!enabled}
+            wide
+        />
+    </Div>
+);
+
+export interface MaxTurnStepsFieldProps {
+    text: string
+    onChanged: (text: string) => void
+}
+
+/** How many model calls one turn may make before it is stopped and the model is asked to wrap up */
+export const MaxTurnStepsField = ({text, onChanged}: MaxTurnStepsFieldProps) => {
+    const parsed = parseMaxTurnSteps(text)
+    return (
+        <Div className="field">
+            <FieldLabel text="Step limit per turn"/>
+            <Input className="field__input--tz" text={text} onChanged={onChanged} placeholder="No limit"/>
+            <FieldHelp
+                text={parsed.valid
+                    ? 'A turn is a series of model calls and tool calls. At this many, the model is told to write down where it got to and the turn stops until you continue. Empty or 0 means no limit.'
+                    : 'A whole number from 0 to 10,000.'}
+                accent={!parsed.valid}
+                wide
+            />
+        </Div>
+    )
+};

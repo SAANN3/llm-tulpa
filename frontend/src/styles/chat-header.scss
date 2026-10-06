@@ -47,6 +47,16 @@
   overflow: hidden;
 }
 
+.chat-header__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: 12px;
+  height: 34px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
 .chat-header__model-label {
   text-transform: uppercase;
   letter-spacing: 0.1em;

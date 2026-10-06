@@ -9,6 +9,10 @@ export interface Settings {
     auto_confirm: boolean
     /** Old thinking traces are shortened to their tail in a long chat, and the newest are replayed longer. */
     trim_old_thinking: boolean
+    /** New chats send the model its tools; off for a model too small for them or a window they would mostly fill. */
+    use_tools: boolean
+    /** How many model calls one turn may make before it is stopped and the model is asked to wrap up; null for no limit. */
+    max_turn_steps: number | null
     /** Whether a Hugging Face token is set (the token itself is never sent back) */
     has_hf_token: boolean
     llm_provider: string
@@ -25,6 +29,9 @@ export interface SettingsUpdate {
     language?: string
     auto_confirm?: boolean
     trim_old_thinking?: boolean
+    use_tools?: boolean
+    /** The turn step limit, 0 for none */
+    max_turn_steps?: number
     /** A Hugging Face access token; empty clears it */
     hf_token?: string
     llm_provider?: string

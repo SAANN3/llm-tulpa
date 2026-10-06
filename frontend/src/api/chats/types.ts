@@ -15,6 +15,8 @@ export interface ChatOut {
     parent_chat_id: number | null
     /** The launch profile this chat runs its model under, or null for a model with none (an Ollama model). */
     launch_profile_id: number | null
+    /** Whether the model is sent its tools in this chat. */
+    tools_enabled: boolean
 }
 
 export interface ChatListOut {

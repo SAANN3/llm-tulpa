@@ -1,10 +1,15 @@
 import {useEffect, useRef} from 'react'
 import {BACKEND_URL} from '../config'
+import type {RunEndReason} from '../api/agent/types'
 import {getToken} from '../utils/auth-token'
 
 export type ServerEvent =
     | { type: 'job_finished'; chat_id: number; job_id: number }
-    | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null }
+    | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null; step: number }
+    | { type: 'run_started'; chat_id: number; started_at: string }
+    | { type: 'messages_changed'; chat_id: number }
+    | { type: 'tool_started'; chat_id: number; tool_name: string }
+    | { type: 'run_ended'; chat_id: number; reason: RunEndReason; detail: string | null; started_at: string; eval_tokens: number; status: number | null }
     | { type: 'model_state'; state: 'loading' | 'ready' | 'stopped' | 'failed' | 'queued'; profile_id: number | null; model: string | null; detail: string | null }
 
 type Listener = (event: ServerEvent) => void
