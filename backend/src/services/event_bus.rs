@@ -59,6 +59,8 @@ pub enum ServerEvent {
         #[schema(value_type = String, format = "date-time")]
         started_at: DateTimeUtc,
         eval_tokens: u64,
+        /// The HTTP status the failure would have had (423 when the model server is in use by someone else).
+        status: Option<u16>,
     },
     /// The model server started loading, became ready, stopped or failed. Not about any one chat:
     /// everyone is told, so a page can say "the model is being applied, don't close it".

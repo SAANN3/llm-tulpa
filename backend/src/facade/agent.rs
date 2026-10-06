@@ -46,18 +46,18 @@ pub use prompts::default_system_prompt;
 
 
 
-/// rough characters-per-token used to turn that into a size. The result is what the whole run was
-/// for, so it's inlined instead of left for a tool call — but a single message bigger than the
-/// window can't be compacted away, so a cap is the backstop. It scales with the context length like
-/// the compaction thresholds do; the sub-agent's own prompt is what asks it to keep results short.
+/// A sub-agent's result goes into its parent's notice in full up to this share of the context window,
+/// turned into a size at `INLINED_RESULT_CHARS_PER_TOKEN` characters a token. The result is what the whole
+/// run was for, so it's inlined instead of left for a tool call — but a single message bigger than the
+/// window can't be compacted away, so a cap is the backstop. It scales with the context length like the
+/// compaction thresholds do; the sub-agent's own prompt is what asks it to keep results short.
 const INLINED_RESULT_FRACTION: f64 = 0.15;
 const INLINED_RESULT_CHARS_PER_TOKEN: f64 = 3.0;
 
-/// Facade over the model providers, `ChatStore`, and `ToolService` — where the actual
-/// "fetch history, call Ollama, persist the result, run tool calls" sequencing lives,
-/// rather than in route handlers or inside any one of the services it composes. Holds
-/// its own `Arc` clones of each rather than borrowing from `AppState`, so it can be
-/// used independently of any particular request's `State` extraction.
+/// The agent's public face: starts, answers, stops and reads a chat's turn, and wires the components that do
+/// the work (see "The agent and its turn runner" in `backend/TOOLS.md`). Holds its own `Arc` clones of the
+/// stores rather than borrowing from `AppState`, so it can be used independently of any particular request's
+/// `State` extraction.
 #[derive(Clone)]
 pub struct Agent {
     /// Provider, launch profile, call parameters and the turn's claim on the model server, and what

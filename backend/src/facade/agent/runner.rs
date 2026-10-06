@@ -76,6 +76,8 @@ pub struct RunEnded {
     #[schema(value_type = String, format = "date-time")]
     pub started_at: DateTimeUtc,
     pub eval_tokens: u64,
+    /// The HTTP status a `failed` run would have had: 423 means the model server is in use by someone else.
+    pub status: Option<u16>,
 }
 
 /// What a chat's turn is doing, for a page that was just opened or reloaded.
@@ -508,22 +510,23 @@ impl TurnRunner {
 
     /// Records how a run ended and tells whoever is watching.
     fn finish(&self, chat_id: i64, end: RunEnd, run: RunSnapshot) {
-        let (reason, detail) = match end {
-            RunEnd::Answered => (RunEndReason::Answered, None),
-            RunEnd::StepLimit => (RunEndReason::StepLimit, None),
-            RunEnd::Stopped => (RunEndReason::Stopped, None),
-            RunEnd::WaitingForPermission => (RunEndReason::WaitingForPermission, None),
+        let (reason, detail, status) = match end {
+            RunEnd::Answered => (RunEndReason::Answered, None, None),
+            RunEnd::StepLimit => (RunEndReason::StepLimit, None, None),
+            RunEnd::Stopped => (RunEndReason::Stopped, None, None),
+            RunEnd::WaitingForPermission => (RunEndReason::WaitingForPermission, None, None),
             RunEnd::Failed(e) => {
+                let status = e.http_code.as_u16();
                 let detail = e.message.unwrap_or_else(|| "the run failed".to_string());
                 tracing::warn!(chat_id, "run failed: {detail}");
-                (RunEndReason::Failed, Some(detail))
+                (RunEndReason::Failed, Some(detail), Some(status))
             }
             // Nothing happened, so there is nothing to report
             RunEnd::NothingToDo | RunEnd::Subagent(_) => return,
         };
-        let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens };
+        let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens, status };
         self.last_ends.lock().unwrap().insert(chat_id, ended);
-        self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens });
+        self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens, status });
     }
 
     /// The loop. A step is a model call and what comes of it; after a reply that asks for tools the
