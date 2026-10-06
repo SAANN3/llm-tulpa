@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The summary header tells the model that what is not listed was dropped, and to read a value again with a tool (or, without tools, to say it no longer has it) instead of reconstructing it. In a 60-item task with one fold the model wrote 29 of 60 hashes in its final file from memory, wrong; the header is meant to stop that, but one run can't show how much it helps.
 - A chat's key facts are bounded: at most 60 entries and 6,000 characters, each cut at 400 characters; the oldest go first except the first 10 (the task's own rules). A new fact that says nothing an existing one doesn't (same words, or a run of whole words inside it) is skipped, and one that contains an existing fact replaces it, so the list keeps the fuller wording. This is plain text comparison, not a request to the model. A 100-item task had left 81 facts, a small window 158, all riding in the system message on every request.
 - A sub-agent's chat publishes `run_started` and `run_ended` like any run (a sub-agent that stops without handing anything back ends as `failed` with what it wrote), so a page that has it open follows it live.
+- Rewinding (`POST /api/chats/rewind`) or deleting a chat that has a run going on is refused with 409: the run is building on those messages.
 - Before a request is sent, its size is estimated from the last measured prompt plus what was added since (a large tool result), and the chat is compacted first when that passes the trigger.
 
 ### Changed
