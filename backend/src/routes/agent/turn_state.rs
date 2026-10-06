@@ -17,8 +17,7 @@ pub struct TurnStateQuery {
 /// What `chat_id`'s turn is doing: `idle`, `running` (since when, when the current model call started and the
 /// tokens its finished calls generated, so a reloaded page can show "thinking for 1m 30s, N tokens" from the
 /// real start), or `waiting_for_permission` (with the tool calls waiting for an answer, which `POST
-/// /api/agent/answer` takes by position). Also says how the last run ended. On a chat with no run, a tool call
-/// the backend was cut off in the middle of (a restart) is recorded as interrupted here.
+/// /api/agent/answer` takes by position). Also says how the last run ended. Only reads.
 #[utoipa::path(
     get,
     path = "/api/agent/turn",

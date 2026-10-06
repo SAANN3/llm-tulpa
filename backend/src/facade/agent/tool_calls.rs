@@ -134,14 +134,14 @@ impl ToolCalls {
     }
 
     /// Records the tool calls that were cut short as interrupted, instead of leaving them to be
-    /// run again. Opening a chat is where this is discovered: a call the chat's grants already
+    /// run again. A turn starting on the chat is where this is done: a call the chat's grants already
     /// allow is executed the moment the model asks for it, never left waiting for a person — so
     /// one that is *still* unresolved while nothing is executing was interrupted (the backend
     /// restarted, or the client went away mid-run), and re-running it could repeat something that
     /// already happened, or block again on a command that never exits. A call waiting for the
     /// user's confirmation is different and stays as it is; so does everything queued after it,
     /// since results are recorded in the order the model asked.
-    async fn settle_interrupted(&self, chat_id: i64) -> Result<(), ErrorService> {
+    pub(super) async fn settle_interrupted(&self, chat_id: i64) -> Result<(), ErrorService> {
         if self.is_running(chat_id) {
             return Ok(());
         }
@@ -179,14 +179,13 @@ impl ToolCalls {
     /// actually running them — lets a caller check each one's `permission` (and warn
     /// about a `Denied` one) before committing to `use_tool`.
     ///
-    /// Also settles calls that were cut short (see `settle_interrupted`): they're recorded as
-    /// interrupted rather than reported as pending, so opening a chat never re-runs them. While a
-    /// call is executing, nothing is reported as pending — whoever is running it owns it.
+    /// Only reads: calls that were cut short are recorded as interrupted when a turn starts (see
+    /// `settle_interrupted`). While a call is executing, nothing is reported as pending — whoever is
+    /// running it owns it.
     pub(super) async fn can_use(&self, chat_id: i64) -> Result<CanUseTool, ErrorService> {
         if self.is_running(chat_id) {
             return Ok(CanUseTool { can_use: false, tools: vec![] });
         }
-        self.settle_interrupted(chat_id).await?;
 
         let pending = self.pending_tool_calls(chat_id).await?;
 

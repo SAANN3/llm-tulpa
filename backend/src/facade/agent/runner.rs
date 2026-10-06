@@ -252,6 +252,8 @@ impl TurnRunner {
         think: Option<ThinkChoice>,
     ) -> Result<StartedTurn, ErrorService> {
         let slot = self.claim(chat_id)?;
+        // A call a crash cut short gets its result before this message, so the history stays in order
+        self.tool_calls.settle_interrupted(chat_id).await?;
 
         // A file can be uploaded before any chat exists to attach it to (the home page's case): this is the
         // moment it becomes this chat's. A no-op for a file already uploaded with a real `chat_id`.
@@ -354,6 +356,7 @@ impl TurnRunner {
         if self.waiting_for_permission(chat_id).await? {
             return Ok(());
         }
+        self.tool_calls.settle_interrupted(chat_id).await?;
         let think = self.thinks.lock().unwrap().get(&chat_id).cloned().flatten();
         self.spawn(slot, think, Start::Wake, Policy::Attended);
         Ok(())
@@ -710,6 +713,8 @@ impl TurnRunner {
             views.push(self.tool_calls.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?);
         }
 
+        // The call the run has to wait at, when an attended run meets one that needs the user's permission
+        let mut stop_before: Option<usize> = None;
         // One-time scopes, by the position of the call they are for
         let mut one_time: HashMap<usize, Value> = HashMap::new();
         match decisions {
@@ -739,7 +744,10 @@ impl TurnRunner {
                         }
                     }
                 } else if matches!(policy, Policy::Attended) {
-                    return Ok(ToolsOutcome::NeedsPermission);
+                    // The calls before the first one that needs permission run now, in the order they were asked,
+                    // and the run waits there: pausing before them would leave them pending, and a read of the
+                    // chat would take them for calls a crash had cut short
+                    stop_before = views.iter().position(|view| matches!(view.permission, AgentToolPermission::Denied { escalation: Some(_), .. }));
                 }
             }
             None => {}
@@ -750,6 +758,9 @@ impl TurnRunner {
         for index in 0..views.len() {
             if run.is_stopped() {
                 return Ok(ToolsOutcome::Stopped);
+            }
+            if stop_before == Some(index) {
+                return Ok(ToolsOutcome::NeedsPermission);
             }
             self.events.publish(ServerEvent::ToolStarted { chat_id, tool_name: views[index].name.clone() });
             run.tool_started(&views[index].name);
