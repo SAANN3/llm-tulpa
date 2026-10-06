@@ -10,6 +10,8 @@ import {clearToken, getToken} from '../utils/auth-token'
 interface ClientHandlers {
     onUnauthorized?: () => void
     onSetupRequired?: () => void
+    /** A request got no answer at all (the backend is down or the network is) */
+    onUnreachable?: () => void
 }
 
 const handlers: ClientHandlers = {}
@@ -42,6 +44,9 @@ export const installAuthInterceptors = () => {
             }
 
             if (error.response?.status === 503) handlers.onSetupRequired?.()
+            // Not the status request itself: it is what the handler asks, and would ask again
+            const isStatusRequest = typeof error.config?.url === 'string' && error.config.url.endsWith('/api/setup/status')
+            if (!error.response && error.code !== 'ERR_CANCELED' && !isStatusRequest) handlers.onUnreachable?.()
             return Promise.reject(error)
         },
     )

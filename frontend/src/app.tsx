@@ -1,5 +1,6 @@
-import {useState} from 'react'
+import {useEffect, useState, type ReactNode} from 'react'
 import {BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate} from 'react-router-dom'
+import {BackendUnreachable} from './components/backend-unreachable.tsx'
 import {SetupUpdatePopup} from './components/popups/setup-update-popup.tsx'
 import {AuthProvider} from './context/auth-provider.tsx'
 import {SettingsProvider} from './context/settings-provider.tsx'
@@ -22,6 +23,31 @@ import Stats from './pages/stats.tsx'
 import Users from './pages/users.tsx'
 
 const UPDATE_DISMISSED_KEY = 'setup_update_dismissed'
+
+/** How often a page that can't reach the backend asks again */
+const BACKEND_RETRY_MS = 4000
+
+/**
+ * Covers the app while the backend can't be reached, and asks it again until it answers. The pages stay
+ * mounted under the cover, so what the user had open is still there when the backend comes back.
+ */
+const BackendGate = ({children}: { children: ReactNode }) => {
+    const {status, unreachable, refresh} = useSetup()
+
+    useEffect(() => {
+        if (unreachable == null) return
+        const id = setInterval(() => void refresh(), BACKEND_RETRY_MS)
+        return () => clearInterval(id)
+    }, [unreachable, refresh])
+
+    return (
+        <>
+            {/* Before the first answer there is nothing to show under the cover: the guards below would only wait */}
+            {status ? children : null}
+            {unreachable != null ? <BackendUnreachable reason={unreachable} onRetry={() => void refresh()}/> : null}
+        </>
+    )
+};
 
 const RequireAuth = () => {
     const {status, loading: setupLoading} = useSetup()
@@ -65,32 +91,34 @@ const RequireOwner = () => {
 const App = () => (
     <ThemeProvider>
         <SetupProvider>
-            <AuthProvider>
-                <SettingsProvider>
-                    <BrowserRouter>
-                        <Routes>
-                            <Route path="/setup" element={<Setup/>}/>
-                            <Route path="/setup/update" element={<Setup/>}/>
-                            <Route path="/login" element={<Login/>}/>
-                            <Route element={<RequireAuth/>}>
-                                <Route path="/" element={<Home/>}/>
-                                <Route path="/chat" element={<Chat/>}/>
-                                <Route path="/search" element={<Search/>}/>
-                                <Route path="/folders" element={<Folders/>}/>
-                                <Route path="/folders/:id" element={<Folder/>}/>
-                                <Route path="/settings" element={<Settings/>}/>
-                                <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
-                                <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
-                                <Route path="/models/:tab?" element={<Models/>}/>
-                                <Route element={<RequireOwner/>}>
-                                    <Route path="/plugins" element={<Plugins/>}/>
-                                    <Route path="/users" element={<Users/>}/>
+            <BackendGate>
+                <AuthProvider>
+                    <SettingsProvider>
+                        <BrowserRouter>
+                            <Routes>
+                                <Route path="/setup" element={<Setup/>}/>
+                                <Route path="/setup/update" element={<Setup/>}/>
+                                <Route path="/login" element={<Login/>}/>
+                                <Route element={<RequireAuth/>}>
+                                    <Route path="/" element={<Home/>}/>
+                                    <Route path="/chat" element={<Chat/>}/>
+                                    <Route path="/search" element={<Search/>}/>
+                                    <Route path="/folders" element={<Folders/>}/>
+                                    <Route path="/folders/:id" element={<Folder/>}/>
+                                    <Route path="/settings" element={<Settings/>}/>
+                                    <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
+                                    <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
+                                    <Route path="/models/:tab?" element={<Models/>}/>
+                                    <Route element={<RequireOwner/>}>
+                                        <Route path="/plugins" element={<Plugins/>}/>
+                                        <Route path="/users" element={<Users/>}/>
+                                    </Route>
                                 </Route>
-                            </Route>
-                        </Routes>
-                    </BrowserRouter>
-                </SettingsProvider>
-            </AuthProvider>
+                            </Routes>
+                        </BrowserRouter>
+                    </SettingsProvider>
+                </AuthProvider>
+            </BackendGate>
         </SetupProvider>
     </ThemeProvider>
 );

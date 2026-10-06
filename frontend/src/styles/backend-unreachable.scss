@@ -1,0 +1,23 @@
+@use 'tokens' as *;
+
+// Over everything, the page's own background behind it: what is under it can't be used while the backend is away
+.backend-unreachable {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: var(--color-secondary);
+}
+
+.backend-unreachable__panel {
+  width: 520px;
+  max-width: calc(100vw - #{$space-8});
+}
+
+.backend-unreachable__body {
+  gap: $space-4;
+}
+
+.backend-unreachable__actions {
+  display: flex;
+  justify-content: flex-end;
+}
