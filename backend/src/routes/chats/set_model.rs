@@ -19,8 +19,8 @@ pub(crate) struct SetModelRequest {
     provider: Option<String>,
 }
 
-/// Rebinds a chat to another model. Takes effect on the chat's next turn — the model is
-/// read from the chat on every call (see `Agent::advance`), so there's nothing to reload.
+/// Rebinds a chat to another model. Takes effect on the chat's next turn — a run keeps the model
+/// it started on, and the next one reads it from the chat, so there's nothing to reload.
 #[utoipa::path(
     post,
     path = "/api/chats/model",

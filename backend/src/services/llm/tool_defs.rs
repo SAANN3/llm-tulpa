@@ -35,8 +35,8 @@ pub struct ToolParameters {
     /// `serde_json`'s) key order isn't stable across two builds of the same content.
     /// The chat template renders this into the literal prompt text, so an unstable
     /// order here changes the prompt's bytes on every single call — right alongside
-    /// `Agent::advance`'s own prompt-cache fix, this is the other half of what made
-    /// Ollama/llama.cpp's prefix cache fail to match almost immediately on every turn.
+    /// the current date riding on the newest message only (`History`), this is the other half
+    /// of what made Ollama/llama.cpp's prefix cache fail to match almost immediately on every turn.
     properties: BTreeMap<String, ToolProperty>,
 }
 

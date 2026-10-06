@@ -12,8 +12,8 @@ use crate::services::job_store::{JobRecord, JobStatus};
 use crate::tools::chat::write_notes::MAX_NOTES_CHARS;
 use crate::tools::llm::return_agent::ReturnAgentTool;
 
-/// Prepended (joined one per line into one message) to every `chat`/`continue_chat`
-/// call (see `advance`), applying to every conversation. One entry per rule, so
+/// Prepended (joined one per line into one message) to every model request of a turn
+/// (see `History`), applying to every conversation. One entry per rule, so
 /// adding/editing/removing one doesn't touch the others; a rule that's too long for one
 /// line uses `\` at the end of the line to keep the *source* multi-line without putting
 /// an actual newline in the compiled string (the backslash eats the newline and the

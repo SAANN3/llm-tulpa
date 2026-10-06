@@ -113,7 +113,7 @@ impl ToolService {
 
     /// Returns a snapshot of all registered tools as `Arc<dyn Tool>` pointers.
     /// Callers can hold these past `.await` points without keeping the lock open.
-    /// Used by `Agent::advance` to build the Ollama tool-schema on every turn.
+    /// Used by `Turn` to build the tool schema for every model request.
     pub async fn snapshot_tools(&self) -> Vec<Arc<dyn Tool>> {
         self.tools.read().await.values().cloned().collect()
     }

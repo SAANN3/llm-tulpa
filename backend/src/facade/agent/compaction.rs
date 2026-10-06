@@ -264,7 +264,7 @@ impl Compaction {
 
     /// Produces an updated summary covering `existing_summary` (if any) plus every
     /// message in `to_fold`, via a plain (no tools) Ollama call — not part of the
-    /// visible conversation, so it doesn't go through `advance`/get persisted as a chat
+    /// visible conversation, so it isn't a step of a turn and isn't persisted as a chat
     /// message itself.
     async fn summarize(
         &self,
