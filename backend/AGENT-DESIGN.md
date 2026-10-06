@@ -1,6 +1,6 @@
 # Agent components and a per-chat turn runner: design note
 
-Status: proposal for review. Nothing in it is built.
+Status: the backend is built (phases 1-7 below). The frontend still calls the endpoints this note drops; switching it is phase 8.
 
 ## Words used here
 - **Turn:** everything between a user message and the model's final answer. It is a loop: the model replies, maybe asks for tools, the tools run, the model is asked again, until it answers without asking for a tool.
@@ -24,11 +24,12 @@ All live in `facade/agent/`, private to it. `Agent` stays as the thin public fac
 | `History` | nothing | builds what the model is sent from a chat's stored rows: system message (rules, summary, key facts, pinned messages, notes), stubs for cleared results, thinking caps | Prompts |
 | `ModelCall` | `turn_holds` | picks provider and launch profile, sizes the reply cap, holds the model server for a turn, makes one request with the reply policy (unusable replies, regeneration, cut-off continuation), and can abort it | providers, launch |
 | `Compaction` | `compaction_backoff` | the trigger, clearing plan, the notes request, the fold (summary and facts), back-off | History, ModelCall, one-shot helper |
-| `Tools` | `running_tools` | the tool set a chat sees, permission and scope storage, run one tool, pending calls, interrupted calls | tool service, permission store |
+| `ToolCalls` (`tool_calls.rs`) | `running`, `live_subagents` | permission and scope storage, run one tool, pending calls, interrupted calls | tool service, permission store |
 | `Notices` | nothing | turns finished jobs and sub-agent results into notices | job store |
+| `RunTracker` (`run_tracker.rs`) | one run's start time, current call start, tokens, stop signal | what the runner and the steps share about a run | none |
 | `Turn` | nothing | one step: build request, call, persist, hand back tool calls, run maintenance | History, ModelCall, Compaction, Tools, Notices |
 | `TurnRunner` | the registry of active runs | loops steps until the run ends, with a permission policy; see below | Turn, Tools |
-| `Subagents` | `live_subagents`, the slot | starts a sub-agent as a background job; its loop is a `TurnRunner` run with the unattended policy | TurnRunner (through the existing `Weak` runner trait) |
+| `Subagents` (`subagent_run.rs`, still `impl Agent`) | the slot | starts a sub-agent as a background job; its loop is a `TurnRunner` run with the sub-agent policy | TurnRunner (through the existing `Weak` runner trait) |
 
 ```
 Prompts ──► History ──► Compaction ──┐
@@ -80,7 +81,7 @@ Invariants the split must keep, each with a test: the front of the prompt change
 | `POST /continue` | dropped | continuing after tool results is the runner's own loop; the browser was its only caller |
 | `POST /use_tool` | dropped | the runner runs the tools; same reason |
 | `POST /can_use_tool` | dropped | `GET /turn?chat_id=` returns the same pending call, why it needs permission, and the run state, in one place |
-| `POST /allow_scope` | `POST /answer`: allow once, allow a scope, or deny; also resumes the run | one call replaces `allow_scope` + `use_tool` + `continue` |
+| `POST /allow_scope` | `POST /answer` with `decisions: [{index, allowance: permanent \| only_now \| deny}]`, index into `pending` of `GET /turn`; also resumes the run | one call replaces `allow_scope` + `use_tool` + `continue` |
 | `POST /job_notices` | dropped | the server starts the reply when a job finishes (the `JobFinished` event exists) |
 | `POST /regenerate` | kept, returns 202 | it runs through the same runner and events |
 | (new) `POST /stop` | stops the active run of a chat | the stop button |
@@ -105,8 +106,20 @@ Backend first, the frontend after it, and the frontend is not touched while the 
 7. `TurnRunner`, events, the new endpoints (the old ones removed); sub-agents move onto it. The current UI cannot run turns from here until phase 8, so nothing is released in between.
 8. Frontend, in one switch: the loop and its hooks removed, the page driven by the events, a stop button, the permission prompt from `GET /turn` and `POST /answer`.
 
+## As built
+- **Where things are:** `agent/runner.rs` (`TurnRunner`: the registry of runs, the loop, the permission policy, the job wake-up, regenerate, answers), `agent/turn.rs` (one step), `agent/run_tracker.rs`. `Agent` keeps the public methods (`start_turn`, `start_regenerate`, `answer`, `stop`, `turn_state`, `reply`, `bind_job_waker`) and delegates.
+- **Policy:** `Attended` (a user's chat: a call needing permission ends the run, unless the user has auto-confirm) and `Subagent` (grant with auto-confirm, refuse without; the run ends at `llm.return_agent`; 100 model calls at most).
+- **Events** (`ServerEvent`): `run_started`, `messages_changed` (read what is newer than the last message you have), `tool_started`, `turn_progress` (as before), `run_ended` with `answered`, `failed` (with `detail`), `stopped`, `step_limit` or `waiting_for_permission`. The last end is also kept in memory and returned by `GET /turn` as `last_end`, so a page opened after a failure can say why nothing is going on.
+- **`GET /turn` on a chat with no run** records a cut-short allowed tool call as interrupted (it calls `ToolCalls::can_use`); with a run going it does not touch the chat.
+- **Step limit:** `user_settings.max_turn_steps` (schema 14; 0 in `POST /settings` removes it, null means none). On the last allowed step the newest message of that request gets `prompts::step_limit_note`; a tool call in that reply is dropped from the stored message and the text stays; the run ends with `step_limit`. The model does not always follow the note: in the live check it answered "Second call to os.get_date." and tried the call again, which was refused.
+- **Stop** drops the model call in flight (`tokio::select!` in `Turn::ask`), so the request is closed and nothing of the reply is stored; a tool already running finishes, and tools queued behind it stay pending.
+- **Messaging plugins** use `Agent::reply`: one step, no run and no registry entry.
+- **Regenerate** checks (`check_regenerable`) after claiming the chat, so no other run can change the newest message between the check and the step.
+
 ## Found while building
-- A tool result that makes the *next* request exceed the window fails with a 502 and leaves the chat stuck: the compaction check at the start of a continue uses the prompt size measured *before* the result arrived, so nothing triggers, and every retry fails the same way. Seen at a 16k window with a 100-entry `chat.list_messages` result. The `Turn` step should check the size of the request it is about to send (last measured size plus the new messages) and compact first.
+- A tool result that makes the *next* request exceed the window failed with a 502 and left the chat stuck: the compaction check at the start of a continue used the prompt size measured *before* the result arrived, so nothing triggered, and every retry failed the same way. Seen at a 16k window with a 100-entry `chat.list_messages` result. `Turn::make_room` now estimates the next request (last measured size plus the characters added since the model's last reply, at 3 characters a token) and compacts first; in the live check it fired at an estimate of 15,672 tokens and folded.
+- **Still open:** a fresh tool result that is by itself larger than the window cannot be folded away (it is the newest message, and the fold keeps the tail), so the request is still refused with a 400 from the server. Seen at a 16k window with `chat.get_messages` for four ids. A cap on a tool result relative to the window would close it; not built.
+- A job that finishes during the last model call of a run is reported at the next step of a run on that chat, not on its own (the wake-up finds the chat busy).
 
 ## Decided in review
 - The last step at the step limit keeps the same tool list, so the model server's cached prompt still serves it, and any tool call in that reply is refused while its text is kept.
