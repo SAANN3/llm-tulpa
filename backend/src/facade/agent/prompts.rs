@@ -298,11 +298,16 @@ pub(super) const CUT_OFF_CONTINUATION: &str =
 /// First lines of the system message once a chat has a summary.
 pub(super) const FOLD_HEADER: &str = "Earlier parts of this conversation were summarized to keep it within \
                      the model's context window. The messages from before this point can be \
-                     looked up with chat.list_messages and chat.get_messages.";
+                     looked up with chat.list_messages and chat.get_messages. Details that are not \
+                     listed below were dropped: before you write down a value from before this point, \
+                     read it again with a tool (the files and commands named below, or those two \
+                     tools), and never reconstruct a value from memory or fill a gap with a plausible one.";
 
 /// `FOLD_HEADER` for a chat without tools: nothing to look the older messages up with.
 const FOLD_HEADER_NO_TOOLS: &str = "Earlier parts of this conversation were summarized to keep it within \
-                     the model's context window.";
+                     the model's context window. Details that are not listed below were dropped: if you \
+                     need one that is neither below nor in the messages that follow, say you no longer \
+                     have it instead of guessing.";
 
 /// The line that opens the summary block of the system message.
 pub(super) fn fold_header(tools: bool) -> &'static str {
