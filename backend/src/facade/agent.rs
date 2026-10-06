@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::StatusCode;
@@ -10,38 +9,38 @@ use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::{ChatStore, MessageTimings, NewMessage, NewToolCall, ToolCallOut},
+    chat_store::{ChatStore, MessageTimings, NewMessage, NewToolCall},
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
-    job_store::{JobKind, JobRecord, JobStatus, JobStore},
+    job_store::JobStore,
     llm::{ChatMessage, LlmProviders, ThinkChoice},
-    permission_store::{PermissionStore, PermissionStoreErrors},
+    permission_store::PermissionStore,
     preset_store::PresetStore,
     settings_store::SettingsStore,
     tools::ToolService,
 };
 use crate::facade::launch::LaunchFacade;
 use crate::facade::one_shot::OneShot;
-use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
+use crate::tools::base::{Tool, ToolContext};
 use crate::tools::subagent::{self, SubagentHandle};
 
 mod compaction;
 mod history;
 mod model_call;
+mod notices;
 mod prompts;
 mod subagent_run;
+mod tool_calls;
 
 use compaction::Compaction;
 use history::History;
+use notices::Notices;
+use tool_calls::ToolCalls;
 use model_call::{ModelCall, ReplyProblem, Regenerations};
-use prompts::{command_preview, job_notice_text, with_attached_files_note, SubagentEnd, INTERRUPTED_TOOL_MESSAGE};
+use prompts::with_attached_files_note;
 pub use prompts::default_system_prompt;
 
-
-/// How many of a chat's newest messages `pending_tool_calls` looks through: it walks back over the
-/// tool results of the last reply, a handful at most.
-const PENDING_TOOL_CALLS_LOOKBACK: u64 = 500;
 
 
 /// rough characters-per-token used to turn that into a size. The result is what the whole run was
@@ -67,49 +66,20 @@ pub struct Agent {
     compaction: Compaction,
     chat_store: Arc<ChatStore>,
     tools: Arc<ToolService>,
-    /// Template `use_tool` calls `copy_with_chat_id` on to get the real, per-call
-    /// context — its own `chat_id` is unused/meaningless (never itself handed to a
-    /// tool). See `ToolContext`'s own doc comment for why it isn't `AppState`.
+    /// The services the agent itself reaches (files, events), and the template `ToolCalls` makes each
+    /// tool's real, per-call context from. See `ToolContext`'s own doc comment for why it isn't `AppState`.
     tool_context: ToolContext,
-    /// Where finished background jobs are looked up when a chat's next turn starts — see
-    /// `flush_job_notices`. Also reachable to tools through `tool_context`.
-    job_store: Arc<JobStore>,
-    /// Per-chat tool-permission grants — what scope each tool has already been given
-    /// within a given chat, if any. Consulted by `to_agent_tool_call`/`use_tool` to
-    /// decide whether a call is `Allowed` outright or needs the caller to confirm.
-    permission_store: Arc<PermissionStore>,
+    /// The model's tool calls: which are pending, whether each is permitted, running them.
+    tool_calls: ToolCalls,
+    /// Finished background jobs and sub-agents, reported to the model as notices.
+    notices: Notices,
     /// Per-user settings — consulted once per turn for the user's custom system prompt
     /// (a user without one gets the built-in default instead).
     settings_store: Arc<SettingsStore>,
-    /// See `INLINED_RESULT_FRACTION` — the most of a sub-agent's result a notice carries.
-    max_inlined_result_bytes: u64,
-    /// Chats with a tool call executing right now. See `RunningToolGuard`.
-    running_tools: Arc<Mutex<HashSet<i64>>>,
-    /// Sub-agent chats whose run is going on right now (from being started until it ends or is
-    /// killed). Their tool calls are the backend's to run, so `is_running` treats them as busy —
-    /// without it, opening one between two of its calls would look like a call cut short by a restart.
-    live_subagents: Arc<Mutex<HashSet<i64>>>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
     /// for both than running back to back.
     subagent_slot: Arc<Semaphore>,
-}
-
-/// Marks a chat as having a tool call executing, for as long as it lives. Dropping it — on
-/// completion, on an error, or because the request was cancelled (a client that disconnects drops
-/// the handler's future) — clears the mark. Without it a chat with an *allowed* call in flight is
-/// indistinguishable from one whose call was cut short by a restart: both look like "allowed and
-/// still unresolved". The same guard marks a sub-agent's chat for its whole run
-/// (`live_subagents`), for the same reason.
-struct RunningToolGuard {
-    running: Arc<Mutex<HashSet<i64>>>,
-    chat_id: i64,
-}
-
-impl Drop for RunningToolGuard {
-    fn drop(&mut self) {
-        self.running.lock().unwrap().remove(&self.chat_id);
-    }
 }
 
 impl Agent {
@@ -156,78 +126,25 @@ impl Agent {
             history.clone(),
             OneShot::new(providers),
         );
+        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone());
+        let notices = Notices::new(
+            chat_store.clone(),
+            job_store,
+            tool_calls.clone(),
+            (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN) as u64,
+        );
         Self {
             history,
             model,
             compaction,
+            tool_calls,
             chat_store,
             tools,
             tool_context,
-            job_store,
-            permission_store,
+            notices,
             settings_store,
-            max_inlined_result_bytes: (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN)
-                as u64,
-            running_tools: Arc::new(Mutex::new(HashSet::new())),
-            live_subagents: Arc::new(Mutex::new(HashSet::new())),
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
-    }
-
-    /// Claims the chat's single tool-execution slot. Two calls running at once for one chat (a
-    /// second tab opened, or a reload, while a long command is still going) would run the same
-    /// pending call twice.
-    fn mark_running(&self, chat_id: i64) -> Result<RunningToolGuard, ErrorService> {
-        if !self.running_tools.lock().unwrap().insert(chat_id) {
-            return Err(ErrorService::new(StatusCode::CONFLICT, "a tool call is already running for this chat"));
-        }
-        Ok(RunningToolGuard { running: self.running_tools.clone(), chat_id })
-    }
-
-    fn is_running(&self, chat_id: i64) -> bool {
-        self.running_tools.lock().unwrap().contains(&chat_id) || self.live_subagents.lock().unwrap().contains(&chat_id)
-    }
-
-    /// Records the tool calls that were cut short as interrupted, instead of leaving them to be
-    /// run again. Opening a chat is where this is discovered: a call the chat's grants already
-    /// allow is executed the moment the model asks for it, never left waiting for a person — so
-    /// one that is *still* unresolved while nothing is executing was interrupted (the backend
-    /// restarted, or the client went away mid-run), and re-running it could repeat something that
-    /// already happened, or block again on a command that never exits. A call waiting for the
-    /// user's confirmation is different and stays as it is; so does everything queued after it,
-    /// since results are recorded in the order the model asked.
-    async fn settle_interrupted(&self, chat_id: i64) -> Result<(), ErrorService> {
-        if self.is_running(chat_id) {
-            return Ok(());
-        }
-
-        for call in self.pending_tool_calls(chat_id).await? {
-            let name = call.tool_name.clone();
-            let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
-            if !matches!(view.permission, AgentToolPermission::Allowed) {
-                break;
-            }
-
-            self.chat_store
-                .new_message(NewMessage {
-                    chat_id,
-                    role: "tool".to_string(),
-                    content: Value::String(INTERRUPTED_TOOL_MESSAGE.to_string()).to_string(),
-                    tool_name: Some(name),
-                    thinking: None,
-                    thought_duration_ms: None,
-                    tool_success: Some(false),
-                    tool_denied: false,
-                    tool_calls: vec![],
-                    images: vec![],
-                    file_ids: vec![],
-                    prompt_tokens: None,
-                    eval_tokens: None,
-                    timings: MessageTimings::default(),
-                })
-                .await?;
-        }
-        Ok(())
     }
 
     /// Persists `prompt` (plus `images`, if any — base64-encoded, no data-URL prefix —
@@ -279,7 +196,7 @@ impl Agent {
             })
             .await?;
 
-        let notices = self.flush_job_notices(chat_id).await?;
+        let notices = self.notices.flush_job_notices(chat_id).await?;
 
         // Everything newer than `messages`, oldest first: the user's prompt, then any
         // job notices flushed just above (persisted after it, so this is also their
@@ -307,9 +224,15 @@ impl Agent {
     pub async fn continue_chat(&self, chat_id: i64, think: Option<ThinkChoice>) -> Result<ChatOut, ErrorService> {
         let last_prompt_tokens = self.chat_store.chat(chat_id).await.ok().and_then(|c| c.last_prompt_tokens.map(|t| t as u64));
         self.compaction.maybe_compact(chat_id, last_prompt_tokens, think.clone()).await;
-        let notices = self.flush_job_notices(chat_id).await?;
+        let notices = self.notices.flush_job_notices(chat_id).await?;
         let messages = self.history.for_chat(chat_id).await?;
         self.advance(chat_id, messages, None, think, notices, true).await
+    }
+
+    /// Reports the background jobs (and sub-agents) that finished since the model was last told about
+    /// one, without calling the model — see `Notices::flush_notices`.
+    pub async fn flush_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
+        self.notices.flush_notices(chat_id).await
     }
 
     /// Has the model answer again where it answered last, and replaces that answer with the new
@@ -359,102 +282,6 @@ impl Agent {
         let out = self.advance(chat_id, messages, None, think, vec![], true).await?;
         self.chat_store.delete_message(chat_id, message_id).await?;
         Ok(out)
-    }
-
-    /// Persists a `notice` for every background job (or sub-agent) that has finished since the model
-    /// was last told about one, and returns them — without calling the model. A client shows them at
-    /// once and then has the model respond with `continue_chat`; splitting it that way is what lets
-    /// the notice appear the moment the job ends instead of after a model call that can take a
-    /// while. Empty if there's nothing to report, which is what makes a stale hint
-    /// (`ServerEvent::JobFinished` for a job an in-progress turn already reported) harmless — the
-    /// decision is made here, not by the caller, because only here is claiming the finished jobs
-    /// atomic. Also empty while tool calls are still waiting to run (mid-turn, or paused on a
-    /// confirmation): a notice has to come after every tool result already in the chat, never in the
-    /// middle of an unfinished batch, so it goes out with the `continue_chat` that follows once
-    /// they have.
-    pub async fn flush_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
-        // Possible: also return empty while a model call is in flight (see TOOLS.md, "Known gap").
-        if !self.pending_tool_calls(chat_id).await?.is_empty() {
-            return Ok(vec![]);
-        }
-
-        self.flush_job_notices(chat_id).await
-    }
-
-    /// Turns every background job of `chat_id` that has finished but not been reported
-    /// into a persisted `notice` message, oldest first, and returns them. Called at the
-    /// one point in every turn where appending is always safe — after the newest
-    /// message already stored, before the model's own reply — so a notice can never
-    /// land between an assistant message's tool calls and their results. Persisted (not
-    /// just added to the prompt) so the model keeps seeing it on later turns, the chat
-    /// reads the same after a reload as it did live, and the reply that follows makes
-    /// sense next to it. Each job is claimed before its notice is written, so
-    /// concurrent callers can't report it twice; a job whose notice fails to save is
-    /// handed back so the next turn tries again.
-    async fn flush_job_notices(&self, chat_id: i64) -> Result<Vec<NoticeOut>, ErrorService> {
-        let jobs = self.job_store.claim_unnotified(chat_id).await?;
-
-        let mut notices = Vec::with_capacity(jobs.len());
-        for job in jobs {
-            let content = match job.kind {
-                JobKind::Process => job_notice_text(&job),
-                JobKind::Agent { .. } => self.agent_job_notice_text(&job).await,
-            };
-            let stored = self
-                .chat_store
-                .new_message(NewMessage {
-                    chat_id,
-                    role: "notice".to_string(),
-                    content,
-                    tool_name: None,
-                    thinking: None,
-                    thought_duration_ms: None,
-                    tool_success: None,
-                    tool_denied: false,
-                    tool_calls: vec![],
-                    images: vec![],
-                    file_ids: vec![],
-                    prompt_tokens: None,
-                    eval_tokens: None,
-                    timings: MessageTimings::default(),
-                })
-                .await;
-
-            match stored {
-                Ok(message) => notices.push(NoticeOut { content: message.content, created_at: message.created_at }),
-                Err(e) => {
-                    if let Err(undo) = self.job_store.unclaim(job.id).await {
-                        tracing::error!(job_id = job.id, "couldn't hand a job back after its notice failed to save: {undo}");
-                    }
-                    return Err(e.into());
-                }
-            }
-        }
-
-        Ok(notices)
-    }
-
-    /// The `notice` text for a finished sub-agent job. Unlike a command's, it carries the outcome
-    /// itself: the result of a run that succeeded, or why it didn't get one.
-    async fn agent_job_notice_text(&self, job: &JobRecord) -> String {
-        let prompt = command_preview(&job.command);
-
-        match (job.status, job.exit_code) {
-            (JobStatus::Lost, _) => prompts::subagent_job_notice(job.id, &prompt, SubagentEnd::Lost),
-            (JobStatus::Exited, code) => {
-                let (text, cut) = match self.job_store.read_log_head(job, self.max_inlined_result_bytes).await {
-                    Ok(read) => read,
-                    Err(e) => (format!("(its result could not be read: {e})"), false),
-                };
-                let end = if code == Some(0) {
-                    SubagentEnd::Finished { result: &text, cut }
-                } else {
-                    SubagentEnd::Failed { result: &text, cut }
-                };
-                prompts::subagent_job_notice(job.id, &prompt, end)
-            }
-            _ => prompts::subagent_job_notice(job.id, &prompt, SubagentEnd::Ended),
-        }
     }
 
     /// Sends `messages` (plus `new_message`, if any) to Ollama, prefixed with
@@ -764,7 +591,7 @@ impl Agent {
         let mut tool_calls = Vec::with_capacity(requested_tool_calls.len());
         for call in requested_tool_calls {
             tool_calls.push(
-                self.to_agent_tool_call(chat_id, call.function.name, call.function.arguments)
+                self.tool_calls.to_agent_tool_call(chat_id, call.function.name, call.function.arguments)
                     .await?,
             );
         }
@@ -790,32 +617,6 @@ impl Agent {
         Ok(out)
     }
 
-    /// The tool calls the model has asked for that haven't been run yet, without
-    /// actually running them — lets a caller check each one's `permission` (and warn
-    /// about a `Denied` one) before committing to `use_tool`.
-    ///
-    /// Also settles calls that were cut short (see `settle_interrupted`): they're recorded as
-    /// interrupted rather than reported as pending, so opening a chat never re-runs them. While a
-    /// call is executing, nothing is reported as pending — whoever is running it owns it.
-    pub async fn can_use_tool(&self, chat_id: i64) -> Result<CanUseTool, ErrorService> {
-        if self.is_running(chat_id) {
-            return Ok(CanUseTool { can_use: false, tools: vec![] });
-        }
-        self.settle_interrupted(chat_id).await?;
-
-        let pending = self.pending_tool_calls(chat_id).await?;
-
-        let mut tools = Vec::with_capacity(pending.len());
-        for call in pending {
-            tools.push(self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?);
-        }
-
-        Ok(CanUseTool {
-            can_use: !tools.is_empty(),
-            tools,
-        })
-    }
-
     /// Runs the next pending tool call (in the order the model requested them) and
     /// persists its result as a `tool`-role message, whether it succeeded, failed, or
     /// was denied — the model needs to see all three outcomes to react sensibly on its
@@ -837,322 +638,21 @@ impl Agent {
     /// same as `can_use_tool` would, so a caller can tell whether to run another `use_tool`
     /// or move on without a separate round trip.
     pub async fn use_tool(&self, chat_id: i64, scope: Option<Value>) -> Result<UseToolOut, ErrorService> {
-        self.run_next_tool(chat_id, scope, false).await
+        self.tool_calls.run_next_tool(chat_id, scope, false).await
     }
 
-    /// `use_tool`'s body. `unattended` is for a chat nobody is watching (a sub-agent's): a denied
-    /// call is reported to the model as final for this run, instead of promising it "they'll be
-    /// asked to approve it then" — there is no one to ask.
-    async fn run_next_tool(&self, chat_id: i64, scope: Option<Value>, unattended: bool) -> Result<UseToolOut, ErrorService> {
-        let _running = self.mark_running(chat_id)?;
-        let chat = self.chat_store.chat(chat_id).await?;
-        let is_subagent = chat.parent_chat_id.is_some();
-        let mut pending = self.pending_tool_calls(chat_id).await?.into_iter();
-        let next = pending
-            .next()
-            .ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "no pending tool call to run"))?;
-
-        let had_scope;
-        let effective_scope = match scope {
-            Some(scope) => {
-                had_scope = true;
-                match self.tools.get_tool(&next.tool_name).await {
-                    Some(tool) => resolved_scope_from_json(tool.as_ref(), scope),
-                    None => ResolvedScope::default(),
-                }
-            }
-            None => {
-                let stored = self.stored_scope(chat_id, &next.tool_name).await?;
-                had_scope = stored.own.is_some() || !stored.shared.is_empty();
-                stored
-            }
-        };
-
-        let permission = self
-            .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, is_subagent)
-            .await;
-
-        let (success, denied, err, content) = match permission {
-            AgentToolPermission::Allowed => {
-                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.provider, chat.model);
-                match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
-                    Ok(value) => (true, false, None, value),
-                    Err(e) => {
-                        let message = e.to_string();
-                        (false, false, Some(message.clone()), Value::String(message))
-                    }
-                }
-            }
-            AgentToolPermission::Denied { reason, escalation } => {
-                let message = prompts::tool_call_refused(unattended, had_scope, escalation.is_some(), &next.tool_name, &reason);
-                (false, true, Some(message.clone()), Value::String(message))
-            }
-        };
-
-        let stored = self
-            .chat_store
-            .new_message(NewMessage {
-                chat_id,
-                role: "tool".to_string(),
-                content: content.to_string(),
-                tool_name: Some(next.tool_name.clone()),
-                thinking: None,
-                thought_duration_ms: None,
-                tool_success: Some(success),
-                tool_denied: denied,
-                tool_calls: vec![],
-                images: vec![],
-                file_ids: vec![],
-                prompt_tokens: None,
-                eval_tokens: None,
-                timings: MessageTimings::default(),
-            })
-            .await?;
-
-        let mut tools = Vec::with_capacity(pending.len());
-        for call in pending {
-            tools.push(self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?);
-        }
-
-        Ok(UseToolOut {
-            id: stored.id,
-            success,
-            denied,
-            tool_name: next.tool_name,
-            err,
-            content,
-            created_at: stored.created_at,
-            tools,
-        })
+    /// The tool calls the model has asked for that haven't been run yet, without
+    /// actually running them — lets a caller check each one's `permission` (and warn
+    /// about a `Denied` one) before committing to `use_tool`.
+    pub async fn can_use_tool(&self, chat_id: i64) -> Result<CanUseTool, ErrorService> {
+        self.tool_calls.can_use(chat_id).await
     }
 
-    /// Persists a scope grant for a tool within a chat, so future calls to that tool (or
-    /// any other tool sharing one of its buckets — see `Tool::shared_buckets`) can be
-    /// `Allowed` without asking again. `scope` is the envelope `resolved_scope_to_json`
-    /// produced when this grant was first offered, echoed back verbatim by the
-    /// frontend; `resolved_scope_from_json` reads it back into its own/shared-bucket
-    /// deltas — each one is just the single new fact that call needed (see
-    /// `storage::check_scope`), not a snapshot of everything already granted. Each delta
-    /// is appended to that row's *current* value, read fresh right here rather than
-    /// trusted from whatever the caller last saw: two denied calls from the same reply
-    /// needing the same bucket have their escalations computed from the same
-    /// pre-approval state, so if this just overwrote with the caller's delta, approving
-    /// the second would erase the first's grant. Reading fresh at the moment each one is
-    /// actually persisted is what makes approving both, in sequence, correct.
+    /// Persists a scope grant for a tool within a chat, so future calls to that tool (or any other
+    /// tool sharing one of its buckets) can be `Allowed` without asking again.
     pub async fn allow_scope(&self, chat_id: i64, tool_name: String, scope: Value) -> Result<(), ErrorService> {
-        let Some(tool) = self.tools.get_tool(&tool_name).await else {
-            return Err(ErrorService::new(
-                StatusCode::BAD_REQUEST,
-                format!("no tool named '{tool_name}'"),
-            ));
-        };
-
-        let delta = resolved_scope_from_json(tool.as_ref(), scope);
-
-        if let Some(own_delta) = delta.own {
-            let existing = self.get_scope_or_none(chat_id, &tool_name).await?;
-            self.permission_store.update_scope(chat_id, &tool_name, merge_scope_delta(existing, own_delta)).await?;
-        }
-        for (bucket, shared_delta) in delta.shared {
-            let existing = self.get_scope_or_none(chat_id, bucket.db_key()).await?;
-            self.permission_store
-                .update_scope(chat_id, bucket.db_key(), merge_scope_delta(existing, shared_delta))
-                .await?;
-        }
-
-        Ok(())
+        self.tool_calls.allow_scope(chat_id, tool_name, scope).await
     }
-
-    /// A tool's actual scope for one call — its own bucket (if it has one) plus every
-    /// shared bucket it declares, each fetched and kept separate rather than flattened
-    /// into one object. Flattening would collide: every storage bucket stores its grant
-    /// under the same JSON key (`SharedBucket::json_key`), so a tool declaring both
-    /// `StorageRead` and `StorageWrite` would have one silently overwrite the other if
-    /// they were merged into a single map instead of kept apart by bucket.
-    async fn stored_scope(&self, chat_id: i64, tool_name: &str) -> Result<ResolvedScope, ErrorService> {
-        let Some(tool) = self.tools.get_tool(tool_name).await else {
-            return Ok(ResolvedScope::default());
-        };
-
-        let own = if tool.uses_own_bucket() {
-            self.get_scope_or_none(chat_id, tool_name).await?
-        } else {
-            None
-        };
-
-        let mut shared = HashMap::new();
-        for &bucket in tool.shared_buckets() {
-            if let Some(value) = self.get_scope_or_none(chat_id, bucket.db_key()).await? {
-                shared.insert(bucket, value);
-            }
-        }
-
-        Ok(ResolvedScope { own, shared })
-    }
-
-    /// `PermissionStore::get_scope`, with "nothing granted yet" collapsed to `None`
-    /// rather than an error — that's the normal/expected case for most tool calls, not
-    /// a failure.
-    async fn get_scope_or_none(&self, chat_id: i64, key: &str) -> Result<Option<Value>, ErrorService> {
-        match self.permission_store.get_scope(chat_id, key).await {
-            Ok(scope) => Ok(Some(scope)),
-            Err(PermissionStoreErrors::NotFound) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Resolves a tool call's permission into the facade-facing shape: an unknown tool
-    /// name and a `ToolSerializationError` (couldn't even read `data`) both collapse
-    /// into `Denied` with no escalation — from a caller's perspective both just mean
-    /// "this can't run as given," the distinction between them only matters to
-    /// whoever's implementing the tool. A `Denied` from the tool itself always carries
-    /// its `reason` through, whether or not it came with an `escalation` — a hard
-    /// refusal still needs to reach the UI and the model, not just silently vanish.
-    async fn tool_permission(
-        &self,
-        tool_name: &str,
-        data: Value,
-        scope: ResolvedScope,
-        is_subagent: bool,
-    ) -> AgentToolPermission {
-        if !subagent::available_to(tool_name, is_subagent) {
-            return AgentToolPermission::Denied {
-                reason: format!("'{tool_name}' isn't available in this chat"),
-                escalation: None,
-            };
-        }
-
-        let Some(tool) = self.tools.get_tool(tool_name).await else {
-            return AgentToolPermission::Denied {
-                reason: format!("no tool named '{tool_name}'"),
-                escalation: None,
-            };
-        };
-
-        match tool.is_dangerous(data, scope) {
-            Ok(ToolPermission::Allowed) => AgentToolPermission::Allowed,
-            Ok(ToolPermission::Denied { reason, escalation }) => AgentToolPermission::Denied {
-                reason,
-                escalation: escalation.map(|grant| AgentScopeGrant {
-                    scope: resolved_scope_to_json(grant.scope),
-                    ui_message: grant.ui_message,
-                }),
-            },
-            Err(e) => AgentToolPermission::Denied {
-                reason: format!("couldn't validate call arguments: {e}"),
-                escalation: None,
-            },
-        }
-    }
-
-    /// Finds tool calls the model has requested but that don't have a result message
-    /// yet, by walking the chat's messages newest-first: skip past `tool` rows (already
-    /// resolved), and whatever comes right after them decides the answer. If that's an
-    /// `assistant` message with `tool_calls`, the ones beyond however many `tool` rows
-    /// we just skipped are still pending (`tool_calls` is id-ordered, i.e. the order the
-    /// model requested them in). Anything else — a plain assistant reply, a `user`
-    /// message, or an empty chat — means nothing is pending; in particular a fresh
-    /// `user` message always wins even if older unresolved tool calls sit further back,
-    /// since the user talking again supersedes them.
-    async fn pending_tool_calls(&self, chat_id: i64) -> Result<Vec<ToolCallOut>, ErrorService> {
-        let (messages, _) = self.chat_store.messages(chat_id, PENDING_TOOL_CALLS_LOOKBACK, 0).await?;
-
-        let resolved = messages.iter().take_while(|message| message.role == "tool").count();
-
-        let Some(candidate) = messages.get(resolved) else {
-            return Ok(vec![]);
-        };
-
-        if candidate.role != "assistant" {
-            return Ok(vec![]);
-        }
-
-        Ok(candidate.tool_calls[resolved.min(candidate.tool_calls.len())..].to_vec())
-    }
-
-    /// Builds the facade-facing view of a tool call the model has requested, including
-    /// whether it's actually permitted right now — always checked against whatever
-    /// scope is already stored for this chat/tool (never a one-time override; only
-    /// `use_tool` accepts one of those), since this is a preview, not a commitment to
-    /// run anything.
-    async fn to_agent_tool_call(
-        &self,
-        chat_id: i64,
-        name: String,
-        arguments: Value,
-    ) -> Result<AgentToolCall, ErrorService> {
-        let scope = self.stored_scope(chat_id, &name).await?;
-        let is_subagent = self.chat_store.chat(chat_id).await?.parent_chat_id.is_some();
-        let permission = self.tool_permission(&name, arguments.clone(), scope, is_subagent).await;
-
-        Ok(AgentToolCall {
-            permission,
-            name,
-            arguments,
-        })
-    }
-}
-
-/// Serializes a `ResolvedScope` into the flat JSON value that crosses the HTTP boundary
-/// as `AgentScopeGrant.scope` — opaque to the frontend (`unknown` on its side), which
-/// only ever echoes it back verbatim via `allow_scope` or a `use_tool` one-time
-/// override. Shared buckets are keyed by `SharedBucket::db_key()` — the same string
-/// `PermissionStore` rows already use — so `resolved_scope_from_json` (below) can read
-/// them back into the right bucket unambiguously, rather than guessing a flattened
-/// object apart by a shared JSON key the way the old `split_scope` had to.
-fn resolved_scope_to_json(scope: ResolvedScope) -> Value {
-    let shared: serde_json::Map<String, Value> =
-        scope.shared.into_iter().map(|(bucket, value)| (bucket.db_key().to_string(), value)).collect();
-
-    serde_json::json!({ "own": scope.own, "shared": shared })
-}
-
-/// The inverse of `resolved_scope_to_json`. `tool` decides which shared buckets are even
-/// meaningful for it; a bucket key present in `json` that `tool` doesn't declare (e.g.
-/// stale data from before a tool's declared buckets changed) is just dropped rather than
-/// erroring — there's nothing sensible to do with it, and dropping it is no worse than
-/// the grant never having existed.
-fn resolved_scope_from_json(tool: &dyn Tool, json: Value) -> ResolvedScope {
-    let own = json.get("own").filter(|v| !v.is_null()).cloned();
-
-    let mut shared = HashMap::new();
-    if let Some(shared_obj) = json.get("shared").and_then(|s| s.as_object()) {
-        for &bucket in tool.shared_buckets() {
-            if let Some(value) = shared_obj.get(bucket.db_key()) {
-                shared.insert(bucket, value.clone());
-            }
-        }
-    }
-
-    ResolvedScope { own, shared }
-}
-
-/// Appends `delta`'s facts into `existing`, one level deep: for a top-level key that's
-/// an object on both sides (e.g. `"folders"`), the two objects' own keys are unioned —
-/// two different approved folders both end up in the same map, rather than the second
-/// replacing the first. Anything else in `delta` just sets that key outright. Every
-/// bucket's stored shape today is exactly one level deep (`{"folders": {...}}`,
-/// `{"hosts": {...}}`), so one level of recursion covers everything currently in play.
-fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
-    let mut base = existing.and_then(|v| v.as_object().cloned()).unwrap_or_default();
-    let Some(delta_obj) = delta.as_object() else {
-        return delta;
-    };
-
-    for (key, delta_value) in delta_obj {
-        match (base.get(key).and_then(|v| v.as_object()), delta_value.as_object()) {
-            (Some(existing_inner), Some(delta_inner)) => {
-                let mut merged_inner = existing_inner.clone();
-                merged_inner.extend(delta_inner.clone());
-                base.insert(key.clone(), Value::Object(merged_inner));
-            }
-            _ => {
-                base.insert(key.clone(), delta_value.clone());
-            }
-        }
-    }
-
-    Value::Object(base)
 }
 
 /// `Agent`'s outputs (this one included) derive `Serialize` and go straight out as JSON

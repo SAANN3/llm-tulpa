@@ -70,13 +70,14 @@ impl Agent {
 
         let auto_confirm = self.settings_store.auto_confirm(parent.user_id).await?;
         let sub = self.chat_store.create_subchat(&parent, sub_chat_name(&prompt)).await?;
-        self.permission_store.copy_grants(parent.id, sub.id).await?;
+        self.tool_calls.copy_grants(parent.id, sub.id).await?;
 
         let agent = self.clone();
         let task_prompt = prompt.clone();
         let sub_chat_id = sub.id;
-        let live = self.mark_subagent_live(sub.id);
+        let live = self.tool_calls.mark_live(sub.id);
         let job = self
+            .tool_context
             .job_store
             .start_agent(parent.id, &prompt, sub.id, async move {
                 // Held for the whole run; dropped when it ends or the job is killed.
@@ -86,13 +87,6 @@ impl Agent {
             .await?;
 
         Ok(SubagentStarted { job_id: job.id, chat_id: sub.id })
-    }
-
-    /// Marks a sub-agent's chat as live until the returned guard is dropped — the same guard type
-    /// the tool-execution mark uses, over the set `is_running` also consults.
-    fn mark_subagent_live(&self, chat_id: i64) -> super::RunningToolGuard {
-        self.live_subagents.lock().unwrap().insert(chat_id);
-        super::RunningToolGuard { running: self.live_subagents.clone(), chat_id }
     }
 
     /// One sub-agent run, from waiting its turn to how it ended. A failure partway (Ollama
@@ -212,8 +206,8 @@ impl Agent {
     /// deltas instead of overwriting).
     async fn run_pending_unattended(&self, chat_id: i64, auto_confirm: bool) -> Result<PendingRun, ErrorService> {
         if auto_confirm {
-            for call in self.pending_tool_calls(chat_id).await? {
-                let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
+            for call in self.tool_calls.pending_tool_calls(chat_id).await? {
+                let view = self.tool_calls.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
                 if let AgentToolPermission::Denied { escalation: Some(grant), .. } = view.permission {
                     self.allow_scope(chat_id, view.name, grant.scope).await?;
                 }
@@ -222,7 +216,7 @@ impl Agent {
 
         let mut failed_return = None;
         loop {
-            let out = self.run_next_tool(chat_id, None, true).await?;
+            let out = self.tool_calls.run_next_tool(chat_id, None, true).await?;
             if out.tool_name == ReturnAgentTool::NAME {
                 if out.success {
                     let answer = match out.content {
