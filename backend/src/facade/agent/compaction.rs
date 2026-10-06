@@ -54,6 +54,8 @@ mod notes;
 /// tens of thousands of tokens of growth away.
 const TRIGGER_FRACTION: f64 = 0.70;
 const KEEP_CHARS_PER_TOKEN: f64 = 0.6;
+/// What the chat template adds around one message, as characters (about 40 tokens at 3 characters a token).
+const MESSAGE_OVERHEAD_CHARS: usize = 120;
 /// After a failed fold, the prompt has to grow by this fraction of the window before the next try.
 const COMPACTION_RETRY_GROWTH: f64 = 0.05;
 
@@ -188,6 +190,7 @@ impl Compaction {
                         thinking
                     }
                     + message.images.iter().map(String::len).sum::<usize>()
+                    + Self::fixed_cost_chars(message)
             })
             .collect();
         let split_at = pick_compaction_boundary(&sizes, keep_chars);
@@ -235,6 +238,17 @@ impl Compaction {
         tracing::info!(chat_id, new_boundary_id, facts_added, "compaction finished for chat_id {chat_id}");
 
         Ok(())
+    }
+
+    /// What a message costs in the prompt beyond its text and thinking: the name and arguments of the tool calls
+    /// it made (a `storage.write_file` call carries the whole file there) and what the chat template wraps
+    /// around every message (role markers, the tool-call tags), counted as a number of characters. Left out,
+    /// a chat of many short tool calls looks small to the fold while its prompt is over the window: at a 24k
+    /// window 164 such messages were judged to fit in 14,745 characters and nothing was folded, until the
+    /// request was refused for being larger than the window.
+    fn fixed_cost_chars(message: &Message) -> usize {
+        let calls: usize = message.tool_calls.iter().map(|call| call.tool_name.len() + call.arguments.to_string().len()).sum();
+        calls + MESSAGE_OVERHEAD_CHARS
     }
 
     /// Produces an updated summary covering `existing_summary` (if any) plus every
@@ -499,7 +513,32 @@ fn pick_compaction_boundary(sizes: &[usize], keep_chars: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::chat_store::ToolCallOut;
     use serde_json::json;
+
+    #[test]
+    fn a_tool_call_costs_its_arguments_and_every_message_its_template_overhead() {
+        let message = |tool_calls: Vec<ToolCallOut>| Message {
+            id: 1,
+            chat_id: 1,
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+            thinking: None,
+            thought_duration_ms: None,
+            tool_success: None,
+            tool_denied: false,
+            tool_calls,
+            images: vec![],
+            file_ids: vec![],
+            prompt_tokens: None,
+            eval_tokens: None,
+        };
+        assert_eq!(Compaction::fixed_cost_chars(&message(vec![])), MESSAGE_OVERHEAD_CHARS);
+        let call = ToolCallOut { tool_name: "storage.write_file".to_string(), arguments: serde_json::json!({"content": "x".repeat(1000)}) };
+        assert!(Compaction::fixed_cost_chars(&message(vec![call])) > 1000 + MESSAGE_OVERHEAD_CHARS);
+    }
 
     #[test]
     fn test_pick_compaction_boundary_logic() {
