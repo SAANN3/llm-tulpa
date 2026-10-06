@@ -91,9 +91,12 @@ impl OutputBudget {
     }
 
     /// Computes a per-request `num_predict` cap for the `chat` path.
-    /// When `known_prompt_tokens` is provided (ground-truth from the previous turn in the DB),
-    /// only the newest message and tool definitions need to be accounted for, leaving the
-    /// real, true context headroom. When `None`, falls back to `PROMPT_CHARS_PER_TOKEN`.
+    /// When `known_prompt_tokens` is provided (ground-truth from the previous request in the DB),
+    /// only the newest message needs to be accounted for: the measurement is of the whole prompt,
+    /// tool definitions included, so adding their cost again would take it away from the reply
+    /// twice (about 9k tokens with this project's tool set, which on a 40k window is most of the
+    /// room left at the compaction trigger). When `None`, the prompt is estimated from its characters
+    /// and the tool definitions are added on top, since nothing measured them.
     pub fn for_chat(
         &self,
         messages: &[ChatMessage],
@@ -105,7 +108,7 @@ impl OutputBudget {
             Some(known) => {
                 let newest_chars = messages.last().map_or(0, |m| m.content.len());
                 let newest_tokens = (newest_chars as f64 / PROMPT_CHARS_PER_TOKEN).ceil() as u64;
-                known + newest_tokens + PROMPT_TOKEN_SAFETY_MARGIN + tool_overhead_tokens
+                known + newest_tokens + PROMPT_TOKEN_SAFETY_MARGIN
             }
             None => {
                 let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
@@ -139,6 +142,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_measured_prompt_already_includes_the_tool_definitions() {
+        let budget = OutputBudget::new(40_000);
+        let messages = vec![ChatMessage::user("hi".to_string())];
+        // 28,000 tokens measured, 9,000 of them tool definitions: 40,000 - 28,000 - 1,024 margin - 1 for the message
+        let measured = budget.for_chat(&messages, 9_000, Some(28_000), None);
+        assert_eq!(measured, 10_975);
+        // Nothing measured: the estimate has no tool definitions in it, so they are added
+        let estimated = budget.for_chat(&messages, 9_000, None, None);
+        assert_eq!(estimated, 40_000 - 9_000 - 1_024);
+    }
+
+    #[test]
     fn test_chat_budget_known_tokens() {
         let budget = OutputBudget::new(98304);
 
@@ -147,9 +162,9 @@ mod tests {
         // Case 1: Ground-truth prompt tokens known from prior turn = 67,139 tokens
         let num_predict = budget.for_chat(&messages, 500, Some(67139), None);
         // newest_chars = 42 chars -> ceil(42 / 3.2) = 14 tokens
-        // reserved = 67139 + 14 + 1024 (PROMPT_TOKEN_SAFETY_MARGIN) + 500 = 68677
-        // remaining = 98304 - 68677 = 29627
-        assert_eq!(num_predict, 29627);
+        // reserved = 67139 + 14 + 1024 (PROMPT_TOKEN_SAFETY_MARGIN) = 68177: the measurement already has the tools in it
+        // remaining = 98304 - 68177 = 30127
+        assert_eq!(num_predict, 30127);
 
         // Case 2: Fallback when known_prompt_tokens is None
         // total_chars = 42 -> 42 / 3.2 = 13 tokens

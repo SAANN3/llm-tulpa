@@ -14,11 +14,12 @@ use crate::tools::base::Tool;
 use crate::tools::chat::write_notes::MAX_NOTES_CHARS;
 use crate::tools::subagent;
 
-/// The notes request is only made with at least this many tokens of the window free: the reply cap is what the window
-/// leaves after the measured prompt, a margin and the tool definitions (counted again on top of the measured size, ~9k),
-/// and below ~6k a model that thinks first runs out of room (measured at a 49k window with 10k free: 4,096 tokens, 150 s,
-/// no notes).
-const NOTES_ASK_MIN_ROOM_TOKENS: u64 = 16_000;
+/// The notes request is only made with at least this many tokens of the window free: the reply may use what the
+/// window leaves after the measured prompt and a margin, and a model that thinks first needs several thousand
+/// tokens to reason and then write notes of up to 8,000 characters (about 2,500 tokens). Below this it runs out
+/// of room mid-reasoning (measured at a 49k window with 10k free, when the tool definitions were counted twice in the
+/// cap: 4,096 tokens, 150 s, no notes). At the compaction trigger a window has 30% free: 12k tokens at 40k.
+const NOTES_ASK_MIN_ROOM_TOKENS: u64 = 6_000;
 
 /// The notes a pre-fold reply carries, or `None` when it carries none to store: an empty reply,
 /// UNCHANGED, a tool call (a real one or the model's own tags in the text), or text over the
