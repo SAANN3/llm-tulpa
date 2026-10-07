@@ -36,6 +36,7 @@ impl UserStore {
     /// simultaneous requests can't both win: the loser gets `AlreadyExists` / `OwnerExists`.
     /// The user's `user_settings` row is created lazily by `SettingsStore` on first use.
     pub async fn create_user(&self, username: &str, password: &str, role: &str) -> Result<User, UserStoreErrors> {
+        check_credentials(username, password)?;
         let hash = AuthService::hash_password(password).await?;
 
         let model = users::ActiveModel {
@@ -133,6 +134,31 @@ pub enum UserStoreErrors {
     Auth(AuthErrors),
     AlreadyExists,
     OwnerExists,
+    /// A username or password the account can't have; the text says why.
+    Invalid(&'static str),
+}
+
+/// The longest username accepted: it is shown in lists and headers.
+const MAX_USERNAME_CHARS: usize = 64;
+
+/// What every account needs, whoever creates it (the setup wizard, the owner): the frontend checks the same, but
+/// the API is reachable without it, and an account with an empty name or password can't be told apart or is open
+/// to anyone. Only the first 72 bytes of a password count (bcrypt), so a longer one is refused rather than
+/// quietly cut.
+fn check_credentials(username: &str, password: &str) -> Result<(), UserStoreErrors> {
+    if username.trim().is_empty() || username.trim() != username {
+        return Err(UserStoreErrors::Invalid("the username can't be empty or start or end with a space"));
+    }
+    if username.chars().count() > MAX_USERNAME_CHARS || username.chars().any(char::is_control) {
+        return Err(UserStoreErrors::Invalid("the username is too long or has control characters in it"));
+    }
+    if password.is_empty() {
+        return Err(UserStoreErrors::Invalid("the password can't be empty"));
+    }
+    if password.len() > 72 {
+        return Err(UserStoreErrors::Invalid("the password is longer than 72 bytes, the most a password can have here"));
+    }
+    Ok(())
 }
 
 impl From<DbErr> for UserStoreErrors {
@@ -161,6 +187,24 @@ impl From<UserStoreErrors> for ErrorService {
             UserStoreErrors::AlreadyExists => {
                 ErrorService::new(StatusCode::CONFLICT, "a user with that name already exists")
             }
+            UserStoreErrors::Invalid(why) => ErrorService::new(StatusCode::BAD_REQUEST, why),
         }
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn an_account_needs_a_real_name_and_a_password_bcrypt_can_hold() {
+        assert!(check_credentials("anna", "secret").is_ok());
+        assert!(check_credentials("Анна", "пароль").is_ok());
+        for (username, password) in [("", "x"), ("   ", "x"), (" anna", "x"), ("anna", ""), ("an\nna", "x")] {
+            assert!(check_credentials(username, password).is_err(), "{username:?}/{password:?} should be refused");
+        }
+        assert!(check_credentials(&"a".repeat(65), "x").is_err());
+        assert!(check_credentials("anna", &"x".repeat(72)).is_ok());
+        assert!(check_credentials("anna", &"x".repeat(73)).is_err());
     }
 }
