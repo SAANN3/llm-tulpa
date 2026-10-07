@@ -16,6 +16,7 @@ export type ServerEvent =
     | { type: 'chat_created'; chat_id: number }
     | { type: 'chat_renamed'; chat_id: number; name: string }
     | { type: 'chat_deleted'; chat_id: number }
+    | { type: 'messages_removed'; chat_id: number; message_ids: number[] }
     | { type: 'model_state'; state: 'loading' | 'ready' | 'stopped' | 'failed' | 'queued'; profile_id: number | null; model: string | null; detail: string | null }
 
 type Listener = (event: ServerEvent) => void

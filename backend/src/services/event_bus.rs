@@ -70,6 +70,8 @@ pub enum ServerEvent {
     ChatRenamed { chat_id: i64, name: String },
     /// The user deleted a chat. The stream still delivers this one: a deleted chat is the user's all the same.
     ChatDeleted { chat_id: i64 },
+    /// Messages were taken out of the chat (a rewind, or the reply a regenerate replaced): pages showing it drop them.
+    MessagesRemoved { chat_id: i64, message_ids: Vec<i64> },
     /// The user looked at the chat: its note of how the last run ended (`unseen_end`) was cleared. Sent only when
     /// there was one to clear, so every other open page of the same user drops it too.
     ChatSeen { chat_id: i64 },
@@ -127,6 +129,7 @@ impl ServerEvent {
             ServerEvent::ToolStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatSeen { chat_id } => Some(*chat_id),
+            ServerEvent::MessagesRemoved { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatCreated { chat_id } => Some(*chat_id),
             ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),

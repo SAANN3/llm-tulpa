@@ -18,13 +18,14 @@ impl ChatStore {
     /// (another tab, a finished job) can't slip into the cut unchecked. The last evaluated prompt
     /// size is cleared with it: it described the longer history, and the compaction decision reads
     /// it.
-    pub async fn rewind_from(&self, chat_id: i64, message_id: i64) -> Result<u64, ChatStoreErrors> {
+    /// Removes `message_id` and everything after it, returning the ids removed.
+    pub async fn rewind_from(&self, chat_id: i64, message_id: i64) -> Result<Vec<i64>, ChatStoreErrors> {
         let refuse = |why: &str| ChatStoreErrors::Conflict(format!("that can't be removed: {why}"));
 
         // A refusal is the transaction's *value*, not its error: nothing has been written by then,
         // so committing it is harmless, and only a database failure rolls back as an error.
         self.db
-            .transaction::<_, Result<u64, ChatStoreErrors>, DbErr>(|txn| {
+            .transaction::<_, Result<Vec<i64>, ChatStoreErrors>, DbErr>(|txn| {
                 Box::pin(async move {
                     let Some(chat) = chats::Entity::find_by_id(chat_id).one(txn).await? else {
                         return Ok(Err(ChatStoreErrors::NotFound));
@@ -67,7 +68,8 @@ impl ChatStore {
                         return Ok(Err(refuse("a tool was used from there on")));
                     }
 
-                    let deleted = messages::Entity::delete_many()
+                    let removed: Vec<i64> = cut().select_only().column(messages::Column::Id).into_tuple().all(txn).await?;
+                    messages::Entity::delete_many()
                         .filter(messages::Column::ChatId.eq(chat_id))
                         .filter(messages::Column::Id.gte(message_id))
                         .exec(txn)
@@ -81,7 +83,7 @@ impl ChatStore {
                     .update(txn)
                     .await?;
 
-                    Ok(Ok(deleted.rows_affected))
+                    Ok(Ok(removed))
                 })
             })
             .await

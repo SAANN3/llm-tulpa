@@ -512,6 +512,23 @@ def the_chat_list_changes_are_announced():
 
 
 @scenario
+def removed_messages_are_announced():
+    settings()
+    chat = new_chat("removed")
+    events = collect_events()
+    script({"text": "First."}, {"text": "Second."})
+    turn(chat, "one")
+    reply = messages(chat)[-1]["id"]
+    eq(api("/api/agent/regenerate", {"chat_id": chat, "message_id": reply})[0], 202, "regenerate")
+    wait_idle(chat)
+    kept = messages(chat)
+    eq(api("/api/chats/rewind", {"chat_id": chat, "message_id": kept[0]["id"]})[0], 200, "rewind")
+    time.sleep(0.5)
+    removed = [sorted(e["message_ids"]) for e in events if e.get("chat_id") == chat and e["type"] == "messages_removed"]
+    eq(removed, [[reply], sorted(m["id"] for m in kept)], "the replaced reply, then everything the rewind took")
+
+
+@scenario
 def messages_after_an_id_and_the_run_events():
     settings()
     chat = new_chat("events")

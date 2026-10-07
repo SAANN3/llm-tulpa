@@ -3,6 +3,7 @@ import {rewindChat} from '../api/chats/rewind.ts'
 import {getMessages} from '../api/chats/messages'
 import type {MessageOut} from '../api/chats/types'
 import {peekPendingPrompt} from '../utils/pending-prompt.ts'
+import {useServerEvent} from './use-server-events.ts'
 
 const MESSAGES_PAGE_SIZE = 30
 
@@ -109,6 +110,8 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
     const fetchAgainRef = useRef(false)
     // Messages taken off the screen that the backend still holds for a moment (a reply being regenerated): `fetchNew` must not bring them back
     const hiddenIdsRef = useRef(new Set<number>())
+    // Reads the chat's first page again: set while that read failed (the backend was going away at that moment)
+    const retryFirstLoadRef = useRef<(() => void) | null>(null)
 
     /** Reads the messages newer than the last one shown. Called when the backend says it stored some; calls that arrive while one is in flight make it look once more */
     const fetchNew = async () => {
@@ -164,9 +167,10 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
     useEffect(() => {
         let cancelled = false
         readyRef.current = false
+        retryFirstLoadRef.current = null
 
         if (!skipInitialFetchRef.current) {
-            getMessages({chatId, limit: MESSAGES_PAGE_SIZE}).then((result) => {
+            const load = () => getMessages({chatId, limit: MESSAGES_PAGE_SIZE}).then((result) => {
                 if (cancelled) return
                 const queue: ToolArgsQueue = {args: []}
                 const historical = toDisplayMessages([...result.messages].reverse(), queue)
@@ -183,7 +187,11 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
                     wantNewRef.current = false
                     void fetchNewRef.current()
                 }
+            }, () => {
+                // Read again when the event stream is back, which is when the backend is (see `stream_open` below)
+                if (!cancelled) retryFirstLoadRef.current = () => void load()
             })
+            void load()
         } else {
             // A chat just made for the home page's prompt: nothing in it yet, its messages arrive as they are stored
             queueRef.current = {args: []}
@@ -200,6 +208,28 @@ export const useMessages = (chatId: number, onAppended?: () => void) => {
             wantNewRef.current = false
         }
     }, [chatId])
+
+    // The stream (re)opened, so the backend answers again: a first page that couldn't be read is read now
+    useServerEvent('stream_open', () => {
+        const retry = retryFirstLoadRef.current
+        retryFirstLoadRef.current = null
+        retry?.()
+    })
+
+    // A rewind or a regenerate somewhere else (another tab, another device) took these out of the chat. Here they may
+    // be gone already (this page did it), and then nothing changes.
+    useServerEvent('messages_removed', (event) => {
+        if (event.chat_id !== chatIdRef.current) return
+        const gone = new Set(event.message_ids)
+        event.message_ids.forEach((id) => hiddenIdsRef.current.add(id))
+        const kept = messagesRef.current.filter((m) => m.id == null || !gone.has(m.id))
+        const removedHere = messagesRef.current.length - kept.length
+        if (removedHere === 0) return
+        messagesRef.current = kept
+        totalRef.current -= removedHere
+        setMessages(kept)
+        setTotal((t) => t - removedHere)
+    })
 
     const loadOlder = async (): Promise<boolean> => {
         if (loadingMoreRef.current || messagesRef.current.length >= totalRef.current) return false

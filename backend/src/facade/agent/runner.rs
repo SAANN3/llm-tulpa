@@ -728,6 +728,7 @@ impl TurnRunner {
             first = false;
             if let Some(old) = replace.take() {
                 self.chat_store.delete_message(chat_id, old).await?;
+                self.events.publish(ServerEvent::MessagesRemoved { chat_id, message_ids: vec![old] });
             }
             self.events.publish(ServerEvent::MessagesChanged { chat_id });
 

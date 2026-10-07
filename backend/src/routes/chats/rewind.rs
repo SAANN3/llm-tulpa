@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::event_bus::ServerEvent, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct RewindChatRequest {
@@ -46,7 +46,10 @@ pub async fn rewind_chat(
     if services.agent.has_run(body.chat_id) {
         return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has a run going on"));
     }
-    let deleted = services.chat_store.rewind_from(body.chat_id, body.message_id).await?;
+    let removed = services.chat_store.rewind_from(body.chat_id, body.message_id).await?;
+    if !removed.is_empty() {
+        state.events.publish(ServerEvent::MessagesRemoved { chat_id: body.chat_id, message_ids: removed.clone() });
+    }
 
-    Ok(Json(RewindChatResponse { deleted }))
+    Ok(Json(RewindChatResponse { deleted: removed.len() as u64 }))
 }

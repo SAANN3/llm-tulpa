@@ -20,13 +20,17 @@ export const useChats = (onLoaded?: () => void, folderId?: number) => {
     const [total, setTotal] = useState(0)
     const [loadingMore, setLoadingMore] = useState(false)
 
+    // Whether the list has been read at all: a first read that failed (the backend was going away) is tried again
+    // when the event stream is back
+    const loadedRef = useRef(false)
     const reload = useCallback(
         () =>
             getChats({folder_id: folderId, limit: CHATS_PAGE_SIZE}).then((result) => {
+                loadedRef.current = true
                 setChats('chats' in result ? result.chats : [result])
                 setTotal('chats' in result ? result.total : 1)
                 onLoaded?.()
-            }),
+            }, () => undefined),
         [folderId],
     )
 
@@ -85,7 +89,7 @@ export const useChats = (onLoaded?: () => void, folderId?: number) => {
             // The next event or sync tries again
         }
     }, [folderId])
-    useServerEvent('stream_open', () => void syncUnseenEnds())
+    useServerEvent('stream_open', () => void (loadedRef.current ? syncUnseenEnds() : reload()))
     useEffect(() => {
         const onVisible = () => {
             if (document.visibilityState === 'visible') void syncUnseenEnds()
