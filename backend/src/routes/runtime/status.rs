@@ -8,7 +8,7 @@ use crate::{facade::placement, routes::auth::AuthUser, services::llama_runtime::
 /// profile it runs, who has a turn on it right now, and where the model went (layers on the GPU,
 /// buffer sizes) as the server itself reported at startup, and whether the model is really on the GPU
 /// (judged from the launch profile and what the kernel says the process holds on the GPUs). A model change also arrives as a
-/// `model_state` event on `/api/events`, so a page needn't poll while it waits.
+/// `model_state` event on `/api/live`, so a page needn't poll while it waits.
 #[utoipa::path(
     get,
     path = "/api/runtime",

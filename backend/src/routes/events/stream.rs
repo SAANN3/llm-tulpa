@@ -30,7 +30,7 @@ use crate::{
 /// chats it owns (one ownership lookup per event, and events are rare).
 #[utoipa::path(
     get,
-    path = "/api/events",
+    path = "/api/live",
     tag = "events",
     responses(
         (status = 200, description = "An open `text/event-stream`; each event's data is a JSON `ServerEvent`", content_type = "text/event-stream", body = String),
@@ -64,7 +64,7 @@ fn events_for(
             let event = received.ok()?;
             // An event about no chat in particular (the model server's state) is everyone's
             if let Some(chat_id) = event.chat_id() {
-                chats.owned_chat(user_id, chat_id).await.ok()?;
+                chats.owns(user_id, chat_id).await.ok()?.then_some(())?;
             }
             Some(event)
         }

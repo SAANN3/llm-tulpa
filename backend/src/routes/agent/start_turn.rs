@@ -33,7 +33,7 @@ pub(crate) struct StartTurnOut {
 
 /// Stores `prompt` as the user's next message and starts a run on `chat_id` that answers it: the
 /// backend asks the model, runs the tools it asks for and asks again until it answers, without a
-/// browser holding anything open. Returns at once; follow the run with `GET /api/events`
+/// browser holding anything open. Returns at once; follow the run with `GET /api/live`
 /// (`run_started`, `messages_changed`, `tool_started`, `run_ended`) and read what it stored through
 /// the chat's messages. A tool call that needs permission ends the run until `POST /api/agent/answer`.
 #[utoipa::path(

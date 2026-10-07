@@ -36,7 +36,7 @@ pub struct AppState {
     pub installer: Arc<LlamaInstaller>,
     /// Where the model files live; the owner can change it while the backend runs
     pub model_folder: Arc<ModelFolder>,
-    /// What the backend broadcasts to connected frontends (`GET /api/events`). Needs no
+    /// What the backend broadcasts to connected frontends (`GET /api/live`). Needs no
     /// database, so it lives here rather than in `AppServices`; the job store and the agent
     /// get a handle to it when the services are built.
     pub events: Arc<EventBus>,

@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::event_bus::ServerEvent, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct DeleteChatQuery {
@@ -39,6 +39,7 @@ pub async fn delete_chat(
         return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has a run going on"));
     }
     services.chat_store.delete_chat(query.id).await?;
+    state.events.publish(ServerEvent::ChatDeleted { chat_id: query.id });
 
     Ok(StatusCode::NO_CONTENT)
 }

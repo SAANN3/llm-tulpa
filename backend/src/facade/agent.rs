@@ -196,6 +196,11 @@ impl Agent {
         self.runner.has_run(chat_id)
     }
 
+    /// The chats with a run going on, in no particular order. Whose they are is for the caller to check.
+    pub fn running_chat_ids(&self) -> Vec<i64> {
+        self.runner.running_chat_ids()
+    }
+
     /// What the chat's turn is doing: nothing, running (since when, how many tokens so far), or
     /// waiting at a permission prompt (which calls).
     pub async fn turn_state(&self, chat_id: i64) -> Result<TurnState, ErrorService> {

@@ -20,6 +20,7 @@ use super::search::*;
 use super::set_folder::*;
 use super::set_model::*;
 use super::set_profile::*;
+use super::set_seen::*;
 use super::set_tools::*;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -29,6 +30,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/rewind", post(rewind_chat))
         .route("/model", post(set_model))
         .route("/profile", post(set_profile))
+        .route("/seen", post(set_seen))
         .route("/tools", post(set_tools))
         .route("/folder", post(set_folder))
         .route("/messages", get(get_messages))
@@ -39,7 +41,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -51,6 +53,7 @@ pub fn router() -> Router<Arc<AppState>> {
         SetModelRequest,
         SetProfileRequest,
         SetToolsRequest,
+        SetSeenRequest,
         SetFolderRequest,
         MessageToolCallOut,
         MessageOut,

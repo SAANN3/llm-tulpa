@@ -375,6 +375,11 @@ impl TurnRunner {
         self.runs.lock().unwrap().contains_key(&chat_id)
     }
 
+    /// The chats with a run going on, whose end is not yet recorded.
+    pub(super) fn running_chat_ids(&self) -> Vec<i64> {
+        self.runs.lock().unwrap().iter().filter(|(_, run)| !run.snapshot().ended).map(|(chat_id, _)| *chat_id).collect()
+    }
+
     /// Stops the chat's run: the model call in flight is dropped and nothing of it is stored. A tool that is
     /// already running finishes.
     pub(super) fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
@@ -458,9 +463,9 @@ impl TurnRunner {
         self.store_user_message(chat_id, prompt, vec![], vec![]).await?;
         let run = slot.run.clone();
         // A page that has the sub-agent's chat open follows it like any run
-        self.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
+        self.announce_start(chat_id, &run).await;
         let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run.clone()).await;
-        self.finish(chat_id, &end, &run);
+        self.finish(chat_id, &end, &run).await;
         drop(slot);
         match end {
             RunEnd::Subagent(result) => Ok(result),
@@ -497,7 +502,7 @@ impl TurnRunner {
                 if !matches!(start, Start::Answer { .. }) {
                     runner.turn_steps.lock().unwrap().remove(&chat_id);
                 }
-                runner.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
+                runner.announce_start(chat_id, &run).await;
             }
             // In a task of its own: a panic in the run ends it as a failure the page is told about, instead of
             // freeing the chat in silence while every page keeps showing a run that is gone
@@ -518,7 +523,7 @@ impl TurnRunner {
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
             // The end is recorded and told before the chat is free, so a new run's start can't come first; the state
             // already says idle (the run is marked ended), which is what a page asking on `RunEnded` needs
-            runner.finish(chat_id, &end, &run);
+            runner.finish(chat_id, &end, &run).await;
             drop(slot);
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
@@ -542,7 +547,7 @@ impl TurnRunner {
     }
 
     /// Records how a run ended and tells whoever is watching.
-    fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) {
+    async fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) {
         // Only a wait for permission keeps the turn going (its claim on the model server and its step count)
         if !matches!(end, RunEnd::WaitingForPermission) {
             self.turn.release(chat_id);
@@ -577,7 +582,35 @@ impl TurnRunner {
         };
         let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens, status };
         self.last_ends.lock().unwrap().insert(chat_id, ended);
+        // Stored before the event goes out: a page that reads the chat list on `run_ended` must find it
+        self.record_end(chat_id, reason).await;
         self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens, status });
+    }
+
+    /// Notes how a run ended for the chat's owner to find (`chats.unseen_end`). A run the user stopped has nothing to
+    /// tell them. Best effort: the note is a convenience, and a run that ended must not fail over it.
+    async fn record_end(&self, chat_id: i64, reason: RunEndReason) {
+        let name = match reason {
+            RunEndReason::Answered => "answered",
+            RunEndReason::Failed => "failed",
+            RunEndReason::StepLimit => "step_limit",
+            RunEndReason::WaitingForPermission => "waiting_for_permission",
+            RunEndReason::Stopped => return,
+        };
+        if let Err(e) = self.chat_store.set_unseen_end(chat_id, name).await {
+            tracing::warn!(chat_id, "couldn't record how the run ended: {e:?}");
+        }
+    }
+
+    /// A run starts on the chat: what the one before left unseen is no longer news, and pages are told (with the chat
+    /// that started this one, for a sub-agent, so they can show the work there).
+    async fn announce_start(&self, chat_id: i64, run: &RunTracker) {
+        if let Err(e) = self.chat_store.clear_unseen_end(chat_id).await {
+            tracing::warn!(chat_id, "couldn't clear how the last run ended: {e:?}");
+        }
+        // A chat that can't be read has no parent to name; the run itself fails on the same read a moment later
+        let parent_chat_id = self.chat_store.chat(chat_id).await.ok().and_then(|chat| chat.parent_chat_id);
+        self.events.publish(ServerEvent::RunStarted { chat_id, parent_chat_id, started_at: run.snapshot().started_at });
     }
 
     /// The loop. A step is a model call and what comes of it; after a reply that asks for tools the
@@ -644,7 +677,7 @@ impl TurnRunner {
                     return Ok(RunEnd::NothingToDo);
                 }
                 self.last_ends.lock().unwrap().remove(&chat_id);
-                self.events.publish(ServerEvent::RunStarted { chat_id, started_at: run.snapshot().started_at });
+                self.announce_start(chat_id, &run).await;
             }
             // Not for a regenerate: its prompt is the one the old reply was made from, minus that reply, and
             // folding now could fold the very reply (and its question) that is about to be replaced

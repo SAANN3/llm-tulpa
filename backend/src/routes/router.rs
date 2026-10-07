@@ -16,7 +16,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/llm", llm::router::router())
         .nest("/agent", agent::router::router())
         .nest("/chats", chats::router::router())
-        .nest("/events", events::router::router())
+        // Not `/events`: a path ending in `/api/events` is on the ad-blocker lists (EasyPrivacy), and a page behind such a
+        // blocker (Adblock Plus in Samsung Internet) then never gets its stream
+        .nest("/live", events::router::router())
         .nest("/files", files::router::router())
         .nest("/folders", folders::router::router())
         .nest("/hf", hf::router::router())

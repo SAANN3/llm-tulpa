@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 const CHANNEL_CAPACITY: usize = 256;
 
 /// Something the backend tells every connected frontend about, outside any request it
-/// was asked to answer — see `GET /api/events`. Deliberately just a hint that something
+/// was asked to answer — see `GET /api/live`. Deliberately just a hint that something
 /// changed (which chat, which job), never the content itself: the actual data is always
 /// read back through the normal API, so a missed or duplicated event can't leave a
 /// client with wrong data, only a late refresh.
@@ -42,6 +42,8 @@ pub enum ServerEvent {
     /// A run (the backend's loop of model calls and tool calls for one chat) started.
     RunStarted {
         chat_id: i64,
+        /// The chat that started this one as a sub-agent, so a page with no row for it can show the work on that one.
+        parent_chat_id: Option<i64>,
         #[schema(value_type = String, format = "date-time")]
         started_at: DateTimeUtc,
     },
@@ -62,6 +64,15 @@ pub enum ServerEvent {
         /// The HTTP status the failure would have had (423 when the model server is in use by someone else).
         status: Option<u16>,
     },
+    /// The user created a chat (not a sub-agent's or a plugin's): the chat list of their other open pages gets it.
+    ChatCreated { chat_id: i64 },
+    /// The user renamed a chat; `name` is what it is called now.
+    ChatRenamed { chat_id: i64, name: String },
+    /// The user deleted a chat. The stream still delivers this one: a deleted chat is the user's all the same.
+    ChatDeleted { chat_id: i64 },
+    /// The user looked at the chat: its note of how the last run ended (`unseen_end`) was cleared. Sent only when
+    /// there was one to clear, so every other open page of the same user drops it too.
+    ChatSeen { chat_id: i64 },
     /// The model server started loading, became ready, stopped or failed. Not about any one chat:
     /// everyone is told, so a page can say "the model is being applied, don't close it".
     ModelState {
@@ -115,6 +126,10 @@ impl ServerEvent {
             ServerEvent::MessagesChanged { chat_id } => Some(*chat_id),
             ServerEvent::ToolStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
+            ServerEvent::ChatSeen { chat_id } => Some(*chat_id),
+            ServerEvent::ChatCreated { chat_id } => Some(*chat_id),
+            ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
+            ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),
             ServerEvent::ModelState { .. } => None,
         }
     }

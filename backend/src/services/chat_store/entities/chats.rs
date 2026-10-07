@@ -43,6 +43,9 @@ pub struct Model {
     /// Whether the model is sent its tools in this chat. A model too small for them, or a window the tool
     /// definitions would mostly fill, runs without; a new chat takes the user's default.
     pub tools_enabled: bool,
+    /// How the last run ended when the user hasn't looked at the chat since (`answered`, `waiting_for_permission`,
+    /// `failed` or `step_limit`); NULL when there is nothing new.
+    pub unseen_end: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

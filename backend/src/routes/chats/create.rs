@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::event_bus::ServerEvent, state::AppState};
 
 use super::get::ChatOut;
 
@@ -87,6 +87,7 @@ pub async fn create_chat(
         }
     }
     let contexts = services.launches.contexts(services.context_length).await?;
+    state.events.publish(ServerEvent::ChatCreated { chat_id: chat.id });
 
     Ok(Json(ChatOut {
         id: chat.id,
@@ -101,5 +102,6 @@ pub async fn create_chat(
         parent_chat_id: chat.parent_chat_id,
         launch_profile_id: chat.launch_profile_id,
         tools_enabled: chat.tools_enabled,
+        unseen_end: chat.unseen_end,
     }))
 }

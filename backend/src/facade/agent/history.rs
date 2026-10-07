@@ -485,6 +485,7 @@ mod tests {
             cleared_up_to_message_id: None,
             thinking_trimmed_up_to_message_id: None,
             tools_enabled: true,
+            unseen_end: None,
         }
     }
 

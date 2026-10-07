@@ -67,6 +67,12 @@ impl ChatStore {
         self.to_chat(chat).await
     }
 
+    /// Whether the chat belongs to `user_id`, deleted or not: the event stream tells a user about their own chat's
+    /// deletion, which `owned_chat` would already call not found.
+    pub async fn owns(&self, user_id: i64, chat_id: i64) -> Result<bool, ChatStoreErrors> {
+        Ok(chats::Entity::find_by_id(chat_id).filter(chats::Column::UserId.eq(user_id)).one(&self.db).await?.is_some())
+    }
+
     /// Like `chat`, but 404s unless the chat belongs to `user_id` — the ownership gate
     /// handlers use before acting on a chat.
     pub async fn owned_chat(&self, user_id: i64, chat_id: i64) -> Result<Chat, ChatStoreErrors> {
@@ -75,6 +81,22 @@ impl ChatStore {
             return Err(ChatStoreErrors::NotFound);
         }
         Ok(chat)
+    }
+
+    /// Which of `chat_ids` are the user's own, not-deleted chats (a sub-agent's included: it is the
+    /// user's too). One query, for a caller that holds a list of ids from somewhere else.
+    pub async fn owned_chat_refs(&self, user_id: i64, chat_ids: &[i64]) -> Result<Vec<ChatRef>, ChatStoreErrors> {
+        let rows: Vec<(i64, Option<i64>)> = chats::Entity::find()
+            .filter(chats::Column::UserId.eq(user_id))
+            .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::Id.is_in(chat_ids.iter().copied()))
+            .select_only()
+            .column(chats::Column::Id)
+            .column(chats::Column::ParentChatId)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(rows.into_iter().map(|(id, parent_chat_id)| ChatRef { id, parent_chat_id }).collect())
     }
 
     /// The chats a user sees in their chat list: not deleted, not a sub-agent's, not owned by a
@@ -201,6 +223,7 @@ impl ChatStore {
             cleared_up_to_message_id: row.cleared_up_to_message_id,
             thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
             tools_enabled: row.tools_enabled,
+            unseen_end: row.unseen_end,
         }
     }
 
@@ -643,6 +666,29 @@ impl ChatStore {
             .update(&self.db)
             .await?;
         Ok(())
+    }
+
+    /// Records how a run on the chat ended, until the user looks at the chat (see `chats.unseen_end`). Doesn't
+    /// touch `updated_at`, so the chat keeps its place in the list. Ownership is the caller's responsibility.
+    pub async fn set_unseen_end(&self, chat_id: i64, unseen_end: &str) -> Result<(), ChatStoreErrors> {
+        chats::Entity::update_many()
+            .col_expr(chats::Column::UnseenEnd, Expr::value(unseen_end))
+            .filter(chats::Column::Id.eq(chat_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Clears the chat's `unseen_end`. Whether there was one to clear: the caller tells other pages only then.
+    /// Ownership is the caller's responsibility.
+    pub async fn clear_unseen_end(&self, chat_id: i64) -> Result<bool, ChatStoreErrors> {
+        let result = chats::Entity::update_many()
+            .col_expr(chats::Column::UnseenEnd, Expr::value(Option::<String>::None))
+            .filter(chats::Column::Id.eq(chat_id))
+            .filter(chats::Column::UnseenEnd.is_not_null())
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 
     /// Rebinds a chat to another model, which takes effect from its next turn. Ownership is
@@ -1160,6 +1206,14 @@ pub struct Chat {
     pub thinking_trimmed_up_to_message_id: Option<i64>,
     /// Whether the model is sent its tools in this chat (see `chats.tools_enabled`).
     pub tools_enabled: bool,
+    /// How the last run ended, until the user has looked at the chat (see `chats.unseen_end`).
+    pub unseen_end: Option<String>,
+}
+
+/// A chat's id and the chat that started it as a sub-agent, for a caller that needs nothing else about it.
+pub struct ChatRef {
+    pub id: i64,
+    pub parent_chat_id: Option<i64>,
 }
 
 /// The list view's content preview: whitespace collapsed to single spaces and cut at

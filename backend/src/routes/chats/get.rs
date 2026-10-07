@@ -50,6 +50,9 @@ pub(crate) struct ChatOut {
     pub(crate) launch_profile_id: Option<i64>,
     /// Whether the model is sent its tools in this chat.
     pub(crate) tools_enabled: bool,
+    /// How the last run on this chat ended, until the chat is opened (`POST /api/chats/seen`): `answered`,
+    /// `waiting_for_permission`, `failed` or `step_limit`. `null` when there is nothing new.
+    pub(crate) unseen_end: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -105,6 +108,7 @@ pub async fn get_chats(
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
             tools_enabled: chat.tools_enabled,
+            unseen_end: chat.unseen_end,
         })));
     }
 
@@ -130,6 +134,7 @@ pub async fn get_chats(
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
             tools_enabled: chat.tools_enabled,
+            unseen_end: chat.unseen_end,
         })
         .collect();
 

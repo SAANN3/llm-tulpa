@@ -18,13 +18,20 @@ _b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=")
 _h = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
 _c = _b64(json.dumps({"sub": 1, "username": "scenarios", "role": "owner", "exp": int(time.time()) + 86400}).encode())
 _secret = json.load(open(SETTINGS))["jwt_secret"]
-TOKEN = (_h + b"." + _c + b"." + _b64(hmac.new(_secret.encode(), _h + b"." + _c, hashlib.sha256).digest())).decode()
+
+
+def token_for(user_id, username, role):
+    claims = _b64(json.dumps({"sub": user_id, "username": username, "role": role, "exp": int(time.time()) + 86400}).encode())
+    return (_h + b"." + claims + b"." + _b64(hmac.new(_secret.encode(), _h + b"." + claims, hashlib.sha256).digest())).decode()
+
+
+TOKEN = token_for(1, "scenarios", "owner")
 
 
 def request(base, path, body=None, method=None, token=True):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = "Bearer " + TOKEN
+        headers["Authorization"] = "Bearer " + (TOKEN if token is True else token)
     req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
                                  method=method or ("POST" if body is not None else "GET"), headers=headers)
     try:
@@ -433,6 +440,57 @@ def the_tools_switch_is_refused_during_a_run_and_applies_after():
     assert calls("main")[0]["has_tools"] and not calls("main")[1]["has_tools"], "the next request has no tools"
 
 
+def collect_events(seconds=10):
+    """Every event the backend sends this user while the stream is open, in a list that fills in the background"""
+    import threading
+    events = []
+
+    def listen():
+        req = urllib.request.Request(BACKEND + "/api/live", headers={"Authorization": "Bearer " + TOKEN, "Accept": "text/event-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=seconds) as r:
+                for line in r:
+                    if line.startswith(b"data:"):
+                        events.append(json.loads(line[5:]))
+        except Exception:
+            pass
+
+    threading.Thread(target=listen, daemon=True).start()
+    time.sleep(0.5)
+    return events
+
+
+@scenario
+def seen_is_announced_only_when_there_was_something_to_clear():
+    settings()
+    chat = new_chat("seen-event")
+    events = collect_events()
+    script({"text": "Done."})
+    turn(chat, "go")
+    eq(api("/api/chats/seen", {"chat_id": chat})[0], 204, "seen")
+    eq(api("/api/chats/seen", {"chat_id": chat})[0], 204, "seen again")
+    time.sleep(0.5)
+    mine = [e for e in events if e.get("chat_id") == chat]
+    eq([e["type"] for e in mine if e["type"] == "chat_seen"], ["chat_seen"], "one chat_seen for two calls")
+    assert [e["type"] for e in mine].index("run_ended") < [e["type"] for e in mine].index("chat_seen"), "after the end"
+    # another user's chat can't be marked, so nothing goes out for it
+    status, _ = request(BACKEND, "/api/chats/seen", {"chat_id": chat}, token=token_for(2, "testuser", "user"))
+    assert status in (404, 401), status
+
+
+@scenario
+def the_chat_list_changes_are_announced():
+    settings()
+    events = collect_events()
+    chat = new_chat("listed")
+    eq(api("/api/chats/rename", {"chat_id": chat, "name": "Renamed"})[0], 204, "rename")
+    eq(api(f"/api/chats?id={chat}", None, "DELETE")[0], 204, "delete")
+    time.sleep(0.5)
+    mine = [e for e in events if e.get("chat_id") == chat]
+    eq([e["type"] for e in mine], ["chat_created", "chat_renamed", "chat_deleted"], "the list changes, in order")
+    eq(mine[1]["name"], "Renamed", "the new name")
+
+
 @scenario
 def messages_after_an_id_and_the_run_events():
     settings()
@@ -441,7 +499,7 @@ def messages_after_an_id_and_the_run_events():
     seen = []
 
     def listen():
-        req = urllib.request.Request(BACKEND + "/api/events", headers={"Authorization": "Bearer " + TOKEN, "Accept": "text/event-stream"})
+        req = urllib.request.Request(BACKEND + "/api/live", headers={"Authorization": "Bearer " + TOKEN, "Accept": "text/event-stream"})
         try:
             with urllib.request.urlopen(req, timeout=8) as r:
                 for line in r:
@@ -484,6 +542,89 @@ def two_chats_run_at_once():
 
 
 @scenario
+def running_chats_are_listed_for_their_owner_only():
+    settings()
+    a, b = new_chat("run-a"), new_chat("run-b")
+    eq(ok("/api/agent/runs"), [], "nothing runs yet")
+    script({"text": "A", "delay": 1.5}, {"text": "B", "delay": 1.5})
+    api("/api/agent/turn", {"chat_id": a, "prompt": "go a"})
+    api("/api/agent/turn", {"chat_id": b, "prompt": "go b"})
+    wait_for(lambda: len(ok("/api/agent/runs")) == 2, what="both runs listed")
+    listed = ok("/api/agent/runs")
+    eq(sorted(r["chat_id"] for r in listed), sorted([a, b]), "the running chats")
+    assert all(r["state"]["status"] == "running" for r in listed), listed
+    # another user (the second account of the database, when there is one) sees none of them
+    status, other = request(BACKEND, "/api/agent/runs", token=token_for(2, "testuser", "user"))
+    if status == 200:
+        eq(other, [], "another user's list")
+    else:
+        print(f"      (no second user in this database: {status}, ownership not checked)")
+    wait_idle(a)
+    wait_idle(b)
+    wait_for(lambda: ok("/api/agent/runs") == [], what="the list empty again")
+
+
+def unseen(chat):
+    return ok(f"/api/chats?id={chat}")["unseen_end"]
+
+
+@scenario
+def the_end_of_a_run_is_marked_until_the_chat_is_seen():
+    settings(auto_confirm=False)
+    chat = new_chat("unseen")
+    eq(unseen(chat), None, "a new chat has nothing new")
+    script({"text": "Done."})
+    turn(chat, "go")
+    eq(unseen(chat), "answered", "marked when the run ends")
+    chats = ok("/api/chats?limit=50")["chats"]
+    eq([c["unseen_end"] for c in chats if c["id"] == chat], ["answered"], "the list carries it")
+    eq(api("/api/chats/seen", {"chat_id": chat})[0], 204, "seen")
+    eq(unseen(chat), None, "cleared")
+    # a stopped run has nothing to tell
+    script({"text": "never stored", "delay": 20})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "again"})
+    wait_for(lambda: len(calls("main")) == 2, what="the second model call")
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 204, "stop")
+    wait_idle(chat, 10)
+    eq(unseen(chat), None, "a stopped run leaves no mark")
+    # a wait for permission is marked, and the answer's run clears it
+    write = {"name": "storage.write_file", "arguments": {"path": "/tmp/fake_seen_%d.txt" % os.getpid(), "content": "x"}}
+    script({"tool_calls": [write]}, {"text": "Written."})
+    turn(chat, "write it")
+    eq(unseen(chat), "waiting_for_permission", "marked while waiting")
+    api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "deny"}]})
+    wait_for(lambda: unseen(chat) in (None, "answered"), what="the answer's run to start")
+    wait_idle(chat)
+    eq(unseen(chat), "answered", "marked again at the end")
+    # a failed run is marked as failed; another user's chat can't be marked
+    script({"status": 500, "body": "not json at all"})
+    turn(chat, "fail")
+    eq(unseen(chat), "failed", "failed run")
+    status, _ = request(BACKEND, "/api/chats/seen", {"chat_id": chat}, token=token_for(2, "testuser", "user"))
+    assert status in (404, 401), f"another user marking the chat: {status}"
+    eq(unseen(chat), "failed", "still marked")
+
+
+@scenario
+def a_sub_agents_run_names_its_parent():
+    settings()
+    parent = new_chat("parent-of-run")
+    sub = {"system_contains": "You are a sub-agent"}
+    notsub = {"system_lacks": "You are a sub-agent"}
+    script({"match": notsub, "tool_calls": [{"name": "llm.run_agent", "arguments": {"prompt": "find the number"}}]},
+           {"match": sub, "delay": 2.0, "tool_calls": [{"name": "llm.return_agent", "arguments": {"output": "42"}}]},
+           {"match": notsub, "text": "Delegated."},
+           {"match": notsub, "text": "It is 42."})
+    events = collect_events()
+    api("/api/agent/turn", {"chat_id": parent, "prompt": "delegate"})
+    wait_for(lambda: any(r["parent_chat_id"] == parent for r in ok("/api/agent/runs")), what="the sub-agent listed with its parent")
+    wait_for(lambda: ok("/api/agent/runs") == [] and state(parent)["status"] == "idle", limit=60, what="every run over")
+    starts = [e for e in events if e["type"] == "run_started"]
+    assert all(e["parent_chat_id"] is None for e in starts if e["chat_id"] == parent), "the parent's own starts name no parent"
+    assert any(e["parent_chat_id"] == parent for e in starts), f"the sub-agent's start names its parent ({starts})"
+
+
+@scenario
 def a_crash_in_the_model_server_connection_fails_the_run_cleanly():
     settings()
     chat = new_chat("badbody")
@@ -499,6 +640,8 @@ def main():
     names = ONLY or list(SCENARIOS)
     failed = 0
     for name in names:
+        # A run the last scenario left going (a wake-up after a sub-agent's result) would take the next one's scripted replies
+        wait_for(lambda: ok("/api/agent/runs") == [], what="no run going on")
         fake("/__reset", {})
         t0 = time.time()
         try:

@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
-use axum::{routing::post, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use utoipa::OpenApi;
 
 use crate::state::AppState;
 
 use super::answer::*;
 use super::regenerate::*;
+use super::running::*;
 use super::start_turn::*;
 use super::stop::*;
 use super::turn_state::*;
@@ -14,6 +18,7 @@ use super::turn_state::*;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/turn", post(start_turn).get(turn_state))
+        .route("/runs", get(running))
         .route("/regenerate", post(regenerate))
         .route("/answer", post(answer))
         .route("/stop", post(stop))
@@ -21,13 +26,14 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(start_turn, turn_state, regenerate, answer, stop),
+    paths(start_turn, turn_state, running, regenerate, answer, stop),
     components(schemas(
         StartTurnRequest,
         StartTurnOut,
         RegenerateRequest,
         AnswerRequest,
         StopRequest,
+        RunningChat,
         crate::facade::agent::TurnState,
         crate::facade::agent::TurnStatus,
         crate::facade::agent::RunEnded,
