@@ -252,6 +252,42 @@ impl JobStore {
         self.get(chat_id, id).await
     }
 
+    /// Stops a job lost across a restart whose process is still there (a dev server, say): nothing watches it any
+    /// more, but it can still be stopped. Only when the process with the recorded pid is the job's own — it started
+    /// when the job did — since after a reboot that number can belong to any program. Anything else is reported as
+    /// not running, as before.
+    async fn kill_lost(&self, chat_id: i64, id: i64) -> Result<JobRecord, JobStoreErrors> {
+        let current = jobs::Entity::find_by_id(id)
+            .filter(jobs::Column::ChatId.eq(chat_id))
+            .one(&self.db)
+            .await?
+            .ok_or(JobStoreErrors::NotFound)?;
+        let pid = current.pid.and_then(|pid| u32::try_from(pid).ok());
+        let started_at = current.started_at;
+        let record = JobRecord::from(current);
+        let still_there = match (record.status, &record.kind, pid) {
+            (JobStatus::Lost, JobKind::Process, Some(pid)) => {
+                tokio::task::spawn_blocking(move || process::started_around(pid, started_at)).await.unwrap_or(false)
+            }
+            _ => false,
+        };
+        let (true, Some(pid)) = (still_there, pid) else {
+            return Err(JobStoreErrors::NotRunning { id: record.id, status: record.status });
+        };
+
+        process::kill_process_tree(pid).await;
+        let killed = self
+            .returning(
+                "UPDATE jobs SET status = 'killed', finished_at = now(), notified = TRUE \
+                 WHERE id = $1 AND status = 'lost' RETURNING *",
+                [id.into()],
+            )
+            .await?
+            .into_iter()
+            .next();
+        Ok(killed.map(JobRecord::from).unwrap_or(record))
+    }
+
     /// Starts `run` — a sub-agent's whole run — as a background job of `chat_id`, and returns as soon
     /// as the task is going. `prompt` is what's recorded and shown back; `agent_chat_id` is the chat
     /// the sub-agent works in. When `run` ends, its text is written to the job's log and the job is
@@ -391,8 +427,7 @@ impl JobStore {
             .next();
 
         let Some(job) = claimed else {
-            let current = self.get(chat_id, id).await?;
-            return Err(JobStoreErrors::NotRunning { id: current.id, status: current.status });
+            return self.kill_lost(chat_id, id).await;
         };
 
         if let Some(pid) = job.pid.and_then(|pid| u32::try_from(pid).ok()) {
@@ -606,6 +641,9 @@ impl fmt::Display for JobStoreErrors {
                 write!(f, "database query failed")
             }
             JobStoreErrors::NotFound => write!(f, "no such job in this chat"),
+            JobStoreErrors::NotRunning { id, status: JobStatus::Lost } => {
+                write!(f, "job {id} was lost when the backend restarted, and its process has ended too")
+            }
             JobStoreErrors::NotRunning { id, status } => {
                 write!(f, "job {id} is not running (status: {})", status.as_str())
             }

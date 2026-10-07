@@ -32,9 +32,10 @@ impl Tool for JobKillTool {
     }
 
     fn description(&self) -> &str {
-        "Stops a running background job — a command and everything it started, or a sub-agent. Fails if the job has already \
-         finished, and says what state it's in. Only jobs started in this chat. Its output so \
-         far stays readable with os.job_output."
+        "Stops a running background job — a command and everything it started, or a sub-agent. A command job \
+         marked lost (the backend restarted while it ran) is stopped too if its process is still running. Fails \
+         if the job has already finished, and says what state it's in. Only jobs started in this chat. Its output \
+         so far stays readable with os.job_output."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {

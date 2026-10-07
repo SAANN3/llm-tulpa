@@ -123,3 +123,35 @@ fn kill_descendants(root: u32) {
         }
     }
 }
+
+/// Whether process `pid` is the one that started at `started_at` (within a few seconds): a pid recorded before a
+/// restart can by now belong to another program, after a reboot most of all, and a process group is only ever
+/// killed when its leader is the one that was recorded.
+pub fn started_around(pid: u32, started_at: chrono::DateTime<chrono::Utc>) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    const TOLERANCE_SECS: i64 = 10;
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+    system
+        .process(pid)
+        .is_some_and(|process| (process.start_time() as i64 - started_at.timestamp()).abs() <= TOLERANCE_SECS)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_process_is_recognised_by_when_it_started() {
+        let started_at = chrono::Utc::now();
+        let mut child = shell_command("sleep 30", None).spawn().unwrap();
+        let pid = child.id().unwrap();
+        assert!(started_around(pid, started_at));
+        assert!(!started_around(pid, started_at - chrono::Duration::hours(1)), "the same pid, started another time");
+        child.kill().await.unwrap();
+        let _ = child.wait().await;
+        assert!(!started_around(pid, started_at), "a process that's gone");
+    }
+}
