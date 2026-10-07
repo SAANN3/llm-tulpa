@@ -9,7 +9,7 @@ use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolContext,
     ToolError, ToolParams, ToolPermission, ToolSerializationError,
 };
-use crate::tools::storage::normalize;
+use crate::tools::storage::{is_within_granted, normalize};
 
 use super::parse_host;
 
@@ -93,7 +93,7 @@ impl Tool for DownloadFileTool {
             .and_then(|f| f.as_object());
 
         let host_granted = hosts.is_some_and(|h| h.contains_key(&host));
-        let folder_granted = folders.is_some_and(|f| f.keys().any(|k| target.starts_with(k)));
+        let folder_granted = folders.is_some_and(|f| is_within_granted(&target, f.keys()));
 
         if host_granted && folder_granted {
             return Ok(ToolPermission::Allowed);

@@ -81,11 +81,57 @@ fn granted_folders(bucket: SharedBucket, scope: Option<&Value>) -> Option<&serde
     scope?.get(bucket.json_key())?.as_object()
 }
 
+/// Where `path` (already `normalize`d) really is: the part of it that exists with its symlinks resolved, and the
+/// rest — not created yet — appended as it is. A symlink that points nowhere yet (one a write would create the
+/// target of) is followed by hand, so it can't pass for a plain new name inside a granted folder.
+pub(crate) fn real_location(path: &Path) -> PathBuf {
+    resolve_real(path, 0)
+}
+
+/// Symlinks followed by hand before giving up on a chain (a loop): the same limit Linux applies.
+const MAX_SYMLINK_HOPS: usize = 40;
+
+fn resolve_real(path: &Path, hops: usize) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(metadata) = std::fs::symlink_metadata(&existing) {
+            let resolved = match std::fs::canonicalize(&existing) {
+                Ok(real) => Some(real),
+                // A dangling symlink: where it would lead once its target is created
+                Err(_) if metadata.file_type().is_symlink() && hops < MAX_SYMLINK_HOPS => std::fs::read_link(&existing).ok().map(|target| {
+                    let base = existing.parent().and_then(|parent| std::fs::canonicalize(parent).ok()).unwrap_or_default();
+                    resolve_real(&normalize(&base.join(target)), hops + 1)
+                }),
+                Err(_) => None,
+            };
+            let Some(mut real) = resolved else { return path.to_path_buf() };
+            real.extend(missing.iter().rev());
+            return real;
+        }
+        match (existing.file_name().map(|name| name.to_os_string()), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                missing.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// Whether `target` lies inside one of the granted `folders`, compared where both really are: a symlink inside a
+/// granted folder that points out of it (at `/etc`, `~/.ssh`) doesn't take the grant along, and a folder granted
+/// through a symlinked path still covers the place it names. Comparing the paths as written did the first.
+pub(crate) fn is_within_granted<'a>(target: &Path, mut folders: impl Iterator<Item = &'a String>) -> bool {
+    let real_target = real_location(target);
+    folders.any(|folder| real_target.starts_with(real_location(&normalize(Path::new(folder)))))
+}
+
 fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>) -> ToolPermission {
     let folders = granted_folders(bucket, granted);
 
     if let Some(folders) = folders {
-        if folders.keys().any(|folder| scope_root.starts_with(folder)) {
+        if is_within_granted(scope_root, folders.keys()) {
             return ToolPermission::Allowed;
         }
     }
@@ -96,6 +142,19 @@ fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>)
     // two denied calls from the same reply (e.g. reading two different ungranted
     // folders at once) each build their escalation from the same pre-approval
     // snapshot — approving both would have the second overwrite the first's addition.
+    //
+    // The grant offered (and named in the question) is where the folder really is: a path through a symlink
+    // would otherwise ask about `~/project/link` while granting `/etc`.
+    let real_root = real_location(scope_root);
+    let ui_message = if real_root == scope_root {
+        format!("Allow access to everything under '{}' (including subfolders)?", scope_root.display())
+    } else {
+        format!(
+            "Allow access to everything under '{}' (including subfolders)? The path asked for, '{}', leads there.",
+            real_root.display(),
+            scope_root.display()
+        )
+    };
     ToolPermission::Denied {
         reason: format!("no permission granted covering '{}'", scope_root.display()),
         escalation: Some(ScopeGrant {
@@ -103,13 +162,10 @@ fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>)
                 own: None,
                 shared: HashMap::from([(
                     bucket,
-                    serde_json::json!({ bucket.json_key(): { scope_root.to_string_lossy(): true } }),
+                    serde_json::json!({ bucket.json_key(): { real_root.to_string_lossy(): true } }),
                 )]),
             },
-            ui_message: format!(
-                "Allow access to everything under '{}' (including subfolders)?",
-                scope_root.display()
-            ),
+            ui_message,
         }),
     }
 }
@@ -118,7 +174,9 @@ fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>)
 /// `delete_file`) — scopes to the file's containing folder, so a grant covers every
 /// file in that folder, not just this one call's.
 pub(super) fn check_file_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
-    let target = normalize(Path::new(path));
+    // The file itself is resolved before its folder is taken: a symlinked file in a granted folder (`notes` ->
+    // `/etc/passwd`, or one whose target doesn't exist yet) belongs to the folder it leads to
+    let target = real_location(&normalize(Path::new(path)));
     let root = target
         .parent()
         .map(Path::to_path_buf)
@@ -276,5 +334,67 @@ mod size_tests {
         };
         assert!(message.contains("3.0mb") && message.contains("1.0mb") && message.contains("use head"), "{message}");
         std::fs::remove_file(&path).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    fn grant(folder: &Path) -> Value {
+        serde_json::json!({ SharedBucket::StorageRead.json_key(): { folder.to_string_lossy(): true } })
+    }
+
+    fn allowed(path: &Path, granted: &Value) -> bool {
+        matches!(check_file_scope(&path.to_string_lossy(), SharedBucket::StorageRead, Some(granted)), ToolPermission::Allowed)
+    }
+
+    #[test]
+    fn a_grant_covers_where_things_really_are() {
+        let root = std::env::temp_dir().join(format!("tulpa-symlink-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let granted = root.join("granted");
+        let secret = root.join("secret");
+        std::fs::create_dir_all(granted.join("sub")).unwrap();
+        std::fs::create_dir_all(&secret).unwrap();
+        std::fs::write(secret.join("key"), "x").unwrap();
+        symlink(&secret, granted.join("link")).unwrap();
+        // A link whose target doesn't exist yet: a write through it would create the file outside
+        symlink(secret.join("not-yet"), granted.join("dangling")).unwrap();
+        symlink(&granted, root.join("alias")).unwrap();
+        let in_granted = grant(&granted);
+
+        assert!(allowed(&granted.join("sub/file.txt"), &in_granted));
+        assert!(allowed(&granted.join("new/deeper/file.txt"), &in_granted), "a path that doesn't exist yet");
+        assert!(allowed(&granted.join("sub/../sub/file.txt"), &in_granted));
+        assert!(!allowed(&granted.join("link/key"), &in_granted), "a symlink out of the granted folder");
+        assert!(!allowed(&granted.join("dangling/x"), &in_granted), "a dangling symlink out of it");
+        // A symlinked file belongs to the folder it leads to
+        symlink(secret.join("key"), granted.join("file-link")).unwrap();
+        assert!(!allowed(&granted.join("file-link"), &in_granted), "a symlinked file out of the folder");
+        assert!(!allowed(&granted.join("dangling"), &in_granted), "a dangling symlinked file out of the folder");
+        symlink(granted.join("sub/inside.txt"), granted.join("inner-link")).unwrap();
+        assert!(allowed(&granted.join("inner-link"), &in_granted), "a symlink that stays inside is fine");
+        assert!(!allowed(&secret.join("key"), &in_granted));
+
+        // A folder granted through a symlinked path covers the place it names
+        let through_alias = grant(&root.join("alias"));
+        assert!(allowed(&granted.join("sub/file.txt"), &through_alias));
+        assert!(allowed(&root.join("alias/sub/file.txt"), &in_granted));
+
+        // The question and the grant name the real place
+        let ToolPermission::Denied { escalation: Some(offer), .. } =
+            check_directory_scope(&granted.join("link").to_string_lossy(), SharedBucket::StorageRead, Some(&in_granted))
+        else {
+            panic!("a path out of the grant must ask");
+        };
+        let real_secret = std::fs::canonicalize(&secret).unwrap();
+        assert!(offer.ui_message.contains(&*real_secret.to_string_lossy()), "{}", offer.ui_message);
+        let offered = &offer.scope.shared[&SharedBucket::StorageRead][SharedBucket::StorageRead.json_key()];
+        assert!(offered.get(&*real_secret.to_string_lossy()).is_some(), "{offered}");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
