@@ -30,7 +30,7 @@ pub(crate) struct AnswerRequest {
         (status = 202, description = "The answers are applied and the run continues"),
         (status = 400, description = "An answer points at no pending call, or grants what the call doesn't ask for", body = crate::services::error::ErrorBody),
         (status = 404, description = "Chat not found", body = crate::services::error::ErrorBody),
-        (status = 409, description = "The chat has a run going on, or nothing waiting for an answer", body = crate::services::error::ErrorBody),
+        (status = 409, description = "The chat has a run going on, nothing waiting for an answer, or belongs to a messaging plugin", body = crate::services::error::ErrorBody),
     ),
 )]
 pub async fn answer(

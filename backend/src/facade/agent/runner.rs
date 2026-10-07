@@ -255,6 +255,7 @@ impl TurnRunner {
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
     ) -> Result<StartedTurn, ErrorService> {
+        self.refuse_plugin_chat(chat_id).await?;
         let slot = self.claim(chat_id)?;
         // A call a crash cut short gets its result before this message, so the history stays in order
         self.tool_calls.settle_interrupted(chat_id).await?;
@@ -319,6 +320,16 @@ impl TurnRunner {
         Ok(())
     }
 
+    /// A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
+    /// back to the messaging app: a run started here would run beside that agent's, with tools, and its reply would
+    /// never reach the app.
+    async fn refuse_plugin_chat(&self, chat_id: i64) -> Result<(), ErrorService> {
+        if self.chat_store.is_plugin_chat(chat_id).await? {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "this chat belongs to a messaging plugin: write to it from the messaging app"));
+        }
+        Ok(())
+    }
+
     /// Starts a run from the user's answers to the permission prompt the chat is waiting at.
     pub(super) async fn start_answer(
         &self,
@@ -326,6 +337,7 @@ impl TurnRunner {
         decisions: Vec<Decision>,
         think: Option<ThinkChoice>,
     ) -> Result<(), ErrorService> {
+        self.refuse_plugin_chat(chat_id).await?;
         let slot = self.claim(chat_id)?;
         let pending = self.tool_calls.can_use(chat_id).await?.tools;
         if pending.is_empty() {

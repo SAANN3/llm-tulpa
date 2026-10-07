@@ -44,7 +44,7 @@ pub(crate) struct StartTurnOut {
     responses(
         (status = 202, description = "The prompt is stored and the run has started", body = StartTurnOut),
         (status = 404, description = "Chat not found", body = crate::services::error::ErrorBody),
-        (status = 409, description = "The chat already has a run going on", body = crate::services::error::ErrorBody),
+        (status = 409, description = "The chat already has a run going on, or belongs to a messaging plugin", body = crate::services::error::ErrorBody),
     ),
 )]
 pub async fn start_turn(
