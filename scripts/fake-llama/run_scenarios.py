@@ -294,6 +294,26 @@ def permission_waits_and_answers_continue():
 
 
 @scenario
+def every_command_of_a_shell_line_needs_approval_and_allow_once_adds_to_the_chats_grants():
+    settings(auto_confirm=False)
+    chat = new_chat("shell-grants")
+    first = {"name": "os.execute_command", "arguments": {"command": "cd /tmp"}}
+    both = {"name": "os.execute_command", "arguments": {"command": "cd /tmp && echo once-ok"}}
+    script({"tool_calls": [first]}, {"text": "ok"}, {"tool_calls": [both]}, {"text": "done"})
+    eq(turn(chat, "go")["status"], "waiting_for_permission", "cd needs approving")
+    eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "permanent"}]})[0], 202, "approve cd")
+    eq(wait_idle(chat)["last_end"]["reason"], "answered", "first turn")
+    s = turn(chat, "again")
+    # `cd` is approved for the chat, but the line also runs `echo`
+    eq(s["status"], "waiting_for_permission", "a chained command still asks")
+    has(s["pending"][0]["permission"]["escalation"]["ui_message"], "`echo`", "the prompt names the missing command")
+    eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "allow echo once")
+    eq(wait_idle(chat)["last_end"]["reason"], "answered", "second turn")
+    tool = [m for m in messages(chat) if m["role"] == "tool"][-1]
+    has(str(tool["content"]), "once-ok", "the line ran with the stored grant plus the one-time one")
+
+
+@scenario
 def allowed_call_runs_before_the_wait_and_the_step_count_carries():
     settings(auto_confirm=False, max_turn_steps=10)
     chat = new_chat("order")

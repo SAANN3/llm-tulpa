@@ -381,7 +381,7 @@ pub(super) fn effective_command(command: &str) -> String {
 /// `SharedBucket::ShellCommands` grant, if any). Every command the line would run has to be approved, not
 /// only its first one: chaining (`;`, `&&`, `|`, `$( )` ...) is how one approved word would otherwise carry
 /// any other command through. The blocklist applies whatever is approved.
-pub(super) fn check_command_permission(command: &str, workdir: Option<&str>, approved_scope: Option<&Value>) -> ToolPermission {
+pub(crate) fn check_command_permission(command: &str, workdir: Option<&str>, approved_scope: Option<&Value>) -> ToolPermission {
     let commands = command_words(command);
     let cmd_lower = command.to_lowercase();
     let has_destructive_command = commands

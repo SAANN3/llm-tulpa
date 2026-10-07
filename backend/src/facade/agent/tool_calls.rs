@@ -212,20 +212,17 @@ impl ToolCalls {
             .next()
             .ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "no pending tool call to run"))?;
 
-        let had_scope;
+        let stored = self.stored_scope(chat_id, &next.tool_name).await?;
+        let had_scope = scope.is_some() || stored.own.is_some() || !stored.shared.is_empty();
+        // A one-time grant adds to what the chat already has, the way a permanent one would: it holds only
+        // what was missing (one more command of a shell line, the folder of a download whose host is already
+        // approved), so on its own it would refuse the very call it was meant to let through
         let effective_scope = match scope {
-            Some(scope) => {
-                had_scope = true;
-                match self.tools.get_tool(&next.tool_name).await {
-                    Some(tool) => resolved_scope_from_json(tool.as_ref(), scope),
-                    None => ResolvedScope::default(),
-                }
-            }
-            None => {
-                let stored = self.stored_scope(chat_id, &next.tool_name).await?;
-                had_scope = stored.own.is_some() || !stored.shared.is_empty();
-                stored
-            }
+            Some(scope) => match self.tools.get_tool(&next.tool_name).await {
+                Some(tool) => with_one_time_grant(stored, resolved_scope_from_json(tool.as_ref(), scope)),
+                None => ResolvedScope::default(),
+            },
+            None => stored,
         };
 
         let result_cap = Self::result_cap_chars(self.model.context_of(&chat).await?);
@@ -495,6 +492,19 @@ fn resolved_scope_from_json(tool: &dyn Tool, json: Value) -> ResolvedScope {
 /// replacing the first. Anything else in `delta` just sets that key outright. Every
 /// bucket's stored shape today is exactly one level deep (`{"folders": {...}}`,
 /// `{"hosts": {...}}`), so one level of recursion covers everything currently in play.
+/// The chat's stored grants with a one-time grant laid over them, bucket by bucket (see `merge_scope_delta`).
+fn with_one_time_grant(stored: ResolvedScope, one_time: ResolvedScope) -> ResolvedScope {
+    let mut merged = stored;
+    if let Some(own) = one_time.own {
+        merged.own = Some(merge_scope_delta(merged.own.take(), own));
+    }
+    for (bucket, delta) in one_time.shared {
+        let existing = merged.shared.remove(&bucket);
+        merged.shared.insert(bucket, merge_scope_delta(existing, delta));
+    }
+    merged
+}
+
 fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
     let mut base = existing.and_then(|v| v.as_object().cloned()).unwrap_or_default();
     let Some(delta_obj) = delta.as_object() else {
@@ -521,6 +531,34 @@ fn merge_scope_delta(existing: Option<Value>, delta: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_one_time_grant_adds_to_what_the_chat_already_has() {
+        use crate::tools::base::SharedBucket;
+
+        let key = SharedBucket::ShellCommands.json_key();
+        let stored = ResolvedScope {
+            own: Some(json!({"hosts": {"example.com": true}})),
+            shared: HashMap::from([(SharedBucket::ShellCommands, json!({ key: {"cd": true} }))]),
+        };
+        let one_time = ResolvedScope {
+            own: None,
+            shared: HashMap::from([
+                (SharedBucket::ShellCommands, json!({ key: {"rm": true} })),
+                (SharedBucket::StorageWrite, json!({ SharedBucket::StorageWrite.json_key(): {"/tmp/x": true} })),
+            ]),
+        };
+        let merged = with_one_time_grant(stored, one_time);
+        assert_eq!(merged.own, Some(json!({"hosts": {"example.com": true}})));
+        assert_eq!(merged.shared[&SharedBucket::ShellCommands], json!({ key: {"cd": true, "rm": true} }));
+        assert!(merged.shared.contains_key(&SharedBucket::StorageWrite));
+        // The line that asked: `cd` was approved before, `rm` only now
+        let line = "cd /tmp/x && rm old.txt";
+        assert!(matches!(
+            crate::tools::os::shell::check_command_permission(line, None, merged.shared.get(&SharedBucket::ShellCommands)),
+            crate::tools::base::ToolPermission::Allowed
+        ));
+    }
 
     #[test]
     fn the_cap_follows_the_window_with_a_floor() {
