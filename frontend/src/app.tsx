@@ -3,6 +3,8 @@ import {BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate} from 'react
 import {BackendUnreachable} from './components/backend-unreachable.tsx'
 import {SetupUpdatePopup} from './components/popups/setup-update-popup.tsx'
 import {AuthProvider} from './context/auth-provider.tsx'
+import {DebugPanel} from './components/debug-panel.tsx'
+import {RunsProvider} from './context/runs-provider.tsx'
 import {SettingsProvider} from './context/settings-provider.tsx'
 import {SetupProvider} from './context/setup-provider.tsx'
 import {ThemeProvider} from './context/theme-provider.tsx'
@@ -95,26 +97,29 @@ const App = () => (
                 <AuthProvider>
                     <SettingsProvider>
                         <BrowserRouter>
-                            <Routes>
-                                <Route path="/setup" element={<Setup/>}/>
-                                <Route path="/setup/update" element={<Setup/>}/>
-                                <Route path="/login" element={<Login/>}/>
-                                <Route element={<RequireAuth/>}>
-                                    <Route path="/" element={<Home/>}/>
-                                    <Route path="/chat" element={<Chat/>}/>
-                                    <Route path="/search" element={<Search/>}/>
-                                    <Route path="/folders" element={<Folders/>}/>
-                                    <Route path="/folders/:id" element={<Folder/>}/>
-                                    <Route path="/settings" element={<Settings/>}/>
-                                    <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
-                                    <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
-                                    <Route path="/models/:tab?" element={<Models/>}/>
-                                    <Route element={<RequireOwner/>}>
-                                        <Route path="/plugins" element={<Plugins/>}/>
-                                        <Route path="/users" element={<Users/>}/>
+                            <RunsProvider>
+                                <Routes>
+                                    <Route path="/setup" element={<Setup/>}/>
+                                    <Route path="/setup/update" element={<Setup/>}/>
+                                    <Route path="/login" element={<Login/>}/>
+                                    <Route element={<RequireAuth/>}>
+                                        <Route path="/" element={<Home/>}/>
+                                        <Route path="/chat" element={<Chat/>}/>
+                                        <Route path="/search" element={<Search/>}/>
+                                        <Route path="/folders" element={<Folders/>}/>
+                                        <Route path="/folders/:id" element={<Folder/>}/>
+                                        <Route path="/settings" element={<Settings/>}/>
+                                        <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
+                                        <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
+                                        <Route path="/models/:tab?" element={<Models/>}/>
+                                        <Route element={<RequireOwner/>}>
+                                            <Route path="/plugins" element={<Plugins/>}/>
+                                            <Route path="/users" element={<Users/>}/>
+                                        </Route>
                                     </Route>
-                                </Route>
-                            </Routes>
+                                </Routes>
+                                <DebugPanel/>
+                            </RunsProvider>
                         </BrowserRouter>
                     </SettingsProvider>
                 </AuthProvider>

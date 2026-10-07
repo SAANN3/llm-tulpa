@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu, Check, Lock, WarningDiamond} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
@@ -7,9 +7,11 @@ import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
 import {Button, Div, Label} from './primitives'
+import {ThinkingAnimation} from './thinking-animation.tsx'
 import {setChatFolder} from '../api/chats/set-folder'
-import type {ChatOut} from '../api/chats/types'
+import type {ChatOut, UnseenEnd} from '../api/chats/types'
 import {useAuth} from '../context/use-auth.ts'
+import {useRuns} from '../context/use-runs.ts'
 import {onSidebarWindowResized, setSidebarCollapsed, useSidebarCollapsed} from '../context/sidebar-state.ts'
 import {useChats} from '../hooks/use-chats.ts'
 import {daysBefore} from '../utils/dates'
@@ -24,6 +26,15 @@ const recencyGroup = (updatedAt: string): RecencyGroup => {
     if (diffDays <= 0) return 'Today'
     if (diffDays === 1) return 'Yesterday'
     return 'Earlier'
+};
+
+/** What a chat's row shows about its run: a small animation while it works, else how the last run ended until the chat is opened */
+const runIcon = (working: boolean, unseenEnd: UnseenEnd | null) => {
+    if (working) return <ThinkingAnimation className="chat-entry__running" isPlaying/>
+    if (unseenEnd === 'answered' || unseenEnd === 'step_limit') return <Check width={16} height={16}/>
+    if (unseenEnd === 'waiting_for_permission') return <Lock width={16} height={16}/>
+    if (unseenEnd === 'failed') return <WarningDiamond width={16} height={16}/>
+    return undefined
 };
 
 /** Buckets chats into the three recency groups, dropping empty ones */
@@ -48,6 +59,7 @@ export const Sidebar = () => {
 
     const chatsListRef = useRef<LazyListHandle>(null)
     const {chats, loadOlder, rename, delete: deleteChat} = useChats(() => chatsListRef.current?.jumpToTop())
+    const {working} = useRuns()
     const [assigningChat, setAssigningChat] = useState<ChatOut | null>(null)
     const collapsed = useSidebarCollapsed()
 
@@ -150,6 +162,7 @@ export const Sidebar = () => {
                                         })
                                     }}
                                     onAssignFolder={() => setAssigningChat(c)}
+                                    icon={runIcon(working.has(c.id), c.id === selectedChatId && !document.hidden ? null : c.unseen_end)}
                                 />
                             ))}
                         </Div>

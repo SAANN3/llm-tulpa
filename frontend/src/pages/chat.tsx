@@ -29,25 +29,8 @@ import {useSettings} from '../context/use-settings.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
 import {errorReason} from '../utils/error-reason.ts'
-import {notify} from '../utils/notifications'
 import {describeRunEnd} from '../utils/run-end.ts'
-import type {AgentToolCall, Decision, RunEnded} from '../api/agent/types'
-
-const NOTIFICATION_BODY_MAX_CHARS = 100
-
-const truncateForNotification = (text: string): string => {
-    const trimmed = text.trim()
-    if (trimmed.length <= NOTIFICATION_BODY_MAX_CHARS) return trimmed
-
-    return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_CHARS).trimEnd()}...`
-};
-
-/** The calls of a wait for permission that need an answer, by tool name */
-const askingToolNames = (pending: AgentToolCall[]): string =>
-    pending
-        .filter((call) => call.permission.status === 'denied' && call.permission.escalation)
-        .map((call) => call.name)
-        .join(', ')
+import type {Decision, RunEnded} from '../api/agent/types'
 
 const LOAD_MORE_THRESHOLD = 80
 
@@ -174,24 +157,14 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setContextUsed(event.prompt_tokens + event.eval_tokens)
     })
 
-    // Reacts to a run's end: a busy model server gets its popup, a regenerate that didn't produce its reply gets the old
-    // reply back, and a finished answer or a wait for permission can notify when the tab is in the background
+    // Reacts to a run's end: a busy model server gets its popup, and a regenerate that didn't produce its reply gets the old
+    // reply back (the notification for a finished run is the runs provider's, which works on every page)
     const regeneratingRef = useRef(false)
-    runEndedRef.current = (end, view) => {
+    runEndedRef.current = (end) => {
         if (end.reason === 'failed' && end.status === 423) setBusyReason(end.detail ?? 'The model is in use by someone else.')
         if (regeneratingRef.current) {
             regeneratingRef.current = false
             if (end.reason !== 'answered') void reload()
-        }
-        if (!settings?.notifications_enabled) return
-        if (end.reason === 'waiting_for_permission' && !settings.auto_confirm) {
-            notify('llm-tulpa', `Waiting on your OK to run: ${askingToolNames(view.pending)}`)
-        } else if (end.reason === 'answered') {
-            void fetchNewRef.current().then(() => {
-                const reply = [...messagesRef.current].reverse().find((m) => m.role === 'assistant')
-                const text = reply != null && typeof reply.content === 'string' ? reply.content : ''
-                if (text.trim().length > 0) notify('llm-tulpa', truncateForNotification(text))
-            })
         }
     }
 

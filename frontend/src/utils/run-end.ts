@@ -1,4 +1,5 @@
-import type {RunEnded} from '../api/agent/types.ts'
+import type {RunEnded, RunEndReason} from '../api/agent/types.ts'
+import type {UnseenEnd} from '../api/chats/types.ts'
 import {formatDurationShort, formatTokenCount} from './format.ts'
 
 /**
@@ -20,3 +21,6 @@ export const describeRunEnd = (end: RunEnded, stepLimit: number | null): string 
             return null
     }
 }
+
+/** What a chat's row says about a run that just ended, until the chat is opened (a run the user stopped has nothing to say) */
+export const unseenEndOf = (reason: RunEndReason): UnseenEnd | null => (reason === 'stopped' ? null : reason)

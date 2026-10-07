@@ -86,3 +86,11 @@ export interface StartTurnOut {
     /** The id the user's own message was stored under. */
     user_message_id: number
 }
+
+/** A chat with a run going on, from `GET /api/agent/runs` */
+export interface RunningChat {
+    chat_id: number
+    /** The chat that started this one as a sub-agent, or null */
+    parent_chat_id: number | null
+    state: TurnState
+}

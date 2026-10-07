@@ -1,0 +1,41 @@
+@use 'tokens' as *;
+
+// Over everything, small, and out of the way of the composer: it is for reading while something goes wrong
+.debug-panel {
+  position: fixed;
+  right: $space-2;
+  bottom: $space-2;
+  z-index: 1000;
+  width: min(92vw, 480px);
+  border: $line-border solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.debug-panel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 6px;
+}
+
+.debug-panel__buttons {
+  display: flex;
+  gap: $space-2;
+}
+
+// Nested so it beats the generic `button[data-variant]` padding (an element+attribute selector)
+.debug-panel .debug-panel__button {
+  padding: 0 8px;
+  font-size: 10px;
+  box-shadow: none;
+}
+
+.debug-panel__lines {
+  max-height: 32vh;
+  overflow-y: auto;
+  padding: 2px 6px 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

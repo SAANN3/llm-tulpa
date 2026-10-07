@@ -19,3 +19,12 @@
   padding: 0 6px;
   cursor: pointer;
 }
+
+// The same three dots as the thinking animation, small enough to sit in a row
+.chat-entry .chat-entry__running {
+  font-size: 10px;
+  // The dots take the row's own colors, whichever variant the row has: a selected row is inverted, and the
+  // animation's own variant would paint a box of the opposite colors on it
+  background-color: transparent;
+  color: inherit;
+}

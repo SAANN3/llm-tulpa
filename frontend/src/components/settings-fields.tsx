@@ -190,6 +190,26 @@ export const UseToolsField = ({enabled, onToggle}: UseToolsFieldProps) => (
     </Div>
 );
 
+export interface DebugFieldProps {
+    enabled: boolean
+    onToggle: (enabled: boolean) => void
+}
+
+/** The debug switch of this browser: it applies at once and isn't part of the saved settings */
+export const DebugField = ({enabled, onToggle}: DebugFieldProps) => (
+    <Div className="field">
+        <Div className="field__row">
+            <Label className="field__row-label" text="Debug output in this browser"/>
+            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+        </Div>
+        <FieldHelp
+            text="Shows diagnostic details about what the app is doing: in the browser console, and on screen where a page offers them. For finding problems; it adds noise, so leave it off otherwise. It applies to this browser only, takes effect at once and is not part of the saved settings."
+            accent={enabled}
+            wide
+        />
+    </Div>
+);
+
 export interface MaxTurnStepsFieldProps {
     text: string
     onChanged: (text: string) => void

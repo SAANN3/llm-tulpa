@@ -6,6 +6,7 @@ import {
     ActiveModelField,
     AutoConfirmField,
     TrimOldThinkingField,
+    DebugField,
     UseToolsField,
     MaxTurnStepsField,
     NameTimezoneFields,
@@ -15,7 +16,9 @@ import {
 import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
+import {useDebug} from '../hooks/use-debug.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {setDebug} from '../utils/debug.ts'
 import {requestNotificationPermission} from '../utils/notifications'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
@@ -32,6 +35,7 @@ const Settings = () => {
     const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(settings?.auto_confirm ?? false)
     const [trimOldThinking, setTrimOldThinking] = useState(settings?.trim_old_thinking ?? false)
     const [useTools, setUseTools] = useState(settings?.use_tools ?? true)
+    const debug = useDebug()
     const [maxTurnStepsText, setMaxTurnStepsText] = useState(settings?.max_turn_steps != null ? String(settings.max_turn_steps) : '')
 
     const onToggleNotifications = async (enabled: boolean) => {
@@ -86,6 +90,7 @@ const Settings = () => {
                     <TrimOldThinkingField enabled={trimOldThinking} onToggle={setTrimOldThinking}/>
                     <UseToolsField enabled={useTools} onToggle={setUseTools}/>
                     <MaxTurnStepsField text={maxTurnStepsText} onChanged={setMaxTurnStepsText}/>
+                    <DebugField enabled={debug} onToggle={setDebug}/>
                     <Div className="settings__actions">
                         <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>
                         <Button className="settings__action" text="Save" onClicked={onSave} disabled={saveDisabled}/>

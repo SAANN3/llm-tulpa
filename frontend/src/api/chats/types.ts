@@ -17,7 +17,12 @@ export interface ChatOut {
     launch_profile_id: number | null
     /** Whether the model is sent its tools in this chat. */
     tools_enabled: boolean
+    /** How the chat's last run ended, until the chat is opened; null when there is nothing new. */
+    unseen_end: UnseenEnd | null
 }
+
+/** The ways a run ends that the user hasn't looked at yet (a run they stopped leaves none) */
+export type UnseenEnd = 'answered' | 'waiting_for_permission' | 'failed' | 'step_limit'
 
 export interface ChatListOut {
     chats: ChatOut[]
