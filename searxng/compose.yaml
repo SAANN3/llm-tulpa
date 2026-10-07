@@ -3,6 +3,9 @@ services:
     image: "searxng/searxng:latest"
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
+      # The image's server (Granian) listens on every interface by default (`::`), and under host networking that
+      # put this instance, with its limiter off, on the LAN. The backend reaches it over loopback through nginx.
+      - GRANIAN_HOST=127.0.0.1
     volumes:
       - "./settings.yml:/etc/searxng/settings.yml:ro"
     # Host networking, not the `app-net` bridge — same reasoning as the `backend`
