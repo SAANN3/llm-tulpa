@@ -253,27 +253,10 @@ impl Tool for ExecuteCommandTool {
     ) -> Result<ToolPermission, ToolSerializationError> {
         let args: ExecuteCommandArgs = serde_json::from_value(data)?;
 
-        // Temporary, explicit opt-in for one unsupervised overnight run (2026-08-30) —
-        // NOT a standing exception. Both env vars must be set AND match exactly
-        // (trimmed) for this one specific call shape to skip approval; every other
-        // call still requires a human, same as always. Remove both from
-        // compose.yaml's backend environment (no rebuild needed, just recreate the
-        // container) once the unattended stretch is over.
-        let auto_cmd = std::env::var("EXECUTE_COMMAND_AUTO_APPROVE_CMD").ok();
-        let auto_workdir = std::env::var("EXECUTE_COMMAND_AUTO_APPROVE_WORKDIR").ok();
-        let auto_approved = match (&auto_cmd, &auto_workdir) {
-            (Some(auto_cmd), Some(auto_workdir)) => {
-                args.command.trim() == auto_cmd.trim()
-                    && args.workdir.as_deref().map(str::trim) == Some(auto_workdir.trim())
-            }
-            _ => false,
-        };
-
         Ok(check_command_permission(
             &args.command,
             args.workdir.as_deref(),
             scope.shared.get(&SharedBucket::ShellCommands),
-            auto_approved,
         ))
     }
 

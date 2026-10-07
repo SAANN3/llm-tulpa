@@ -84,7 +84,6 @@ impl Tool for StartJobTool {
             &args.command,
             args.workdir.as_deref(),
             scope.shared.get(&SharedBucket::ShellCommands),
-            false,
         ))
     }
 
