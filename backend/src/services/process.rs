@@ -4,7 +4,34 @@
 //! the `unix` and `windows` branches are written; every other target is treated like
 //! Unix.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Environment variables set with `os.env_write`, given to every command this backend runs from then on (until
+/// it restarts). Kept here and not in the backend's own environment: changing that while other threads may be
+/// reading it is undefined behaviour (which is why `std::env::set_var` is `unsafe`), and the backend itself has
+/// no use for them.
+static COMMAND_ENV: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// Sets `key` for the commands run from now on, returning the value they would have seen before.
+pub fn set_command_env(key: &str, value: &str) -> Option<String> {
+    let previous = command_env_var(key);
+    COMMAND_ENV.lock().unwrap().insert(key.to_string(), value.to_string());
+    previous
+}
+
+/// The value of `key` a command run now would see.
+pub fn command_env_var(key: &str) -> Option<String> {
+    COMMAND_ENV.lock().unwrap().get(key).cloned().or_else(|| std::env::var(key).ok())
+}
+
+/// Every variable a command run now would see.
+pub fn command_env() -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = std::env::vars().collect();
+    env.extend(COMMAND_ENV.lock().unwrap().clone());
+    env
+}
 
 /// A `Command` that runs `command_line` through the platform's shell: `sh -c` on
 /// everything but Windows, `cmd /C` there. `workdir`, when given, is where it starts.
@@ -25,6 +52,7 @@ pub fn shell_command(command_line: &str, workdir: Option<PathBuf>) -> tokio::pro
     if let Some(workdir) = workdir {
         command.current_dir(workdir);
     }
+    command.envs(COMMAND_ENV.lock().unwrap().clone());
     command
 }
 

@@ -24,8 +24,9 @@ impl Tool for EnvReadTool {
     }
 
     fn description(&self) -> &str {
-        "Reads environment variables of this backend process. With no arguments returns all \
-         env vars as a JSON object. With a key argument returns just that variable's value."
+        "Reads the environment variables the commands this backend runs see (its own, plus \
+         any set with os.env_write). With no arguments returns all env vars as a JSON object. \
+         With a key argument returns just that variable's value."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {
@@ -36,13 +37,13 @@ impl Tool for EnvReadTool {
         let args: EnvReadArgs = serde_json::from_value(data)?;
 
         if let Some(key) = &args.key {
-            let value = std::env::var(key).unwrap_or_default();
+            let value = crate::services::process::command_env_var(key).unwrap_or_default();
             Ok(serde_json::to_value(&EnvReadOut { value })?)
         } else {
             // Return all env vars as a JSON object
             let mut map: serde_json::Map<String, Value> = serde_json::Map::new();
-            for (k, v) in std::env::vars() {
-                map.insert(k.clone(), serde_json::Value::String(v));
+            for (k, v) in crate::services::process::command_env() {
+                map.insert(k, serde_json::Value::String(v));
             }
             Ok(serde_json::to_value(map)?)
         }
