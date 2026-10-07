@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Drives one agent task through the HTTP API the way the browser does, then prints the chat's
-context numbers (scripts/chat-metrics) — the fixed benchmark for context-management changes.
+"""Runs one agent task through the HTTP API (a turn the backend runs, followed until it ends), then prints
+the chat's context numbers (scripts/chat-metrics) — the fixed benchmark for context-management changes.
 
 usage: scripts/context-bench --base http://127.0.0.1:3104 --secret JWT_SECRET --prompt-file TASK.md \\
            --profile ID [--user-id 1 --username san3] [--max-rounds 150] [--container tulpa-bench-pg]
 
 Run it against a throwaway backend (never the real stack) and give the task a scratch git
 worktree as its working folder, so whatever the agent edits is not the real repo. Every scope the
-agent asks for (a folder to read, a command word to run) is granted, the same as auto-confirm.
+agent asks for (a folder to read, a command word to run) is granted: the script turns on the user's
+auto-confirm, and sets their step limit to --max-rounds (a turn that reaches it ends as `step_limit`).
 """
 import argparse, base64, hashlib, hmac, json, subprocess, sys, time, urllib.request, urllib.error
 
@@ -64,32 +65,34 @@ chat_id = chat["id"]
 log(f"chat {chat_id} on profile {args.profile}")
 
 prompt = open(args.prompt_file).read()
+call("/api/settings", {"auto_confirm": True, "max_turn_steps": args.max_rounds})
 started = time.time()
-out = call("/api/agent/chat", {"chat_id": chat_id, "prompt": prompt})
-rounds = 0
+call("/api/agent/turn", {"chat_id": chat_id, "prompt": prompt})
+last_step = None
 while True:
-    rounds += 1
-    log(f"reply {out['id']}: {len(out.get('thinking') or '')} thinking chars, {out['thought_duration_ms'] / 1000:.0f}s, "
-        f"{len(out['tool_calls'])} tool call(s), {len(out['content'])} text chars")
-    if not out["can_use_tools"] and not out["tool_calls"]:
-        break
-    if rounds >= args.max_rounds:
-        log("stopped: max rounds")
-        break
-    pending = out["tool_calls"]
-    while pending:
-        permission = pending[0]["permission"]
-        if permission["status"] == "denied":
-            escalation = permission.get("escalation")
-            if not escalation:
-                log(f"cannot run {pending[0]['name']}: {permission['reason']}")
-                break
-            call("/api/agent/allow_scope", {"chat_id": chat_id, "tool_name": pending[0]["name"], "scope": escalation["scope"]})
-        result = call("/api/agent/use_tool", {"chat_id": chat_id})
-        log(f"  {result['tool_name']}: {'ok' if result['success'] else 'failed'}{' (denied)' if result['denied'] else ''}")
-        pending = result["tools"]
-    out = call("/api/agent/continue", {"chat_id": chat_id})
+    time.sleep(2)
+    state = call(f"/api/agent/turn?chat_id={chat_id}")
+    if state["status"] == "running":
+        step = (state["step"], state["running_tool"])
+        if step != last_step:
+            doing = f"running {state['running_tool']}" if state["running_tool"] else "model call"
+            log(f"step {state['step']}: {doing}, {state['eval_tokens']} tokens generated so far")
+            last_step = step
+        continue
+    if state["status"] == "waiting_for_permission":
+        # Auto-confirm grants what an escalation offers, so a wait means a call asked for more: granted the same way
+        decisions = [{"index": index, "allowance": "permanent"} for index, call_ in enumerate(state["pending"])
+                     if call_["permission"]["status"] == "denied" and call_["permission"].get("escalation")]
+        log(f"waiting for permission: granting {len(decisions)} call(s)")
+        call("/api/agent/answer", {"chat_id": chat_id, "decisions": decisions})
+        continue
+    end = state["last_end"] or {}
+    log(f"run ended: {end.get('reason')}{' - ' + end['detail'] if end.get('detail') else ''}")
+    break
 
-log(f"done in {(time.time() - started) / 60:.1f} min, {rounds} model replies")
-print(json.dumps({"chat_id": chat_id, "minutes": round((time.time() - started) / 60, 1)}))
+messages = call(f"/api/chats/messages?chat_id={chat_id}&limit=5000")["messages"]
+replies = sum(1 for m in messages if m["role"] == "assistant")
+log(f"done in {(time.time() - started) / 60:.1f} min, {replies} model replies")
+print(json.dumps({"chat_id": chat_id, "minutes": round((time.time() - started) / 60, 1), "replies": replies,
+                  "end": (state.get("last_end") or {}).get("reason")}))
 subprocess.run([sys.executable, __file__.replace("context-bench", "chat-metrics"), str(chat_id), "--container", args.container])
