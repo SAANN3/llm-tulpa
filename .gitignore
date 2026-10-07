@@ -11,3 +11,7 @@ ds-bundle/
 .design-sync/
 design_handoff_*/
 frontend/src/design-sync-preview.css
+
+# Python bytecode from the scripts
+__pycache__/
+*.pyc
