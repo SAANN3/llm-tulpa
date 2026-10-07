@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before a request is sent, its size is estimated from the last measured prompt plus what was added since (a large tool result), and the chat is compacted first when that passes the trigger.
 
 ### Changed
-- The server-event stream moved from `GET /api/events` to `GET /api/live`. A path ending in `/api/events` is on the ad-blocker filter lists (EasyPrivacy), and a page behind such a blocker (Adblock Plus in Samsung Internet, for one) was refused the stream in the browser, so it never saw a run end, a chat created elsewhere or a finished job. The events themselves are unchanged.
+- The server-event stream moved from `GET /api/events` to `GET /api/live`. A path ending in `/api/events` is on common ad-blocker filter lists, and a page behind such a blocker was refused the stream by its own browser, so it never saw a run end, a chat created elsewhere or a finished job. The events themselves are unchanged.
 - `POST /api/agent/regenerate` returns 202 and the new reply arrives like any run's. `POST /api/agent/chat`, `/continue`, `/use_tool`, `/can_use_tool`, `/allow_scope` and `/job_notices` are gone; the turn runner does what a browser did with them.
 
 ### Removed
