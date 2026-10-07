@@ -3,6 +3,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 
 use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolContext,
@@ -11,6 +12,10 @@ use crate::tools::base::{
 use crate::tools::storage::normalize;
 
 use super::parse_host;
+
+/// How long a download may go without receiving anything before it is given up. No limit on the whole: a
+/// large file on a slow line takes as long as it takes.
+const DOWNLOAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct DownloadFileTool;
 
@@ -28,6 +33,9 @@ struct DownloadFileOut {
     status_code: u16,
     content_type: String,
     bytes_written: u64,
+    /// For a redirect to another host, which isn't followed: where it points (nothing was written)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirected_to: Option<String>,
 }
 
 #[async_trait]
@@ -124,7 +132,9 @@ impl Tool for DownloadFileTool {
         let args: DownloadFileArgs = serde_json::from_value(data)?;
         let path = normalize(Path::new(&args.path));
 
-        let response = reqwest::get(&args.url)
+        let mut response = super::client_for(&args.url, None, Some(DOWNLOAD_READ_TIMEOUT))?
+            .get(&args.url)
+            .send()
             .await
             .map_err(|e| ToolError::FailedUnknown(format!("couldn't fetch {}: {e}", &args.url)))?;
 
@@ -135,20 +145,79 @@ impl Tool for DownloadFileTool {
             .map(|h| h.to_str().unwrap_or("unknown").to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| ToolError::FailedUnknown(format!("couldn't read body from {}: {e}", &args.url)))?;
+        if let Some(location) = super::redirect_location(&response) {
+            return Ok(serde_json::to_value(DownloadFileOut {
+                path: path.to_string_lossy().to_string(),
+                status_code,
+                content_type,
+                bytes_written: 0,
+                redirected_to: Some(location),
+            })?);
+        }
 
-        tokio::fs::write(&path, &bytes)
-            .await
-            .map_err(|e| ToolError::FailedUnknown(format!("couldn't write '{}': {e}", path.display())))?;
+        let bytes_written = save_body(&mut response, &path).await.map_err(ToolError::FailedUnknown)?;
 
         Ok(serde_json::to_value(DownloadFileOut {
             path: path.to_string_lossy().to_string(),
             status_code,
             content_type,
-            bytes_written: bytes.len() as u64,
+            bytes_written,
+            redirected_to: None,
         })?)
+    }
+}
+
+/// Writes a response's body to `path` as it arrives: a large file read into memory first could take the backend
+/// down with it. A download that fails partway leaves no file behind, since a half-written one would pass for
+/// the real thing. Returns the bytes written.
+async fn save_body(response: &mut reqwest::Response, path: &Path) -> Result<u64, String> {
+    let mut file = tokio::fs::File::create(path).await.map_err(|e| format!("couldn't write '{}': {e}", path.display()))?;
+    let mut written: u64 = 0;
+    let copied: Result<(), String> = async {
+        while let Some(chunk) = response.chunk().await.map_err(|e| format!("couldn't read the body of {}: {e}", response.url()))? {
+            file.write_all(&chunk).await.map_err(|e| format!("couldn't write '{}': {e}", path.display()))?;
+            written += chunk.len() as u64;
+        }
+        file.flush().await.map_err(|e| format!("couldn't write '{}': {e}", path.display()))
+    }
+    .await;
+    if let Err(error) = copied {
+        drop(file);
+        let _ = tokio::fs::remove_file(path).await;
+        return Err(error);
+    }
+    Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_server::{ok, serve};
+    use super::*;
+
+    fn routes(path: &str, _: u16) -> Option<Vec<u8>> {
+        match path {
+            "/stall" => None,
+            _ => Some(ok(&vec![b'y'; 5 * 1024 * 1024])),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_download_is_written_as_it_arrives_and_a_failed_one_leaves_nothing() {
+        let port = serve(routes).await;
+        let dir = std::env::temp_dir().join(format!("tulpa-download-test-{port}"));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let url = format!("http://127.0.0.1:{port}/file");
+        let path = dir.join("file.bin");
+        let mut response = super::super::client_for(&url, None, None).ok().expect("client").get(&url).send().await.unwrap();
+        assert_eq!(save_body(&mut response, &path).await.unwrap(), 5 * 1024 * 1024);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 5 * 1024 * 1024);
+
+        let url = format!("http://127.0.0.1:{port}/stall");
+        let path = dir.join("stalled.bin");
+        let mut response = super::super::client_for(&url, None, Some(std::time::Duration::from_millis(300))).ok().expect("client").get(&url).send().await.unwrap();
+        assert!(save_body(&mut response, &path).await.is_err());
+        assert!(!path.exists(), "a failed download leaves no partial file");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

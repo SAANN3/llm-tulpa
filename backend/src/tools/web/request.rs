@@ -27,6 +27,14 @@ const HARD_MAX_RESPONSE_BYTES: usize = 500_000;
 /// from being unreasonably long rather than serving a real layout purpose.
 const HTML_TEXT_WRAP_WIDTH: usize = 120;
 
+/// How much of a response is read at all, whatever `max_response_bytes` says: the cap applies after an HTML
+/// page's text is extracted, so the page itself is read first, but a link to a multi-gigabyte file must not
+/// be pulled into memory whole.
+const MAX_READ_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long one request may take from start to the last byte.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 pub struct WebRequestTool;
 
 #[derive(Deserialize, tool_derive::ToolParams)]
@@ -55,6 +63,9 @@ struct WebRequestOut {
     body: String,
     bytes_returned: u64,
     truncated: bool,
+    /// For a redirect to another host, which isn't followed: where it points
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirected_to: Option<String>,
 }
 
 /// The two permission levels a host can be granted, independent of which specific
@@ -179,7 +190,7 @@ impl Tool for WebRequestTool {
         let method = reqwest::Method::from_bytes(args.method.to_uppercase().as_bytes())
             .map_err(|_| ToolError::FailedUnknown(format!("unrecognized HTTP method '{}'", args.method)))?;
 
-        let mut request = reqwest::Client::new().request(method, &args.url);
+        let mut request = super::client_for(&args.url, Some(REQUEST_TIMEOUT), None)?.request(method, &args.url);
 
         if let Some(headers) = &args.headers {
             let mut header_map = reqwest::header::HeaderMap::new();
@@ -213,10 +224,9 @@ impl Tool for WebRequestTool {
         let is_html = content_type.to_ascii_lowercase().starts_with("text/html");
         let cap = (args.max_response_bytes.map(|b| b as usize).unwrap_or(DEFAULT_MAX_RESPONSE_BYTES)).min(HARD_MAX_RESPONSE_BYTES);
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| ToolError::FailedUnknown(format!("couldn't read response body: {e}")))?;
+        let redirected_to = super::redirect_location(&response);
+        let mut response = response;
+        let (bytes, read_cut) = read_capped(&mut response, MAX_READ_BYTES).await?;
 
         // An HTML page's raw markup is mostly tag/script/style noise around a small
         // amount of actual content — extracted first (on the *whole* response, before
@@ -232,7 +242,7 @@ impl Tool for WebRequestTool {
         };
 
         let full_bytes = full_body.as_bytes();
-        let truncated = full_bytes.len() > cap;
+        let truncated = read_cut || full_bytes.len() > cap;
         let returned = &full_bytes[..full_bytes.len().min(cap)];
         let body = String::from_utf8_lossy(returned).to_string();
 
@@ -242,6 +252,50 @@ impl Tool for WebRequestTool {
             body,
             bytes_returned: returned.len() as u64,
             truncated,
+            redirected_to,
         })?)
+    }
+}
+
+/// Reads a response's body up to `max` bytes, and whether there was more.
+async fn read_capped(response: &mut reqwest::Response, max: usize) -> Result<(Vec<u8>, bool), ToolError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| ToolError::FailedUnknown(format!("couldn't read response body: {e}")))?
+    {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= max {
+            let more = bytes.len() > max || response.chunk().await.ok().flatten().is_some();
+            bytes.truncate(max);
+            return Ok((bytes, more));
+        }
+    }
+    Ok((bytes, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_server::{ok, serve};
+    use super::*;
+
+    fn big(_: &str, _: u16) -> Option<Vec<u8>> {
+        Some(ok(&vec![b'x'; 3 * 1024 * 1024]))
+    }
+
+    #[tokio::test]
+    async fn a_large_body_is_read_only_up_to_the_cap() {
+        let port = serve(big).await;
+        let url = format!("http://127.0.0.1:{port}/");
+        let mut response = super::super::client_for(&url, None, None).ok().expect("client").get(&url).send().await.unwrap();
+        let (bytes, more) = read_capped(&mut response, 1024 * 1024).await.ok().expect("read");
+        assert_eq!(bytes.len(), 1024 * 1024);
+        assert!(more);
+
+        let mut response = super::super::client_for(&url, None, None).ok().expect("client").get(&url).send().await.unwrap();
+        let (bytes, more) = read_capped(&mut response, 8 * 1024 * 1024).await.ok().expect("read");
+        assert_eq!(bytes.len(), 3 * 1024 * 1024);
+        assert!(!more);
     }
 }

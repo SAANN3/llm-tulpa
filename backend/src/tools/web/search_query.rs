@@ -16,6 +16,9 @@ fn searxng_base_url() -> String {
     crate::config::searxng_url()
 }
 
+/// A local SearXNG that doesn't answer within this has a problem; waiting longer holds the run.
+const SEARCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub struct SearchQueryTool;
 
 #[derive(Deserialize, tool_derive::ToolParams)]
@@ -84,8 +87,9 @@ impl Tool for SearchQueryTool {
         let num_results = args.num_results.unwrap_or(DEFAULT_NUM_RESULTS).min(MAX_NUM_RESULTS);
         let base_url = searxng_base_url();
 
-        let response = reqwest::Client::new()
-            .get(format!("{base_url}/search"))
+        let url = format!("{base_url}/search");
+        let response = super::client_for(&url, Some(SEARCH_TIMEOUT), None)?
+            .get(&url)
             .query(&[("q", args.query.as_str()), ("format", "json")])
             .send()
             .await
