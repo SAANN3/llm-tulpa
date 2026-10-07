@@ -310,7 +310,25 @@ pub fn save(config: &AppConfig) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-    std::fs::write(&path, json)
+    write_atomically(&path, json.as_bytes())
+}
+
+/// Writes `contents` to a temporary file next to `path` and renames it over `path`: a crash or power cut in the
+/// middle leaves the old file or the new one, never a cut-off one. A cut-off `settings.json` doesn't parse, and
+/// the backend then refuses to start (see `load_or_init`) — with the database connection and the JWT secret in
+/// it. The file keeps the permissions it had.
+fn write_atomically(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let temporary = path.with_extension("json.saving");
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    drop(file);
+    if let Ok(existing) = std::fs::metadata(path) {
+        std::fs::set_permissions(&temporary, existing.permissions())?;
+    }
+    std::fs::rename(&temporary, path)
 }
 
 /// Loads the existing config, or creates+persists a fresh one on first run. A file that
@@ -344,4 +362,26 @@ fn generate_secret() -> String {
     let mut bytes = [0u8; 48];
     rand::thread_rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+#[cfg(all(test, unix))]
+mod save_tests {
+    use super::*;
+
+    #[test]
+    fn a_save_replaces_the_file_whole_and_keeps_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("tulpa-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "{\"old\": true}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&path, b"{\"new\": true}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"new\": true}");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(!dir.join("settings.json.saving").exists(), "no temporary file is left behind");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

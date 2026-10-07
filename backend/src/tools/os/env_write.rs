@@ -128,6 +128,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_written_variable_reaches_later_commands_without_touching_the_backend() {
         let previous = crate::services::process::set_command_env("TULPA_ENV_WRITE_TEST", "42");

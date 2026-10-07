@@ -150,7 +150,7 @@ async fn find_matches(
     Ok(matches)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
