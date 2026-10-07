@@ -40,7 +40,8 @@ impl Tool for FindFilesTool {
     fn description(&self) -> &str {
         "Searches a directory tree for files, like `find`/`grep` combined: filter by \
          filename substring, by file content substring, or both. Returns the matching \
-         files' paths."
+         files' paths. Folders it can't open are skipped, and files over 16 MB aren't \
+         searched for content."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {
@@ -77,12 +78,17 @@ impl Tool for FindFilesTool {
     }
 }
 
+/// Files larger than this aren't read for a content search: the search reads each file whole, and a model
+/// file or disk image in the tree would otherwise be pulled into memory.
+const MAX_CONTENT_SEARCH_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Walks `root` depth-first with an explicit stack (`Vec::pop` is LIFO) rather than
 /// recursive `async fn` calls (which can't recurse directly — the resulting future
 /// would be infinitely sized). `depth` counts subdirectory levels below `root`; `root`
 /// itself is depth 0. Traversal order isn't part of this tool's contract — nothing
 /// depends on it being depth-first specifically, that's just what an explicit stack
-/// gives for free.
+/// gives for free. Only `root` itself has to open: a subfolder that can't (no permission, gone meanwhile)
+/// is skipped, since one unreadable folder deep in a home directory used to fail the whole search.
 async fn find_matches(
     root: std::path::PathBuf,
     depth_limit: Option<i64>,
@@ -90,14 +96,26 @@ async fn find_matches(
     substr: Option<&str>,
 ) -> std::io::Result<Vec<String>> {
     let mut matches = Vec::new();
-    let mut stack = vec![(root, 0i64)];
+    let mut stack = vec![(root.clone(), 0i64)];
 
     while let Some((dir, depth)) = stack.pop() {
-        let mut read_dir = tokio::fs::read_dir(&dir).await?;
+        let mut read_dir = match tokio::fs::read_dir(&dir).await {
+            Ok(read_dir) => read_dir,
+            Err(e) if dir == root => return Err(e),
+            // Skipped on purpose: see above
+            Err(_) => continue,
+        };
 
-        while let Some(entry) = read_dir.next_entry().await? {
+        loop {
+            let entry = match read_dir.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(_) => break,
+            };
             let path = entry.path();
-            let metadata = entry.metadata().await?;
+            // Doesn't follow symlinks (a symlinked folder isn't walked into, so no loops); an entry that went
+            // away meanwhile is skipped
+            let Ok(metadata) = entry.metadata().await else { continue };
 
             if metadata.is_dir() {
                 if depth_limit.map(|limit| depth < limit).unwrap_or(true) {
@@ -115,6 +133,7 @@ async fn find_matches(
 
             let content_matches = match substr {
                 None => true,
+                Some(_) if metadata.len() > MAX_CONTENT_SEARCH_BYTES => false,
                 Some(needle) => tokio::fs::read_to_string(&path)
                     .await
                     .map(|content| content.contains(needle))
@@ -129,4 +148,35 @@ async fn find_matches(
     }
 
     Ok(matches)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unreadable_folder_or_a_huge_file_does_not_end_the_search() {
+        let root = std::env::temp_dir().join(format!("tulpa-find-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("open/deeper")).unwrap();
+        std::fs::create_dir_all(root.join("closed")).unwrap();
+        std::fs::write(root.join("open/deeper/a.txt"), "needle here").unwrap();
+        std::fs::write(root.join("closed/b.txt"), "needle here").unwrap();
+        // Starts with the needle, then grows past the content-search limit
+        let big = root.join("open/big.bin");
+        std::fs::write(&big, "needle").unwrap();
+        std::fs::File::options().write(true).open(&big).unwrap().set_len(MAX_CONTENT_SEARCH_BYTES + 1).unwrap();
+        std::fs::set_permissions(root.join("closed"), std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let found = find_matches(root.clone(), None, None, Some("needle")).await;
+        std::fs::set_permissions(root.join("closed"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let found = found.unwrap();
+        assert_eq!(found, vec![root.join("open/deeper/a.txt").to_string_lossy().to_string()]);
+
+        // The folder asked for is still an error when it can't be opened
+        assert!(find_matches(root.join("missing"), None, None, None).await.is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

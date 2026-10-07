@@ -8,7 +8,11 @@ use crate::tools::base::{
     ToolParams, ToolPermission, ToolSerializationError,
 };
 
-use super::{check_file_scope, normalize};
+use super::{check_file_scope, normalize, refuse_if_larger};
+
+/// The largest file read at all: the whole file is read to find lines and offsets, even when a small part of it
+/// comes back.
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 pub struct ReadFileTool;
 
@@ -122,6 +126,13 @@ impl Tool for ReadFileTool {
     async fn call_untyped(&self, data: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: ReadFileArgs = serde_json::from_value(data)?;
         let path = normalize(std::path::Path::new(&args.path));
+        refuse_if_larger(
+            &path,
+            MAX_FILE_BYTES,
+            "to read",
+            "look at parts of it with os.execute_command instead (`head`, `tail`, `grep`, `sed -n 'A,Bp'`)",
+        )
+        .await?;
 
         let content = tokio::fs::read_to_string(&path)
             .await

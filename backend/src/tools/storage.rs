@@ -133,10 +133,29 @@ pub(crate) fn check_directory_scope(path: &str, bucket: SharedBucket, scope: Opt
     check_scope(&normalize(Path::new(path)), bucket, scope)
 }
 
+/// Refuses a file larger than `max_bytes` before anything reads it: these tools read a file whole, and a
+/// model that points one at a disk image or a model file would otherwise pull gigabytes into the backend's
+/// memory. `what` and `instead` finish the message ("too large to read: ...").
+pub(crate) async fn refuse_if_larger(path: &Path, max_bytes: u64, what: &str, instead: &str) -> Result<(), ToolError> {
+    let size = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| ToolError::FailedUnknown(format!("couldn't read '{}': {e}", path.display())))?
+        .len();
+    if size > max_bytes {
+        return Err(ToolError::FailedUnknown(format!(
+            "'{}' is {}, too large {what} (the limit is {}): {instead}",
+            path.display(),
+            human_size(size),
+            human_size(max_bytes)
+        )));
+    }
+    Ok(())
+}
+
 /// Adaptive human-readable byte count — individual files span a much wider range than
 /// the whole-disk figures `os`'s `format_gb` is built for, so this steps up through
 /// b/kb/mb/gb instead of always reporting gb.
-pub(super) fn human_size(bytes: u64) -> String {
+pub(crate) fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 3] = ["kb", "mb", "gb"];
 
     let mut size = bytes as f64;
@@ -241,4 +260,21 @@ fn overlapping_context(existing: &str, needle: &str, replacement: &str) -> Optio
 
 fn is_meaningful_probe(probe: &str) -> bool {
     probe.chars().filter(|c| !c.is_whitespace()).count() >= MIN_PROBE_SIGNAL_CHARS
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_file_over_the_limit_is_refused_before_it_is_read() {
+        let path = std::env::temp_dir().join(format!("tulpa-size-test-{}", std::process::id()));
+        std::fs::File::create(&path).unwrap().set_len(3 * 1024 * 1024).unwrap();
+        assert!(refuse_if_larger(&path, 4 * 1024 * 1024, "to read", "x").await.is_ok());
+        let Err(ToolError::FailedUnknown(message)) = refuse_if_larger(&path, 1024 * 1024, "to read", "use head").await else {
+            panic!("a file over the limit must be refused");
+        };
+        assert!(message.contains("3.0mb") && message.contains("1.0mb") && message.contains("use head"), "{message}");
+        std::fs::remove_file(&path).unwrap();
+    }
 }

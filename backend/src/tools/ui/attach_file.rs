@@ -9,7 +9,10 @@ use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError, ToolParams,
     ToolPermission, ToolSerializationError,
 };
-use crate::tools::storage::{check_file_scope, normalize};
+use crate::tools::storage::{check_file_scope, normalize, refuse_if_larger};
+
+/// The same as `routes::files`' upload limit: an attached file is a file in the chat like an uploaded one.
+const MAX_ATTACH_BYTES: u64 = 500 * 1024 * 1024;
 
 pub struct AttachFileTool;
 
@@ -69,6 +72,8 @@ impl Tool for AttachFileTool {
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: AttachFileArgs = serde_json::from_value(data)?;
         let path = normalize(Path::new(&args.path));
+        // The same limit as a file the user uploads; the copy is read whole to store it
+        refuse_if_larger(&path, MAX_ATTACH_BYTES, "to attach", "tell the user where it is instead").await?;
 
         let bytes = tokio::fs::read(&path)
             .await

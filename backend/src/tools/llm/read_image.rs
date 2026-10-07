@@ -10,7 +10,9 @@ use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
     ToolParams, ToolPermission, ToolSerializationError,
 };
-use crate::tools::storage::{check_file_scope, normalize};
+use crate::tools::storage::{check_file_scope, normalize, refuse_if_larger};
+
+const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Used when `prompt` is left empty — a neutral "just tell me what's in it" request
 /// rather than requiring the model to always come up with something to ask.
@@ -81,6 +83,8 @@ impl Tool for ReadImageTool {
             )));
         }
         let path = normalize(std::path::Path::new(&args.path));
+        // No model takes an image this large, and reading it whole would only fill memory
+        refuse_if_larger(&path, MAX_IMAGE_BYTES, "for an image", "make a smaller copy first (for example with ImageMagick's `convert`)").await?;
 
         let bytes = tokio::fs::read(&path)
             .await
