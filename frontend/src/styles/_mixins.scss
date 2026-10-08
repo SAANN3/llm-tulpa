@@ -9,3 +9,10 @@
 @mixin dos-shadow($color: var(--color-border), $offset: $shadow-offset) {
   box-shadow: $offset $offset 0 0 $color;
 }
+
+// The dot grid behind the pages (Settings → Dotted background): the same accent-tinted dots as the scrollbar's
+// track, spaced like dot-grid paper. A mixin, so anything that covers the page with its own background can carry it too.
+@mixin dot-grid {
+  background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 22%, var(--color-secondary)) 1px, transparent 1px);
+  background-size: 12px 12px;
+}

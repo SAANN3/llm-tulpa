@@ -56,6 +56,17 @@
   align-self: flex-start;
 }
 
+// Open, the toggle sits on the trace like a tab: no gap and no shadow between them (the shadow would show as a
+// stripe across the gap), and its bottom border lies on the trace's top one
+.chat-message__thinking--open {
+  gap: 0;
+
+  .chat-message__thinking-toggle {
+    box-shadow: none;
+    margin-bottom: -$line-border;
+  }
+}
+
 .chat-message__thinking-body {
   padding: $space-3;
   font-size: 13px;

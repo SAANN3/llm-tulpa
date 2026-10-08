@@ -154,3 +154,30 @@ its text color, since that is the only thing telling a keyword from plain text.
 
 **A theme only ever *fills in values* (`--color-primary: ...`); `styles/variants.scss` is the
 only file allowed to *wire* those values to real CSS properties via `[data-variant]`.**
+
+### Backgrounds
+
+What sits behind the pages is chosen in Settings → Background and kept per browser, like the theme
+(`ThemeContext.background`: an id, a brightness and a speed). `off` is the plain page color, `dots`
+is the static dot grid (`_mixins.scss`'s `dot-grid`, switched on by `data-dots` on `<html>`), and
+every other id is an animated background drawn on one canvas behind everything
+(`components/ascii-background.tsx`). Animated backgrounds take their colors from the same three
+variables, read from `<html>` whenever `data-theme` changes, so a theme needs nothing for them.
+
+They live in `src/backgrounds/`:
+- `engine/scene.ts` — `Scene`, the one renderer: a grid of characters over the window, each cell a
+  character and a level (1–4 the accent at rising opacity, 5 the text color), drawn as text one
+  level at a time; plus what an effect needs to know about the page (the floor above the composer,
+  the area right of the sidebar, a centered panel's sides).
+- `engine/runner.ts` — loads the chosen effect, draws it at its own frame rate, stops while the
+  tab is hidden, a quarter speed with "reduce motion".
+- `engine/random.ts` — `rand` for what may change, `mulberry` / `hash` / `noise` for what must
+  come out the same every frame (a tree's leaves, a ridge).
+- `layers/` — pieces several effects share (stars, fireflies, embers, clouds, a static layer).
+- `effects/` — one file per family; each exports a factory taking its options and returning
+  `(scene) => ({init, draw})`, with all its state private to it.
+- `index.ts` — the registry the picker lists: id, name, group, frame rate, a description and a
+  `load` that imports the effect's file only when it is chosen.
+
+A new background is a file in `effects/` (or a new set of options for an existing one) and one
+entry in `index.ts`.

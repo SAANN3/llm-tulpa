@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mixins' as *;
 
 // Over everything, the page's own background behind it: what is under it can't be used while the backend is away
 .backend-unreachable {
@@ -6,6 +7,11 @@
   inset: 0;
   z-index: 2000;
   background: var(--color-secondary);
+}
+
+// Its own background hides the body's, so it carries the dots itself
+:root[data-dots='on'] .backend-unreachable {
+  @include dot-grid;
 }
 
 .backend-unreachable__panel {

@@ -11,14 +11,13 @@ import {
     UseToolsField,
     MaxTurnStepsField,
     NameTimezoneFields,
-    DotsField,
     NotificationsField,
     HfTokenField,
 } from '../components/settings-fields.tsx'
+import {BackgroundPicker} from '../components/background-picker.tsx'
 import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
-import {useTheme} from '../context/use-theme.ts'
 import {useDebug} from '../hooks/use-debug.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {useGoBack} from '../hooks/use-go-back.ts'
@@ -52,7 +51,6 @@ const Settings = () => {
     }
 
     const onBack = useGoBack()
-    const {dots, setDots} = useTheme()
 
     const tz = validateTimezone(timezoneText)
     const nameValid = name.trim().length > 0
@@ -75,7 +73,7 @@ const Settings = () => {
                 <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText}
                                     onTimezoneChanged={setTimezoneText}/>
                 <ThemePreview/>
-                <DotsField enabled={dots} onToggle={setDots}/>
+                <BackgroundPicker/>
                 <Div className="field">
                     <Label className="field__label" text="System prompt"/>
                     <Div className="field__control">

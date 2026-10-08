@@ -1,12 +1,12 @@
 @use 'tokens' as *;
 @use 'mixins' as *;
 
+// No bar of its own: the title and the header's solid controls sit straight on the page's (dotted) background
 .chat-header {
   display: flex;
   align-items: center;
   gap: $space-3;
   padding: $space-2 $space-4;
-  border-bottom: $line-border solid var(--color-border);
 }
 
 .chat-header__name {
@@ -147,9 +147,9 @@
 }
 
 .chat-header__context {
-  // Mimics `.chat-header__model`'s own look (same border + shadow as any
-  // `button[data-variant]`) without actually being a button — this is a readout, not a
-  // control, so there's nothing here for a click to do. `width: fit-content` (not a
+  // Looks like the header's buttons (the same border + shadow as any `button[data-variant]`)
+  // without being a button — this is a readout, not a control, so there's nothing here for
+  // a click to do. `width: fit-content` (not a
   // fixed px width) so the box always sizes to its label: a fixed width let the
   // nowrap label overflow past the right border while the bar below it (which fills
   // the box's real width) stayed short of the text above it — sizing to content keeps
@@ -165,6 +165,8 @@
   box-sizing: border-box;
   padding: 0 $space-3;
   border: $line-border solid currentColor;
+  // Solid like the buttons beside it, so the dotted background doesn't show through the box
+  background: var(--color-secondary);
   @include dos-shadow;
 }
 

@@ -1,0 +1,50 @@
+@use 'tokens' as *;
+
+// One column of choices in a box that scrolls on its own, so the long list doesn't stretch the Settings page
+.background-picker__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border: $line-border solid var(--color-border);
+  background: var(--color-secondary);
+  padding: $space-1 0;
+}
+
+.background-picker__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.background-picker__group-name {
+  padding: $space-2 $space-3 $space-1;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+.background-picker__row {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  padding: 3px $space-3;
+  cursor: pointer;
+}
+
+.background-picker__row:hover {
+  background: var(--color-surface-strong);
+}
+
+.background-picker__slider {
+  display: grid;
+  grid-template-columns: 90px 1fr 40px;
+  align-items: center;
+  gap: $space-2;
+  font-size: 13px;
+}
+
+.background-picker__value {
+  text-align: right;
+  opacity: 0.7;
+}

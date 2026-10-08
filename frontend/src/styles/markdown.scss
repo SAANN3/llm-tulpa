@@ -78,6 +78,8 @@
 
 .markdown table {
   border-collapse: collapse;
+  // A grid of cells reads as one block: solid, so the dotted page background doesn't show in every cell
+  background: var(--color-secondary);
 }
 
 .markdown th,

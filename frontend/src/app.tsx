@@ -1,5 +1,6 @@
 import {useEffect, useState, type ReactNode} from 'react'
 import {BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate} from 'react-router-dom'
+import {AsciiBackground} from './components/ascii-background.tsx'
 import {BackendUnreachable} from './components/backend-unreachable.tsx'
 import {SetupUpdatePopup} from './components/popups/setup-update-popup.tsx'
 import {AuthProvider} from './context/auth-provider.tsx'
@@ -92,6 +93,7 @@ const RequireOwner = () => {
 
 const App = () => (
     <ThemeProvider>
+        <AsciiBackground/>
         <SetupProvider>
             <BackendGate>
                 <AuthProvider>

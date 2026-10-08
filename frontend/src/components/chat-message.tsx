@@ -143,7 +143,7 @@ export const ChatMessage = ({
                     </ReactMarkdown>
                 </div>
                 {thinking ? (
-                    <Div ref={thinkingRef} className="vbox chat-message__thinking">
+                    <Div ref={thinkingRef} className={`vbox chat-message__thinking${isThinkingOpen ? ' chat-message__thinking--open' : ''}`}>
                         <Button
                             className="chat-message__thinking-toggle"
                             variant="secondary"

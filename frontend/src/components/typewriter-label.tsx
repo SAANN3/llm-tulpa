@@ -35,7 +35,8 @@ export const TypewriterLabel = ({
     }, [text, charIntervalMs])
 
     return (
-        <span style={style} className={className} data-variant={variant}>
+        // `data-label` like the Label primitive: text has no background of its own, so the dotted page shows around it
+        <span style={style} className={className} data-variant={variant} data-label>
       {text.slice(0, visibleCount)}
             <span className="caret">_</span>
     </span>

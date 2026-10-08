@@ -90,11 +90,8 @@ body {
   line-height: 1.4;
 }
 
-// The dot grid behind the pages (Settings → Dotted background): the same accent-tinted dots as the scrollbar's
-// track, spaced like dot-grid paper
 :root[data-dots='on'] body {
-  background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 22%, var(--color-secondary)) 1px, transparent 1px);
-  background-size: 12px 12px;
+  @include dot-grid;
 }
 
 [data-variant] {

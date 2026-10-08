@@ -25,12 +25,16 @@
 .chat__readonly {
   padding: $space-3 $space-4;
   border-top: $line-border solid var(--color-border);
+  // Where the composer would be, and as solid as it
+  background: var(--color-surface);
   font-size: 13px;
 }
 
 .chat__status {
   padding: $space-2 $space-3;
   border: $line-border solid var(--color-border);
+  // A framed box reads as one block: solid, so the dotted background doesn't show inside it
+  background: var(--color-secondary);
   font-size: 13px;
 }
 

@@ -1,0 +1,10 @@
+// Behind everything and never in the way: below the page's content (negative z-index, still above the page's own
+// background color) and deaf to the pointer
+.ascii-background {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  pointer-events: none;
+}

@@ -50,7 +50,8 @@
   border: $line-border solid var(--color-border);
   cursor: pointer;
   user-select: none;
-  background: transparent;
+  // Solid, so a result reads as one block over the dotted background
+  background: var(--color-secondary);
 
   &:hover {
     background-color: var(--color-surface-strong);
