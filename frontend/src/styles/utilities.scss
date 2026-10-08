@@ -44,6 +44,16 @@
   line-height: 1.35;
 }
 
+// A row can be a link (the sidebar's): no underline, and the text's own color unless a variant (the selected row)
+// gives it one
+a.list-row {
+  text-decoration: none;
+}
+
+a.list-row:not([data-variant]) {
+  color: inherit;
+}
+
 .list-row:not([data-variant]):hover {
   background-color: var(--color-surface-strong);
 }

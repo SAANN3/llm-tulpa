@@ -4,6 +4,7 @@ import {Frame} from '../components/frame.tsx'
 import {Button, Div} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {useGoBack} from '../hooks/use-go-back.ts'
 import {ActivityTab} from './stats/activity-tab.tsx'
 import {ModelsTab} from './stats/models-tab.tsx'
 import {ServerTab} from './stats/server-tab.tsx'
@@ -22,6 +23,7 @@ type Tab = (typeof TABS)[number]
 const Stats = () => {
     useDocumentTitle('Usage')
     const navigate = useNavigate()
+    const goBack = useGoBack()
     const {tab: tabSlug, range: rangeSlug} = useParams()
     const tab = TABS.find((name) => name.toLowerCase() === tabSlug) ?? TABS[0]
     const range = RANGES.find((option) => option.slug === rangeSlug) ?? DEFAULT_RANGE
@@ -49,7 +51,7 @@ const Stats = () => {
                        label: 'period',
                        run: (key) => stepRange(key === 'ArrowLeft' ? -1 : 1),
                    }] : []}
-                   onEscape={() => navigate('/')} escapeLabel="back">
+                   onEscape={goBack} escapeLabel="back">
                 {tab !== 'Server' ? (
                     <Div className="stats__ranges">
                         {RANGES.map((option) => (
@@ -69,7 +71,7 @@ const Stats = () => {
                     {tab === 'Server' ? <ServerTab/> : null}
                 </Div>
 
-                <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
+                <Button variant="secondary" text="Back" onClicked={goBack}/>
             </Frame>
         </Div>
     )

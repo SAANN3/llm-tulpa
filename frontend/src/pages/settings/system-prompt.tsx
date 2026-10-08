@@ -1,14 +1,14 @@
 import {useEffect, useState} from 'react'
-import {useNavigate} from 'react-router-dom'
 import '../../styles/system-prompt.scss'
 import {getSystemPrompt} from '../../api/settings/system-prompt-get.ts'
 import {setSystemPrompt} from '../../api/settings/system-prompt-set.ts'
 import {Button, Div, Label, TextField} from '../../components/primitives'
 import {useDocumentTitle} from '../../hooks/use-document-title.ts'
+import {useGoBack} from '../../hooks/use-go-back.ts'
 
 const SystemPrompt = () => {
     useDocumentTitle('System Prompt')
-    const navigate = useNavigate()
+    const goBack = useGoBack('/settings')
     const [loading, setLoading] = useState(true)
     const [defaultPrompt, setDefaultPrompt] = useState('')
     const [custom, setCustom] = useState<string | null>(null)
@@ -58,7 +58,7 @@ const SystemPrompt = () => {
     return (
         <Div className="page vbox system-prompt">
             <Div className="system-prompt__header">
-                <Button variant="secondary" text="Back" onClicked={() => navigate('/settings')}/>
+                <Button variant="secondary" text="Back" onClicked={goBack}/>
                 <Label className="section-heading" text="System prompt"/>
                 <Label variant="secondary" className="system-prompt__status"
                        text={error ?? (saving ? 'Saving…' : custom ? 'Custom prompt active' : 'Built-in default active')}/>

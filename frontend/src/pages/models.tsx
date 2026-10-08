@@ -17,6 +17,7 @@ import {useSettings} from '../context/use-settings.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {useModelsData} from '../hooks/use-models-data.ts'
 import {useRuntime} from '../hooks/use-runtime.ts'
+import {useGoBack} from '../hooks/use-go-back.ts'
 
 const TABS = ['Models', 'Download', 'Presets', 'Hardware', 'Ollama'] as const
 
@@ -26,6 +27,7 @@ const TABS = ['Models', 'Download', 'Presets', 'Hardware', 'Ollama'] as const
 const Models = () => {
     useDocumentTitle('Models')
     const navigate = useNavigate()
+    const goBack = useGoBack()
     const {tab: tabSlug} = useParams()
     const {user} = useAuth()
     const {settings} = useSettings()
@@ -53,7 +55,7 @@ const Models = () => {
             <Frame className="models__panel" bodyClassName="models__body"
                    tabs={TABS.map((name) => ({id: name, label: name}))} activeTab={tab}
                    onTab={(id) => navigate(`/models/${id.toLowerCase()}`, {replace: true})}
-                   actions={[]} onEscape={() => navigate('/')} escapeLabel="back">
+                   actions={[]} onEscape={goBack} escapeLabel="back">
                     <Div className="models__scroll">
                     <RuntimePanel status={status} profileName={loaded?.name ?? null} isOwner={isOwner}
                                   defaultProfileId={defaultProfileId} onChanged={changed}/>
@@ -76,7 +78,7 @@ const Models = () => {
 
                     </Div>
 
-                    <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
+                    <Button variant="secondary" text="Back" onClicked={goBack}/>
             </Frame>
         </Div>
     )

@@ -11,14 +11,17 @@ import {
     UseToolsField,
     MaxTurnStepsField,
     NameTimezoneFields,
+    DotsField,
     NotificationsField,
     HfTokenField,
 } from '../components/settings-fields.tsx'
 import {ThemePreview} from '../components/theme-preview.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useSettings} from '../context/use-settings.ts'
+import {useTheme} from '../context/use-theme.ts'
 import {useDebug} from '../hooks/use-debug.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {useGoBack} from '../hooks/use-go-back.ts'
 import {setDebug} from '../utils/debug.ts'
 import {requestNotificationPermission} from '../utils/notifications'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
@@ -48,7 +51,8 @@ const Settings = () => {
         setNotificationsEnabled(await requestNotificationPermission())
     }
 
-    const onBack = () => navigate('/')
+    const onBack = useGoBack()
+    const {dots, setDots} = useTheme()
 
     const tz = validateTimezone(timezoneText)
     const nameValid = name.trim().length > 0
@@ -60,7 +64,7 @@ const Settings = () => {
 
         const timezone = Number(timezoneText)
         await setSettings({name: name.trim(), timezone, notifications_enabled: notificationsEnabled, auto_confirm: autoConfirmEnabled, trim_old_thinking: trimOldThinking, use_tools: useTools, max_turn_steps: steps.value})
-        navigate('/')
+        onBack()
     }
 
     return (
@@ -71,6 +75,7 @@ const Settings = () => {
                 <NameTimezoneFields name={name} onNameChanged={setName} timezoneText={timezoneText}
                                     onTimezoneChanged={setTimezoneText}/>
                 <ThemePreview/>
+                <DotsField enabled={dots} onToggle={setDots}/>
                 <Div className="field">
                     <Label className="field__label" text="System prompt"/>
                     <Div className="field__control">

@@ -115,6 +115,21 @@ export const HfTokenField = ({hasToken, onSave}: HfTokenFieldProps) => {
     )
 };
 
+export interface DotsFieldProps {
+    enabled: boolean
+    onToggle: (enabled: boolean) => void
+}
+
+/** The dot grid behind the pages; applies at once and is kept in this browser, like the theme */
+export const DotsField = ({enabled, onToggle}: DotsFieldProps) => (
+    <Div className="field">
+        <Div className="field__row">
+            <Label className="field__row-label" text="Dotted background"/>
+            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+        </Div>
+    </Div>
+);
+
 export interface NotificationsFieldProps {
     enabled: boolean
     onToggle: (enabled: boolean) => void

@@ -19,6 +19,7 @@ import {Sidebar} from '../components/sidebar.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useChats} from '../hooks/use-chats.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {useGoBack} from '../hooks/use-go-back.ts'
 
 /** One folder's own page: its chats, newest-active first, plus rename/delete for the
  * folder itself — the destination of a folder row on `/folders` and of a chat header's
@@ -27,6 +28,7 @@ const Folder = () => {
     const {id} = useParams<{ id: string }>()
     const folderId = Number(id)
     const navigate = useNavigate()
+    const goBack = useGoBack('/folders')
     const [folderName, setFolderName] = useState<string | null>(null)
     const [renaming, setRenaming] = useState(false)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -72,7 +74,7 @@ const Folder = () => {
             <Sidebar/>
             <Div className="vbox folders">
                 <Div className="folders__header">
-                    <Button variant="secondary" className="folders__back" onClicked={() => navigate('/folders')}>
+                    <Button variant="secondary" className="folders__back" onClicked={goBack}>
                         <ArrowLeft width={16} height={16}/>
                     </Button>
                     {folderName != null ? (

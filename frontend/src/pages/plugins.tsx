@@ -11,6 +11,7 @@ import {Button, Div, Label, ToggleSwitch} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {usePlugins} from '../hooks/use-plugins.ts'
+import {useGoBack} from '../hooks/use-go-back.ts'
 import {errorReason} from '../utils/error-reason.ts'
 
 const pluginKey = (plugin: PluginInfo): string => `${plugin.plugin_name}/${plugin.plugin_subname}`;
@@ -22,7 +23,9 @@ const Plugins = () => {
     const {plugins, loading, setEnabled, setSettings, getSchema, getHelp} = usePlugins()
     const [notice, setNotice] = useState<{key: string; message: string} | null>(null)
 
-    const onBack = () => navigate('/')
+    const onBack = useGoBack('/')
+    // A plugin's settings were opened from the list, so stepping back returns to it
+    const backToList = useGoBack('/plugins')
 
     const onToggle = async (plugin: PluginInfo, enabled: boolean) => {
         const key = pluginKey(plugin)
@@ -53,7 +56,7 @@ const Plugins = () => {
         <Div className="page center vbox plugins">
             <TypewriterLabel className="plugins__title" text="[ Plugins ]" charIntervalMs={30}/>
             <Frame className="plugins__panel" bodyClassName="plugins__body" title="Plugins"
-                   actions={[]} onEscape={openPluginName != null ? () => navigate('/plugins') : onBack} escapeLabel="back">
+                   actions={[]} onEscape={openPluginName != null ? backToList : onBack} escapeLabel="back">
                 {openPluginName != null && openPluginSubname != null ? (
                     openPlugin ? (
                         <PluginSettings
@@ -62,14 +65,14 @@ const Plugins = () => {
                             getSchema={getSchema}
                             getHelp={getHelp}
                             onSave={(settings) => setSettings(openPlugin.plugin_name, openPlugin.plugin_subname, settings)}
-                            onBack={() => navigate('/plugins')}
+                            onBack={backToList}
                         />
                     ) : loading ? (
                         <Label variant="secondary" text="Loading…"/>
                     ) : (
                         <Div className="vbox plugins__missing">
                             <Label variant="secondary" text="No such plugin."/>
-                            <Button variant="secondary" text="Back" onClicked={() => navigate('/plugins')}/>
+                            <Button variant="secondary" text="Back" onClicked={backToList}/>
                         </Div>
                     )
                 ) : (

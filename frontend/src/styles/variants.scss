@@ -90,6 +90,13 @@ body {
   line-height: 1.4;
 }
 
+// The dot grid behind the pages (Settings → Dotted background): the same accent-tinted dots as the scrollbar's
+// track, spaced like dot-grid paper
+:root[data-dots='on'] body {
+  background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 22%, var(--color-secondary)) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+
 [data-variant] {
   box-sizing: border-box;
   font: inherit;
@@ -107,6 +114,7 @@ img[data-variant] {
 }
 
 button[data-variant],
+a.link-button[data-variant],
 input[type='text'][data-variant],
 input[type='password'][data-variant],
 textarea[data-variant] {
@@ -135,21 +143,33 @@ input[data-variant]:-webkit-autofill {
   @include themed-autofill;
 }
 
-button[data-variant] {
+button[data-variant],
+a.link-button[data-variant] {
   cursor: pointer;
   @include dos-shadow;
   transition: transform 0.05s ease, background-color 0.1s ease, color 0.1s ease;
 }
 
 button[data-variant]:hover:not(:disabled),
-button[data-variant]:focus-visible:not(:disabled) {
+button[data-variant]:focus-visible:not(:disabled),
+a.link-button[data-variant]:hover,
+a.link-button[data-variant]:focus-visible {
   background-color: var(--color-tertiary);
   color: var(--color-secondary);
 }
 
-button[data-variant]:active:not(:disabled) {
+button[data-variant]:active:not(:disabled),
+a.link-button[data-variant]:active {
   transform: translate($shadow-offset, $shadow-offset);
   box-shadow: none;
+}
+
+// A link that looks like a button (the primitive `Link` with the `link-button` class) sits and centers its text like one
+a.link-button[data-variant] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 button[data-variant]:disabled {

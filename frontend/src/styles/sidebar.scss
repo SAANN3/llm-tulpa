@@ -55,17 +55,20 @@
   padding: $space-2 0;
 }
 
-.sidebar__utils-item {
-  // Reset button text display for icon-only buttons
-  &.sidebar__utils-item--compact {
-    padding: $space-1;
-    min-width: 28px;
-    min-height: 28px;
-    flex-shrink: 0;
+// The rail's icons: one square the size of the toggle above them, whether the entry is a link (a page) or a
+// button (Log out). With the data-variant in the selector, so the button and link-button padding can't win over it.
+.sidebar__utils-item.sidebar__utils-item--compact[data-variant] {
+  width: 34px;
+  height: 34px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
 
-    svg {
-      display: block;
-    }
+  svg {
+    display: block;
   }
 }
 

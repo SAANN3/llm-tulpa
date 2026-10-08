@@ -79,3 +79,11 @@ export interface ToggleSwitchProps {
   onToggled: (toggled: boolean) => void
   disabled?: boolean
 }
+
+export interface LinkProps {
+  /** The in-app address it opens */
+  to: string
+  children?: ReactNode
+  title?: string
+  onContextMenu?: (e: MouseEvent<HTMLAnchorElement>) => void
+}

@@ -6,8 +6,9 @@
   z-index: 1000;
 }
 
+// A menu wears the dialogs' double frame, without a title: a right-click menu reads as the same kind of thing
 .popup--menu {
-  border: 1px solid currentColor;
+  border: $frame-border double var(--color-primary);
   border-radius: 0;
   overflow: hidden;
   @include dos-shadow(var(--color-shadow));
@@ -68,4 +69,9 @@
   padding: $space-2 $space-4;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.popup-menu__item:hover {
+  background-color: var(--color-tertiary);
+  color: var(--color-secondary);
 }

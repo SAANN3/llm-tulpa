@@ -1,12 +1,13 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu, Check, Lock, WarningDiamond} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Plus, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu, Check, Lock, WarningDiamond} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {ChatEntry} from './chat-entry.tsx'
 import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
-import {Button, Div, Label} from './primitives'
+import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
+import {Button, Div, Label, Link} from './primitives'
 import {ThinkingAnimation} from './thinking-animation.tsx'
 import {setChatFolder} from '../api/chats/set-folder'
 import type {ChatOut, UnseenEnd} from '../api/chats/types'
@@ -53,6 +54,13 @@ export const Sidebar = () => {
     const navigate = useNavigate()
     const location = useLocation()
     const {user, logout} = useAuth()
+    const [confirmingLogout, setConfirmingLogout] = useState(false)
+    // In both layouts of the sidebar, so the rail's button asks too
+    const logoutPopup = (
+        <ConfirmPopup open={confirmingLogout} title="Log out" confirmLabel="Log out"
+                      message="Log out of this browser? Your chats stay as they are." onConfirm={logout}
+                      onClose={() => setConfirmingLogout(false)}/>
+    )
     const [searchParams] = useSearchParams()
     const idParam = searchParams.get('id')
     const selectedChatId = idParam == null ? null : Number(idParam)
@@ -71,9 +79,7 @@ export const Sidebar = () => {
         return () => window.removeEventListener('resize', onResize)
     }, [])
 
-    const selectChat = (id: number) => navigate(`/chat?id=${id}`)
 
-    const onNewChat = () => navigate('/')
 
     const toggle = (
         <Button
@@ -87,16 +93,17 @@ export const Sidebar = () => {
 
     // Collapse-safe utils: hide plugins/users if not owner
     const utilsCollapsed = [
-        {label: 'Search chats', path: '/search', icon: <Search width={16} height={16}/>, action: () => navigate('/search')},
-        {label: 'Settings', path: '/settings', icon: <Settings2 width={16} height={16}/>, action: () => navigate('/settings')},
-        {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>, action: () => navigate('/folders')},
-        {label: 'Usage', path: '/stats', icon: <Analytics width={16} height={16}/>, action: () => navigate('/stats')},
-        {label: 'Models', path: '/models', icon: <Cpu width={16} height={16}/>, action: () => navigate('/models')},
+        {label: 'New chat', path: '/', icon: <Plus width={16} height={16}/>},
+        {label: 'Search chats', path: '/search', icon: <Search width={16} height={16}/>},
+        {label: 'Settings', path: '/settings', icon: <Settings2 width={16} height={16}/>},
+        {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>},
+        {label: 'Usage', path: '/stats', icon: <Analytics width={16} height={16}/>},
+        {label: 'Models', path: '/models', icon: <Cpu width={16} height={16}/>},
         ...(user?.role === 'owner' ? [
-            {label: 'Plugins', path: '/plugins', icon: <Plug width={16} height={16}/>, action: () => navigate('/plugins')},
-            {label: 'Users', path: '/users', icon: <User width={16} height={16}/>, action: () => navigate('/users')},
+            {label: 'Plugins', path: '/plugins', icon: <Plug width={16} height={16}/>},
+            {label: 'Users', path: '/users', icon: <User width={16} height={16}/>},
         ] : []),
-        {label: 'Log out', path: '#logout', icon: <Logout width={16} height={16}/>, action: logout},
+        {label: 'Log out', path: null, icon: <Logout width={16} height={16}/>, action: () => setConfirmingLogout(true)},
     ]
 
     // The shrunk rail: toggle + utils icons, no text
@@ -107,17 +114,19 @@ export const Sidebar = () => {
                     {toggle}
                 </Div>
                 <Div className="sidebar__utils-collapsed">
-                    {utilsCollapsed.map(item => (
-                        <Button
-                            key={item.path}
-                            className="sidebar__utils-item sidebar__utils-item--compact"
-                            title={item.label}
-                            onClicked={item.action}
-                        >
+                    {utilsCollapsed.map(item => item.path != null ? (
+                        <Link key={item.label} to={item.path} variant="primary" title={item.label}
+                              className="link-button sidebar__utils-item sidebar__utils-item--compact">
+                            {item.icon}
+                        </Link>
+                    ) : (
+                        <Button key={item.label} className="sidebar__utils-item sidebar__utils-item--compact" title={item.label}
+                                onClicked={item.action}>
                             {item.icon}
                         </Button>
                     ))}
                 </Div>
+                {logoutPopup}
             </Div>
         )
     }
@@ -126,22 +135,22 @@ export const Sidebar = () => {
         <Div className="vbox sidebar">
             <Div className="sidebar__top">
                 {toggle}
-                <Button variant="primary" className="sidebar__new-chat" text="New chat" onClicked={onNewChat}/>
+                <Link to="/" variant="primary" className="link-button sidebar__new-chat">New chat</Link>
             </Div>
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
-                <ChatEntry label="Search chats" selected={location.pathname === '/search'} icon={<Search width={18} height={18}/>} onClicked={() => navigate('/search')}/>
-                <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} onClicked={() => navigate('/settings')}/>
-                <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} onClicked={() => navigate('/folders')}/>
-                <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} onClicked={() => navigate('/stats')}/>
-                <ChatEntry label="Models" selected={location.pathname.startsWith('/models')} icon={<Cpu width={18} height={18}/>} onClicked={() => navigate('/models')}/>
+                <ChatEntry label="Search chats" selected={location.pathname === '/search'} icon={<Search width={18} height={18}/>} href="/search"/>
+                <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} href="/settings"/>
+                <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} href="/folders"/>
+                <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} href="/stats"/>
+                <ChatEntry label="Models" selected={location.pathname.startsWith('/models')} icon={<Cpu width={18} height={18}/>} href="/models"/>
                 {user?.role === 'owner' ? (
                     <>
-                        <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} onClicked={() => navigate('/plugins')}/>
-                        <ChatEntry label="Users" selected={location.pathname === '/users'} icon={<User width={18} height={18}/>} onClicked={() => navigate('/users')}/>
+                        <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} href="/plugins"/>
+                        <ChatEntry label="Users" selected={location.pathname === '/users'} icon={<User width={18} height={18}/>} href="/users"/>
                     </>
                 ) : null}
-                <ChatEntry label="Log out" selected={false} icon={<Logout width={18} height={18}/>} onClicked={logout}/>
+                <ChatEntry label="Log out" selected={false} icon={<Logout width={18} height={18}/>} onClicked={() => setConfirmingLogout(true)}/>
             </Div>
             <Label className="section-heading" text="Chats"/>
             <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">
@@ -154,7 +163,7 @@ export const Sidebar = () => {
                                     key={c.id}
                                     label={c.name}
                                     selected={c.id === selectedChatId}
-                                    onClicked={() => selectChat(c.id)}
+                                    href={`/chat?id=${c.id}`}
                                     onRename={(name) => rename(c.id, name)}
                                     onDelete={() => {
                                         deleteChat(c.id).then(() => {
@@ -178,6 +187,7 @@ export const Sidebar = () => {
                 }}
                 onClose={() => setAssigningChat(null)}
             />
+            {logoutPopup}
         </Div>
     )
 };
