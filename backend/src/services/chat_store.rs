@@ -179,6 +179,36 @@ impl ChatStore {
         Ok((self.to_chats(rows).await?, total))
     }
 
+    /// The models and launch profiles the user's most recently active chats are set to, newest first, each
+    /// pair once. A chat is ranked by its last message (`updated_at`), so a model it was switched to counts
+    /// from the chat's last activity, and only the chat's current model counts: a message doesn't record
+    /// which model wrote it.
+    pub async fn recent_models(&self, user_id: i64, limit: u64) -> Result<Vec<RecentModel>, ChatStoreErrors> {
+        let rows: Vec<(i64, Option<i64>)> = Self::listed_chats(user_id)
+            .select_only()
+            .column(chats::Column::ModelId)
+            .column(chats::Column::LaunchProfileId)
+            .group_by(chats::Column::ModelId)
+            .group_by(chats::Column::LaunchProfileId)
+            .order_by_desc(Expr::col(chats::Column::UpdatedAt).max())
+            .limit(limit)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+
+        let mut ids: Vec<i64> = rows.iter().map(|(model_id, _)| *model_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let models = self.models.get_many(&ids).await?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(model_id, launch_profile_id)| {
+                models.get(&model_id).cloned().map(|model| RecentModel { model, launch_profile_id })
+            })
+            .collect())
+    }
+
     /// Maps rows into `Chat`s, resolving every row's model in one batched lookup.
     async fn to_chats(&self, rows: Vec<chats::Model>) -> Result<Vec<Chat>, ChatStoreErrors> {
         let mut ids: Vec<i64> = rows.iter().map(|row| row.model_id).collect();
@@ -1214,6 +1244,12 @@ pub struct Chat {
 pub struct ChatRef {
     pub id: i64,
     pub parent_chat_id: Option<i64>,
+}
+
+/// A model one of the user's chats is set to, with the launch profile it runs under (none for an Ollama model).
+pub struct RecentModel {
+    pub model: ModelRef,
+    pub launch_profile_id: Option<i64>,
 }
 
 /// The list view's content preview: whitespace collapsed to single spaces and cut at

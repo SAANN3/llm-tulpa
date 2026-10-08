@@ -4,6 +4,7 @@ mod export;
 mod find;
 mod get;
 mod messages;
+mod recent_models;
 mod rename;
 mod rewind;
 mod search;

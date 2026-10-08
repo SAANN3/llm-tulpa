@@ -14,6 +14,7 @@ use super::export::*;
 use super::find::*;
 use super::get::*;
 use super::messages::*;
+use super::recent_models::*;
 use super::rename::*;
 use super::rewind::*;
 use super::search::*;
@@ -37,11 +38,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/search", get(search_messages))
         .route("/find", get(find_chats))
         .route("/export", get(export_chat))
+        .route("/recent_models", get(recent_models))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -65,6 +67,8 @@ pub fn router() -> Router<Arc<AppState>> {
         FindChatsResponse,
         ExportFormatParam,
         AttachmentModeParam,
+        RecentModelOut,
+        RecentModelsResponse,
     )),
 )]
 pub struct ApiDoc;
