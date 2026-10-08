@@ -39,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `POST /api/agent/regenerate` returns 202 and the new reply arrives like any run's. `POST /api/agent/chat`, `/continue`, `/use_tool`, `/can_use_tool`, `/allow_scope` and `/job_notices` are gone; the turn runner does what a browser did with them.
 
 ### Removed
+- The desktop quick launcher (`extensions/launcher`). Its prompt suggestions could not load since accounts were added (the call needs a token it never had). The home page still takes a prompt as `/?prompt=...`.
 - The `agent_history_len` setting (default 2000). It limited how many of a chat's newest messages were loaded for a turn and for a fold, so past that count the oldest messages after the compaction boundary dropped out of the prompt and out of the next fold without a word. What is sent to the model is bounded by compaction, by tokens; a chat that has grown past the window now fails visibly instead. A `settings.json` that still has the key keeps working (it is ignored).
 
 ### Fixed

@@ -44,7 +44,7 @@ const Home = () => {
         setPicking(false)
     }
 
-    // A prompt handed over by the launcher (extensions/launcher) as /?prompt=..., already percent-decoded
+    // A prompt handed over in the link as /?prompt=..., already percent-decoded
     const launchPrompt = searchParams.get('prompt')?.trim() || null
 
     // replace swaps this history entry for the chat, so Back can't land on /?prompt=... and send it twice
