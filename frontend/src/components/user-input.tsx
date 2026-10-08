@@ -1,4 +1,4 @@
-import type {ChangeEvent, CSSProperties, DragEvent, ReactNode} from 'react'
+import type {ChangeEvent, CSSProperties, DragEvent} from 'react'
 import {useEffect, useRef, useState} from 'react'
 import type {ThinkChoice} from '../api/agent/types'
 import {uploadFile} from '../api/files/upload'
@@ -6,7 +6,9 @@ import {getThinkingCapability, type ThinkingModel} from '../api/llm/thinking-cap
 import {Attachment as AttachmentIcon} from 'pixelarticons/react'
 import '../styles/user-input.scss'
 import {Attachment} from './attachment.tsx'
-import {Button, Div, Label, Select, TextField, ToggleSwitch} from './primitives'
+import {ModelMenu, type ThinkingLevels} from './model-menu.tsx'
+import {Button, Div, Label, TextField} from './primitives'
+import type {ModelChoice} from '../utils/model-choice.ts'
 
 export interface UserInputProps {
     text?: string
@@ -22,12 +24,15 @@ export interface UserInputProps {
     /** A message being edited: its text and attachments fill the composer until it is sent or cancelled. `key` tells one edit from the next. */
     editing?: { key: number; text: string; images: string[]; fileIds: number[] } | null
     onCancelEdit?: () => void
-    /** The chat's bound model — only a change signal, so the thinking options are re-read after a switch */
-    model?: string | null
+    /** The model the message goes to, shown on the model button; the thinking options are re-read when it changes */
+    modelChoice?: ModelChoice | null
+    onModelPicked?: (choice: ModelChoice) => void
+    /** For a new chat's model that isn't the user's default: marks the button and offers going back to the default */
+    onUseDefault?: () => void
+    /** The user's default model, marked in the model menu where a pick is only for a new chat */
+    defaultChoice?: ModelChoice | null
     /** For a chat that doesn't exist yet (the home page): the model picked for it, whose thinking options are offered instead of the default model's */
     startModel?: ThinkingModel | null
-    /** A control shown at the start of the footer, such as the home page's model picker */
-    footerStart?: ReactNode
 }
 
 const DEFAULT_PLACEHOLDER = 'Message...'
@@ -57,15 +62,19 @@ export const UserInput = ({
     inputDisabled,
     initialThink = true,
     chatId,
-    model,
+    modelChoice,
+    onModelPicked,
+    onUseDefault,
+    defaultChoice,
     startModel,
-    footerStart,
     editing,
     onCancelEdit,
 }: UserInputProps) => {
     const [value, setValue] = useState(text ?? '')
     const [think, setThink] = useState(initialThink)
     const [thinkingModes, setThinkingModes] = useState<string[] | null>(null)
+    // Until the model is asked, it is taken to think: the switch has always been on by default
+    const [canThink, setCanThink] = useState(true)
     const [thinkMode, setThinkMode] = useState<string | null>(null)
     const [images, setImages] = useState<string[]>([])
     const [fileIds, setFileIds] = useState<number[]>([])
@@ -110,6 +119,7 @@ export const UserInput = ({
         getThinkingCapability(chatId, startName && startProvider ? {model: startName, provider: startProvider} : null).then(
             (capability) => {
                 if (cancelled) return
+                setCanThink(capability.kind !== 'unsupported')
                 if (capability.kind === 'graduated') {
                     setThinkingModes(capability.modes)
                     // The chosen level stays only while the model offers it
@@ -125,7 +135,16 @@ export const UserInput = ({
         return () => {
             cancelled = true
         }
-    }, [chatId, model, startProvider, startName])
+    }, [chatId, modelChoice?.provider, modelChoice?.model, modelChoice?.profileId, startProvider, startName])
+
+    // The model button's levels: a graduated model's own, or on and off; off is always last
+    const thinking: ThinkingLevels | null = !canThink ? null : thinkingModes
+        ? {levels: [...thinkingModes, 'off'], selected: think ? thinkMode ?? thinkingModes[0] ?? 'off' : 'off'}
+        : {levels: ['on', 'off'], selected: think ? 'on' : 'off'}
+    const chooseThinking = (level: string) => {
+        setThink(level !== 'off')
+        if (thinkingModes?.includes(level)) setThinkMode(level)
+    }
 
     const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
 
@@ -248,23 +267,19 @@ export const UserInput = ({
                 }}
             />
             <Div className="composer__footer">
-                {footerStart}
+                <Button className="composer__icon-button" onClicked={() => fileInputRef.current?.click()}
+                        disabled={dropDisabled}>
+                    <AttachmentIcon width={20} height={20}/>
+                </Button>
                 <Div className="composer__hint">
-                    <Label variant="secondary" className="composer__hint-part" text="Enter to send"/>
-                    <Label variant="secondary" className="composer__hint-part" text="Shift+Enter for a new line"/>
+                    <Label variant="secondary" text="[Enter] Send"/>
+                    <Label variant="secondary" text="[Shift+Enter] Newline"/>
                 </Div>
                 <Div className="composer__controls">
-                    <Label variant="secondary" className="composer__think-label" text="Thinking"/>
-                    <ToggleSwitch toggled={think} onToggled={setThink} disabled={blocked}/>
-                    {thinkingModes ? (
-                        <Div className={['composer__mode', !think && 'composer__mode--disabled'].filter(Boolean).join(' ')}>
-                            <Select values={thinkingModes} selected={thinkMode ?? undefined} onChosen={setThinkMode}/>
-                        </Div>
+                    {onModelPicked ? (
+                        <ModelMenu current={modelChoice ?? null} onPick={onModelPicked} onUseDefault={onUseDefault} defaultChoice={defaultChoice}
+                                   thinking={thinking} onThinking={chooseThinking} disabled={blocked}/>
                     ) : null}
-                    <Button className="composer__icon-button" onClicked={() => fileInputRef.current?.click()}
-                            disabled={dropDisabled}>
-                        <AttachmentIcon width={20} height={20}/>
-                    </Button>
                     <Button className="composer__send" text="Send" onClicked={send} disabled={blocked || !canSend}/>
                 </Div>
             </Div>

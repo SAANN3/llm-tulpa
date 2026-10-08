@@ -4,6 +4,9 @@ import {Navigate, useLocation, useNavigate, useSearchParams} from 'react-router-
 import '../styles/chat.scss'
 import type {ThinkChoice} from '../api/agent/types'
 import {getChats} from '../api/chats/get'
+// Named apart from the page's own setChatModel state setter
+import {setChatModel as saveChatModel} from '../api/chats/set-model'
+import {setChatProfile} from '../api/chats/set-profile'
 import type {MessageSearchOut} from '../api/chats/types'
 import {ChatHeader} from '../components/chat-header.tsx'
 import {ChatMessage} from '../components/chat-message.tsx'
@@ -28,6 +31,7 @@ import {useServerEvent} from '../hooks/use-server-events.ts'
 import {useSettings} from '../context/use-settings.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
+import type {ModelChoice} from '../utils/model-choice.ts'
 import {errorReason} from '../utils/error-reason.ts'
 import {describeRunEnd} from '../utils/run-end.ts'
 import type {Decision, RunEnded} from '../api/agent/types'
@@ -76,6 +80,19 @@ const ChatView = ({chatId}: { chatId: number }) => {
     // undefined until the chat has been fetched: whether it is a sub-agent's chat changes what the page does
     const [parentChatId, setParentChatId] = useState<number | null | undefined>(undefined)
     useDocumentTitle(chatName ?? 'Chat')
+
+    // A profile carries its model; an Ollama model moves the chat off any launch profile
+    const changeModel = async (choice: ModelChoice) => {
+        await saveChatModel(chatId, choice.model, choice.provider)
+        if (choice.profileId != null) await setChatProfile(chatId, choice.profileId)
+        setChatModel(choice.model)
+        setChatProvider(choice.provider)
+        setChatProfileId(choice.profileId)
+        // A profile's context window is its own: the gauge's maximum follows the chat
+        getChats({id: chatId}).then((result) => {
+            if (!('chats' in result)) setContextMax(result.context_length)
+        })
+    }
 
     useEffect(() => {
         setChatName(null)
@@ -298,17 +315,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
         <Div className="page">
             <Sidebar/>
             <Div className="chat">
-                <ChatHeader chatId={chatId} name={chatName} model={chatModel} provider={chatProvider}
-                            launchProfileId={chatProfileId}
-                            onModelChanged={(model, provider, profileId) => {
-                                setChatModel(model)
-                                setChatProvider(provider)
-                                setChatProfileId(profileId)
-                                // A profile's context window is its own: the gauge's maximum follows the chat
-                                getChats({id: chatId}).then((result) => {
-                                    if (!('chats' in result)) setContextMax(result.context_length)
-                                })
-                            }}
+                <ChatHeader chatId={chatId} name={chatName}
                             contextUsed={contextUsed}
                             contextMax={contextMax}
                             folderId={folderId}
@@ -407,7 +414,8 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         onCancelEdit={() => setEditing(null)}
                         initialThink={initialThink}
                         chatId={chatId}
-                        model={chatModel}
+                        modelChoice={chatModel != null ? {provider: chatProvider, model: chatModel, profileId: chatProfileId} : null}
+                        onModelPicked={(choice) => void changeModel(choice)}
                     />
                 )}
             </Div>

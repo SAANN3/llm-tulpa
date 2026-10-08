@@ -30,34 +30,6 @@
 }
 
 .home__composer {
-  width: 520px;
+  width: 640px;
   max-width: 100%;
-}
-
-// The model picked for the new chat: a row of its own at the top of the composer's footer, with room for
-// a long file name (cut short only when it is longer than the composer)
-.home__model {
-  display: flex;
-  align-items: center;
-  gap: $space-2;
-  flex: 1 1 100%;
-  min-width: 0;
-}
-
-.home__model-button,
-.home__model-reset {
-  font-size: 12px;
-}
-
-// Takes the whole row, or what the Default button leaves of it, so it lines up with the text field and Send
-.home__model-button {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home__model-reset {
-  flex-shrink: 0;
 }

@@ -3,10 +3,8 @@ import {useEffect, useRef, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/home.scss'
 import type {ThinkChoice} from '../api/agent/types'
-import type {LaunchProfile} from '../api/profiles/types'
 import {Mark} from '../components/mark.tsx'
-import {ChooseModelPopup} from '../components/popups/choose-model-popup.tsx'
-import {Button, Div, Label} from '../components/primitives'
+import {Div, Label} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {UserInput} from '../components/user-input.tsx'
 import {useSettings} from '../context/use-settings.ts'
@@ -14,15 +12,8 @@ import {useChats} from '../hooks/use-chats.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {usePrompts} from '../hooks/use-prompts.ts'
 import {useRuntime} from '../hooks/use-runtime.ts'
+import {sameChoice, type ModelChoice} from '../utils/model-choice.ts'
 import {setPendingPrompt} from '../utils/pending-prompt.ts'
-
-/** A model picked for the chat about to be started, instead of the user's default */
-interface StartOn {
-    provider: string
-    model: string
-    /** The launch profile, for a model the backend runs itself; null for an Ollama model */
-    profileId: number | null
-}
 
 const Home = () => {
     useDocumentTitle('Llm-tulpa')
@@ -35,14 +26,9 @@ const Home = () => {
     const [greetingLoading, setGreetingLoading] = useState(true)
     const [placeholder, setPlaceholder] = useState('')
     const [creating, setCreating] = useState(false)
-    // For this chat only: the default model in the settings is not touched
-    const [startOn, setStartOn] = useState<StartOn | null>(null)
-    const [picking, setPicking] = useState(false)
-
-    const pickProfile = (profile: LaunchProfile) => {
-        setStartOn({provider: profile.provider, model: profile.model, profileId: profile.id})
-        setPicking(false)
-    }
+    // A model picked for the chat about to be started, instead of the user's default: the default in the settings
+    // is not touched
+    const [startOn, setStartOn] = useState<ModelChoice | null>(null)
 
     // A prompt handed over in the link as /?prompt=..., already percent-decoded
     const launchPrompt = searchParams.get('prompt')?.trim() || null
@@ -112,8 +98,9 @@ const Home = () => {
         : status?.state === 'starting'
             ? `Loading ${status.model ?? 'the model'}`
             : creating ? 'Starting a chat' : 'Thinking'
-    const shownModel = startOn?.model ?? settings?.active_model ?? null
-    const shownProvider = startOn?.provider ?? settings?.llm_provider ?? 'llama-cpp'
+    const defaultChoice: ModelChoice | null = settings?.active_model
+        ? {provider: settings.llm_provider, model: settings.active_model, profileId: settings.launch_profile_id}
+        : null
 
     return (
         <Div className="page">
@@ -134,26 +121,10 @@ const Home = () => {
                         placeholder={placeholder || undefined}
                         clearOnSend={false}
                         startModel={startOn ? {model: startOn.model, provider: startOn.provider} : null}
-                        footerStart={(
-                            <Div className="home__model">
-                                <Button variant="secondary" className="home__model-button" disabled={creating}
-                                        text={`Model: ${shownModel ?? 'none'}${startOn ? ' (this chat)' : ''}`}
-                                        onClicked={() => setPicking(true)}/>
-                                {startOn ? <Button variant="secondary" className="home__model-reset" text="Default" disabled={creating} onClicked={() => setStartOn(null)}/> : null}
-                            </Div>
-                        )}
-                    />
-                    <ChooseModelPopup
-                        open={picking}
-                        provider={shownProvider}
-                        selected={shownProvider === 'ollama' ? shownModel : null}
-                        selectedProfileId={startOn ? startOn.profileId : settings?.launch_profile_id ?? null}
-                        onSelect={(model) => {
-                            setStartOn({provider: 'ollama', model, profileId: null})
-                            setPicking(false)
-                        }}
-                        onSelectProfile={pickProfile}
-                        onClose={() => setPicking(false)}
+                        modelChoice={startOn ?? defaultChoice}
+                        onModelPicked={(choice) => setStartOn(defaultChoice && sameChoice(choice, defaultChoice) ? null : choice)}
+                        onUseDefault={startOn ? () => setStartOn(null) : undefined}
+                        defaultChoice={defaultChoice}
                     />
                 </Div>
             </Div>

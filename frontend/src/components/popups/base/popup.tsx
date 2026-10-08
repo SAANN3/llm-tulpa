@@ -18,11 +18,15 @@ interface DialogProps extends PopupBaseProps {
     /** Overrides the default width; a dialog is never narrower than its minimum either way */
     width?: number
     position?: undefined
+    corner?: undefined
 }
 
 /** A menu: unframed and anchored at a point, such as a right-click or a "more" button */
 interface MenuProps extends PopupBaseProps {
     position: { x: number; y: number }
+    /** Which corner of the menu sits at `position`: the top left (the default) opens it below and to the right,
+     * the bottom right opens it above and to the left, for a control at the bottom of the page */
+    corner?: 'top-left' | 'bottom-right'
     title?: undefined
     width?: undefined
 }
@@ -58,7 +62,9 @@ export const Popup = (props: PopupProps) => {
     if (props.position) {
         return createPortal(
             <Div ref={ref} variant="secondary" className="vbox popup popup--menu"
-                 style={{left: props.position.x, top: props.position.y}}>
+                 style={props.corner === 'bottom-right'
+                     ? {right: window.innerWidth - props.position.x, bottom: window.innerHeight - props.position.y}
+                     : {left: props.position.x, top: props.position.y}}>
                 {children}
             </Div>,
             document.body

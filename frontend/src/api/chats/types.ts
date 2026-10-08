@@ -93,3 +93,16 @@ export interface FindChatsResponse {
     /** Most recently active first */
     chats: ChatFindOut[]
 }
+
+export interface RecentModelOut {
+    provider: string
+    model: string
+    /** The name the owner gave the model, when it has one */
+    display_name: string | null
+    /** The launch profile the chat runs the model under; null for an Ollama model */
+    launch_profile_id: number | null
+}
+
+export interface RecentModelsResponse {
+    models: RecentModelOut[]
+}

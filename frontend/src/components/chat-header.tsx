@@ -5,16 +5,11 @@ import {useNavigate} from 'react-router-dom'
 import '../styles/chat-header.scss'
 import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
-import {setChatModel} from '../api/chats/set-model'
-import {setChatProfile} from '../api/chats/set-profile'
 import {setChatTools} from '../api/chats/set-tools'
 import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
-import type {LaunchProfile} from '../api/profiles/types'
-import {profileLabel, useProfileCatalog} from '../hooks/use-profile-catalog.ts'
 import {formatTokenCount} from '../utils/format.ts'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
-import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {ExportChatPopup} from './popups/export-chat-popup.tsx'
 import {InputPopup} from './popups/base/input-popup.tsx'
 import {SearchMessagesPopup} from './popups/search-messages-popup.tsx'
@@ -23,13 +18,6 @@ import {Button, Div, Label} from './primitives'
 export interface ChatHeaderProps {
     chatId: number
     name: string | null
-    /** The model this chat is bound to, or null while it's still loading */
-    model: string | null
-    provider: string
-    /** Called with the new model, and with the launch profile it runs under (null for an Ollama model) */
-    onModelChanged: (model: string, provider: string, profileId: number | null) => void
-    /** The launch profile the chat runs under, or null for a model with none */
-    launchProfileId: number | null
     /** How much context the chat is using (Ollama's last measured prompt size), null while unknown */
     contextUsed: number | null
     /** The context window the agent runs under — the gauge's max */
@@ -52,15 +40,11 @@ export interface ChatHeaderProps {
     runActive: boolean
 }
 
-/** The bar above a chat's messages: its name, the model it's bound to (with a switcher popup),
+/** The bar above a chat's messages: its name, its tools switch and folder, the context gauge,
  * and in-chat message search */
 export const ChatHeader = ({
     chatId,
     name,
-    model,
-    provider,
-    onModelChanged,
-    launchProfileId,
     contextUsed,
     contextMax,
     folderId,
@@ -74,7 +58,6 @@ export const ChatHeader = ({
     runActive,
 }: ChatHeaderProps) => {
     const navigate = useNavigate()
-    const [open, setOpen] = useState(false)
     const [folderOpen, setFolderOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
     const [exportOpen, setExportOpen] = useState(false)
@@ -94,22 +77,6 @@ export const ChatHeader = ({
             cancelled = true
         }
     }, [folderId])
-
-    const {models, profiles} = useProfileCatalog()
-
-    // An Ollama model: the backend moves the chat off any launch profile
-    const onSelect = async (chosen: string) => {
-        await setChatModel(chatId, chosen, 'ollama')
-        onModelChanged(chosen, 'ollama', null)
-        setOpen(false)
-    }
-
-    const onSelectProfile = async (profile: LaunchProfile) => {
-        await setChatModel(chatId, profile.model, profile.provider)
-        await setChatProfile(chatId, profile.id)
-        onModelChanged(profile.model, profile.provider, profile.id)
-        setOpen(false)
-    }
 
     const onSelectFolder = async (chosen: number | null) => {
         await setChatFolder(chatId, chosen)
@@ -141,10 +108,6 @@ export const ChatHeader = ({
                     <Pencil width={16} height={16}/>
                 </Button>
             </Div>
-            <Button variant="secondary" className="chat-header__model" onClicked={() => setOpen(true)}>
-                <span className="chat-header__model-label">model:</span>
-                <span className="chat-header__model-name">{profileLabel(models, profiles, launchProfileId) ?? model ?? '…'}</span>
-            </Button>
             {parentChatId == null ? (
                 <Button variant="secondary" className="chat-header__tools" disabled={runActive}
                         title={toolsEnabled ? 'The model is sent its tools in this chat. Click to turn them off.' : 'The model has no tools in this chat. Click to turn them on.'}
@@ -193,8 +156,6 @@ export const ChatHeader = ({
                     <Close width={20} height={20}/>
                 </Button>
             ) : null}
-            <ChooseModelPopup open={open} provider={provider} selected={provider === 'ollama' ? model : null} selectedProfileId={launchProfileId}
-                              onSelect={onSelect} onSelectProfile={onSelectProfile} onClose={() => setOpen(false)}/>
             <AssignFolderPopup
                 open={folderOpen}
                 selected={folderId}

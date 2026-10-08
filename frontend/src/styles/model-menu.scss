@@ -1,0 +1,111 @@
+@use 'tokens' as *;
+
+.model-menu {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.model-menu__button {
+  height: 34px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.model-menu__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// The accent marks what isn't the model's name: the level, and the star of a pick that isn't the default
+.model-menu__mark,
+.model-menu__level {
+  color: var(--color-tertiary);
+}
+
+.model-menu__level {
+  flex-shrink: 0;
+}
+
+.model-menu__level--off {
+  color: inherit;
+  opacity: 0.5;
+}
+
+.model-menu__button:hover:not(:disabled) {
+  .model-menu__mark,
+  .model-menu__level {
+    color: inherit;
+    opacity: 1;
+  }
+}
+
+.model-menu__panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - #{$space-8}));
+  padding: $space-1 0;
+  font-size: 13px;
+}
+
+.model-menu__section {
+  padding: $space-2 $space-4 $space-1;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+.model-menu__item {
+  display: flex;
+  flex-direction: column;
+  padding: $space-2 $space-4;
+  cursor: pointer;
+  min-width: 0;
+
+  > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.model-menu__entry-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-menu__item:hover .model-menu__mark {
+  color: inherit;
+}
+
+.model-menu__item--on {
+  background: var(--color-surface-accent);
+}
+
+.model-menu__item:hover {
+  background: var(--color-tertiary);
+  color: var(--color-secondary);
+}
+
+.model-menu__detail {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.model-menu__note {
+  padding: $space-1 $space-4 $space-2;
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+.model-menu__divider {
+  margin: $space-1 0;
+  border-top: $line-border dashed var(--color-border);
+}

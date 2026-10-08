@@ -19,8 +19,7 @@
   display: flex;
   align-items: center;
   gap: $space-2;
-  // Starts from a readable width, so in a tight header the model chip, whose name also truncates,
-  // gives way before the title is squeezed down to a letter
+  // Starts from a readable width, so in a tight header the title isn't squeezed down to a letter
   flex: 1 1 10em;
   // A flex item won't shrink below its content unless told it may: without this the long name
   // keeps the group at full width, so the name never truncates and the buttons overlap it
@@ -33,18 +32,6 @@
 
 .chat-header__title-group button {
   flex-shrink: 0;
-}
-
-.chat-header__model {
-  display: inline-flex;
-  align-items: center;
-  gap: $space-2;
-  font-size: 12px;
-  height: 34px;
-  box-sizing: border-box;
-  // Shrinkable so the header fits narrow windows (the name truncates)
-  min-width: 0;
-  overflow: hidden;
 }
 
 .chat-header__tools {

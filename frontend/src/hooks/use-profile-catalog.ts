@@ -27,12 +27,3 @@ export const useProfileCatalog = () => {
 
     return {models, profiles}
 };
-
-/** What the header shows for a chat: the model's name, plus the profile's when the model has several */
-export const profileLabel = (models: ManagedModel[], profiles: LaunchProfile[], profileId: number | null): string | null => {
-    const profile = profiles.find((p) => p.id === profileId)
-    if (!profile) return null
-    const model = models.find((m) => m.id === profile.model_id)
-    const name = model?.display_name ?? profile.model
-    return (model?.profile_ids.length ?? 1) > 1 ? `${name} · ${profile.name}` : name
-};

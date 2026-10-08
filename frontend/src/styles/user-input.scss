@@ -56,55 +56,34 @@
   padding: 11px 12px;
 }
 
-// The footer wraps instead of squeezing: the controls keep their full size and drop to a line of their own
-// when the hint leaves them no room, and the hint itself wraps rather than being cut off
+// One row of 34px controls: attach and the key hints on the left, the model button and Send on the right.
+// It never wraps: when it runs out of room the model's name is cut short, the hints keep their text.
 .composer__footer {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: $space-2;
 }
 
-// Two phrases that sit on one line when there is room and otherwise break between them, one per line,
-// so neither is ever cut off in the middle
+// Two lines in the height of one button
 .composer__hint {
   display: flex;
-  flex-wrap: wrap;
-  column-gap: 1.2em;
+  flex-direction: column;
+  justify-content: center;
+  height: 34px;
   font-size: 11px;
   line-height: 1.25;
   opacity: 0.6;
-  flex: 1 1 8em;
-  min-width: 8em;
-}
-
-.composer__hint-part {
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .composer__controls {
   display: flex;
   align-items: center;
   gap: $space-2;
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 0 1 auto;
   margin-left: auto;
-}
-
-.composer__think-label {
-  font-size: 12px;
-  opacity: 0.6;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.composer__mode {
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.composer__mode--disabled {
-  opacity: 0.4;
-  pointer-events: none;
 }
 
 .composer__footer {
@@ -125,5 +104,6 @@
 
   .composer__send {
     padding: 0 18px;
+    flex-shrink: 0;
   }
 }
