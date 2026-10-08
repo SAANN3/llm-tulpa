@@ -31,6 +31,26 @@ const listeners = new Set<Listener>()
 let controller: AbortController | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * One tab per browser holds the stream and passes every event on to the others. A browser opens at most six
+ * connections to one server over HTTP/1.1 and every stream keeps one busy for good, so with a stream per tab the
+ * seventh tab's stream waited for ever and its page never heard a run end. The tab holding the lock below is the one
+ * that connects; when it closes, the browser hands the lock to a waiting tab, which connects in turn. Without the
+ * lock API (it needs a secure context: a LAN address over plain http has none) or a channel, every tab has its own.
+ */
+const LOCK_NAME = 'llm-tulpa-live'
+const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('llm-tulpa-live')
+const canShare = channel != null && typeof navigator !== 'undefined' && navigator.locks != null
+
+type ChannelMessage =
+    /** An event as the stream delivered it */
+    | { kind: 'event'; data: string }
+    /** A tab that started listening asks whether the stream is open */
+    | { kind: 'hello' }
+
+/** Whether this tab holds the stream and it is open right now */
+let streamOpen = false
+
 /** Hands one parsed SSE message to every listener; a malformed one is ignored, a failing listener doesn't stop the rest */
 const dispatch = (data: string) => {
     let event: ServerEvent
@@ -73,7 +93,7 @@ const readStream = async (response: Response) => {
                 .map((line) => line.slice(5).trimStart())
                 .join('\n')
             buffer = buffer.slice(boundary + 2)
-            if (data) dispatch(data)
+            if (data) relay(data)
             boundary = buffer.indexOf('\n\n')
         }
     }
@@ -120,19 +140,57 @@ const connect = async (signal: AbortSignal) => {
             })
             debugLog('sse', 'response', response.status)
             if (response.ok) {
-                // Told to every listener: what happened while the stream was down (or before it was first open)
-                // was never delivered, and each one reads what it needs again
-                dispatch(JSON.stringify({type: 'stream_open'}))
+                streamOpen = true
+                // Told to every listener, in every tab: what happened while the stream was down (or before it was
+                // first open) was never delivered, and each one reads what it needs again
+                relay(JSON.stringify({type: 'stream_open'}))
                 await readStream(response)
             }
         } catch (error) {
             if (signal.aborted) return
             debugLog('sse', 'connection failed', error instanceof Error ? `${error.name}: ${error.message}` : error)
             void probeBackend(getToken())
+        } finally {
+            streamOpen = false
         }
         debugLog('sse', `reconnecting in ${RECONNECT_MS} ms`)
         await new Promise((resolve) => setTimeout(resolve, RECONNECT_MS))
     }
+}
+
+/** Dispatches an event the stream delivered here, and passes it on to the other tabs */
+const relay = (data: string) => {
+    dispatch(data)
+    if (canShare) channel?.postMessage({kind: 'event', data} satisfies ChannelMessage)
+}
+
+channel?.addEventListener('message', (message: MessageEvent<ChannelMessage>) => {
+    if (!canShare || !controller) return
+    const said = message.data
+    if (said.kind === 'event') {
+        dispatch(said.data)
+    } else if (said.kind === 'hello' && streamOpen) {
+        // The newcomer missed nothing it could have heard yet, but it is how its listeners learn the stream is up
+        channel?.postMessage({kind: 'event', data: JSON.stringify({type: 'stream_open'})} satisfies ChannelMessage)
+    }
+})
+
+/** Connects once this tab is the one to hold the stream; until then it hears the events from the tab that does */
+const start = (signal: AbortSignal) => {
+    if (!canShare) {
+        void connect(signal)
+        return
+    }
+    debugLog('sse', 'waiting for the stream lock; until then events come from another tab')
+    channel?.postMessage({kind: 'hello'} satisfies ChannelMessage)
+    navigator.locks
+        .request(LOCK_NAME, {signal}, async () => {
+            debugLog('sse', 'this tab holds the stream')
+            await connect(signal)
+        })
+        .catch(() => {
+            // Aborted while waiting for the lock: the tab stopped listening before its turn came
+        })
 }
 
 /** Adds a listener, opening the shared connection for the first one; returns the remover */
@@ -144,7 +202,7 @@ const subscribe = (listener: Listener): (() => void) => {
     listeners.add(listener)
     if (!controller) {
         controller = new AbortController()
-        void connect(controller.signal)
+        start(controller.signal)
     }
 
     return () => {
