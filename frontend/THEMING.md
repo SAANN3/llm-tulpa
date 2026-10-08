@@ -181,3 +181,10 @@ They live in `src/backgrounds/`:
 
 A new background is a file in `effects/` (or a new set of options for an existing one) and one
 entry in `index.ts`.
+
+The scenes are drawn as light on dark: stars, the moon, fire and lit windows are bright marks on a
+dark sky. On a light theme the same marks come out dark on a light sky, like a photo negative.
+That is a decision, not a bug: a light theme keeps its light page, and the scenes are not redrawn
+for it. What *is* corrected is how strongly they show: `inkFor` in `engine/scene.ts` raises the
+ink where the accent is close to the background or the page is light, so a light theme shows them
+about as clearly as the dark themes they were tuned on.

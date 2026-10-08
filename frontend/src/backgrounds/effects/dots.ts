@@ -23,7 +23,7 @@ export const dots = (p: DotsOptions): EffectFactory => (s): Effect => {
         draw(d) {
             Td += d * p.flow
             s.clear()
-            const {ctx, W, H, strength: k} = s, {bg: BG, accent: AC, fg: FG} = s.colors
+            const {ctx, W, H} = s, k = s.strength * s.ink, {bg: BG, accent: AC, fg: FG} = s.colors
             const S = 12
             for (let j = 0, y0 = S / 2; y0 < H + S; j++, y0 += S) {
                 for (let i = 0, x0 = S / 2; x0 < W + S; i++, x0 += S) {

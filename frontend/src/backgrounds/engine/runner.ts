@@ -1,6 +1,6 @@
 import type {BackgroundEffect} from '../index.ts'
 import {sameLayout} from './page-layout.ts'
-import {Scene} from './scene.ts'
+import {inkFor, Scene} from './scene.ts'
 import type {Effect, PageLayout, Rgb} from './types.ts'
 
 /** With the system's "reduce motion" on, everything moves at a quarter of its speed */
@@ -63,6 +63,7 @@ export class BackgroundRunner {
             accent: parseColor(ctx, style.getPropertyValue('--color-tertiary').trim()),
             fg: parseColor(ctx, style.getPropertyValue('--color-primary').trim()),
         }
+        this.scene.ink = inkFor(this.scene.colors.bg, this.scene.colors.accent)
     }
 
     /** A new layout re-fits the effect to it, keeping what it chose at random (the same tree, moved) */
