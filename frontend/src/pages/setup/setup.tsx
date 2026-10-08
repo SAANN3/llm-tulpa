@@ -2,6 +2,7 @@ import {useRef, useState, type CSSProperties} from 'react'
 import {Navigate, useMatch} from 'react-router-dom'
 import '../../styles/setup.scss'
 import {AnimatedSize} from '../../components/animated-size.tsx'
+import {Frame} from '../../components/frame.tsx'
 import {Button, Div} from '../../components/primitives'
 import {TypewriterLabel} from '../../components/typewriter-label.tsx'
 import {useAuth} from '../../context/use-auth.ts'
@@ -113,32 +114,31 @@ const Setup = () => {
     return (
         <Div className="page center vbox setup">
             <TypewriterLabel className="setup__title" text="[ Setup ]" charIntervalMs={30}/>
-            <Div className="dos-frame setup__panel">
-                <span className="dos-frame__title">{current.title}</span>
-                <Div className="dos-frame__body setup__body">
-                    <AnimatedSize className="setup__viewport" measure=".setup__slide:not([inert]) > .setup__slide-content" watch={step}>
-                        <Div className="setup__track" style={{'--step': step} as CSSProperties}>
-                            {steps.map((s, i) => (
-                                <div key={s.key} className="setup__slide" inert={i !== step}>
-                                    <div className="setup__slide-content">
-                                        {typeof s.body === 'function' ? s.body(i === step || i === leaving) : s.body}
-                                    </div>
-                                </div>
-                            ))}
-                        </Div>
-                    </AnimatedSize>
-                    <Div className="center setup__nav">
-                        {!isFirst && <Button variant="secondary" text="Back" onClicked={onBack} disabled={current.locked}/>}
-                        <Button text={busy ? 'Working…' : (current.primaryLabel ?? 'Next')} onClicked={onPrimary}
-                                disabled={!current.canNext || busy || current.locked}/>
-                    </Div>
-                    <Div className="center setup__dots">
+            <Frame className="setup__panel" bodyClassName="setup__body" title={current.title}
+                   actions={[{keys: ['Enter'], shown: 'enter', label: (current.primaryLabel ?? 'Next').toLowerCase(), run: () => void onPrimary()}]}
+                   onEscape={!isFirst && !current.locked ? onBack : undefined} escapeLabel="back">
+                <AnimatedSize className="setup__viewport" measure=".setup__slide:not([inert]) > .setup__slide-content" watch={step}>
+                    <Div className="setup__track" style={{'--step': step} as CSSProperties}>
                         {steps.map((s, i) => (
-                            <div key={s.key} className={`setup__dot${i === step ? ' setup__dot--active' : ''}`}/>
+                            <div key={s.key} className="setup__slide" inert={i !== step}>
+                                <div className="setup__slide-content">
+                                    {typeof s.body === 'function' ? s.body(i === step || i === leaving) : s.body}
+                                </div>
+                            </div>
                         ))}
                     </Div>
+                </AnimatedSize>
+                <Div className="center setup__nav">
+                    {!isFirst && <Button variant="secondary" text="Back" onClicked={onBack} disabled={current.locked}/>}
+                    <Button text={busy ? 'Working…' : (current.primaryLabel ?? 'Next')} onClicked={onPrimary}
+                            disabled={!current.canNext || busy || current.locked}/>
                 </Div>
-            </Div>
+                <Div className="center setup__dots">
+                    {steps.map((s, i) => (
+                        <div key={s.key} className={`setup__dot${i === step ? ' setup__dot--active' : ''}`}/>
+                    ))}
+                </Div>
+            </Frame>
         </Div>
     )
 };

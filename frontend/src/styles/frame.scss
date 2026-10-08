@@ -4,6 +4,15 @@
   display: flex;
   flex-direction: column;
   max-width: 100%;
+  // A panel taller than the window shrinks to fit it, and its body scrolls: otherwise the page (a column as high as the
+  // window) centers it and cuts its title off at the top and its border and key line off at the bottom
+  min-height: 0;
+}
+
+// Room above and below a page's panel, so its title on the top edge and its bottom border never touch the window
+.page:has(> .frame) {
+  box-sizing: border-box;
+  padding-block: $space-6;
 }
 
 .frame__box {
@@ -16,6 +25,7 @@
 .frame__body {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
 }
 
 // The keys that work in the frame, along its bottom edge: what each does, the way back out at the far end

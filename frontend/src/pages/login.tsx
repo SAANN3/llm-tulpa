@@ -3,6 +3,7 @@ import {Navigate, useLocation, useNavigate} from 'react-router-dom'
 import axios from 'axios'
 
 import '../styles/login.scss'
+import {Frame} from '../components/frame.tsx'
 import {Button, Div, Input, Label} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useAuth} from '../context/use-auth.ts'
@@ -48,27 +49,25 @@ const Login = () => {
     return (
         <Div className="page center vbox login">
             <TypewriterLabel className="login__title" text="[ Login ]" charIntervalMs={30}/>
-            <Div className="dos-frame login__panel">
-                <span className="dos-frame__title">Login</span>
-                <Div className="dos-frame__body login__body">
-                    {existingDatabase ? (
-                        <Label variant="secondary" className="field__help"
-                               text="That database already has an account: sign in with it."/>
-                    ) : null}
-                    <Div className="field">
-                        <Label className="field__label" text="Username"/>
-                        <Input text={username} onChanged={setUsername} placeholder="Enter your username"
-                               onKeyDown={onKeyDown}/>
-                    </Div>
-                    <Div className="field">
-                        <Label className="field__label" text="Password"/>
-                        <PasswordInput text={password} onChanged={setPassword} placeholder="Enter your password"
-                               onKeyDown={onKeyDown}/>
-                    </Div>
-                    {error ? <Label variant="secondary" className="login__error" text={error}/> : null}
-                    <Button text={busy ? 'Signing in…' : 'Sign in'} onClicked={onSubmit} disabled={!canSubmit}/>
+            <Frame className="login__panel" bodyClassName="login__body" title="Login"
+                   actions={[{keys: ['Enter'], shown: 'enter', label: 'sign in'}]}>
+                {existingDatabase ? (
+                    <Label variant="secondary" className="field__help"
+                           text="That database already has an account: sign in with it."/>
+                ) : null}
+                <Div className="field">
+                    <Label className="field__label" text="Username"/>
+                    <Input text={username} onChanged={setUsername} placeholder="Enter your username"
+                           onKeyDown={onKeyDown}/>
                 </Div>
-            </Div>
+                <Div className="field">
+                    <Label className="field__label" text="Password"/>
+                    <PasswordInput text={password} onChanged={setPassword} placeholder="Enter your password"
+                                   onKeyDown={onKeyDown}/>
+                </Div>
+                {error ? <Label variant="secondary" className="login__error" text={error}/> : null}
+                <Button text={busy ? 'Signing in…' : 'Sign in'} onClicked={onSubmit} disabled={!canSubmit}/>
+            </Frame>
         </Div>
     )
 };

@@ -4,6 +4,7 @@ import {useNavigate, useSearchParams} from 'react-router-dom'
 import {Gear} from 'pixelarticons/react'
 
 import '../styles/plugins.scss'
+import {Frame} from '../components/frame.tsx'
 import type {PluginInfo} from '../api/plugins/types'
 import {PluginSettings} from '../components/plugin-settings.tsx'
 import {Button, Div, Label, ToggleSwitch} from '../components/primitives'
@@ -51,63 +52,61 @@ const Plugins = () => {
     return (
         <Div className="page center vbox plugins">
             <TypewriterLabel className="plugins__title" text="[ Plugins ]" charIntervalMs={30}/>
-            <Div className="dos-frame plugins__panel">
-                <span className="dos-frame__title">Plugins</span>
-                <Div className="dos-frame__body plugins__body">
-                    {openPluginName != null && openPluginSubname != null ? (
-                        openPlugin ? (
-                            <PluginSettings
-                                key={pluginKey(openPlugin)}
-                                plugin={openPlugin}
-                                getSchema={getSchema}
-                                getHelp={getHelp}
-                                onSave={(settings) => setSettings(openPlugin.plugin_name, openPlugin.plugin_subname, settings)}
-                                onBack={() => navigate('/plugins')}
-                            />
-                        ) : loading ? (
-                            <Label variant="secondary" text="Loading…"/>
-                        ) : (
-                            <Div className="vbox plugins__missing">
-                                <Label variant="secondary" text="No such plugin."/>
-                                <Button variant="secondary" text="Back" onClicked={() => navigate('/plugins')}/>
-                            </Div>
-                        )
+            <Frame className="plugins__panel" bodyClassName="plugins__body" title="Plugins"
+                   actions={[]} onEscape={openPluginName != null ? () => navigate('/plugins') : onBack} escapeLabel="back">
+                {openPluginName != null && openPluginSubname != null ? (
+                    openPlugin ? (
+                        <PluginSettings
+                            key={pluginKey(openPlugin)}
+                            plugin={openPlugin}
+                            getSchema={getSchema}
+                            getHelp={getHelp}
+                            onSave={(settings) => setSettings(openPlugin.plugin_name, openPlugin.plugin_subname, settings)}
+                            onBack={() => navigate('/plugins')}
+                        />
+                    ) : loading ? (
+                        <Label variant="secondary" text="Loading…"/>
                     ) : (
-                        <>
-                            {loading ? (
-                                <Label variant="secondary" text="Loading…"/>
-                            ) : plugins.length === 0 ? (
-                                <Label variant="secondary" text="No plugins registered."/>
-                            ) : (
-                                <Div className="vbox plugins__list">
-                                    {plugins.map((plugin) => (
-                                        <Div key={pluginKey(plugin)} className="vbox plugins__item">
-                                            <Div className="list-row plugins__row">
-                                                <Div className="vbox plugins__row-main">
-                                                    <Label className="plugins__name" text={plugin.plugin_subname}/>
-                                                    <Label className="mono plugins__subname" variant="secondary"
-                                                           text={plugin.plugin_name}/>
-                                                </Div>
-                                                <Div className="plugins__controls">
-                                                    <ToggleSwitch toggled={plugin.enabled}
-                                                                  onToggled={(enabled) => onToggle(plugin, enabled)}/>
-                                                    <Div onClick={() => openSettings(plugin)} className="plugins__gear">
-                                                        <Gear width={16} height={16}/>
-                                                    </Div>
+                        <Div className="vbox plugins__missing">
+                            <Label variant="secondary" text="No such plugin."/>
+                            <Button variant="secondary" text="Back" onClicked={() => navigate('/plugins')}/>
+                        </Div>
+                    )
+                ) : (
+                    <>
+                        {loading ? (
+                            <Label variant="secondary" text="Loading…"/>
+                        ) : plugins.length === 0 ? (
+                            <Label variant="secondary" text="No plugins registered."/>
+                        ) : (
+                            <Div className="vbox plugins__list">
+                                {plugins.map((plugin) => (
+                                    <Div key={pluginKey(plugin)} className="vbox plugins__item">
+                                        <Div className="list-row plugins__row">
+                                            <Div className="vbox plugins__row-main">
+                                                <Label className="plugins__name" text={plugin.plugin_subname}/>
+                                                <Label className="mono plugins__subname" variant="secondary"
+                                                       text={plugin.plugin_name}/>
+                                            </Div>
+                                            <Div className="plugins__controls">
+                                                <ToggleSwitch toggled={plugin.enabled}
+                                                              onToggled={(enabled) => onToggle(plugin, enabled)}/>
+                                                <Div onClick={() => openSettings(plugin)} className="plugins__gear">
+                                                    <Gear width={16} height={16}/>
                                                 </Div>
                                             </Div>
-                                            {notice?.key === pluginKey(plugin) ? (
-                                                <Label className="plugins__notice" text={notice.message}/>
-                                            ) : null}
                                         </Div>
-                                    ))}
-                                </Div>
-                            )}
-                            <Button variant="secondary" text="Back" onClicked={onBack}/>
-                        </>
-                    )}
-                </Div>
-            </Div>
+                                        {notice?.key === pluginKey(plugin) ? (
+                                            <Label className="plugins__notice" text={notice.message}/>
+                                        ) : null}
+                                    </Div>
+                                ))}
+                            </Div>
+                        )}
+                        <Button variant="secondary" text="Back" onClicked={onBack}/>
+                    </>
+                )}
+            </Frame>
         </Div>
     )
 };

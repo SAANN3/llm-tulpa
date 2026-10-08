@@ -3,6 +3,7 @@ import {useNavigate} from 'react-router-dom'
 import axios from 'axios'
 
 import '../styles/users.scss'
+import {Frame} from '../components/frame.tsx'
 import type {User} from '../api/auth/types'
 import {createUser} from '../api/users/create'
 import {deleteUser} from '../api/users/delete'
@@ -63,43 +64,41 @@ const Users = () => {
     return (
         <Div className="page center vbox users">
             <TypewriterLabel className="users__title" text="[ Users ]" charIntervalMs={30}/>
-            <Div className="dos-frame users__panel">
-                <span className="dos-frame__title">Users</span>
-                <Div className="dos-frame__body users__body">
-                    <Div className="users__list">
-                        {users.map((u) => (
-                            <Div key={u.id} className="users__row">
-                                <Label className="users__name" text={u.username}/>
-                                <Label variant="secondary" className="users__role" text={u.role}/>
-                                {u.id === currentUser?.id ? (
-                                    <Label variant="secondary" className="users__you" text="(you)"/>
-                                ) : confirmingId === u.id ? (
-                                    <>
-                                        <Label variant="secondary" className="users__you" text={`Delete ${u.username} and their chats?`}/>
-                                        <Button text="Delete" onClicked={() => onDelete(u.id)}/>
-                                        <Button variant="secondary" text="Cancel" onClicked={() => setConfirmingId(null)}/>
-                                    </>
-                                ) : (
-                                    <Button variant="secondary" text="Delete" onClicked={() => setConfirmingId(u.id)}/>
-                                )}
-                            </Div>
-                        ))}
-                    </Div>
-
-                    <Div className="field">
-                        <Label className="field__label" text="New user"/>
-                        <Input text={username} onChanged={setUsername} placeholder="Username"/>
-                        <PasswordInput text={password} onChanged={setPassword} placeholder="Password"/>
-                    </Div>
-
-                    {error ? <Label variant="secondary" className="users__error" text={error}/> : null}
-
-                    <Div className="users__actions">
-                        <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
-                        <Button text={busy ? 'Creating…' : 'Create user'} onClicked={onCreate} disabled={!canCreate}/>
-                    </Div>
+            <Frame className="users__panel" bodyClassName="users__body" title="Users"
+                   actions={[]} onEscape={() => navigate('/')} escapeLabel="back">
+                <Div className="users__list">
+                    {users.map((u) => (
+                        <Div key={u.id} className="users__row">
+                            <Label className="users__name" text={u.username}/>
+                            <Label variant="secondary" className="users__role" text={u.role}/>
+                            {u.id === currentUser?.id ? (
+                                <Label variant="secondary" className="users__you" text="(you)"/>
+                            ) : confirmingId === u.id ? (
+                                <>
+                                    <Label variant="secondary" className="users__you" text={`Delete ${u.username} and their chats?`}/>
+                                    <Button text="Delete" onClicked={() => onDelete(u.id)}/>
+                                    <Button variant="secondary" text="Cancel" onClicked={() => setConfirmingId(null)}/>
+                                </>
+                            ) : (
+                                <Button variant="secondary" text="Delete" onClicked={() => setConfirmingId(u.id)}/>
+                            )}
+                        </Div>
+                    ))}
                 </Div>
-            </Div>
+
+                <Div className="field">
+                    <Label className="field__label" text="New user"/>
+                    <Input text={username} onChanged={setUsername} placeholder="Username"/>
+                    <PasswordInput text={password} onChanged={setPassword} placeholder="Password"/>
+                </Div>
+
+                {error ? <Label variant="secondary" className="users__error" text={error}/> : null}
+
+                <Div className="users__actions">
+                    <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
+                    <Button text={busy ? 'Creating…' : 'Create user'} onClicked={onCreate} disabled={!canCreate}/>
+                </Div>
+            </Frame>
         </Div>
     )
 };

@@ -72,7 +72,7 @@ export const ActiveModelField = ({provider, model, launchProfileId, onChosen}: A
                 <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
             </Div>
             {profileName ? <Label variant="secondary" className="field__help" text={`Launch profile: ${profileName}`}/> : null}
-            <FieldHelp text="New chats start with this model. Each chat can be switched from its own header."/>
+            <FieldHelp text="New chats start with this model. Each chat can be switched with the model button under its message box."/>
             <ChooseModelPopup
                 open={open}
                 provider={provider}
