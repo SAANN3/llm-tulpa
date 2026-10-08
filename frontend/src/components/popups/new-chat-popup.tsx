@@ -8,7 +8,7 @@ export interface NewChatPopupProps extends Omit<CreateChatFormProps, 'onCancel'>
 
 /** Name a new chat, directly or by describing it */
 export const NewChatPopup = ({open, onClose, createChat, onCreated}: NewChatPopupProps) => (
-    <Popup open={open} onClose={onClose} title="New chat">
+    <Popup open={open} onClose={onClose} title="New chat" actions={[]}>
         <CreateChatForm createChat={createChat} onCreated={onCreated} onCancel={onClose}/>
     </Popup>
 );

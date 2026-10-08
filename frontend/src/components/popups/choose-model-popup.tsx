@@ -24,18 +24,13 @@ const TABS = [
     {id: 'ollama', label: 'Ollama'},
 ]
 
-// Its own component so the tab starts from the current provider each time the popup opens
-const ChooseModelForm = ({provider, selected, selectedProfileId = null, onSelect, onSelectProfile, onClose}: Omit<ChooseModelPopupProps, 'open'>) => {
+// Its own component, mounted only while open, so the tab starts from the current provider each time the popup opens
+const ChooseModelDialog = ({provider, selected, selectedProfileId = null, onSelect, onSelectProfile, onClose}: Omit<ChooseModelPopupProps, 'open'>) => {
     const navigate = useNavigate()
     const [tab, setTab] = useState(provider === 'ollama' ? 'ollama' : 'llama-cpp')
 
     return (
-        <>
-            <Div className="models__tabs">
-                {TABS.map((t) => (
-                    <Button key={t.id} variant={t.id === tab ? 'primary' : 'secondary'} text={t.label} onClicked={() => setTab(t.id)}/>
-                ))}
-            </Div>
+        <Popup open onClose={onClose} title="Choose model" width={460} tabs={TABS} activeTab={tab} onTab={setTab} actions={[]}>
             {tab === 'ollama' ? (
                 <OllamaModelList selected={provider === 'ollama' ? selected : null} onSelect={onSelect}/>
             ) : (
@@ -48,14 +43,10 @@ const ChooseModelForm = ({provider, selected, selectedProfileId = null, onSelect
                 }}/>
                 <Button variant="primary" text="Close" onClicked={onClose}/>
             </Div>
-        </>
+        </Popup>
     )
 }
 
 /** Pick a model: one tab per provider, the same kind of list in each. Adding, downloading and tuning
  * models happens on the Models page, one button away. */
-export const ChooseModelPopup = ({open, onClose, ...rest}: ChooseModelPopupProps) => (
-    <Popup open={open} onClose={onClose} title="Choose model" width={460}>
-        <ChooseModelForm {...rest} onClose={onClose}/>
-    </Popup>
-);
+export const ChooseModelPopup = ({open, ...rest}: ChooseModelPopupProps) => (open ? <ChooseModelDialog {...rest}/> : null);

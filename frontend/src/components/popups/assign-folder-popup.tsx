@@ -11,7 +11,7 @@ export interface AssignFolderPopupProps {
 
 /** Pick, clear or create the folder a chat belongs to */
 export const AssignFolderPopup = ({open, selected, onSelect, onClose}: AssignFolderPopupProps) => (
-    <Popup open={open} onClose={onClose} title="Assign folder">
+    <Popup open={open} onClose={onClose} title="Assign folder" actions={[]}>
         <FolderPicker selected={selected} onSelect={onSelect}/>
     </Popup>
 );

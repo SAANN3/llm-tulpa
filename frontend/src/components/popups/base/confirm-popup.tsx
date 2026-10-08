@@ -13,16 +13,17 @@ export interface ConfirmPopupProps {
 }
 
 /** Asks the user to confirm something before it happens */
-export const ConfirmPopup = ({open, title, message, confirmLabel = 'Continue', onConfirm, onClose}: ConfirmPopupProps) => (
-    <Popup open={open} onClose={onClose} title={title}>
-        <Label text={message}/>
-        <PopupActions
-            confirmLabel={confirmLabel}
-            onConfirm={() => {
-                onClose()
-                onConfirm()
-            }}
-            onCancel={onClose}
-        />
-    </Popup>
-);
+export const ConfirmPopup = ({open, title, message, confirmLabel = 'Continue', onConfirm, onClose}: ConfirmPopupProps) => {
+    const confirm = () => {
+        onClose()
+        onConfirm()
+    }
+
+    return (
+        <Popup open={open} onClose={onClose} title={title}
+               actions={[{keys: ['Enter'], shown: 'enter', label: confirmLabel.toLowerCase(), run: confirm}]}>
+            <Label text={message}/>
+            <PopupActions confirmLabel={confirmLabel} onConfirm={confirm} onCancel={onClose}/>
+        </Popup>
+    )
+};

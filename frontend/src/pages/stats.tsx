@@ -1,5 +1,6 @@
 import {useNavigate, useParams} from 'react-router-dom'
 import '../styles/stats.scss'
+import {Frame} from '../components/frame.tsx'
 import {Button, Div} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
@@ -30,39 +31,46 @@ const Stats = () => {
     const show = (nextTab: Tab, nextRange: RangeOption) =>
         navigate(`/stats/${nextTab.toLowerCase()}/${nextRange.slug}`, {replace: true})
 
+    const rangeIndex = RANGES.indexOf(range)
+    const stepRange = (by: number) => {
+        const next = RANGES[rangeIndex + by]
+        if (next) show(tab, next)
+    }
+
     return (
         <Div className="page center vbox stats">
             <TypewriterLabel className="stats__title" text="[ Usage ]" charIntervalMs={30}/>
-            <Div className="dos-frame stats__panel">
-                <span className="dos-frame__title">{tab}</span>
-                <Div className="dos-frame__body stats__body">
-                    <Div className="stats__bar">
-                        <Div className="stats__tabs">
-                            {TABS.map((name) => (
-                                <Button key={name} variant={name === tab ? 'primary' : 'secondary'} text={name}
-                                        onClicked={() => show(name, range)}/>
-                            ))}
-                        </Div>
-                        {tab !== 'Server' ? (
-                            <Div className="stats__ranges">
-                                {RANGES.map((option) => (
-                                    <Button key={option.label} variant={option === range ? 'primary' : 'secondary'}
-                                            text={option.label} onClicked={() => show(tab, option)}/>
-                                ))}
-                            </Div>
-                        ) : null}
+            <Frame className="stats__panel" bodyClassName="stats__body"
+                   tabs={TABS.map((name) => ({id: name, label: name}))} activeTab={tab}
+                   onTab={(id) => show(id as Tab, range)}
+                   actions={tab !== 'Server' ? [{
+                       keys: ['ArrowLeft', 'ArrowRight'],
+                       shown: '← →',
+                       label: 'period',
+                       run: (key) => stepRange(key === 'ArrowLeft' ? -1 : 1),
+                   }] : []}
+                   onEscape={() => navigate('/')} escapeLabel="back">
+                {tab !== 'Server' ? (
+                    <Div className="stats__ranges">
+                        {RANGES.map((option) => (
+                            <Button key={option.label} variant="secondary"
+                                    className={`stats__range${option === range ? ' stats__range--on' : ''}`}
+                                    text={option.label} onClicked={() => show(tab, option)}/>
+                        ))}
                     </Div>
+                ) : null}
 
+                <Div className="stats__content">
                     {tab === 'Usage' ? <UsageTab range={range}/> : null}
                     {tab === 'Speed' ? <SpeedTab range={range}/> : null}
                     {tab === 'Models' ? <ModelsTab range={range}/> : null}
                     {tab === 'Tools' ? <ToolsTab range={range}/> : null}
                     {tab === 'Activity' ? <ActivityTab range={range}/> : null}
                     {tab === 'Server' ? <ServerTab/> : null}
-
-                    <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
                 </Div>
-            </Div>
+
+                <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
+            </Frame>
         </Div>
     )
 };

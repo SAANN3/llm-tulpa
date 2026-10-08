@@ -13,27 +13,58 @@
   width: min(860px, calc(100vw - #{$space-8}));
 }
 
+// One height for every tab, so switching tabs never resizes the panel (and a tab still loading doesn't shrink it):
+// what doesn't fit scrolls inside, the Back button stays at the bottom
 .stats__body {
   display: flex;
   flex-direction: column;
   gap: $space-4;
+  height: min(720px, calc(100vh - 200px));
+}
+
+.stats__content {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  max-height: calc(100vh - 100px);
-}
-
-// Tabs on the left, the range on the right: one row instead of two
-.stats__bar {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: $space-3;
+  flex-direction: column;
+  gap: $space-4;
+  // Keeps what sits at the right edge clear of the scrollbar
+  padding-right: $space-3;
 }
 
-.stats__tabs,
+.stats__body > button {
+  flex-shrink: 0;
+}
+
+// The period as words on the right, the chosen one underlined in the accent
 .stats__ranges {
   display: flex;
-  flex-wrap: wrap;
-  gap: $space-2;
+  justify-content: flex-end;
+  gap: $space-4;
+}
+
+.stats .stats__range[data-variant] {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  transform: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.stats .stats__range[data-variant]:hover:not(:disabled) {
+  background: transparent;
+  color: var(--color-tertiary);
+  opacity: 1;
+}
+
+.stats .stats__range--on[data-variant] {
+  opacity: 1;
+  color: var(--color-tertiary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 // Two charts to a row, so a tab with several still fits one screen

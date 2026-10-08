@@ -8,7 +8,7 @@ export interface NewFolderPopupProps extends Omit<CreateFolderFormProps, 'onCanc
 
 /** Name a new folder, directly or by describing it */
 export const NewFolderPopup = ({open, onClose, createFolder, onCreated}: NewFolderPopupProps) => (
-    <Popup open={open} onClose={onClose} title="New folder">
+    <Popup open={open} onClose={onClose} title="New folder" actions={[]}>
         <CreateFolderForm createFolder={createFolder} onCreated={onCreated} onCancel={onClose}/>
     </Popup>
 );

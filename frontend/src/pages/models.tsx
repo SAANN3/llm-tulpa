@@ -5,6 +5,7 @@ import '../styles/models.scss'
 import {HfPanel} from '../components/models/hf-panel.tsx'
 import {HardwarePanel} from '../components/models/hardware-panel.tsx'
 import {ModelsPanel} from '../components/models/models-panel.tsx'
+import {Frame} from '../components/frame.tsx'
 import {ModelPicker} from '../components/model-picker.tsx'
 import {OllamaAddressField} from '../components/ollama-address-field.tsx'
 import {PresetsPanel} from '../components/models/presets-panel.tsx'
@@ -18,7 +19,6 @@ import {useModelsData} from '../hooks/use-models-data.ts'
 import {useRuntime} from '../hooks/use-runtime.ts'
 
 const TABS = ['Models', 'Download', 'Presets', 'Hardware', 'Ollama'] as const
-type Tab = (typeof TABS)[number]
 
 /** The models the backend runs itself: what is loaded, how each model is launched, the user's own
  * sampling presets and what the hardware looks like to llama.cpp. The tab lives in the address
@@ -50,19 +50,13 @@ const Models = () => {
     return (
         <Div className="page center vbox models">
             <TypewriterLabel className="models__title" text="[ Models ]" charIntervalMs={30}/>
-            <Div className="dos-frame models__panel">
-                <span className="dos-frame__title">{tab}</span>
-                <Div className="dos-frame__body models__body">
+            <Frame className="models__panel" bodyClassName="models__body"
+                   tabs={TABS.map((name) => ({id: name, label: name}))} activeTab={tab}
+                   onTab={(id) => navigate(`/models/${id.toLowerCase()}`, {replace: true})}
+                   actions={[]} onEscape={() => navigate('/')} escapeLabel="back">
                     <Div className="models__scroll">
                     <RuntimePanel status={status} profileName={loaded?.name ?? null} isOwner={isOwner}
                                   defaultProfileId={defaultProfileId} onChanged={changed}/>
-
-                    <Div className="models__tabs">
-                        {TABS.map((name: Tab) => (
-                            <Button key={name} variant={name === tab ? 'primary' : 'secondary'} text={name}
-                                    onClicked={() => navigate(`/models/${name.toLowerCase()}`, {replace: true})}/>
-                        ))}
-                    </Div>
 
                     {error ? <Div className="models__error">{error}</Div> : null}
                     {tab === 'Models' ? (
@@ -83,8 +77,7 @@ const Models = () => {
                     </Div>
 
                     <Button variant="secondary" text="Back" onClicked={() => navigate('/')}/>
-                </Div>
-            </Div>
+            </Frame>
         </Div>
     )
 };

@@ -123,6 +123,11 @@ const ChatView = ({chatId}: { chatId: number }) => {
         }
     }, [chatId])
 
+    // A rename from the header here, or from the sidebar or another page, reaches the title the same way
+    useServerEvent('chat_renamed', (event) => {
+        if (event.chat_id === chatId) setChatName(event.name)
+    })
+
     // With an automatic context the window is whatever the server picked when it loaded the model, so
     // the gauge's maximum is read again once a load finishes.
     useServerEvent('model_state', (event) => {

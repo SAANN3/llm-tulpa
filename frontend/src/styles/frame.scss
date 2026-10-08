@@ -1,0 +1,104 @@
+@use 'tokens' as *;
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+.frame__box {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.frame__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+// The keys that work in the frame, along its bottom edge: what each does, the way back out at the far end
+.frame__hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: $space-5;
+  row-gap: $space-1;
+  margin: 0 $space-6;
+  padding: $space-2 0 $space-3;
+  border-top: $line-border solid var(--color-border);
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.frame__hints-gap {
+  flex: 1;
+}
+
+.frame__hint {
+  white-space: nowrap;
+}
+
+.frame__hint-keys {
+  color: var(--color-tertiary);
+}
+
+// Tabs on the top edge, like a browser's. Only the selected tab touches the frame; the others end just above it, so
+// nothing of theirs lies over the frame's border. The selected tab's sides are the frame's own 3px double line
+// (1px line, 1px gap, 1px line), and a 3px strip under it opens the frame's top border and joins the lines: the
+// frame's outer line turns up into the tab's outer line, its inner line into the tab's inner line.
+.frame__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: $space-1;
+  position: relative;
+  z-index: 1;
+}
+
+// An unpicked tab is dimmed by its text color, not by opacity: its background stays solid, so what lies behind
+// it (a page under a dialog) doesn't show through and mix with its label
+.frame .frame__tab[data-variant] {
+  position: relative;
+  margin-bottom: 2px;
+  padding: 6px 14px 5px;
+  border: $line-border solid var(--color-border);
+  border-bottom: none;
+  box-shadow: none;
+  transform: none;
+  background: var(--color-secondary);
+  color: color-mix(in srgb, var(--color-primary) 60%, var(--color-secondary));
+}
+
+.frame .frame__tab[data-variant]:hover:not(:disabled) {
+  background: var(--color-secondary);
+  color: var(--color-tertiary);
+}
+
+.frame .frame__tab--on[data-variant] {
+  margin-bottom: 0;
+  padding: 7px 16px;
+  border: $frame-border double var(--color-primary);
+  border-bottom: none;
+  color: var(--color-primary);
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: -$frame-border;
+    right: -$frame-border;
+    top: 100%;
+    height: $frame-border;
+    background:
+      linear-gradient(var(--color-primary), var(--color-primary)) 2px 0 / 1px 2px no-repeat,
+      linear-gradient(var(--color-primary), var(--color-primary)) right 2px top 0 / 1px 2px no-repeat,
+      linear-gradient(var(--color-secondary), var(--color-secondary)) 1px 0 / calc(100% - 2px) 2px no-repeat,
+      linear-gradient(var(--color-secondary), var(--color-secondary)) 3px 2px / calc(100% - 6px) 1px no-repeat;
+  }
+}
+
+.frame__tab-key {
+  opacity: 0.6;
+  margin-right: 0.5em;
+}

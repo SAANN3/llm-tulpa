@@ -10,7 +10,8 @@ export interface SetupUpdatePopupProps {
 
 /** Shown to the owner once after an update that changed what the setup wizard configures */
 export const SetupUpdatePopup = ({open, onSetup, onLater}: SetupUpdatePopupProps) => (
-    <Popup open={open} onClose={onLater} title="We updated the app">
+    <Popup open={open} onClose={onLater} title="We updated the app"
+           actions={[{keys: ['Enter'], shown: 'enter', label: 'set up now', run: onSetup}]}>
         <Div className="center">
             <Reload width={48} height={48}/>
         </Div>

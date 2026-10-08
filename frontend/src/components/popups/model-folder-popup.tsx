@@ -75,7 +75,9 @@ const FolderBrowser = ({current, onChoose, onClose}: Omit<ModelFolderPopupProps,
 
 /** Pick the folder the model files live in: type a path or walk the folders */
 export const ModelFolderPopup = ({open, onClose, ...rest}: ModelFolderPopupProps) => (
-    <Popup open={open} onClose={onClose} title="Model folder" width={520}>
+    // Enter is the path field's own key, so the footer only names it
+    <Popup open={open} onClose={onClose} title="Model folder" width={520}
+           actions={[{keys: ['Enter'], shown: 'enter', label: 'open the typed path'}]}>
         <FolderBrowser {...rest} onClose={onClose}/>
     </Popup>
 );

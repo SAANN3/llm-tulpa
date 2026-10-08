@@ -13,11 +13,12 @@
   width: min(860px, calc(100vw - #{$space-8}));
 }
 
+// One height for every tab, so switching tabs never resizes the panel (and a tab still loading doesn't shrink it)
 .models__body {
   display: flex;
   flex-direction: column;
   gap: $space-4;
-  max-height: calc(100vh - 100px);
+  height: min(720px, calc(100vh - 200px));
 }
 
 // Everything but the Back button scrolls, so Back stays in view at the bottom of the frame
@@ -36,7 +37,6 @@
   flex-shrink: 0;
 }
 
-.models__tabs,
 .models__toolbar,
 .models__runtime-actions {
   display: flex;

@@ -68,7 +68,7 @@ const RemoveForm = ({name, fileMissing, onRemove, onClose}: Omit<RemoveModelPopu
 
 /** Removes a model from the list, keeping its file or deleting it, with a second question before either */
 export const RemoveModelPopup = ({open, onClose, ...rest}: RemoveModelPopupProps) => (
-    <Popup open={open} onClose={onClose} title="Remove model" width={460}>
+    <Popup open={open} onClose={onClose} title="Remove model" width={460} actions={[]}>
         <RemoveForm {...rest} onClose={onClose}/>
     </Popup>
 );

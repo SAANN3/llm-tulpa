@@ -10,7 +10,7 @@ export interface ModelBusyPopupProps {
 /** Tells the user the model server is loaded with a different model that another user is in the
  * middle of using: switching now would throw away what that turn has cached, so they wait */
 export const ModelBusyPopup = ({reason, onClose}: ModelBusyPopupProps) => (
-    <Popup open={reason != null} onClose={onClose} title="Model in use">
+    <Popup open={reason != null} onClose={onClose} title="Model in use" actions={[{keys: ['Enter'], shown: 'enter', label: 'ok', run: onClose}]}>
         <Label text={reason ?? ''}/>
         <Label variant="secondary" text="The model did not answer. Try again in a moment."/>
         <Div className="popup__actions">

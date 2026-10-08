@@ -12,7 +12,7 @@ export interface SearchMessagesPopupProps {
 
 /** Search one chat's messages */
 export const SearchMessagesPopup = ({open, chatId, onSelect, onClose}: SearchMessagesPopupProps) => (
-    <Popup open={open} onClose={onClose} title="Search messages" width={540}>
+    <Popup open={open} onClose={onClose} title="Search messages" width={540} actions={[]}>
         <ChatSearch
             chatId={chatId}
             onSelect={(hit, query) => {

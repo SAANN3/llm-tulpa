@@ -58,7 +58,7 @@ export const ExportChatPopup = ({open, chatId, chatName, onClose}: ExportChatPop
     }
 
     return (
-        <Popup open={open} onClose={busy ? () => undefined : onClose} title="Export chat" width={460}>
+        <Popup open={open} onClose={busy ? () => undefined : onClose} title="Export chat" width={460} actions={[]}>
             <Div className="export-chat__row">
                 <Label text="Format"/>
                 <Select values={Object.keys(FORMATS)} selected={format} onChosen={setFormat}/>

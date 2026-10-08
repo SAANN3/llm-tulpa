@@ -149,7 +149,7 @@ const ProfileForm = ({modelFile, profile, projectors, hasMtp, layers, trainedCon
 
 /** Edits how one model is launched: context, KV cache, GPU layers, MTP, vision projector */
 export const ProfileEditorPopup = ({open, onClose, ...rest}: ProfileEditorPopupProps) => (
-    <Popup open={open} onClose={onClose} title={rest.profile ? 'Edit launch profile' : 'New launch profile'} width={520}>
+    <Popup open={open} onClose={onClose} title={rest.profile ? 'Edit launch profile' : 'New launch profile'} width={520} actions={[]}>
         <ProfileForm {...rest} onClose={onClose}/>
     </Popup>
 );

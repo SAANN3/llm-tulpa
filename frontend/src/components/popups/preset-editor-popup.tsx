@@ -81,7 +81,7 @@ const PresetForm = ({initial, onSave, onClose}: Omit<PresetEditorPopupProps, 'op
 
 /** Edits one sampling preset; a field left empty is not sent, so the server's own default applies */
 export const PresetEditorPopup = ({open, title, initial, onSave, onClose}: PresetEditorPopupProps) => (
-    <Popup open={open} onClose={onClose} title={title} width={480}>
+    <Popup open={open} onClose={onClose} title={title} width={480} actions={[]}>
         <PresetForm initial={initial} onSave={onSave} onClose={onClose}/>
     </Popup>
 );

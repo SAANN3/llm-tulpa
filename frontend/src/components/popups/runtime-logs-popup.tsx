@@ -48,7 +48,7 @@ export const RuntimeLogsPopup = ({open, onClose}: RuntimeLogsPopupProps) => {
     }, [open])
 
     return (
-        <Popup open={open} onClose={onClose} title="Model server log" width={760}>
+        <Popup open={open} onClose={onClose} title="Model server log" width={760} actions={[]}>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
             <Div ref={box} className="models__log"
                  onScroll={(e) => {

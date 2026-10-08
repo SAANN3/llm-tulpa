@@ -13,8 +13,10 @@
   @include dos-shadow(var(--color-shadow));
 }
 
-// The frame supplies its own border and shadow, so the overlay itself is just a positioner
-.popup--dialog {
+// The frame supplies its own border and shadow, so the overlay itself is just a positioner. Doubled class: the
+// overlay is a secondary-variant Div, and `[data-variant='secondary']` (loaded later, same weight) would otherwise
+// paint its background as a rectangle around the dialog's margin
+.popup.popup--dialog {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
@@ -22,6 +24,11 @@
   background: transparent;
   box-shadow: none;
   overflow: visible;
+}
+
+// The margin is the whole dialog's, tabs included, so the tabs stay flush with the frame's left edge
+.popup__dialog {
+  margin: $space-4;
 }
 
 .popup__frame {
@@ -32,7 +39,6 @@
   min-height: 120px;
   max-width: calc(100vw - #{$space-8} * 2);
   max-height: calc(100vh - #{$space-8} * 2);
-  margin: $space-4;
 
   // Nested so these beat `.dos-frame__body` regardless of stylesheet order
   > .popup__body {
