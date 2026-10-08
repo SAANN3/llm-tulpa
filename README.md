@@ -62,7 +62,7 @@ It starts those three in Docker (and stops the backend container), then runs `ca
 - llama.cpp runs inside the backend: it is downloaded for your hardware, started on the first request, switched between **launch profiles** (context size, KV cache, GPU layers, MTP speculative decoding, vision projector) and unloaded when idle. A **Models page** has the models and their profiles, Hugging Face search and download, per-user **sampling presets** (temperature and friends, with templates and export/import), and what llama.cpp sees of your hardware. Ollama still works as a second provider.
 - Switch the model per chat from the chat header — one chooser with a tab per provider. A model change takes effect with the next prompt, never in the middle of a running turn, and a request that needs another model waits for the one in progress instead of cutting it off.
 - Runs entirely on your own hardware — no API keys, nothing sent anywhere (a Hugging Face download talks to Hugging Face, only when you ask for one).
-- Themes to pick from — Slate, Paper, Matcha, and the warm dark Ember, Twilight and Cinder — will expand in the future!
+- 25 themes to pick from: Slate, Paper, Matcha, Ember, Twilight and Cinder; cozy ones (Cozy, Cozy Night, Cocoa, Hearth, Oatmeal); chill ones (Chill, Chill Day, Lagoon, Fog, Dusk); Moss, Sakura, Rose Dusk, Ocean, Dune and Ink; two old-terminal looks (Amber, Phosphor); and High Contrast.
 
 ## Screenshots
 | | | |
