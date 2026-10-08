@@ -5,6 +5,7 @@ import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {useModelsData} from '../hooks/use-models-data.ts'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
+import {PasswordInput} from './password-input.tsx'
 
 /** A field label in the small-caps style used above every input in this panel */
 const FieldLabel = ({text}: { text: string }) => <Label className="field__label" text={text}/>;
@@ -105,7 +106,7 @@ export const HfTokenField = ({hasToken, onSave}: HfTokenFieldProps) => {
         <Div className="field">
             <FieldLabel text="Hugging Face token"/>
             <Div className="field__control">
-                <Input type="password" text={token} onChanged={setToken} placeholder={hasToken ? 'a token is set' : 'hf_…'}/>
+                <PasswordInput text={token} onChanged={setToken} placeholder={hasToken ? 'a token is set' : 'hf_…'}/>
                 <Button variant="secondary" text={token.trim() ? 'Save' : 'Clear'} disabled={!token.trim() && !hasToken}
                         onClicked={() => onSave(token.trim()).then(() => setToken(''))}/>
             </Div>

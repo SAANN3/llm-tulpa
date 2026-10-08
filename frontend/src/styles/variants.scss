@@ -108,10 +108,31 @@ img[data-variant] {
 
 button[data-variant],
 input[type='text'][data-variant],
+input[type='password'][data-variant],
 textarea[data-variant] {
   border: $line-border solid currentColor;
   border-radius: 0;
   padding: 0.5em 0.8em;
+}
+
+// A field the browser filled in (a saved login) gets the browser's own yellow or blue background, a filter
+// and a forced text color in Firefox, which the currentColor border follows; an inset shadow covers the
+// background and the theme's colors come back. Two rules, not one list: a browser that doesn't know one of
+// the selectors would drop the whole rule.
+@mixin themed-autofill {
+  box-shadow: inset 0 0 0 1000px var(--color-secondary);
+  border-color: var(--color-primary);
+  -webkit-text-fill-color: var(--color-primary);
+  caret-color: var(--color-primary);
+  filter: none;
+}
+
+input[data-variant]:autofill {
+  @include themed-autofill;
+}
+
+input[data-variant]:-webkit-autofill {
+  @include themed-autofill;
 }
 
 button[data-variant] {

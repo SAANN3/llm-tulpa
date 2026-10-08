@@ -8,14 +8,22 @@
   gap: $space-2;
 }
 
+// The run marks and the menu trigger share one inset from the row's right edge, so they line up whichever
+// one a row shows
 .chat-entry__icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  padding: 0 6px;
   opacity: 0.75;
 }
 
+// Flex, not inline: an inline svg sits on the text baseline and leaves room for descenders below it, which
+// pushed the dots above the row's middle
 .chat-entry__menu-trigger {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
   padding: 0 6px;
   cursor: pointer;
 }

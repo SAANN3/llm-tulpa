@@ -21,6 +21,7 @@ export const SpeedTab = ({range}: { range: RangeOption }) => {
     const slow = sum((day) => day.slow_calls)
     const generation = tokensPerSecond(sum((day) => day.timed_eval_tokens), sum((day) => day.eval_ms))
     const prompt = tokensPerSecond(sum((day) => day.processed_tokens), sum((day) => day.processed_ms))
+    const loadMs = sum((day) => day.load_ms)
 
     return (
         <>
@@ -29,7 +30,10 @@ export const SpeedTab = ({range}: { range: RangeOption }) => {
                 <StatCard label="Prompt processing" value={formatSpeed(prompt)}
                           hint={`${sum((day) => day.processed_calls)} calls measured`}/>
                 <StatCard label="Slow calls" value={String(slow)} hint={`${formatPercent(slow, replies)} of replies, 30s or more`}/>
-                <StatCard label="Loading models" value={formatMs(sum((day) => day.load_ms))}/>
+                {/* llama.cpp reports no load time, so its replies record 0: a total of 0 means nothing was measured,
+                    since even a cached load takes a few milliseconds */}
+                <StatCard label="Loading models" value={loadMs > 0 ? formatMs(loadMs) : '–'}
+                          hint={loadMs > 0 ? undefined : 'not measured with llama.cpp'}/>
             </Div>
             {timed === 0 ? (
                 <Label variant="secondary" className="stats__note"
@@ -58,7 +62,7 @@ export const SpeedTab = ({range}: { range: RangeOption }) => {
                 />
                 </Div>
             <Label variant="secondary" className="stats__note"
-                   text="A call is the whole round trip; a slow one is almost always a long prompt the server evaluated again instead of finding it cached. Prompt speed counts only tokens actually evaluated, which only the MTP backend reports."/>
+                   text="A call is the whole round trip; a slow one is almost always a long prompt the server evaluated again instead of finding it cached. Prompt speed counts only tokens actually evaluated, which llama.cpp reports and Ollama doesn't."/>
         </>
     )
 };

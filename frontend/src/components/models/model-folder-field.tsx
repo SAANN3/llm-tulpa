@@ -38,7 +38,7 @@ export const ModelFolderField = ({onChanged}: ModelFolderFieldProps) => {
                                text={`Models you added earlier that are not in this folder, so they can't load from here: ${folder.missing_models.join(', ')}. Choose the folder they were in, or move the files here.`}/>
                     ) : null}
                 </Div>
-                <Button variant="secondary" text={folder?.path ? 'Change…' : 'Choose…'} onClicked={() => setOpen(true)}/>
+                <Button variant="secondary" text={folder?.path ? 'Change' : 'Choose'} onClicked={() => setOpen(true)}/>
             </Div>
             <ModelFolderPopup open={open} current={folder?.path ?? null} onChoose={choose} onClose={() => setOpen(false)}/>
         </Div>

@@ -59,7 +59,7 @@ export const ServerSettingsField = () => {
             <Label variant="secondary" className="field__help"
                    text="An idle model is unloaded after this long, which frees the GPU for something else (the next chat loads it again, a few seconds when it is cached). 0 keeps it loaded."/>
             <Div className="field__row">
-                <Label className="field__row-label" text="Load the default model when the backend starts"/>
+                <Label className="field__row-label field__row-label--wide" text="Load the default model when the backend starts"/>
                 <ToggleSwitch toggled={autostart} onToggled={setAutostart}/>
             </Div>
             <Div className="models__toolbar">

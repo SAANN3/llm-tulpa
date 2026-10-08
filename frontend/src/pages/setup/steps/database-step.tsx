@@ -5,6 +5,7 @@ import {getSetupStatus} from '../../../api/setup/status'
 import {useSetup} from '../../../context/use-setup.ts'
 import {Div, Input, Label} from '../../../components/primitives'
 import type {StepDef, WizardContext} from '../types.ts'
+import {PasswordInput} from '../../../components/password-input.tsx'
 
 /** PostgreSQL connection form; the backend tests it and, on success, persists it and goes live */
 export const useDatabaseStep = ({setBusy}: WizardContext): StepDef => {
@@ -78,7 +79,7 @@ export const useDatabaseStep = ({setBusy}: WizardContext): StepDef => {
                     </Div>
                     <Div className="field">
                         <Label className="field__label" text="Password"/>
-                        <Input type="password" text={password} onChanged={setPassword} placeholder="••••••"/>
+                        <PasswordInput text={password} onChanged={setPassword} placeholder="••••••"/>
                     </Div>
                 </Div>
                 {error ? <Label variant="secondary" className="setup__error" text={error}/> : null}

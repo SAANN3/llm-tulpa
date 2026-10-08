@@ -8,6 +8,7 @@ import {useSetup} from '../../../context/use-setup.ts'
 import {passwordStrength} from '../../../utils/password-strength.ts'
 import {LANGUAGES} from './welcome-step.tsx'
 import type {StepDef, WizardContext} from '../types.ts'
+import {PasswordInput} from '../../../components/password-input.tsx'
 
 interface EarlierAnswers {
     language: string
@@ -73,7 +74,7 @@ export const useOwnerSteps = ({setBusy}: WizardContext, earlier: EarlierAnswers)
             <Div className="setup__step">
                 <Div className="field">
                     <Label className="field__label" text="Password"/>
-                    <Input type="password" text={password} onChanged={setPassword} placeholder="Choose a password"/>
+                    <PasswordInput text={password} onChanged={setPassword} placeholder="Choose a password"/>
                     <Div className="setup__strength">
                         <Div className="setup__strength-bar" style={{'--score': strength.score} as CSSProperties}/>
                     </Div>
@@ -81,7 +82,7 @@ export const useOwnerSteps = ({setBusy}: WizardContext, earlier: EarlierAnswers)
                 </Div>
                 <Div className="field">
                     <Label className="field__label" text="Repeat password"/>
-                    <Input type="password" text={repeat} onChanged={setRepeat} placeholder="Repeat your password"/>
+                    <PasswordInput text={repeat} onChanged={setRepeat} placeholder="Repeat your password"/>
                     {repeat.length > 0 && repeat !== password ? (
                         <Label variant="secondary" className="field__help field__help--accent"
                                text="Passwords don't match."/>

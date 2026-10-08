@@ -11,6 +11,7 @@ import {Button, Div, Input, Label} from '../components/primitives'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useAuth} from '../context/use-auth.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {PasswordInput} from '../components/password-input.tsx'
 
 const Users = () => {
     useDocumentTitle('Users')
@@ -88,7 +89,7 @@ const Users = () => {
                     <Div className="field">
                         <Label className="field__label" text="New user"/>
                         <Input text={username} onChanged={setUsername} placeholder="Username"/>
-                        <Input type="password" text={password} onChanged={setPassword} placeholder="Password"/>
+                        <PasswordInput text={password} onChanged={setPassword} placeholder="Password"/>
                     </Div>
 
                     {error ? <Label variant="secondary" className="users__error" text={error}/> : null}

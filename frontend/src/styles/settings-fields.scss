@@ -52,6 +52,11 @@
   max-width: 32ch;
 }
 
+// For a row in a page wider than the settings column, where the label has room for one line
+.field__row-label--wide {
+  max-width: none;
+}
+
 .field__help--wide {
   max-width: 40ch;
 }

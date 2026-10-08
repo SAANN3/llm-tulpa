@@ -30,6 +30,9 @@
   gap: $space-3;
   padding: $space-2 $space-3;
   border: $line-border solid var(--color-border);
+  box-sizing: border-box;
+  // As tall as a row with a Delete button, so your own row (which has none) is the same height
+  min-height: 54px;
 }
 
 .users__name {

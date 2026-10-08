@@ -8,6 +8,7 @@ import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {useAuth} from '../context/use-auth.ts'
 import {useSetup} from '../context/use-setup.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
+import {PasswordInput} from '../components/password-input.tsx'
 
 const Login = () => {
     useDocumentTitle('Login')
@@ -61,7 +62,7 @@ const Login = () => {
                     </Div>
                     <Div className="field">
                         <Label className="field__label" text="Password"/>
-                        <Input type="password" text={password} onChanged={setPassword} placeholder="Enter your password"
+                        <PasswordInput text={password} onChanged={setPassword} placeholder="Enter your password"
                                onKeyDown={onKeyDown}/>
                     </Div>
                     {error ? <Label variant="secondary" className="login__error" text={error}/> : null}
