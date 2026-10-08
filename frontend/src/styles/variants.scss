@@ -330,6 +330,71 @@ input[type='checkbox'][role='switch'][data-variant]:checked::before {
   transform: translate(1.2em, -50%);
 }
 
+// A slider in the toggle switch's shape: a box with a 2px border in the text color, as tall as the toggle, the part up
+// to the value tinted like a switch that is on, and the knob a solid square filling the box's inside, edge to edge. The tint comes from `--fill` (set by the primitive), since only Firefox can style the filled part of a range
+// on its own.
+input[type='range'][data-variant] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 1.2em;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range'][data-variant]::-webkit-slider-runnable-track {
+  height: 1.2em;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  background: linear-gradient(to right, color-mix(in srgb, currentColor 30%, transparent) var(--fill, 0%), transparent var(--fill, 0%));
+}
+
+input[type='range'][data-variant]::-moz-range-track {
+  height: 1.2em;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  background: transparent;
+}
+
+input[type='range'][data-variant]::-moz-range-progress {
+  height: calc(1.2em - 4px);
+  background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+// The track's border is inside its 1.2em, so the knob is 1.2em less the border on both sides
+input[type='range'][data-variant]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: calc(1.2em - 4px);
+  height: calc(1.2em - 4px);
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: currentColor;
+}
+
+input[type='range'][data-variant]::-moz-range-thumb {
+  width: calc(1.2em - 4px);
+  height: calc(1.2em - 4px);
+  border: none;
+  border-radius: 0;
+  background: currentColor;
+}
+
+input[type='range'][data-variant]:hover::-webkit-slider-thumb,
+input[type='range'][data-variant]:focus-visible::-webkit-slider-thumb {
+  background: var(--color-tertiary);
+}
+
+input[type='range'][data-variant]:hover::-moz-range-thumb,
+input[type='range'][data-variant]:focus-visible::-moz-range-thumb {
+  background: var(--color-tertiary);
+}
+
+input[type='range'][data-variant]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 [data-thinking] {
   display: inline-flex;
   align-items: center;

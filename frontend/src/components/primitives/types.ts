@@ -80,6 +80,15 @@ export interface ToggleSwitchProps {
   disabled?: boolean
 }
 
+export interface SliderProps {
+  value: number
+  onChanged: (value: number) => void
+  min: number
+  max: number
+  step?: number
+  disabled?: boolean
+}
+
 export interface LinkProps {
   /** The in-app address it opens */
   to: string
