@@ -445,12 +445,29 @@ input[type='range'][data-variant]:disabled {
 
 [data-mark][data-spinning='true'] {
   opacity: 1;
-  animation: mark-spin 3.2s linear infinite;
 }
 
-@keyframes mark-spin {
-  to {
-    transform: rotate(360deg);
+// While loading, the lit arm goes round: every arm runs the same fade, each started an eighth of the cycle after the
+// one before it (`--arm` is its place, clockwise from the top). Negative delays, so the tail is there from the first
+// frame instead of the arms switching on one by one.
+[data-mark][data-spinning='true'] [data-mark-arm] {
+  animation: mark-arm 0.96s linear infinite;
+  animation-delay: calc((var(--arm) - 8) * 0.12s);
+}
+
+@keyframes mark-arm {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mark][data-spinning='true'] [data-mark-arm] {
+    animation-duration: 2.4s;
+    animation-delay: calc((var(--arm) - 8) * 0.3s);
   }
 }
 
