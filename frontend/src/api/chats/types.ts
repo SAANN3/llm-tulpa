@@ -106,3 +106,55 @@ export interface RecentModelOut {
 export interface RecentModelsResponse {
     models: RecentModelOut[]
 }
+
+/** One part of what fills a chat's context, in the order the prompt sends them */
+export type ContextPartKind =
+    | 'system_prompt'
+    | 'tools'
+    | 'key_facts'
+    | 'pinned'
+    | 'summary'
+    | 'notes'
+    | 'user_messages'
+    | 'replies'
+    | 'thinking'
+    | 'tool_calls'
+    | 'tool_results'
+
+export interface ContextPartOut {
+    kind: ContextPartKind
+    tokens: number
+    chars: number
+    /** How many there are of it (tools, facts, messages, calls); null for one block of text */
+    count: number | null
+}
+
+/** What the chat remembers past a fold */
+export interface ChatMemoryOut {
+    /** Set by the summarizer at the first fold; not editable */
+    goal: string | null
+    facts: string[]
+    summary: string | null
+    /** The newest notes: the model's newer ones still waiting for the next fold, when there are any */
+    notes: string | null
+    notes_pending: boolean
+    /** Before the first fold there are no facts or summary to edit */
+    folded: boolean
+}
+
+export interface ChatContextResponse {
+    context_length: number
+    /** The prompt size at which the chat is folded */
+    fold_at: number
+    /** True: `used` is the model server's count of the last prompt, shared out over the parts. False: all estimates. */
+    measured: boolean
+    used: number
+    parts: ContextPartOut[]
+    cleared_results: number
+    cleared_tokens: number
+    messages: number
+    folded_messages: number
+    generated_tokens: number
+    subagent_chats: number
+    memory: ChatMemoryOut
+}

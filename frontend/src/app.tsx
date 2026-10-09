@@ -11,6 +11,7 @@ import {SetupProvider} from './context/setup-provider.tsx'
 import {ThemeProvider} from './context/theme-provider.tsx'
 import {useAuth} from './context/use-auth.ts'
 import {useSetup} from './context/use-setup.ts'
+import ChatInfo from './pages/chat-info.tsx'
 import Chat from './pages/chat.tsx'
 import Folder from './pages/folder.tsx'
 import Folders from './pages/folders.tsx'
@@ -107,6 +108,7 @@ const App = () => (
                                     <Route element={<RequireAuth/>}>
                                         <Route path="/" element={<Home/>}/>
                                         <Route path="/chat" element={<Chat/>}/>
+                                        <Route path="/chat/:id/info/:tab?" element={<ChatInfo/>}/>
                                         <Route path="/search" element={<Search/>}/>
                                         <Route path="/folders" element={<Folders/>}/>
                                         <Route path="/folders/:id" element={<Folder/>}/>

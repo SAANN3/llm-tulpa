@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowLeft, ChevronDown, Close, ExternalLink, Folder, Pencil, Search, Share, Tools, Trash} from 'pixelarticons/react'
+import {ArrowLeft, ChevronDown, Close, ExternalLink, Folder, InfoBox, Pencil, Search, Share, Tools, Trash} from 'pixelarticons/react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
@@ -112,6 +112,7 @@ export const ChatHeader = ({
 
     const menu: ContextMenuItem[] = [
         {label: 'Search in chat', icon: <Search width={16} height={16}/>, onSelect: () => setSearchOpen(true)},
+        {label: 'Chat info', icon: <InfoBox width={16} height={16}/>, onSelect: () => navigate(`/chat/${chatId}/info/context`)},
         {label: 'Rename', icon: <Pencil width={16} height={16}/>, onSelect: () => setRenameOpen(true)},
         {label: 'Export', icon: <Share width={16} height={16}/>, onSelect: () => setExportOpen(true)},
         // A sub-agent's chat has the tools its parent gave it
