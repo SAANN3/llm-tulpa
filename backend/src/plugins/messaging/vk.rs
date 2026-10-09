@@ -294,6 +294,10 @@ impl MessagingProvider for VkProvider {
         VkSettings::tool_properties()
     }
 
+    fn summary() -> &'static str {
+        "Talk with the model through a VK community's messages"
+    }
+
     fn help_message() -> String {
         "How to use the VK plugin:\n\
          \n\

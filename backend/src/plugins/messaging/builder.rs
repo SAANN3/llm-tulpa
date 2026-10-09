@@ -41,6 +41,10 @@ impl<P: MessagingProvider> PluginBuilder for MessagingProviderBuilder<P> {
         super::plugin::settings_schema::<P>()
     }
 
+    fn summary(&self) -> &str {
+        P::summary()
+    }
+
     fn help_message(&self) -> String {
         P::help_message()
     }

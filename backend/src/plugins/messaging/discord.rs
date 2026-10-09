@@ -287,6 +287,10 @@ impl MessagingProvider for DiscordProvider {
         DiscordSettings::tool_properties()
     }
 
+    fn summary() -> &'static str {
+        "Talk with the model from Discord, through a bot"
+    }
+
     fn help_message() -> String {
         "How to use the Discord plugin:\n\
          \n\

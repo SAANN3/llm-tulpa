@@ -19,6 +19,7 @@ trait PluginBuilder: Send + Sync {
     fn plugin_name(&self) -> &str;
     fn plugin_subname(&self) -> &str;
     fn settings_schema(&self) -> Vec<PropertyInfo>;
+    fn summary(&self) -> &str;
     fn help_message(&self) -> String;
     async fn build(&self, settings: Value) -> Result<Arc<dyn Plugin>, PluginError>;
 }
@@ -26,7 +27,7 @@ trait PluginBuilder: Send + Sync {
 
 `plugin_name` groups instances that share an API shape and settings contract (e.g. `"messaging"`); `plugin_subname` picks the concrete implementation (e.g. `"telegram"`). `PluginBuilder` is the stateless factory — a settings change is handled by discarding the old `Plugin` instance and building a fresh one via `build`, not an in-place update, so a plugin never has to reason about a partially-applied settings change.
 
-`settings_schema`/`help_message` reuse the same `PropertyInfo` schema tool-calling args use (see [TOOLS.md](./TOOLS.md)) — one generic frontend form renderer for both, instead of hand-built UI per plugin.
+`summary` is one short line on what the plugin does, shown under its name in the plugin list (which comes sorted by `plugin_name`, then `plugin_subname`). `settings_schema`/`help_message` reuse the same `PropertyInfo` schema tool-calling args use (see [TOOLS.md](./TOOLS.md)) — one generic frontend form renderer for both, instead of hand-built UI per plugin.
 
 `PluginRegistry` ([`src/plugins/registry.rs`](./src/plugins/registry.rs)) holds every registered plugin keyed by `(plugin_name, plugin_subname)`, persists settings/enabled state to Postgres, and serves each plugin's own `api_router()` through one catch-all proxy route (`routes/plugins/proxy.rs`) that looks up the live instance in the registry on every request — so a settings change or enable/disable never requires touching axum's route tree, and the routes exist even when the backend started before a database was configured. Plugins run under the **owner's** account (their settings are the owner's, their chats belong to the owner), so every `/api/plugins/*` route — management and proxied alike — is owner-only. A plugin whose stored settings its builder now rejects is logged and left unconfigured instead of failing startup. A plugin whose `settings_schema()` is empty needs no settings input at all — `register` gives it a built `{}` instance right away instead of leaving it stuck unconfigured forever.
 
@@ -41,6 +42,7 @@ trait MessagingProvider: Send + Sync + 'static {
 
     fn subname() -> &'static str;
     fn help_message() -> String;
+    fn summary() -> &'static str;
     fn settings_schema() -> Vec<PropertyInfo>;
     async fn connect(settings: Self::Settings) -> Result<Self, PluginError>;
     async fn run(&self, tx: Sender<IncomingMessage>) -> Result<(), PluginError>;
@@ -89,7 +91,7 @@ Registry-level management routes, under `/api/plugins`:
 
 | Route | What it does |
 |---|---|
-| `GET /` | Every registered plugin, enabled and disabled alike, with its current settings. |
+| `GET /` | Every registered plugin, enabled and disabled alike, with its current settings and its one-line summary, by `plugin_name` then `plugin_subname`. |
 | `GET /settings_schema?plugin_name=&plugin_subname=` | A plugin's settings schema, same shape as a tool's args. |
 | `GET /help?plugin_name=&plugin_subname=` | A plugin's own step-by-step "how to use" message. |
 | `POST /settings` | Sets (or replaces) a plugin's settings, rebuilding its live instance. |

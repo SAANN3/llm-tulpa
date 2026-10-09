@@ -70,6 +70,9 @@ pub trait PluginBuilder: Send + Sync {
     /// generically from this schema instead of needing hand-built UI per plugin.
     fn settings_schema(&self) -> Vec<PropertyInfo>;
 
+    /// What the plugin does, in one short line: shown under its name in the plugin list.
+    fn summary(&self) -> &str;
+
     /// A human-readable info message for this plugin type — e.g. Telegram's explains
     /// how to find/talk to the bot, step by step. Shown as-is on the frontend's plugin
     /// settings panel, same static-per-type nature as `settings_schema` (not per

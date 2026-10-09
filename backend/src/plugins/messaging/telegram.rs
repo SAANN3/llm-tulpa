@@ -245,6 +245,10 @@ impl MessagingProvider for TelegramProvider {
         TelegramSettings::tool_properties()
     }
 
+    fn summary() -> &'static str {
+        "Talk with the model from Telegram, through a bot"
+    }
+
     fn help_message() -> String {
         "How to use the Telegram plugin:\n\
          \n\

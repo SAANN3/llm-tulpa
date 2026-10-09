@@ -26,9 +26,15 @@ impl PluginBuilder for SignaturesBuilder {
         vec![]
     }
 
+    fn summary(&self) -> &str {
+        "A dependency's API for the model: its types and signatures, not its whole source"
+    }
+
     fn help_message(&self) -> String {
-        "Gives the model signature-level views of code files and dependencies, instead of full file contents or LSP features. \
-         additional setup, depending on language, may be needed"
+        "Gives the model a trimmed, typed view of a dependency's public API (its types, and its functions and methods \
+         with their real signatures) instead of its whole source. Nothing to set up: a dependency is found the way the \
+         project itself finds it (cargo, node_modules, go, dotnet, Maven, pkg-config), so that toolchain has to be \
+         available where the model's commands run, and the project's dependencies installed."
             .to_string()
     }
 

@@ -82,6 +82,9 @@ pub trait MessagingProvider: Send + Sync + 'static {
     /// the frontend's plugin settings panel (see `MessagingProviderBuilder::help_message`).
     fn help_message() -> String;
 
+    /// What this provider does, in one short line (see `PluginBuilder::summary`).
+    fn summary() -> &'static str;
+
     /// This provider's own settings fields, for the frontend settings form —
     /// `MessagingProviderBuilder::settings_schema` appends this after the shared
     /// `allowed_chat_ids` field, giving one flat property list overall. In practice

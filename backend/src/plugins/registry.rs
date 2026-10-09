@@ -31,6 +31,8 @@ pub struct PluginInfo {
     pub enabled: bool,
     #[schema(value_type = Object)]
     pub settings: Option<Value>,
+    /// What the plugin does, in one short line
+    pub summary: String,
 }
 
 struct PluginEntry {
@@ -376,8 +378,10 @@ impl PluginRegistry {
     /// listing. `settings` is `None` for a plugin that's known (has a builder, could be
     /// configured) but hasn't been given settings yet, same meaning as `PluginEntry`'s
     /// own `plugin: Option<_>`.
+    /// By kind, then by name: the registry's map has no order of its own, and the list should read the same each time
     pub async fn list(&self) -> Vec<PluginInfo> {
-        self.entries
+        let mut list: Vec<PluginInfo> = self
+            .entries
             .read()
             .await
             .iter()
@@ -386,8 +390,11 @@ impl PluginRegistry {
                 plugin_subname: key.1.clone(),
                 enabled: entry.enabled,
                 settings: entry.plugin.as_ref().map(|plugin| plugin.settings_value()),
+                summary: entry.builder.summary().to_string(),
             })
-            .collect()
+            .collect();
+        list.sort_by(|a, b| (&a.plugin_name, &a.plugin_subname).cmp(&(&b.plugin_name, &b.plugin_subname)));
+        list
     }
 
     /// Runs `req` through a plugin's own `api_router()`, with `req`'s path already relative to
