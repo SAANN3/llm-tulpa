@@ -46,6 +46,17 @@
   flex: 1;
 }
 
+// With buttons at its ends the line is as tall as they are and centers on them; only the hints are dimmed, not the
+// buttons
+.frame__hints--buttons {
+  align-items: center;
+  opacity: 1;
+
+  > .frame__hint {
+    opacity: 0.75;
+  }
+}
+
 .frame__hint {
   white-space: nowrap;
 }

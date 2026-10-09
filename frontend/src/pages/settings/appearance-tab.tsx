@@ -32,8 +32,9 @@ const Swatches = ({theme}: { theme: ThemeName }) => (
 
 /** The theme, the background and how the pages look, in one view: two lists to pick from and a preview of the
  * page. Pointing at an entry shows it in the preview; clicking applies it (a theme with its reveal). It all applies at
- * once and is kept in this browser, not saved with the account's settings. */
-export const AppearanceTab = () => {
+ * once and is kept in this browser, not saved with the account's settings. Without `controls` it is only the two
+ * lists and the preview (the first-run wizard, which asks the time format on a step of its own). */
+export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
     const {themeName, setThemeName, background, setBackground, timeFormat, sidebarSeeThrough, setSidebarSeeThrough, streamReplies, setStreamReplies} = useTheme()
     const [themeFilter, setThemeFilter] = useState('')
     const [backgroundFilter, setBackgroundFilter] = useState('')
@@ -98,7 +99,7 @@ export const AppearanceTab = () => {
                 <AppearancePreview theme={shownTheme} background={shownBackground} strength={background.strength} speed={background.speed}
                                    sidebarSeeThrough={sidebarSeeThrough} timeFormat={timeFormat} streamReplies={streamReplies}
                                    note={`${themeDisplayNames[shownTheme]} · ${backgroundName}${previewing ? ' · click to use' : ''}`}/>
-                <Div className="appearance__look">
+                {controls ? <Div className="appearance__look">
                     <Label text="Brightness"/>
                     <Slider value={background.strength} onChanged={(strength) => setBackground({strength})} min={0.3} max={2} step={0.05} disabled={!animated}/>
                     <Label text="Speed"/>
@@ -115,7 +116,7 @@ export const AppearanceTab = () => {
                     </Div>
                     <Label text="Time format"/>
                     <TimeFormatChoice/>
-                </Div>
+                </Div> : null}
             </Div>
         </Div>
     )

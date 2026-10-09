@@ -92,14 +92,3 @@ a.list-row:not([data-variant]) {
   padding: $space-6;
 }
 
-// Keeps its content from spilling while it resizes; AnimatedSize sets the height
-.animated-size {
-  overflow: clip;
-  transition: height 450ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animated-size {
-    transition: none;
-  }
-}

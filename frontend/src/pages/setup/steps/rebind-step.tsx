@@ -1,6 +1,7 @@
 import {useState} from 'react'
 import {rebindChats} from '../../../api/runtime/setup'
 import {Div, Label, ToggleSwitch} from '../../../components/primitives'
+import {SettingsRow} from '../../../components/settings-fields.tsx'
 import {errorReason} from '../../../utils/error-reason.ts'
 import type {StepDef} from '../types.ts'
 
@@ -11,6 +12,7 @@ export const useRebindStep = (profileId: number | null): StepDef => {
 
     return {
         key: 'rebind',
+        group: 'Existing chats',
         title: 'Existing chats',
         canNext: true,
         onNext: async () => {
@@ -26,12 +28,12 @@ export const useRebindStep = (profileId: number | null): StepDef => {
         body: (
             <Div className="setup__step">
                 <Label className="setup__lead" text="Move your existing chats to the new model?"/>
-                <Div className="field__row">
-                    <Label className="field__row-label" text="Move them"/>
-                    <ToggleSwitch toggled={move} onToggled={setMove}/>
+                <Div className="setup__rows">
+                    <SettingsRow label="Move them"
+                                 help="Chats keep all their messages either way. Left off, each chat stays on the model it was using and keeps working while Ollama is available.">
+                        <ToggleSwitch toggled={move} onToggled={setMove}/>
+                    </SettingsRow>
                 </Div>
-                <Label variant="secondary" className="field__help field__help--wide"
-                       text="Chats keep all their messages either way. Left off, each chat stays on the model it was using and keeps working while Ollama is available."/>
                 {note ? <Label className="model-picker__error" text={note}/> : null}
             </Div>
         ),

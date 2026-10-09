@@ -1,15 +1,16 @@
 import type {ReactNode} from 'react'
 import type {useSettings} from '../../context/use-settings.ts'
 
-/**
- * One wizard step. `body` may be a function of whether the step is the one on screen — every
- * step's body stays mounted (the slides animate sideways), so a step that shouldn't do its
- * work until it's actually reached (the model list fetch) uses that to hold off.
- */
+/** One wizard step. Only the step on screen is rendered; what it holds lives in its hook, so going back and forth keeps
+ * it. */
 export interface StepDef {
     key: string
+    /** The line in the step list it belongs to (Basics, Model…); a step with `part` is one of several under it */
+    group: string
+    part?: string
+    /** The label on the frame's top edge */
     title: string
-    body: ReactNode | ((active: boolean) => ReactNode)
+    body: ReactNode
     canNext: boolean
     /** Runs when the primary button is pressed; resolving `false` keeps the wizard on this step */
     onNext?: () => Promise<boolean>
@@ -18,6 +19,9 @@ export interface StepDef {
     onBack?: () => boolean
     /** Something is in progress that must not be walked away from: Back and the primary button wait */
     locked?: boolean
+    /** What it does can't be done twice (the database is connected, the account created): once it is passed, Back
+     * doesn't return to it or to anything before it */
+    once?: boolean
 }
 
 /** What the shell hands every step hook */

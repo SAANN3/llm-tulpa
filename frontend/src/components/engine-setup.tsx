@@ -1,4 +1,4 @@
-import {useEffect, useState, type CSSProperties} from 'react'
+import {Fragment, useEffect, useState, type CSSProperties} from 'react'
 import '../styles/model-picker.scss'
 import {getHardware, type Hardware} from '../api/runtime/hardware'
 import {getInstallStatus, startInstall, type Channel, type Installed, type InstallTask} from '../api/runtime/install'
@@ -6,6 +6,7 @@ import {getDevices} from '../api/runtime/devices'
 import {errorReason} from '../utils/error-reason.ts'
 import {formatBytes} from '../utils/format-bytes.ts'
 import {Button, Div, Input, Label, Select} from './primitives'
+import {SettingsRow} from './settings-fields.tsx'
 
 export interface EngineSetupProps {
     /** Called whenever the installed state is known */
@@ -81,13 +82,18 @@ export const EngineSetup = ({onInstalled}: EngineSetupProps) => {
         <Div className="setup__step">
             {hardware ? (
                 <>
-                    <Label className="setup__lead" text={`${hardware.cpu || 'CPU'} · ${Math.round(hardware.ram_mib / 1024)} GB RAM`}/>
-                    {hardware.gpus.map((g, i) => (
-                        <Label key={i} variant="secondary" className="field__help"
-                               text={`GPU: ${g.name}${g.vram_mib ? ` · ${Math.round(g.vram_mib / 1024)} GB` : ''}`}/>
-                    ))}
+                    <Label className="setup__lead" text="Install llama.cpp for this machine."/>
+                    <Div className="setup__hardware">
+                        <Label variant="secondary" text="CPU"/>
+                        <Label text={`${hardware.cpu || 'unknown'} · ${Math.round(hardware.ram_mib / 1024)} GB RAM`}/>
+                        {hardware.gpus.map((g, i) => (
+                            <Fragment key={i}>
+                                <Label variant="secondary" text="GPU"/>
+                                <Label text={`${g.name}${g.vram_mib ? ` · ${Math.round(g.vram_mib / 1024)} GB` : ''}`}/>
+                            </Fragment>
+                        ))}
+                    </Div>
                     {hardware.gpus.length === 0 ? <Label variant="secondary" className="field__help" text="No GPU found: the model will run on the CPU."/> : null}
-                    <Label variant="secondary" className="field__help" text={`Suggested build: ${hardware.recommended} — ${hardware.reason}`}/>
                     {hardware.support !== 'tested' ? (
                         <Label variant="secondary" className="field__help"
                                text="This system is untested. It may work; if it doesn't, please open an issue on GitHub with what you see."/>
@@ -102,17 +108,23 @@ export const EngineSetup = ({onInstalled}: EngineSetupProps) => {
                 <Label className="setup__lead" text={`Installed: llama.cpp ${installed.tag} (${installed.build}, ${installed.source})`}/>
             ) : null}
 
-            <Div className="field">
-                <Label className="field__label" text="Build"/>
-                <Select values={hardware?.builds ?? []} selected={build} onChosen={setBuild}/>
+            <Div className="setup__rows">
+                <SettingsRow label="Build" help={hardware ? `Suggested: ${hardware.recommended} — ${hardware.reason}` : undefined}>
+                    <Select values={hardware?.builds ?? []} selected={build} onChosen={setBuild}/>
+                </SettingsRow>
+                <SettingsRow label="Source" help="A release tested with this app, the newest one, or a llama-server you built yourself.">
+                    <Select values={Object.keys(SOURCES)} selected={source} onChosen={setSource}/>
+                </SettingsRow>
+                {SOURCES[source] === 'custom' ? (
+                    <SettingsRow label="llama-server" help="The path to your own binary.">
+                        <Input text={customPath} onChanged={setCustomPath} placeholder="/path/to/llama-server"/>
+                    </SettingsRow>
+                ) : null}
+                <SettingsRow label="">
+                    <Button text={running ? 'Installing…' : installed ? 'Reinstall' : 'Install'} disabled={running || (SOURCES[source] === 'custom' && !customPath.trim())}
+                            onClicked={() => void onInstall()}/>
+                </SettingsRow>
             </Div>
-            <Div className="field">
-                <Label className="field__label" text="Source"/>
-                <Select values={Object.keys(SOURCES)} selected={source} onChosen={setSource}/>
-            </Div>
-            {SOURCES[source] === 'custom' ? (
-                <Input text={customPath} onChanged={setCustomPath} placeholder="/path/to/llama-server"/>
-            ) : null}
 
             {running && task ? (
                 <Div className="model-picker__info">
@@ -126,11 +138,11 @@ export const EngineSetup = ({onInstalled}: EngineSetupProps) => {
             {task?.state === 'failed' ? <Label className="model-picker__error" text={task.error ?? 'The install failed.'}/> : null}
             {error ? <Label className="model-picker__error" text={error}/> : null}
 
-            <Div className="popup__actions">
-                <Button text={running ? 'Installing…' : installed ? 'Reinstall' : 'Install'} disabled={running || (SOURCES[source] === 'custom' && !customPath.trim())}
-                        onClicked={() => void onInstall()}/>
-                {installed ? <Button variant="secondary" text="Check devices" onClicked={() => void onCheck()}/> : null}
-            </Div>
+            {installed ? (
+                <Div className="popup__actions">
+                    <Button variant="secondary" text="Check devices" onClicked={() => void onCheck()}/>
+                </Div>
+            ) : null}
             {devices != null ? <pre className="models__pre">{devices.trim()}</pre> : null}
         </Div>
     )

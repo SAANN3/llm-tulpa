@@ -40,6 +40,9 @@ export interface FrameProps {
     escapeLabel?: 'close' | 'back'
     /** Whether this frame has the keyboard: a page's frame always, a popup's while it is open */
     active?: boolean
+    /** Buttons at the two ends of the key line, for doing with the mouse what the keys do (a wizard's Back and Next) */
+    footerStart?: ReactNode
+    footerEnd?: ReactNode
     className?: string
     boxClassName?: string
     bodyClassName?: string
@@ -61,6 +64,8 @@ export const Frame = ({
     onEscape,
     escapeLabel = 'close',
     active = true,
+    footerStart,
+    footerEnd,
     className,
     boxClassName,
     bodyClassName,
@@ -93,8 +98,10 @@ export const Frame = ({
         return true
     })
 
-    // The escape hint sits at the far end of the line, on its own: it leaves the frame, the rest act inside it
+    // The escape hint sits at the far end of the line, on its own: it leaves the frame, the rest act inside it. With
+    // buttons at the ends, all the hints sit together between them
     const inside = [...tabActions, ...actions]
+    const buttons = footerStart != null || footerEnd != null
 
     return (
         <Div className={['frame', tabs ? 'frame--tabbed' : null, className].filter(Boolean).join(' ')} style={style}>
@@ -114,18 +121,22 @@ export const Frame = ({
                 {title && !tabs ? <span className="dos-frame__title">{title}</span> : null}
                 <Div className={['dos-frame__body', 'frame__body', bodyClassName].filter(Boolean).join(' ')}>{children}</Div>
                 {inside.length > 0 || escapeActions.length > 0 ? (
-                    <Div className="frame__hints">
+                    <Div className={`frame__hints${buttons ? ' frame__hints--buttons' : ''}`}>
+                        {footerStart}
+                        {buttons ? <span className="frame__hints-gap"/> : null}
                         {inside.map((action) => (
                             <span key={action.label} className="frame__hint">
                                 <span className="frame__hint-keys">{keysText(action)}</span> {action.label}
                             </span>
                         ))}
-                        <span className="frame__hints-gap"/>
+                        {buttons ? null : <span className="frame__hints-gap"/>}
                         {escapeActions.map((action) => (
                             <span key={action.label} className="frame__hint">
                                 <span className="frame__hint-keys">{keysText(action)}</span> {action.label}
                             </span>
                         ))}
+                        {buttons ? <span className="frame__hints-gap"/> : null}
+                        {footerEnd}
                     </Div>
                 ) : null}
             </Div>

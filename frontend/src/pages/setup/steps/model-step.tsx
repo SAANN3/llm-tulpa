@@ -13,8 +13,7 @@ import type {StepDef, WizardContext} from '../types.ts'
 const LLAMA = 'llama.cpp (built in)'
 const OLLAMA = 'ollama'
 
-// Radio buttons rather than a dropdown: the wizard's slides clip what sticks out of them, and a dropdown
-// opened on this short step was cut off
+// Two cards with a radio button each: the choice and what it means are read together
 const PROVIDERS = [
     {id: LLAMA, help: 'Downloaded and run by the backend, and every model setting is editable in the app.'},
     {id: OLLAMA, help: 'For those who already run Ollama.'},
@@ -22,7 +21,7 @@ const PROVIDERS = [
 
 /** Where the model runs, then (for the built-in llama.cpp) its engine and the model file, or (for
  * Ollama) the model to pull or choose */
-export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; llamaProfileId: number | null } => {
+export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; llamaProfileId: number | null; summary: string | null } => {
     const [provider, setProvider] = useState(LLAMA)
     const [installed, setInstalled] = useState<Installed | null>(null)
     const [llamaPicks, setLlamaPicks] = useState<LlamaPick[]>([])
@@ -38,29 +37,35 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
 
     const providerStep: StepDef = {
         key: 'provider',
-        title: 'LLM provider',
+        group: 'Model',
+        part: 'Provider',
+        title: 'Model · Provider',
         canNext: true,
         body: (
             <Div className="setup__step">
-                <Label className="field__label" text="Provider"/>
-                {PROVIDERS.map((option) => (
-                    <Div key={option.id} className={`setup__choice${provider === option.id ? ' setup__choice--active' : ''}`}
-                         onClick={() => setProvider(option.id)}>
-                        <RadioButton name="provider" value={option.id} checked={provider === option.id} onChanged={setProvider}/>
-                        <Div className="setup__choice-text">
-                            <Label text={option.id}/>
-                            <Label variant="secondary" className="field__help" text={option.help}/>
+                <Label className="setup__lead" text="Where does the model run?"/>
+                <Div className="setup__choices">
+                    {PROVIDERS.map((option) => (
+                        <Div key={option.id} className={`setup__choice${provider === option.id ? ' setup__choice--active' : ''}`}
+                             onClick={() => setProvider(option.id)}>
+                            <RadioButton name="provider" value={option.id} checked={provider === option.id} onChanged={setProvider}/>
+                            <Div className="setup__choice-text">
+                                <Label text={option.id}/>
+                                <Label variant="secondary" className="field__help" text={option.help}/>
+                            </Div>
                         </Div>
-                    </Div>
-                ))}
+                    ))}
+                </Div>
             </Div>
         ),
     }
 
     if (provider === OLLAMA) {
-        return {llamaProfileId: null, steps: [providerStep, {
+        return {llamaProfileId: null, summary: ollamaModel != null ? `${ollamaModel} on Ollama` : null, steps: [providerStep, {
             key: 'model',
-            title: 'Model',
+            group: 'Model',
+            part: 'Model',
+            title: 'Model · Model',
             canNext: ollamaModel != null,
             onNext: async () => {
                 setOllamaError(null)
@@ -74,28 +79,36 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
                 }
                 return true
             },
-            body: (active) => (
+            body: (
                 <Div className="setup__step">
                     <Label className="setup__lead" text="Pick the model to chat with — pull one if you don't have it yet."/>
-                    {active ? <OllamaAddressField onSaved={() => setOllamaKey((k) => k + 1)}/> : null}
-                    {active ? <ModelPicker key={ollamaKey} selected={ollamaModel} onSelect={setOllamaModel} onDeselect={() => setOllamaModel(null)}/> : null}
+                    <OllamaAddressField onSaved={() => setOllamaKey((k) => k + 1)}/>
+                    <ModelPicker key={ollamaKey} selected={ollamaModel} onSelect={setOllamaModel} onDeselect={() => setOllamaModel(null)}/>
                     {ollamaError ? <Label className="model-picker__error" text={ollamaError}/> : null}
                 </Div>
             ),
         }]}
     }
 
-    return {llamaProfileId, steps: [
+    const summary = llamaPicks.length > 0
+        ? `${llamaPicks[0].file} on llama.cpp${installed ? ` (${installed.build})` : ''}${llamaPicks.length > 1 ? `, and ${llamaPicks.length - 1} more` : ''}`
+        : null
+
+    return {llamaProfileId, summary, steps: [
         providerStep,
         {
             key: 'engine',
-            title: 'llama.cpp',
+            group: 'Model',
+            part: 'llama.cpp',
+            title: 'Model · llama.cpp',
             canNext: installed != null,
-            body: (active) => (active ? <EngineSetup onInstalled={setInstalled}/> : null),
+            body: <EngineSetup onInstalled={setInstalled}/>,
         },
         {
             key: 'llama-model',
-            title: downloadView ? 'Download a model' : 'Model',
+            group: 'Model',
+            part: 'Model file',
+            title: downloadView ? 'Model · Download' : 'Model · Model file',
             canNext: downloadView ? !downloading : llamaPicks.length > 0,
             primaryLabel: downloadView ? 'Done' : undefined,
             // Leaving while a file is arriving would orphan the download's progress, so both buttons wait for it
@@ -132,14 +145,11 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
                 }
                 return true
             },
-            body: (active) => {
-                if (!active) return null
-                // The list is mounted afresh on the way back, so a file that just arrived is in it
-                return downloadView
-                    ? <HfPanel onDownloaded={() => undefined} onRunningChange={setDownloading}
-                               doneHint="downloaded — it will be in the list when you go back"/>
-                    : <LlamaModelPick picks={llamaPicks} onChange={setLlamaPicks} onDownload={() => setDownloadView(true)} error={llamaError}/>
-            },
+            // The list is mounted afresh on the way back, so a file that just arrived is in it
+            body: downloadView
+                ? <HfPanel onDownloaded={() => undefined} onRunningChange={setDownloading}
+                           doneHint="downloaded — it will be in the list when you go back"/>
+                : <LlamaModelPick picks={llamaPicks} onChange={setLlamaPicks} onDownload={() => setDownloadView(true)} error={llamaError}/>,
         },
     ]}
 };
