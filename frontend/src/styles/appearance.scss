@@ -21,6 +21,11 @@
   border: none;
   border-bottom: $line-border solid var(--color-border);
   box-shadow: none;
+
+  // Inside the field: the list clips anything outside it, which cut the outline to its bottom and right edges
+  &:focus-visible {
+    outline-offset: -2px;
+  }
 }
 
 .appearance__items {

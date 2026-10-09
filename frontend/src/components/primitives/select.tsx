@@ -39,15 +39,19 @@ export const Select = ({
             if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
         }
 
+        // In the capture phase, and stopped there: Escape closes the open list and nothing else, where the page's
+        // own key handling (on the document too, later) would otherwise also take it as "back"
         function onKeyDown(e: KeyboardEvent) {
-            if (e.key === 'Escape') setOpen(false)
+            if (e.key !== 'Escape') return
+            e.stopPropagation()
+            setOpen(false)
         }
 
         document.addEventListener('pointerdown', onPointerDown)
-        document.addEventListener('keydown', onKeyDown)
+        document.addEventListener('keydown', onKeyDown, true)
         return () => {
             document.removeEventListener('pointerdown', onPointerDown)
-            document.removeEventListener('keydown', onKeyDown)
+            document.removeEventListener('keydown', onKeyDown, true)
         }
     }, [open])
 

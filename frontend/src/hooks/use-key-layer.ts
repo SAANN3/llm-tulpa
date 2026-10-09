@@ -35,9 +35,30 @@ export const useKeyLayer = (active: boolean, handler: KeyHandler) => {
     }, [active])
 };
 
-/** Whether a key went to something the user types into, where it means a character and not a command */
-export const isTyping = (e: KeyboardEvent): boolean => {
+const TEXT_INPUT_TYPES = new Set(['text', 'password', 'search', 'email', 'url', 'tel', 'number'])
+const ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
+
+/** The keys a focused control uses for itself, by its input type or role; every other key goes on to the page, so a
+ * switch that was just clicked (and keeps the focus) doesn't stop the tab keys or Escape from working */
+const OWN_KEYS: Record<string, string[]> = {
+    checkbox: [' '],
+    radio: [...ARROWS, ' '],
+    range: [...ARROWS, 'Home', 'End', 'PageUp', 'PageDown'],
+}
+
+/** Whether `el` is something the user types into, where every key means a character */
+export const isTextEntry = (el: Element | null): boolean => {
+    if (!(el instanceof HTMLElement)) return false
+    if (el.isContentEditable || el.tagName === 'TEXTAREA') return true
+    return el.tagName === 'INPUT' && TEXT_INPUT_TYPES.has((el as HTMLInputElement).type)
+};
+
+/** Whether a key belongs to the focused control rather than the page: any key in a text field (or a native select),
+ * and a control's own keys (`OWN_KEYS`) on it */
+export const keyBelongsToFocus = (e: KeyboardEvent): boolean => {
     const target = e.target as HTMLElement | null
     if (!target) return false
-    return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+    if (isTextEntry(target) || target.tagName === 'SELECT') return true
+    const kind = target.tagName === 'INPUT' ? (target as HTMLInputElement).type : target.getAttribute('role') ?? ''
+    return OWN_KEYS[kind]?.includes(e.key) ?? false
 };

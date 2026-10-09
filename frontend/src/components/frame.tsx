@@ -1,6 +1,6 @@
 import type {CSSProperties, ReactNode} from 'react'
 import '../styles/frame.scss'
-import {isTyping, useKeyLayer} from '../hooks/use-key-layer.ts'
+import {isTextEntry, keyBelongsToFocus, useKeyLayer} from '../hooks/use-key-layer.ts'
 import {Button, Div} from './primitives'
 
 /** One of a frame's tabs; its place in the list is its number and its key */
@@ -83,7 +83,12 @@ export const Frame = ({
     useKeyLayer(active, (e) => {
         if (e.ctrlKey || e.metaKey || e.altKey) return false
         const action = all.find((a) => a.run && a.keys.includes(e.key))
-        if (!action?.run || (isTyping(e) && !action.whileTyping)) return false
+        // Escape in a text field leaves the field, so the frame's keys work again; a second one is the frame's
+        if (e.key === 'Escape' && !action?.whileTyping && isTextEntry(e.target as Element)) {
+            (e.target as HTMLElement).blur()
+            return true
+        }
+        if (!action?.run || (keyBelongsToFocus(e) && !action.whileTyping)) return false
         action.run(e.key)
         return true
     })

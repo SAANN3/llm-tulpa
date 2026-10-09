@@ -68,6 +68,14 @@ export interface RadioButtonProps {
   onChanged: (value: string) => void
 }
 
+export interface ChoiceGroupProps {
+  options: { value: string; label: string }[]
+  chosen: string
+  onChosen: (value: string) => void
+  /** What the choice is about, for a screen reader */
+  label?: string
+}
+
 export interface CheckboxProps {
   toggled: boolean
   onToggled: (toggled: boolean) => void

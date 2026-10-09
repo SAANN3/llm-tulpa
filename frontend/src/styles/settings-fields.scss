@@ -151,19 +151,6 @@
   text-align: right;
 }
 
-.settings-row__choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $space-5;
-}
-
-.settings-row__choice {
-  display: inline-flex;
-  align-items: center;
-  gap: $space-2;
-  cursor: pointer;
-}
-
 .settings-section {
   display: flex;
   flex-direction: column;

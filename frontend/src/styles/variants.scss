@@ -339,6 +339,48 @@ input[type='checkbox'][role='switch'][data-variant]:checked::before {
   transform: translate(1.2em, -50%);
 }
 
+// The switch draws no outline of its own (`outline: none` above); from the keyboard it gets the usual one
+input[type='checkbox'][role='switch'][data-variant]:focus-visible {
+  outline: 2px solid var(--color-tertiary);
+  outline-offset: 2px;
+}
+
+// A row of options in one frame: cells split by the frame's line, the chosen one filled
+[data-choice-group] {
+  display: inline-flex;
+  border: $line-border solid currentColor;
+  @include dos-shadow;
+}
+
+[data-choice-group] [data-choice] {
+  padding: 0.35em 0.9em;
+  white-space: nowrap;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  & + [data-choice] {
+    border-left: $line-border solid currentColor;
+  }
+
+  &:hover {
+    background: var(--color-surface-strong);
+  }
+
+  &[aria-checked='true'] {
+    background: var(--color-primary);
+    color: var(--color-secondary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-tertiary);
+    outline-offset: -4px;
+  }
+}
+
 // A slider in the toggle switch's shape: a box with a 2px border in the text color, as tall as the toggle, the part up
 // to the value tinted like a switch that is on, and the knob a solid square filling the box's inside, edge to edge. The tint comes from `--fill` (set by the primitive), since only Firefox can style the filled part of a range
 // on its own.

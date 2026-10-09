@@ -2,6 +2,7 @@ export type * from './types'
 
 export {Button} from './button.tsx'
 export {Checkbox} from './checkbox.tsx'
+export {ChoiceGroup} from './choice-group.tsx'
 export {Div} from './div.tsx'
 export {Input} from './input.tsx'
 export {Label} from './label.tsx'

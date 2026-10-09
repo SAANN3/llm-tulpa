@@ -1,9 +1,9 @@
 import {useState} from 'react'
 import type {ReactNode} from 'react'
 import '../styles/settings-fields.scss'
-import {Button, Div, Input, Label, RadioButton, ToggleSwitch} from './primitives'
+import {Button, ChoiceGroup, Div, Input, Label, ToggleSwitch} from './primitives'
 import {useTheme} from '../context/use-theme.ts'
-import {formatTime} from '../utils/time-format.ts'
+import {formatTime, type TimeFormat} from '../utils/time-format.ts'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {useModelsData} from '../hooks/use-models-data.ts'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
@@ -130,14 +130,8 @@ export const TimeFormatChoice = () => {
     const {timeFormat, setTimeFormat} = useTheme()
     const sample = new Date(2026, 0, 1, 14, 11, 12)
     return (
-        <Div className="settings-row__choices">
-            {(['24h', '12h'] as const).map((format) => (
-                <label key={format} className="settings-row__choice">
-                    <RadioButton name="time-format" value={format} checked={timeFormat === format} onChanged={() => setTimeFormat(format)}/>
-                    <span>{formatTime(sample, format)}</span>
-                </label>
-            ))}
-        </Div>
+        <ChoiceGroup label="Time format" chosen={timeFormat} onChosen={(format) => setTimeFormat(format as TimeFormat)}
+                     options={(['24h', '12h'] as const).map((format) => ({value: format, label: formatTime(sample, format)}))}/>
     )
 };
 
