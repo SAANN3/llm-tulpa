@@ -15,8 +15,46 @@
   padding: 10px 0;
 }
 
-.tool-confirm__row--divided {
-  border-top: $line-border solid var(--color-border);
+.tool-confirm__slide {
+  animation: tool-confirm-in 0.22s ease-out;
+}
+
+@keyframes tool-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-confirm__slide {
+    animation: none;
+  }
+}
+
+// One dot per request, bottom right: the one being asked lit, the answered ones filled, the rest outlined
+.tool-confirm__dots {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.tool-confirm__dot {
+  width: 7px;
+  height: 7px;
+  border: $line-border solid currentColor;
+  opacity: 0.45;
+}
+
+.tool-confirm__dot--done {
+  background: currentColor;
+}
+
+.tool-confirm__dot--current {
+  opacity: 1;
+  background: var(--color-tertiary);
+  border-color: var(--color-tertiary);
 }
 
 .tool-confirm__head {
@@ -42,7 +80,6 @@
 .tool-confirm__message {
   font-size: 15px;
   line-height: 1.5;
-  max-width: 70ch;
 }
 
 .tool-confirm__reason {

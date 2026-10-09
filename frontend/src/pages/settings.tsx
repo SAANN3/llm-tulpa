@@ -12,6 +12,7 @@ import {
     MaxTurnStepsField,
     NameTimezoneFields,
     NotificationsField,
+    TimeFormatField,
     HfTokenField,
 } from '../components/settings-fields.tsx'
 import {BackgroundPicker} from '../components/background-picker.tsx'
@@ -74,6 +75,7 @@ const Settings = () => {
                                     onTimezoneChanged={setTimezoneText}/>
                 <ThemePreview/>
                 <BackgroundPicker/>
+                <TimeFormatField/>
                 <Div className="field">
                     <Label className="field__label" text="System prompt"/>
                     <Div className="field__control">

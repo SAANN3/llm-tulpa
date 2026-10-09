@@ -7,13 +7,12 @@ interface PendingCallRowProps {
     call: AgentToolCall
     escalation: AgentScopeGrant
     reason: string
-    first: boolean
     onDecide: (allowance: Allowance) => void
 }
 
 /** One pending tool call's decision row */
-const PendingCallRow = ({call, escalation, reason, first, onDecide}: PendingCallRowProps) => (
-    <Div className={`vbox tool-confirm__row${first ? '' : ' tool-confirm__row--divided'}`}>
+const PendingCallRow = ({call, escalation, reason, onDecide}: PendingCallRowProps) => (
+    <Div className="vbox tool-confirm__row">
         <Div className="tool-confirm__head">
             <Label variant="secondary" className="tool-confirm__badge" text="PERMISSION NEEDED"/>
             <Label className="mono tool-confirm__name" text={call.name}/>
@@ -36,8 +35,9 @@ export interface ToolConfirmationProps {
 }
 
 /**
- * Shown when a run waits for permission. Only the calls the user could grant get a row: a call that
- * is allowed runs, and one that can't be approved is refused for the model, whatever the user says.
+ * Shown when a run waits for permission. Only the calls the user could grant are asked about: a call that
+ * is allowed runs, and one that can't be approved is refused for the model, whatever the user says. Several are
+ * asked one after another, with a dot per request in the corner.
  */
 export const ToolConfirmation = ({pending, onConfirm}: ToolConfirmationProps) => {
     const [decisions, setDecisions] = useState<Decision[]>([])
@@ -54,12 +54,24 @@ export const ToolConfirmation = ({pending, onConfirm}: ToolConfirmationProps) =>
         if (asking.every((row) => next.some((d) => d.index === row.index))) onConfirm(next)
     }
 
+    // One request at a time, the next sliding in once this one is answered; the answers still go out together, when
+    // the last one is given
+    const current = remaining[0]
+    if (!current) return null
+
     return (
         <Div className="vbox tool-confirm">
-            {remaining.map(({index, call, escalation, reason}, i) => (
-                <PendingCallRow key={index} call={call} escalation={escalation} reason={reason} first={i === 0}
-                                onDecide={(allowance) => decide(index, allowance)}/>
-            ))}
+            <Div key={current.index} className="tool-confirm__slide">
+                <PendingCallRow call={current.call} escalation={current.escalation} reason={current.reason}
+                                onDecide={(allowance) => decide(current.index, allowance)}/>
+            </Div>
+            {asking.length > 1 ? (
+                <Div className="tool-confirm__dots">
+                    {asking.map(({index}) => (
+                        <div key={index} className={`tool-confirm__dot${index === current.index ? ' tool-confirm__dot--current' : decisions.some((d) => d.index === index) ? ' tool-confirm__dot--done' : ''}`}/>
+                    ))}
+                </Div>
+            ) : null}
         </Div>
     )
 };

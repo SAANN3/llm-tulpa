@@ -5,6 +5,7 @@ import {useNavigate} from 'react-router-dom'
 import '../styles/tool-message.scss'
 import {Button, Div, Label} from './primitives'
 import {highlightText} from '../utils/highlight.tsx'
+import {useFormatTime} from '../hooks/use-format-time.ts'
 
 export interface ToolMessageProps {
     tool_name: string
@@ -86,6 +87,7 @@ export const ToolMessage = ({
     preserveScrollFor,
     highlightQuery
 }: ToolMessageProps) => {
+    const formatTime = useFormatTime()
     const contentText = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
     const argsText = args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null
     const argsSummary = args ? describeArgs(args) : ''
@@ -137,7 +139,7 @@ export const ToolMessage = ({
                     </Div>
                 ) : null}
             </Div>
-            <Label variant="secondary" className="tool-message__time" text={new Date(created_at).toLocaleTimeString()}/>
+            <Label variant="secondary" className="tool-message__time" text={formatTime(created_at)}/>
         </Div>
     )
 };

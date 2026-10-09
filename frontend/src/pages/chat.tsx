@@ -386,6 +386,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                                             onDelete={canCut && m.id != null
                                                 ? () => setConfirming({kind: 'delete', messageId: m.id as number, later: messages.length - i - 1})
                                                 : undefined}
+                                            isLast={i === messages.length - 1}
                                         />
                                     )}
                                 </div>

@@ -41,45 +41,15 @@
   margin-bottom: $space-2;
 }
 
-.chat-message__thinking {
-  gap: $space-1;
-  max-width: 100%;
-}
-
-.chat-message__thinking-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: $space-1;
-  font-size: 12px;
-  padding: 3px 9px;
-  margin-top: $space-2;
-  align-self: flex-start;
-}
-
-// Open, the toggle sits on the trace like a tab: no gap and no shadow between them (the shadow would show as a
-// stripe across the gap), and its bottom border lies on the trace's top one
-.chat-message__thinking--open {
-  gap: 0;
-
-  .chat-message__thinking-toggle {
-    box-shadow: none;
-    margin-bottom: -$line-border;
-  }
-}
-
+// The thought's text, told apart from the reply by being smaller and dimmer, with a dashed line down its left; no box,
+// so it reads as an aside rather than a second message
 .chat-message__thinking-body {
-  padding: $space-3;
-  font-size: 13px;
-  opacity: 0.85;
-  white-space: pre-wrap;
-  background: var(--color-surface);
-  border: $line-border solid var(--color-border);
-}
-
-.chat-message__thought {
-  font-size: 12px;
-  opacity: 0.6;
   margin-top: $space-2;
+  padding: 2px 0 2px $space-3;
+  font-size: 13px;
+  opacity: 0.7;
+  white-space: pre-wrap;
+  border-left: $line-border dashed var(--color-border);
 }
 
 .chat-message__time {
@@ -98,6 +68,32 @@
   justify-content: flex-end;
 }
 
+// The thought's toggle reads like the time beside it: small dim text, no box. Nested and with the attribute, to
+// outweigh `button[data-variant]`'s border, padding, shadow and hover fill
+.chat-message button.chat-message__thinking-toggle[data-variant] {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 2px;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.6;
+
+  &:hover,
+  &:focus-visible {
+    background: transparent;
+    color: var(--color-tertiary);
+    opacity: 1;
+  }
+
+  &:active {
+    transform: none;
+  }
+}
+
 // `button[data-variant]` (variants.scss) sets the padding and shadow, so a bare class would lose
 button.chat-message__copy {
   display: inline-flex;
@@ -108,5 +104,22 @@ button.chat-message__copy {
   &:hover,
   &:focus-visible {
     opacity: 1;
+  }
+}
+
+// The buttons under a message stay out of the way: shown on the newest message, on the others only while the pointer
+// is on the message (or a button has the keyboard's focus). Hidden, not removed, so showing them moves nothing. Both
+// ways are delayed: they show once the pointer rests on a message a moment, and leave after a wait with a fade, so
+// sweeping the pointer across the chat doesn't leave a trail of buttons popping up and fading behind it. A touch
+// screen has no hover, so there they always show.
+@media (hover: hover) {
+  .chat-message button.chat-message__copy {
+    transition: opacity 0.1s ease 0.06s, visibility 0s linear 0.06s;
+  }
+
+  .chat-message:not(.chat-message--last):not(:hover):not(:focus-within) button.chat-message__copy {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease 0.4s, visibility 0s linear 0.7s;
   }
 }

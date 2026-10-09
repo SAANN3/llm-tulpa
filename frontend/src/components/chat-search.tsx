@@ -4,6 +4,7 @@ import '../styles/chat-search.scss'
 import {searchMessages} from '../api/chats/search'
 import type {MessageSearchOut} from '../api/chats/types'
 import {Checkbox, Div, Input, Label} from './primitives'
+import {useFormatTime} from '../hooks/use-format-time.ts'
 
 export interface ChatSearchProps {
     chatId: number
@@ -46,6 +47,7 @@ const writeStorageBool = (key: string, value: boolean) => {
  * highlighted. Clicking a hit tells the caller which message to scroll to.
  */
 export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
+    const formatTime = useFormatTime()
     const [query, setQuery] = useState('')
     const [includeAssistant, setIncludeAssistantState] = useState(() => readStorageBool(STORAGE_KEY_ASSISTANT, true))
     const [includeUser, setIncludeUserState] = useState(() => readStorageBool(STORAGE_KEY_USER, true))
@@ -173,8 +175,8 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
                                     className="chat-search__meta"
                                     text={
                                         hit.matched_in !== 'content'
-                                            ? `${hit.role} · ${hit.matched_in.toUpperCase()} · ${new Date(hit.created_at).toLocaleTimeString()}`
-                                            : `${hit.role} · ${new Date(hit.created_at).toLocaleTimeString()}`
+                                            ? `${hit.role} · ${hit.matched_in.toUpperCase()} · ${formatTime(hit.created_at)}`
+                                            : `${hit.role} · ${formatTime(hit.created_at)}`
                                     }
                                 />
                             </Div>

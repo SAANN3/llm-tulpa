@@ -1,6 +1,8 @@
 import {useState} from 'react'
 import '../styles/settings-fields.scss'
-import {Button, Div, Input, Label, ToggleSwitch} from './primitives'
+import {Button, Div, Input, Label, RadioButton, ToggleSwitch} from './primitives'
+import {useTheme} from '../context/use-theme.ts'
+import {formatTime} from '../utils/time-format.ts'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {useModelsData} from '../hooks/use-models-data.ts'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
@@ -114,6 +116,25 @@ export const HfTokenField = ({hasToken, onSave}: HfTokenFieldProps) => {
         </Div>
     )
 };
+
+/** 24-hour or 12-hour times; applies at once and is kept in this browser, like the theme */
+export const TimeFormatField = () => {
+    const {timeFormat, setTimeFormat} = useTheme()
+    const sample = new Date(2026, 0, 1, 14, 11, 12)
+    return (
+        <Div className="field">
+            <Label className="field__label" text="Time format"/>
+            <Div className="field__choices">
+                {(['24h', '12h'] as const).map((format) => (
+                    <label key={format} className="field__choice">
+                        <RadioButton name="time-format" value={format} checked={timeFormat === format} onChanged={() => setTimeFormat(format)}/>
+                        <span>{formatTime(sample, format)}</span>
+                    </label>
+                ))}
+            </Div>
+        </Div>
+    )
+}
 
 export interface NotificationsFieldProps {
     enabled: boolean

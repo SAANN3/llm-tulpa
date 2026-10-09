@@ -45,7 +45,8 @@ export function RunStatus({view, onStop}: RunStatusProps) {
 
     return (
         <Div className="vbox run-status">
-            <ThinkingAnimation isPlaying={!waiting}/>
+            {/* Keeps moving while it waits for the user too: the run is still open, only paused on their answer */}
+            <ThinkingAnimation isPlaying/>
             <Div className="run-status__line">
                 <Label className="run-status__label" text={spent ? `${doing} - ${spent}` : doing}/>
                 {waiting ? null : <Button variant="secondary" text="Stop" onClicked={onStop}/>}

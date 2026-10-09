@@ -6,6 +6,7 @@ import {findChats} from '../api/chats/find'
 import type {ChatFindOut, MessageSearchOut} from '../api/chats/types'
 import {highlightText} from '../utils/highlight.tsx'
 import {Checkbox, Div, Input, Label} from './primitives'
+import {useFormatTime} from '../hooks/use-format-time.ts'
 
 /** What a click picked: a chat, or one of its messages (with the query that found it) */
 export interface FoundTarget {
@@ -47,6 +48,7 @@ const writeStorageBool = (key: string, value: boolean) => {
  * its newest matching messages; clicking a chat opens it, clicking a message opens it there.
  */
 export const ChatFinder = ({query, onQueryChanged, onSelect}: ChatFinderProps) => {
+    const formatTime = useFormatTime()
     const [includeMessages, setIncludeMessagesState] = useState(() => readStorageBool(STORAGE_KEY_MESSAGES, true))
     const [found, setFound] = useState<ChatFindOut[] | null>(null)
     const [loading, setLoading] = useState(false)
@@ -133,7 +135,7 @@ export const ChatFinder = ({query, onQueryChanged, onSelect}: ChatFinderProps) =
                                 <Div key={hit.id} className="list-row chat-search__row chat-finder__hit"
                                      onClick={() => onSelect({chatId: chat.chat_id, jump: {hit, query: trimmed}})}>
                                     <Label variant="secondary" className="chat-search__meta"
-                                           text={`${hit.role} · ${new Date(hit.created_at).toLocaleString()}`}/>
+                                           text={`${hit.role} · ${new Date(hit.created_at).toLocaleDateString()}, ${formatTime(hit.created_at)}`}/>
                                     <Div className="chat-search__snippet">
                                         {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}
                                         <span className="chat-search__match">{hit.matched}</span>

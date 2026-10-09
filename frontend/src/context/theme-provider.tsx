@@ -3,6 +3,7 @@ import {ThemeContext} from './theme-context.ts'
 import {DEFAULT_BACKGROUND, findBackground, type BackgroundSettings} from '../backgrounds'
 import {themeNames} from '../themes'
 import {syncFaviconWithTheme} from '../utils/favicon.ts'
+import {localeTimeFormat, type TimeFormat} from '../utils/time-format.ts'
 
 /** The saved background, or the default. A browser that only has the older dots switch keeps its choice. */
 const loadBackground = (): BackgroundSettings => {
@@ -22,6 +23,17 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
     const [background, setBackgroundState] = useState<BackgroundSettings>(loadBackground)
     const setBackground = (change: Partial<BackgroundSettings>) => setBackgroundState((now) => ({...now, ...change}))
 
+    // Per browser too; until picked, whatever the browser's locale uses (saved only once picked, so a browser that
+    // never picked follows its locale if that changes)
+    const [timeFormat, setTimeFormatState] = useState<TimeFormat>(() => {
+        const saved = localStorage.getItem('time_format')
+        return saved === '24h' || saved === '12h' ? saved : localeTimeFormat()
+    })
+    const setTimeFormat = (format: TimeFormat) => {
+        localStorage.setItem('time_format', format)
+        setTimeFormatState(format)
+    }
+
     useEffect(() => {
         localStorage.setItem('theme_name', themeName)
         document.documentElement.dataset.theme = themeName
@@ -35,7 +47,7 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
     }, [background])
 
     return (
-        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground}}>
+        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground, timeFormat, setTimeFormat}}>
             {children}
         </ThemeContext.Provider>
     )

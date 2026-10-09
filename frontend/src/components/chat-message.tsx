@@ -12,6 +12,7 @@ import {Button, Div, Label} from './primitives'
 import {highlightInNode, highlightText} from '../utils/highlight.tsx'
 import {copyText} from '../utils/copy-text.ts'
 import {formatTokenCount} from '../utils/format.ts'
+import {useFormatTime} from '../hooks/use-format-time.ts'
 
 export interface ChatMessageProps {
     role: 'user' | 'assistant'
@@ -40,6 +41,8 @@ export interface ChatMessageProps {
     onEdit?: () => void
     /** Set only on a message that can be deleted, together with everything after it */
     onDelete?: () => void
+    /** The chat's newest message: its buttons always show, the others' only while the pointer is on them */
+    isLast?: boolean
 }
 
 const formatThoughtDuration = (ms: number): string => {
@@ -72,17 +75,33 @@ export const ChatMessage = ({
     onRegenerate,
     onEdit,
     onDelete,
+    isLast = false,
 }: ChatMessageProps) => {
     const isUser = role === 'user'
+    const formatTime = useFormatTime()
     const [localThinking, setLocalThinking] = useState(false)
     const isThinkingOpen = thinkingExpanded !== undefined ? thinkingExpanded : localThinking
     const thinkingRef = useRef<HTMLDivElement>(null)
+    const thinkingBodyRef = useRef<HTMLDivElement>(null)
+    // Set when the user opens the thought, so only their click (not a search opening it) brings it into view
+    const revealThinking = useRef(false)
     const toggleThinking = onToggleThinking ?? (() => setLocalThinking((v) => !v))
     const handleToggleThinking = () => {
+        revealThinking.current = !isThinkingOpen
         const anchor = thinkingRef.current
         if (anchor && preserveScrollFor) preserveScrollFor(anchor, toggleThinking)
         else toggleThinking()
     }
+
+    // The thought opens below its row, so on a message at the bottom of the chat it would open out of sight under the
+    // composer: scroll just enough to show it (nothing moves when it is already in view). A frame later, because the
+    // list keeps the clicked row in place on the next frame (`preserveScrollFor`), which would cancel a scroll begun now.
+    useEffect(() => {
+        if (!isThinkingOpen || !revealThinking.current) return
+        revealThinking.current = false
+        const frame = requestAnimationFrame(() => thinkingBodyRef.current?.scrollIntoView({block: 'nearest', behavior: 'smooth'}))
+        return () => cancelAnimationFrame(frame)
+    }, [isThinkingOpen])
 
     const [copied, setCopied] = useState(false)
     const copiedTimer = useRef<number>(undefined)
@@ -125,7 +144,7 @@ export const ChatMessage = ({
     }, [highlightQuery])
 
     return (
-        <Div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}`}>
+        <Div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}${isLast ? ' chat-message--last' : ''}`}>
             <Div className={isUser ? 'chat-message__bubble' : 'vbox chat-message__body'}>
                 {(images && images.length > 0) || (file_ids && file_ids.length > 0) ? (
                     <Div className={`chat-message__attachments${content ? ' chat-message__attachments--spaced' : ''}`}>
@@ -142,37 +161,25 @@ export const ChatMessage = ({
                         {content}
                     </ReactMarkdown>
                 </div>
-                {thinking ? (
-                    <Div ref={thinkingRef} className={`vbox chat-message__thinking${isThinkingOpen ? ' chat-message__thinking--open' : ''}`}>
-                        <Button
-                            className="chat-message__thinking-toggle"
-                            variant="secondary"
-                            onClicked={handleToggleThinking}
-                        >
-                            {isThinkingOpen ? <ChevronDown width={13} height={13}/> :
-                                <ChevronRight width={13} height={13}/>}
-                            <span>{thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}</span>
-                        </Button>
-                        {isThinkingOpen ? (
-                            <Div className="chat-message__thinking-body">
-                                {highlightText(thinking, highlightQuery)}
-                            </Div>
-                        ) : null}
-                    </Div>
-                ) : thought_duration_ms != null ? (
-                    <Label variant="secondary" className="chat-message__thought"
-                           text={formatThoughtDuration(thought_duration_ms)}/>
-                ) : null}
-                <Div className={`chat-message__footer${isUser ? ' chat-message__footer--user' : ''}`}>
+                {/* The thought sits in the time row, as quiet as the time: a trace to open, or only how long it took */}
+                <Div ref={thinkingRef} className={`chat-message__footer${isUser ? ' chat-message__footer--user' : ''}`}>
                     <Label
                         variant="secondary"
                         className="chat-message__time"
                         text={
                             !isUser && eval_tokens != null
-                                ? `${new Date(created_at).toLocaleTimeString()}, spent ${formatTokenCount(eval_tokens)} tokens`
-                                : new Date(created_at).toLocaleTimeString()
+                                ? `${formatTime(created_at)}, spent ${formatTokenCount(eval_tokens)} tokens`
+                                : formatTime(created_at)
                         }
                     />
+                    {thinking ? (
+                        <Button className="chat-message__thinking-toggle" variant="secondary" onClicked={handleToggleThinking}>
+                            {isThinkingOpen ? <ChevronDown width={12} height={12}/> : <ChevronRight width={12} height={12}/>}
+                            <span>{thought_duration_ms != null ? formatThoughtDuration(thought_duration_ms) : 'Thinking'}</span>
+                        </Button>
+                    ) : thought_duration_ms != null ? (
+                        <Label variant="secondary" className="chat-message__time" text={formatThoughtDuration(thought_duration_ms)}/>
+                    ) : null}
                     <Button className="chat-message__copy" variant="secondary" title="Copy message" onClicked={handleCopy}>
                         {copied ? <Check width={16} height={16}/> : <Copy width={16} height={16}/>}
                     </Button>
@@ -192,6 +199,11 @@ export const ChatMessage = ({
                         </Button>
                     ) : null}
                 </Div>
+                {thinking && isThinkingOpen ? (
+                    <Div ref={thinkingBodyRef} className="chat-message__thinking-body">
+                        {highlightText(thinking, highlightQuery)}
+                    </Div>
+                ) : null}
             </Div>
         </Div>
     )

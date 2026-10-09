@@ -61,3 +61,16 @@
   max-width: 40ch;
 }
 
+// A few options side by side, each a radio with its text (a <label>, so the text picks it too)
+.field__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-5;
+}
+
+.field__choice {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  cursor: pointer;
+}
