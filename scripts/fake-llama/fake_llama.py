@@ -130,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
             CALLS.append({
                 "n": len(CALLS) + 1, "kind": kind, "has_tools": bool(body.get("tools")), "tool_names": [t["function"]["name"] for t in body.get("tools") or []],
                 "max_tokens": body.get("max_tokens"), "messages": messages, "scripted": bool(item), "at": time.time(),
-                "chat_template_kwargs": body.get("chat_template_kwargs"),
+                "chat_template_kwargs": body.get("chat_template_kwargs"), "stream": bool(body.get("stream")),
             })
         delay = float(item.get("delay", 0))
         end = time.time() + delay
@@ -157,12 +157,57 @@ class Handler(BaseHTTPRequestHandler):
             message["tool_calls"] = [{"id": f"call_{i}", "type": "function",
                                       "function": {"name": c["name"], "arguments": json.dumps(c.get("arguments", {}))}} for i, c in enumerate(calls)]
         finish = item.get("finish", "tool_calls" if calls else "stop")
+        usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+        timings = {"prompt_ms": 5.0, "predicted_ms": 10.0, "prompt_n": prompt_tokens}
+        if body.get("stream"):
+            return self.send_stream(item, message, calls, finish, usage, timings)
         self.send_json(200, {
             "id": "fake", "object": "chat.completion", "model": "fake",
             "choices": [{"index": 0, "finish_reason": finish, "message": message}],
-            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
-            "timings": {"prompt_ms": 5.0, "predicted_ms": 10.0, "prompt_n": prompt_tokens},
+            "usage": usage, "timings": timings,
         })
+
+    def send_stream(self, item, message, calls, finish, usage, timings):
+        """The same reply as llama-server streams it (`stream: true`): the thinking and the text in small pieces, each
+        tool call's name and then its arguments' JSON in pieces, the finish reason, then (asked for with
+        `stream_options.include_usage`) a chunk with only the token counts and timings, and `[DONE]`. `piece_delay` in
+        a script item spaces the pieces out, for checking what a page sees while the reply is written."""
+        # No length is known up front, so the end of the body is the end of the connection
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        pause = float(item.get("piece_delay", 0))
+
+        def chunk(delta=None, finish_reason=None, extra=None):
+            body = {"id": "fake", "object": "chat.completion.chunk", "model": "fake",
+                    "choices": [] if delta is None and finish_reason is None else [{"index": 0, "delta": delta or {}, "finish_reason": finish_reason}]}
+            body.update(extra or {})
+            self.wfile.write(b"data: " + json.dumps(body).encode() + b"\n\n")
+            self.wfile.flush()
+            if pause:
+                time.sleep(pause)
+
+        def pieces(text, size=7):
+            return [text[i:i + size] for i in range(0, len(text), size)]
+
+        try:
+            for piece in pieces(message.get("reasoning_content", "")):
+                chunk({"reasoning_content": piece})
+            for piece in pieces(message.get("content", "")):
+                chunk({"content": piece})
+            for i, call in enumerate(calls):
+                chunk({"tool_calls": [{"index": i, "id": f"call_{i}", "type": "function", "function": {"name": call["name"], "arguments": ""}}]})
+                for piece in pieces(json.dumps(call.get("arguments", {})), 5):
+                    chunk({"tool_calls": [{"index": i, "function": {"arguments": piece}}]})
+            chunk(finish_reason=finish)
+            chunk(extra={"usage": usage, "timings": timings})
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # a stop drops the request mid-reply
+            pass
 
 
 if __name__ == "__main__":

@@ -510,13 +510,14 @@ def the_tools_switch_is_refused_during_a_run_and_applies_after():
     assert calls("main")[0]["has_tools"] and not calls("main")[1]["has_tools"], "the next request has no tools"
 
 
-def collect_events(seconds=10):
-    """Every event the backend sends this user while the stream is open, in a list that fills in the background"""
+def collect_events(seconds=10, token=None):
+    """Every event the backend sends this user (or the one `token` signs in) while the stream is open, in a list that
+    fills in the background"""
     import threading
     events = []
 
     def listen():
-        req = urllib.request.Request(BACKEND + "/api/live", headers={"Authorization": "Bearer " + TOKEN, "Accept": "text/event-stream"})
+        req = urllib.request.Request(BACKEND + "/api/live", headers={"Authorization": "Bearer " + (token or TOKEN), "Accept": "text/event-stream"})
         try:
             with urllib.request.urlopen(req, timeout=seconds) as r:
                 for line in r:
@@ -546,6 +547,83 @@ def seen_is_announced_only_when_there_was_something_to_clear():
     # another user's chat can't be marked, so nothing goes out for it
     status, _ = request(BACKEND, "/api/chats/seen", {"chat_id": chat}, token=token_for(2, "testuser", "user"))
     assert status in (404, 401), status
+
+
+@scenario
+def the_reply_is_streamed_and_the_stored_one_matches_the_pieces():
+    """Only the turn's own request streams; its thinking and text reach the page as reply_piece events, in order, and
+    put together they are what gets stored. A tool call's arguments arrive in pieces too and still parse."""
+    settings()
+    chat = new_chat("stream")
+    events = collect_events()
+    thinking = "Let me think about this carefully, step by step."
+    text = "Here is a fairly long answer, written out in many small pieces."
+    script({"tool_calls": [{"name": "os.get_date", "arguments": {"note": "some argument text"}}]},
+           {"thinking": thinking, "text": text, "piece_delay": 0.03})
+    s = turn(chat, "stream please")
+    eq(s["last_end"]["reason"], "answered", "run end")
+    eq(messages(chat)[1]["tool_calls"][0]["tool_name"], "os.get_date", "the streamed call")
+    eq(messages(chat)[-1]["content"], text, "the stored reply")
+    eq(messages(chat)[-1].get("thinking"), thinking, "the stored thinking")
+    time.sleep(0.3)
+    pieces = [e for e in events if e.get("chat_id") == chat and e["type"] == "reply_piece"]
+    eq("".join(p["thinking"] for p in pieces), thinking, "the thinking pieces")
+    eq("".join(p["text"] for p in pieces), text, "the text pieces")
+    assert 2 <= len(pieces) < len(text) // 7, f"pieces are batched, not one per token: {len(pieces)}"
+    assert all(c["stream"] == (c["kind"] == "main") for c in calls()), "only the turn streams"
+
+
+@scenario
+def a_page_opened_midway_gets_the_reply_so_far_and_the_pieces_continue_it():
+    """The state read during a reply carries what was sent of it; the pieces numbered after its `seq` add exactly the
+    rest, nothing twice, nothing missing. Once the reply is stored the state has none."""
+    settings()
+    chat = new_chat("midway")
+    events = collect_events()
+    thinking = "thinking it over " * 6
+    text = "A reply long enough to be read in the middle of being written, piece by piece."
+    script({"thinking": thinking, "text": text, "piece_delay": 0.04})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "go"})
+    wait_for(lambda: (state(chat).get("reply") or {}).get("seq", 0) >= 3, what="a reply under way")
+    so = state(chat)["reply"]
+    assert so["number"] == 1 and so["thinking"] and len(so["thinking"]) < len(thinking), so
+    wait_idle(chat)
+    time.sleep(0.3)
+    later = [e for e in events if e.get("chat_id") == chat and e["type"] == "reply_piece" and e["seq"] > so["seq"]]
+    eq([e["seq"] for e in later], list(range(so["seq"] + 1, so["seq"] + 1 + len(later))), "the pieces after it, in order")
+    eq(so["thinking"] + "".join(e["thinking"] for e in later), thinking, "the thinking put together")
+    eq(so["text"] + "".join(e["text"] for e in later), text, "the text put together")
+    eq(state(chat).get("reply"), None, "no reply in the state once it is stored")
+
+
+@scenario
+def another_users_stream_hears_nothing_of_a_streamed_reply():
+    """Each stream remembers whose chats are whose: the owner's gets every piece, another user's none."""
+    settings()
+    chat = new_chat("private")
+    other = token_for(2, "testuser", "user")
+    if request(BACKEND, "/api/agent/runs", token=other)[0] == 401:
+        print("      (no second user in this database: 401, ownership not checked)")
+        return
+    mine, theirs = collect_events(), collect_events(token=other)
+    script({"thinking": "private thoughts " * 5, "text": "A private reply, in pieces.", "piece_delay": 0.02})
+    turn(chat, "go")
+    time.sleep(0.3)
+    assert any(e["type"] == "reply_piece" and e.get("chat_id") == chat for e in mine), "the owner's stream has the pieces"
+    eq([e["type"] for e in theirs if e.get("chat_id") == chat], [], "another user's stream")
+
+
+@scenario
+def a_regenerated_reply_restarts_the_live_one():
+    """An empty reply is asked again; the page is told to drop what it showed of the first one."""
+    settings()
+    chat = new_chat("restart")
+    events = collect_events()
+    script({"thinking": "hmm", "text": ""}, {"text": "Second try."})
+    eq(turn(chat, "go")["last_end"]["reason"], "answered", "run end")
+    time.sleep(0.3)
+    mine = [e["type"] for e in events if e.get("chat_id") == chat and e["type"] in ("reply_piece", "reply_restart")]
+    eq(mine, ["reply_piece", "reply_restart", "reply_piece"], "a piece, the restart, the new reply")
 
 
 @scenario
