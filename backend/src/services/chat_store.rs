@@ -709,6 +709,18 @@ impl ChatStore {
         Ok(())
     }
 
+    /// The user's listed chats (see `listed_chats`) whose last run ended in something they haven't looked at yet:
+    /// the count on the tab icon.
+    pub async fn unseen_chat_ids(&self, user_id: i64) -> Result<Vec<i64>, ChatStoreErrors> {
+        Ok(Self::listed_chats(user_id)
+            .filter(chats::Column::UnseenEnd.is_not_null())
+            .select_only()
+            .column(chats::Column::Id)
+            .into_tuple()
+            .all(&self.db)
+            .await?)
+    }
+
     /// Clears the chat's `unseen_end`. Whether there was one to clear: the caller tells other pages only then.
     /// Ownership is the caller's responsibility.
     pub async fn clear_unseen_end(&self, chat_id: i64) -> Result<bool, ChatStoreErrors> {

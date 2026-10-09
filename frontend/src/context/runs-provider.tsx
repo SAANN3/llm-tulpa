@@ -7,8 +7,10 @@ import {getRuns} from '../api/agent/runs'
 import {getTurnState} from '../api/agent/turn-state'
 import type {AgentToolCall, RunEnded} from '../api/agent/types'
 import {getMessages} from '../api/chats/messages'
+import {getUnseenChats} from '../api/chats/unseen'
 import {setChatSeen} from '../api/chats/set-seen'
 import {useServerEvent} from '../hooks/use-server-events.ts'
+import {setFaviconUnread} from '../utils/favicon.ts'
 import {notify} from '../utils/notifications'
 
 const NOTIFICATION_BODY_MAX_CHARS = 100
@@ -90,6 +92,25 @@ export const RunsProvider = ({children}: { children: ReactNode }) => {
         else setRuns([])
     }, [token, refreshRuns])
 
+    // How many chats have news, for the tab icon. Read again from the backend after anything that can change it,
+    // rather than worked out here: which chats count (not a sub-agent's, not a plugin's) is the backend's to say.
+    // A later read that answers first wins; an older one arriving after it is dropped.
+    const unseenSeqRef = useRef(0)
+    const refreshUnseen = useCallback(async () => {
+        const seq = ++unseenSeqRef.current
+        try {
+            const ids = await getUnseenChats()
+            if (seq === unseenSeqRef.current) setFaviconUnread(ids.length)
+        } catch {
+            // The next event tries again
+        }
+    }, [])
+
+    useEffect(() => {
+        if (token) void refreshUnseen()
+        else setFaviconUnread(0)
+    }, [token, refreshUnseen])
+
     // Opening a chat, or coming back to its tab, is looking at it
     useEffect(() => {
         if (token && openChatId != null && !document.hidden) markSeen(openChatId)
@@ -100,24 +121,32 @@ export const RunsProvider = ({children}: { children: ReactNode }) => {
         const onVisible = () => {
             if (document.visibilityState !== 'visible' || !token) return
             void refreshRuns()
+            void refreshUnseen()
             if (openChatIdRef.current != null) markSeen(openChatIdRef.current)
         }
         document.addEventListener('visibilitychange', onVisible)
         return () => document.removeEventListener('visibilitychange', onVisible)
-    }, [token, refreshRuns, markSeen])
+    }, [token, refreshRuns, refreshUnseen, markSeen])
 
     // The stream (re)opened: events sent while it was down are gone
-    useServerEvent('stream_open', () => void refreshRuns())
+    useServerEvent('stream_open', () => {
+        void refreshRuns()
+        void refreshUnseen()
+    })
+    useServerEvent('chat_seen', () => void refreshUnseen())
+    useServerEvent('chat_deleted', () => void refreshUnseen())
 
     useServerEvent('run_started', (event) => {
         eventSeqRef.current += 1
         setRuns((prev) => [...prev.filter((run) => run.chatId !== event.chat_id), {chatId: event.chat_id, parentChatId: event.parent_chat_id}])
+        void refreshUnseen()
     })
 
     useServerEvent('run_ended', (event) => {
         eventSeqRef.current += 1
         setRuns((prev) => prev.filter((run) => run.chatId !== event.chat_id))
         if (openChatIdRef.current === event.chat_id && !document.hidden) markSeen(event.chat_id)
+        void refreshUnseen()
         void notifyEnd(event.chat_id, event)
     })
 

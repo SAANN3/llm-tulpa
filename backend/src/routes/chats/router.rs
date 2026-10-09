@@ -27,6 +27,7 @@ use super::set_model::*;
 use super::set_profile::*;
 use super::set_seen::*;
 use super::set_tools::*;
+use super::unseen::*;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -47,11 +48,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/facts", post(edit_facts))
         .route("/summary", post(edit_summary))
         .route("/notes", post(edit_notes))
+        .route("/unseen", get(unseen_chats))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models, chat_context, edit_facts, edit_summary, edit_notes),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models, chat_context, edit_facts, edit_summary, edit_notes, unseen_chats),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -84,6 +86,7 @@ pub fn router() -> Router<Arc<AppState>> {
         EditFactsRequest,
         EditSummaryRequest,
         EditNotesRequest,
+        UnseenChatsResponse,
     )),
 )]
 pub struct ApiDoc;
