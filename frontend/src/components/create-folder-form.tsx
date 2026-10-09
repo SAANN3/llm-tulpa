@@ -3,7 +3,7 @@ import {useState} from 'react'
 import '../styles/folder-picker.scss'
 import {folderName} from '../api/prompts/folder-name'
 import type {FolderOut} from '../api/folders/types'
-import {Button, Div, Input, Label} from './primitives'
+import {ChoiceGroup, Div, Input, Label} from './primitives'
 import {PopupActions} from './popups/base/popup-actions.tsx'
 
 export interface CreateFolderFormProps {
@@ -43,17 +43,19 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
 
     return (
         <Div className="vbox folder-picker__create">
-            <Div className="folder-picker__mode">
-                <Button variant={mode === 'describe' ? undefined : 'secondary'} text="Describe it" onClicked={() => setMode('describe')}/>
-                <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write name" onClicked={() => setMode('name')}/>
-            </Div>
+            <ChoiceGroup className="folder-picker__mode" label="How to name the folder" chosen={mode}
+                         onChosen={(chosen) => setMode(chosen as CreateMode)}
+                         options={[{value: 'describe', label: 'Describe it'}, {value: 'name', label: 'Write a name'}]}/>
             <Input
                 autoFocus
                 text={draft}
                 onChanged={setDraft}
-                placeholder={mode === 'describe' ? "What's this folder for? We'll name it." : 'Folder name'}
+                placeholder={mode === 'describe' ? 'What is this folder for?' : 'Folder name'}
+                onKeyDown={(e) => e.key === 'Enter' && void onCreate()}
             />
-            {error ? <Label variant="secondary" className="folder-picker__error" text={error}/> : null}
+            {error
+                ? <Label variant="secondary" className="folder-picker__error" text={error}/>
+                : mode === 'describe' ? <Label variant="secondary" className="field__help" text="The model names it from your description."/> : null}
             <PopupActions
                 emphasis="confirm"
                 confirmLabel={generating ? 'Thinking…' : 'Create'}

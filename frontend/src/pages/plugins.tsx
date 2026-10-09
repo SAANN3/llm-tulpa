@@ -16,6 +16,16 @@ import {errorReason} from '../utils/error-reason.ts'
 
 const pluginKey = (plugin: PluginInfo): string => `${plugin.plugin_name}/${plugin.plugin_subname}`;
 
+/** A name as a title: a short one (an abbreviation, `vk`) in capitals, a longer one capitalized */
+const titled = (name: string): string => (name.length <= 2 ? name.toUpperCase() : name[0].toUpperCase() + name.slice(1))
+
+/** The plugins by kind, in the order the backend lists them (by kind, then name) */
+const byKind = (plugins: PluginInfo[]): [string, PluginInfo[]][] => {
+    const kinds = new Map<string, PluginInfo[]>()
+    plugins.forEach((p) => kinds.set(p.plugin_name, [...(kinds.get(p.plugin_name) ?? []), p]))
+    return [...kinds]
+}
+
 const Plugins = () => {
     useDocumentTitle('Plugins')
     const navigate = useNavigate()
@@ -83,25 +93,30 @@ const Plugins = () => {
                             <Label variant="secondary" text="No plugins registered."/>
                         ) : (
                             <Div className="vbox plugins__list">
-                                {plugins.map((plugin) => (
-                                    <Div key={pluginKey(plugin)} className="vbox plugins__item">
-                                        <Div className="list-row plugins__row">
-                                            <Div className="vbox plugins__row-main">
-                                                <Label className="plugins__name" text={plugin.plugin_subname}/>
-                                                <Label className="mono plugins__subname" variant="secondary"
-                                                       text={plugin.plugin_name}/>
-                                            </Div>
-                                            <Div className="plugins__controls">
-                                                <ToggleSwitch toggled={plugin.enabled}
-                                                              onToggled={(enabled) => onToggle(plugin, enabled)}/>
-                                                <Div onClick={() => openSettings(plugin)} className="plugins__gear">
-                                                    <Gear width={16} height={16}/>
+                                {byKind(plugins).map(([kind, list]) => (
+                                    <Div key={kind} className="vbox plugins__kind">
+                                        <Label variant="secondary" className="plugins__kind-name" text={kind}/>
+                                        {list.map((plugin) => (
+                                            <Div key={pluginKey(plugin)} className="vbox plugins__item">
+                                                <Div className="plugins__row">
+                                                    <Div className="vbox plugins__row-main">
+                                                        <Label className="plugins__name" text={titled(plugin.plugin_subname)}/>
+                                                        <Label className="plugins__summary" variant="secondary" text={plugin.summary}/>
+                                                    </Div>
+                                                    <Div className="plugins__controls">
+                                                        <ToggleSwitch toggled={plugin.enabled}
+                                                                      onToggled={(enabled) => onToggle(plugin, enabled)}/>
+                                                        <Button variant="secondary" className="plugins__gear" title={`${titled(plugin.plugin_subname)} settings`}
+                                                                onClicked={() => openSettings(plugin)}>
+                                                            <Gear width={18} height={18}/>
+                                                        </Button>
+                                                    </Div>
                                                 </Div>
+                                                {notice?.key === pluginKey(plugin) ? (
+                                                    <Label className="plugins__notice" text={notice.message}/>
+                                                ) : null}
                                             </Div>
-                                        </Div>
-                                        {notice?.key === pluginKey(plugin) ? (
-                                            <Label className="plugins__notice" text={notice.message}/>
-                                        ) : null}
+                                        ))}
                                     </Div>
                                 ))}
                             </Div>

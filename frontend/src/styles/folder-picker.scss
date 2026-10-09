@@ -33,9 +33,9 @@
   align-self: center;
 }
 
+// The choice group keeps its own width rather than stretching across the form
 .folder-picker__mode {
-  display: flex;
-  gap: $space-2;
+  align-self: flex-start;
 }
 
 .folder-picker__error {

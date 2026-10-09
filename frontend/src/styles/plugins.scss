@@ -10,7 +10,7 @@
 }
 
 .plugins__panel {
-  width: 460px;
+  width: 520px;
   max-width: calc(100vw - #{$space-8});
 }
 
@@ -19,45 +19,63 @@
 }
 
 .plugins__list {
-  gap: 2px;
-  max-height: 50vh;
+  gap: $space-4;
+  max-height: 55vh;
   overflow-y: auto;
+}
+
+.plugins__kind-name {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .plugins__item {
   gap: $space-1;
+  border-bottom: $line-border dashed var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
 }
 
 .plugins__row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  cursor: default;
+  gap: $space-4;
+  padding: $space-2 0;
 }
 
 .plugins__row-main {
   gap: 2px;
+  min-width: 0;
 }
 
 .plugins__name {
   font-size: 15px;
 }
 
-.plugins__subname {
-  font-size: 11px;
-  opacity: 0.6;
+.plugins__summary {
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 .plugins__controls {
   display: flex;
   align-items: center;
   gap: $space-3;
+  flex-shrink: 0;
 }
 
-.plugins__gear {
-  cursor: pointer;
-  display: flex;
-  opacity: 0.7;
+// A framed button in the text's full color, the size of the switch beside it; nested to outrank the button padding
+.plugins .plugins__gear {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .plugins__notice {

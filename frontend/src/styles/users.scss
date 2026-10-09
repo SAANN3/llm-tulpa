@@ -18,25 +18,45 @@
   gap: $space-5;
 }
 
+.users__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.users__count {
+  font-size: 12px;
+}
+
+.users .users__new {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+// One frame around the list, a line between rows, every row the same height
 .users__list {
   display: flex;
   flex-direction: column;
-  gap: $space-2;
+  border: $line-border solid var(--color-border);
 }
 
 .users__row {
   display: flex;
   align-items: center;
   gap: $space-3;
-  padding: $space-2 $space-3;
-  border: $line-border solid var(--color-border);
+  height: 46px;
+  padding: 0 $space-2 0 $space-3;
   box-sizing: border-box;
-  // As tall as a row with a Delete button, so your own row (which has none) is the same height
-  min-height: 54px;
+
+  & + & {
+    border-top: $line-border solid var(--color-border);
+  }
 }
 
 .users__name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -52,13 +72,29 @@
   font-size: 12px;
 }
 
+// The trash and, on your own row, a space as wide, so the role lines up down the list; nested to outrank the button
+.users .users__delete,
+.users__action-space {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.users .users__delete {
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  box-shadow: none;
+
+  &:hover {
+    border-color: currentColor;
+    color: var(--color-danger);
+  }
+}
+
 .users__error {
   color: var(--color-danger);
   font-size: 12px;
-}
-
-.users__actions {
-  display: flex;
-  justify-content: space-between;
-  gap: $space-2;
 }

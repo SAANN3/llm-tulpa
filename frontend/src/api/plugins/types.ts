@@ -12,4 +12,6 @@ export interface PluginInfo {
     plugin_subname: string
     enabled: boolean
     settings: Record<string, unknown> | null
+    /** What the plugin does, in one short line */
+    summary: string
 }
