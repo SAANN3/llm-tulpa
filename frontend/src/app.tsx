@@ -112,7 +112,7 @@ const App = () => (
                                         <Route path="/search" element={<Search/>}/>
                                         <Route path="/folders" element={<Folders/>}/>
                                         <Route path="/folders/:id" element={<Folder/>}/>
-                                        <Route path="/settings" element={<Settings/>}/>
+                                        <Route path="/settings/:tab?" element={<Settings/>}/>
                                         <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
                                         <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
                                         <Route path="/models/:tab?" element={<Models/>}/>

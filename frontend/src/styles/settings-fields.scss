@@ -74,3 +74,105 @@
   gap: $space-2;
   cursor: pointer;
 }
+
+// A setting in Settings: name and help on the left, the control at the right edge; a dashed line between rows
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: $space-6;
+  row-gap: $space-2;
+  padding: $space-3 0;
+  border-bottom: $line-border dashed var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.settings-row--full {
+  grid-template-columns: minmax(0, 1fr);
+
+  .settings-row__control {
+    justify-self: stretch;
+  }
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-row__help {
+  font-size: 12.5px;
+  line-height: 1.45;
+  opacity: 0.6;
+  max-width: 80ch;
+}
+
+.settings-row__help--accent {
+  opacity: 1;
+  color: var(--color-tertiary);
+}
+
+.settings-row__control {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.settings-row__value {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.settings-row__number {
+  width: 120px;
+}
+
+// The name takes the row, the timezone a few characters at its right end
+.settings-row__name-tz {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  width: 100%;
+}
+
+.settings-row__name {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row__tz {
+  width: 64px;
+  text-align: right;
+}
+
+.settings-row__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-5;
+}
+
+.settings-row__choice {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  cursor: pointer;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section__title {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: $space-1;
+}

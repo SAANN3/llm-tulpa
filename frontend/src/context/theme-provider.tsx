@@ -34,6 +34,17 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
         setTimeFormatState(format)
     }
 
+    // Per browser, off until picked
+    const [sidebarSeeThrough, setSidebarSeeThroughState] = useState(() => localStorage.getItem('sidebar_see_through') === 'on')
+    const setSidebarSeeThrough = (seeThrough: boolean) => {
+        localStorage.setItem('sidebar_see_through', seeThrough ? 'on' : 'off')
+        setSidebarSeeThroughState(seeThrough)
+    }
+
+    useEffect(() => {
+        document.documentElement.dataset.sidebar = sidebarSeeThrough ? 'see-through' : 'solid'
+    }, [sidebarSeeThrough])
+
     useEffect(() => {
         localStorage.setItem('theme_name', themeName)
         document.documentElement.dataset.theme = themeName
@@ -47,7 +58,7 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
     }, [background])
 
     return (
-        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground, timeFormat, setTimeFormat}}>
+        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground, timeFormat, setTimeFormat, sidebarSeeThrough, setSidebarSeeThrough}}>
             {children}
         </ThemeContext.Provider>
     )

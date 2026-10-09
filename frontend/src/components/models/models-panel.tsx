@@ -136,7 +136,7 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
             {isOwner ? <ModelFolderField onChanged={onChanged}/> : null}
             {isOwner ? <ServerSettingsField/> : null}
             <Label variant="secondary" className="field__help"
-                   text="Loading a model here doesn't make it your default. New chats start on the model and launch profile chosen in Settings, and load them if something else is loaded. To change the default, use Settings → Default model."/>
+                   text="Loading a model here doesn't make it your default. New chats start on the model and launch profile chosen in Settings, and load them if something else is loaded. To change the default, use Settings → Models & keys → Default model."/>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
             {note ? <Label variant="secondary" className="models__meta" text={note}/> : null}
 

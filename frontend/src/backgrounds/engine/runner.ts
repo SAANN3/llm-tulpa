@@ -78,11 +78,16 @@ export class BackgroundRunner {
         this.effect?.init(false)
     }
 
-    dispose(): void {
+    /** Stops drawing, until the next `setEffect` */
+    stop(): void {
         this.loading++
         cancelAnimationFrame(this.frame)
         this.frame = 0
         this.effect = null
+    }
+
+    dispose(): void {
+        this.stop()
         document.removeEventListener('visibilitychange', this.onVisibility)
     }
 

@@ -8,7 +8,7 @@ import {useGoBack} from '../../hooks/use-go-back.ts'
 
 const SystemPrompt = () => {
     useDocumentTitle('System Prompt')
-    const goBack = useGoBack('/settings')
+    const goBack = useGoBack('/settings/behaviour')
     const [loading, setLoading] = useState(true)
     const [defaultPrompt, setDefaultPrompt] = useState('')
     const [custom, setCustom] = useState<string | null>(null)

@@ -1,4 +1,5 @@
 import {useState} from 'react'
+import type {ReactNode} from 'react'
 import '../styles/settings-fields.scss'
 import {Button, Div, Input, Label, RadioButton, ToggleSwitch} from './primitives'
 import {useTheme} from '../context/use-theme.ts'
@@ -9,43 +10,57 @@ import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 import {PasswordInput} from './password-input.tsx'
 
-/** A field label in the small-caps style used above every input in this panel */
-const FieldLabel = ({text}: { text: string }) => <Label className="field__label" text={text}/>;
+export interface SettingsRowProps {
+    label: string
+    /** What the setting does, under its name */
+    help?: string
+    /** Draws the help in the accent: a warning that applies now (a risky switch is on, a value is wrong) */
+    accent?: boolean
+    /** The control under the text, as wide as the row, for one that needs the room (a name field) */
+    full?: boolean
+    children: ReactNode
+}
 
-/** Helper/status text under a field */
-const FieldHelp = ({text, accent, wide}: { text: string; accent?: boolean; wide?: boolean }) => {
-    const className = ['field__help', accent && 'field__help--accent', wide && 'field__help--wide'].filter(Boolean).join(' ')
-    return <Label variant="secondary" className={className} text={text}/>
-};
+/** One setting: its name and help on the left, its control at the right edge; or, `full`, the control under them
+ * across the row. Every row in Settings is one of the two, so the controls line up down the page. */
+export const SettingsRow = ({label, help, accent, full, children}: SettingsRowProps) => (
+    <Div className={`settings-row${full ? ' settings-row--full' : ''}`}>
+        <Div className="settings-row__text">
+            <Label className="settings-row__label" text={label}/>
+            {help ? <Label variant="secondary" className={`settings-row__help${accent ? ' settings-row__help--accent' : ''}`} text={help}/> : null}
+        </Div>
+        <Div className="settings-row__control">{children}</Div>
+    </Div>
+);
 
-export interface NameTimezoneFieldsProps {
+/** A titled group of rows */
+export const SettingsSection = ({title, children}: { title: string; children: ReactNode }) => (
+    <Div className="settings-section">
+        <Label className="settings-section__title" text={title}/>
+        {children}
+    </Div>
+);
+
+export interface NameTimezoneRowProps {
     name: string
     onNameChanged: (name: string) => void
     timezoneText: string
     onTimezoneChanged: (text: string) => void
 }
 
-/** Name + timezone fields — Settings step 1 / Setup step 1 */
-export const NameTimezoneFields = ({name, onNameChanged, timezoneText, onTimezoneChanged}: NameTimezoneFieldsProps) => {
+/** The name across the row and the timezone as a short UTC offset at its right end */
+export const NameTimezoneRow = ({name, onNameChanged, timezoneText, onTimezoneChanged}: NameTimezoneRowProps) => {
     const tz = validateTimezone(timezoneText)
-
+    const nameMissing = name.trim().length === 0
     return (
-        <Div className="field__group">
-            <Div className="field">
-                <FieldLabel text="Name"/>
-                <Input text={name} onChanged={onNameChanged} placeholder="Enter your name"/>
-                <FieldHelp text="This name will be used when talking with the AI."/>
+        <SettingsRow label="Name and timezone" full accent={nameMissing || !tz.valid}
+                     help={nameMissing ? 'Enter a name.' : tz.valid ? 'The model is told your name, and the time where you are.' : tz.message}>
+            <Div className="settings-row__name-tz">
+                <Input className="settings-row__name" text={name} onChanged={onNameChanged} placeholder="Your name"/>
+                <Label variant="secondary" text="UTC"/>
+                <Input className="settings-row__tz" text={timezoneText} onChanged={onTimezoneChanged} placeholder="+3"/>
             </Div>
-            <Div className="field">
-                <FieldLabel text="Timezone"/>
-                <Div className="field__control">
-                    <Input className="field__input--tz" text={timezoneText} onChanged={onTimezoneChanged}
-                           placeholder="UTC offset"/>
-                    {tz.echo ? <Label variant="secondary" text={tz.echo}/> : null}
-                </Div>
-                <FieldHelp text={tz.message} accent={!tz.valid}/>
-            </Div>
-        </Div>
+        </SettingsRow>
     )
 };
 
@@ -67,14 +82,10 @@ export const ActiveModelField = ({provider, model, launchProfileId, onChosen}: A
     const profileName = profiles.find((p) => p.id === shownProfileId)?.name ?? null
 
     return (
-        <Div className="field">
-            <FieldLabel text="Default model"/>
-            <Div className="field__control">
-                <Label text={model ?? 'none selected'}/>
-                <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
-            </Div>
-            {profileName ? <Label variant="secondary" className="field__help" text={`Launch profile: ${profileName}`}/> : null}
-            <FieldHelp text="New chats start with this model. Each chat can be switched with the model button under its message box."/>
+        <SettingsRow label="Default model"
+                     help="New chats start with this model. Each chat can be switched with the model button under its message box.">
+            <Label className="settings-row__value" text={profileName ? `${model ?? 'none selected'} · ${profileName}` : model ?? 'none selected'}/>
+            <Button variant="secondary" text="Change" onClicked={() => setOpen(true)}/>
             <ChooseModelPopup
                 open={open}
                 provider={provider}
@@ -90,7 +101,7 @@ export const ActiveModelField = ({provider, model, launchProfileId, onChosen}: A
                 }}
                 onClose={() => setOpen(false)}
             />
-        </Div>
+        </SettingsRow>
     )
 };
 
@@ -105,131 +116,73 @@ export const HfTokenField = ({hasToken, onSave}: HfTokenFieldProps) => {
     const [token, setToken] = useState('')
 
     return (
-        <Div className="field">
-            <FieldLabel text="Hugging Face token"/>
-            <Div className="field__control">
-                <PasswordInput text={token} onChanged={setToken} placeholder={hasToken ? 'a token is set' : 'hf_…'}/>
-                <Button variant="secondary" text={token.trim() ? 'Save' : 'Clear'} disabled={!token.trim() && !hasToken}
-                        onClicked={() => onSave(token.trim()).then(() => setToken(''))}/>
-            </Div>
-            <FieldHelp text="Only needed to download gated models. Create one at huggingface.co/settings/tokens (read access)."/>
-        </Div>
+        <SettingsRow label="Hugging Face token"
+                     help="Only needed to download gated models. Create one at huggingface.co/settings/tokens (read access).">
+            <PasswordInput text={token} onChanged={setToken} placeholder={hasToken ? 'a token is set' : 'hf_…'}/>
+            <Button variant="secondary" text={token.trim() ? 'Save' : 'Clear'} disabled={!token.trim() && !hasToken}
+                    onClicked={() => onSave(token.trim()).then(() => setToken(''))}/>
+        </SettingsRow>
     )
 };
 
 /** 24-hour or 12-hour times; applies at once and is kept in this browser, like the theme */
-export const TimeFormatField = () => {
+export const TimeFormatChoice = () => {
     const {timeFormat, setTimeFormat} = useTheme()
     const sample = new Date(2026, 0, 1, 14, 11, 12)
     return (
-        <Div className="field">
-            <Label className="field__label" text="Time format"/>
-            <Div className="field__choices">
-                {(['24h', '12h'] as const).map((format) => (
-                    <label key={format} className="field__choice">
-                        <RadioButton name="time-format" value={format} checked={timeFormat === format} onChanged={() => setTimeFormat(format)}/>
-                        <span>{formatTime(sample, format)}</span>
-                    </label>
-                ))}
-            </Div>
+        <Div className="settings-row__choices">
+            {(['24h', '12h'] as const).map((format) => (
+                <label key={format} className="settings-row__choice">
+                    <RadioButton name="time-format" value={format} checked={timeFormat === format} onChanged={() => setTimeFormat(format)}/>
+                    <span>{formatTime(sample, format)}</span>
+                </label>
+            ))}
         </Div>
     )
-}
+};
 
-export interface NotificationsFieldProps {
+export interface SwitchFieldProps {
     enabled: boolean
     onToggle: (enabled: boolean) => void
 }
 
-/** Notifications toggle — Settings step 3 / Setup step 3 */
-export const NotificationsField = ({enabled, onToggle}: NotificationsFieldProps) => (
-    <Div className="field">
-        <Div className="field__row">
-            <Label className="field__row-label" text="Receive notifications when a message is ready"/>
-            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-        </Div>
-        <FieldHelp text="Asks your browser for permission — you can change this later in Settings." wide/>
-    </Div>
+/** Notifications toggle */
+export const NotificationsField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Notifications" help="When a reply is ready and the page is not in view. Asks your browser for permission.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
 );
-
-export interface AutoConfirmFieldProps {
-    enabled: boolean
-    onToggle: (enabled: boolean) => void
-}
 
 /** Auto-confirm toggle — saved with the rest of the user's settings */
-export const AutoConfirmField = ({enabled, onToggle}: AutoConfirmFieldProps) => (
-    <Div className="field">
-        <Div className="field__row">
-            <Label className="field__row-label" text="Auto-confirm tool permissions"/>
-            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-        </Div>
-        <FieldHelp
-            text="Skips the confirmation prompt and automatically allows whatever the model asks to do — only turn this on if you trust it to run unsupervised."
-            accent={enabled}
-            wide
-        />
-    </Div>
+export const AutoConfirmField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Auto-confirm tool permissions" accent={enabled}
+                 help="Skips the confirmation prompt and automatically allows whatever the model asks to do — only turn this on if you trust it to run unsupervised.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
 );
-
-export interface TrimOldThinkingFieldProps {
-    enabled: boolean
-    onToggle: (enabled: boolean) => void
-}
 
 /** Trim-old-thinking toggle — saved with the rest of the user's settings */
-export const TrimOldThinkingField = ({enabled, onToggle}: TrimOldThinkingFieldProps) => (
-    <Div className="field">
-        <Div className="field__row">
-            <Label className="field__row-label" text="Shorten old thinking in long chats"/>
-            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-        </Div>
-        <FieldHelp
-            text="When a long chat nears the model's context limit, the model's earlier reasoning is cut to its last lines and the newest reasoning is kept longer. This frees room without summarizing, but the model may re-check things it had already worked out."
-            accent={enabled}
-            wide
-        />
-    </Div>
+export const TrimOldThinkingField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Shorten old thinking in long chats" accent={enabled}
+                 help="When a long chat nears the model's context limit, the model's earlier reasoning is cut to its last lines and the newest reasoning is kept longer. This frees room without summarizing, but the model may re-check things it had already worked out.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
 );
-
-export interface UseToolsFieldProps {
-    enabled: boolean
-    onToggle: (enabled: boolean) => void
-}
 
 /** Whether new chats send the model its tools — each chat has its own switch afterwards */
-export const UseToolsField = ({enabled, onToggle}: UseToolsFieldProps) => (
-    <Div className="field">
-        <Div className="field__row">
-            <Label className="field__row-label" text="Use tools in new chats"/>
-            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-        </Div>
-        <FieldHelp
-            text="Tools let the model read and write files, run commands and look things up. Their definitions take about 9,000 tokens of every request, so a small model or a small context window does better without them. Only new chats take this; a chat has its own switch in its header."
-            accent={!enabled}
-            wide
-        />
-    </Div>
+export const UseToolsField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Use tools in new chats" accent={!enabled}
+                 help="Tools let the model read and write files, run commands and look things up. Their definitions take about 9,000 tokens of every request, so a small model or a small context window does better without them. Only new chats take this; a chat has its own switch in its menu.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
 );
 
-export interface DebugFieldProps {
-    enabled: boolean
-    onToggle: (enabled: boolean) => void
-}
-
 /** The debug switch of this browser: it applies at once and isn't part of the saved settings */
-export const DebugField = ({enabled, onToggle}: DebugFieldProps) => (
-    <Div className="field">
-        <Div className="field__row">
-            <Label className="field__row-label" text="Debug output in this browser"/>
-            <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-        </Div>
-        <FieldHelp
-            text="Shows diagnostic details about what the app is doing: in the browser console, and on screen where a page offers them. For finding problems; it adds noise, so leave it off otherwise. It applies to this browser only, takes effect at once and is not part of the saved settings."
-            accent={enabled}
-            wide
-        />
-    </Div>
+export const DebugField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Debug output in this browser" accent={enabled}
+                 help="Shows diagnostic details about what the app is doing: in the browser console, and on screen where a page offers them. For finding problems; it adds noise, so leave it off otherwise. It applies to this browser only, takes effect at once and is not part of the saved settings.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
 );
 
 export interface MaxTurnStepsFieldProps {
@@ -241,16 +194,11 @@ export interface MaxTurnStepsFieldProps {
 export const MaxTurnStepsField = ({text, onChanged}: MaxTurnStepsFieldProps) => {
     const parsed = parseMaxTurnSteps(text)
     return (
-        <Div className="field">
-            <FieldLabel text="Step limit per turn"/>
-            <Input className="field__input--tz" text={text} onChanged={onChanged} placeholder="No limit"/>
-            <FieldHelp
-                text={parsed.valid
-                    ? 'A turn is a series of model calls and tool calls. At this many, the model is told to write down where it got to and the turn stops until you continue. Empty or 0 means no limit.'
-                    : 'A whole number from 0 to 10,000.'}
-                accent={!parsed.valid}
-                wide
-            />
-        </Div>
+        <SettingsRow label="Step limit per turn" accent={!parsed.valid}
+                     help={parsed.valid
+                         ? 'A turn is a series of model calls and tool calls. At this many, the model is told to write down where it got to and the turn stops until you continue. Empty or 0 means no limit.'
+                         : 'A whole number from 0 to 10,000.'}>
+            <Input className="settings-row__number" text={text} onChanged={onChanged} placeholder="No limit"/>
+        </SettingsRow>
     )
 };

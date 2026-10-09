@@ -1,0 +1,118 @@
+@use 'tokens' as *;
+
+// The theme list, the background list, and the preview with its settings taking the rest
+.appearance {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 230px 230px minmax(0, 1fr);
+  gap: $space-4;
+}
+
+.appearance__list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: $line-border solid var(--color-border);
+}
+
+// The list's own top line: no frame or shadow of its own (nested with the variant attribute to outrank the input's)
+.appearance__list > .appearance__filter[data-variant] {
+  border: none;
+  border-bottom: $line-border solid var(--color-border);
+  box-shadow: none;
+}
+
+.appearance__items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: $space-2;
+}
+
+.appearance__group {
+  display: block;
+  padding: $space-2 $space-3 2px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.appearance__item {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  padding: 4px $space-3;
+  cursor: pointer;
+}
+
+.appearance__item--pointed {
+  background: var(--color-surface-strong);
+}
+
+.appearance__item--on {
+  color: var(--color-tertiary);
+
+  &::after {
+    content: '●';
+    font-size: 10px;
+  }
+}
+
+.appearance__empty {
+  display: block;
+  padding: $space-3;
+  font-size: 12px;
+}
+
+.appearance__swatches {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.appearance__swatch {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: $line-border solid var(--color-border);
+
+  & + & {
+    border-left: none;
+  }
+}
+
+.appearance__swatch--secondary {
+  background: var(--color-secondary);
+}
+
+.appearance__swatch--primary {
+  background: var(--color-primary);
+}
+
+.appearance__swatch--tertiary {
+  background: var(--color-tertiary);
+}
+
+.appearance__side {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  min-height: 0;
+  min-width: 0;
+}
+
+// Two settings to a line: name, control, name, control
+.appearance__look {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: $space-2 $space-4;
+  font-size: 13px;
+}
+
+.appearance__inline {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: 12px;
+}

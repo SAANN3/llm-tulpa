@@ -10,21 +10,41 @@
 }
 
 .settings__panel {
-  width: min(460px, calc(70vw - #{$space-8}));
+  width: min(1200px, calc(100vw - #{$space-8}));
 }
 
+// One height for every tab, so switching tabs never resizes the panel: a tab that doesn't fit scrolls inside, and
+// Back and Save stay at the bottom
 .settings__body {
   display: flex;
   flex-direction: column;
-  gap: $space-6;
+  gap: $space-4;
+  height: min(760px, calc(100vh - 200px));
+}
+
+.settings__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  // Keeps what sits at the right edge clear of the scrollbar
+  padding-right: $space-3;
+}
+
+// Appearance is laid out to fit the panel (its lists scroll on their own), so the tab itself never scrolls
+.settings__content--fill {
+  overflow: hidden;
+  padding-right: 0;
 }
 
 .settings__actions {
+  flex-shrink: 0;
   display: flex;
+  justify-content: flex-end;
   gap: $space-4;
-  margin-top: $space-2;
 }
 
 .settings__action {
-  flex: 1;
+  min-width: 120px;
 }

@@ -64,3 +64,12 @@ export const themeDisplayNames: Record<ThemeName, string> = {
     phosphor: 'Phosphor',
     'high-contrast': 'High Contrast',
 }
+
+/** The themes as the picker lists them, by kind; every name in `themeNames` is in exactly one group */
+export const themeGroups: readonly { name: string; themes: readonly ThemeName[] }[] = [
+    {name: 'Classic', themes: ['dark', 'white', 'matcha-dark', 'ember', 'twilight', 'cinder']},
+    {name: 'Cozy', themes: ['cozy', 'cozy-night', 'cocoa', 'hearth', 'oatmeal']},
+    {name: 'Chill', themes: ['chill', 'chill-day', 'lagoon', 'fog', 'dusk']},
+    {name: 'Nature', themes: ['moss', 'sakura', 'rose-dusk', 'ocean', 'dune', 'ink']},
+    {name: 'Terminal', themes: ['amber', 'phosphor', 'high-contrast']},
+]

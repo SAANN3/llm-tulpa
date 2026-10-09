@@ -9,6 +9,12 @@
   background: var(--color-surface);
   border-right: $line-border solid var(--color-border);
 
+  // Settings → See-through sidebar: the background shows faintly behind it. Mostly covered, so its text still reads
+  // over a busy background; its rows keep their own solid fills
+  :root[data-sidebar='see-through'] & {
+    background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  }
+
   // Nested (not flat) so this beats the generic `button[data-variant]` padding — an
   // element+attribute selector, higher specificity than a single flat class (see
   // `.chat-header`'s icon buttons for the same fix).

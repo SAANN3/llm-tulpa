@@ -140,7 +140,7 @@ export const Sidebar = () => {
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
                 <ChatEntry label="Search chats" selected={location.pathname === '/search'} icon={<Search width={18} height={18}/>} href="/search"/>
-                <ChatEntry label="Settings" selected={location.pathname === '/settings'} icon={<Settings2 width={18} height={18}/>} href="/settings"/>
+                <ChatEntry label="Settings" selected={location.pathname.startsWith('/settings')} icon={<Settings2 width={18} height={18}/>} href="/settings"/>
                 <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} href="/folders"/>
                 <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} href="/stats"/>
                 <ChatEntry label="Models" selected={location.pathname.startsWith('/models')} icon={<Cpu width={18} height={18}/>} href="/models"/>

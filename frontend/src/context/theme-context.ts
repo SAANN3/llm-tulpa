@@ -13,6 +13,9 @@ export interface ThemeContextValue {
     /** How times of day are shown: 24-hour or 12-hour */
     timeFormat: TimeFormat
     setTimeFormat: (format: TimeFormat) => void
+    /** The sidebar lets the background show faintly through it instead of covering it */
+    sidebarSeeThrough: boolean
+    setSidebarSeeThrough: (seeThrough: boolean) => void
 }
 
 export const ThemeContext = createContext<ThemeContextValue | null>(null)
