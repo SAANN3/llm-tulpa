@@ -43,7 +43,8 @@ const LlamaServerCards = ({server}: { server: LlamaServer }) => {
                           value={formatPercent(server.draft_tokens_accepted_total ?? 0, drafted)}
                           hint={`${formatTokenCount(Math.round(drafted))} drafted`}/>
             ) : null}
-            <StatCard label="Working on" value={`${server.slots_processing ?? 0} of ${server.slots_total ?? 1}`}/>
+            <StatCard label="Working on" value={`${server.slots_processing ?? 0} of ${server.slots_total ?? 1}`}
+                      hint={(server.slots_processing ?? 0) > 0 ? 'a reply is being written' : 'idle: the next message starts at once'}/>
         </Div>
     )
 };

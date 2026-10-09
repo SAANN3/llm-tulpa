@@ -30,6 +30,11 @@ export interface UsageDay {
 export interface UsageStats {
     /** Every day of the range, oldest first, quiet days included */
     days: UsageDay[]
+    /** The average whole call over the range, in ms; null without calls */
+    call_ms_mean: number | null
+    /** Replies that waited for a model to load, and the median wait in ms */
+    loads: number
+    load_ms_median: number | null
 }
 
 export interface ModelUsage {

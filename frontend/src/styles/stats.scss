@@ -168,12 +168,6 @@
   font-size: 11px;
 }
 
-.heatmap__gutter {
-  flex: 0 0 44px;
-  padding-left: 6px;
-  font-size: 11px;
-}
-
 .heatmap__cell {
   flex: 1;
   height: 14px;
@@ -186,7 +180,7 @@
   height: 22px;
 }
 
-// The hour labels sit on the grid's own scale, so 24 lands on its right edge
+// The hour labels sit on the grid's own scale, so 24 lands on its right edge, carrying the unit (no column is spent on it)
 .heatmap__ticks {
   position: relative;
   flex: 1;
@@ -196,6 +190,7 @@
 .heatmap__tick {
   position: absolute;
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .heatmap__tick--mid {

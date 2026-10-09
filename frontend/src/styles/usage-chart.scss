@@ -8,6 +8,8 @@
 
 .usage-chart__bars {
   display: flex;
+  // A few days (a week) are a few narrow bars spread along the axis, not a few wide blocks
+  justify-content: space-around;
   align-items: flex-end;
   gap: 2px;
   height: 64px;
@@ -16,6 +18,7 @@
 
 .usage-chart__slot {
   flex: 1;
+  max-width: 28px;
   height: 100%;
   display: flex;
   align-items: flex-end;
@@ -29,6 +32,12 @@
 
 .usage-chart__slot:hover .usage-chart__bar {
   background: var(--color-primary);
+}
+
+.usage-chart__axis {
+  display: flex;
+  justify-content: space-between;
+  gap: $space-3;
 }
 
 .usage-chart__readout {

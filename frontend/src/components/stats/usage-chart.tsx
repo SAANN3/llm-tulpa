@@ -9,8 +9,14 @@ export interface UsageChartProps {
     format: (value: number) => string
 }
 
-/** A bar per day, scaled to the largest one (a day without a value is an empty bar); hovering a
- * bar reads out its day and value */
+/** A `YYYY-MM-DD` day as `Oct 9` */
+const shortDay = (day: string) => {
+    const [year, month, date] = day.split('-').map(Number)
+    return new Date(year, month - 1, date).toLocaleDateString(undefined, {month: 'short', day: 'numeric'})
+};
+
+/** A bar per day, scaled to the largest one (a day without a value is an empty bar). Under it the first day on the
+ * left and, on the right, the last day's value, or the hovered bar's */
 export const UsageChart = ({title, bars, format}: UsageChartProps) => {
     const [hovered, setHovered] = useState<number | null>(null)
     const max = Math.max(...bars.map((bar) => bar.value ?? 0), 1)
@@ -26,8 +32,11 @@ export const UsageChart = ({title, bars, format}: UsageChartProps) => {
                     </Div>
                 ))}
             </Div>
-            <Label variant="secondary" className="usage-chart__readout"
-                   text={shown ? `${shown.day} · ${shown.value == null ? '–' : format(shown.value)}` : ''}/>
+            <Div className="usage-chart__axis">
+                <Label variant="secondary" className="usage-chart__readout" text={bars.length > 1 ? shortDay(bars[0].day) : ''}/>
+                <Label variant="secondary" className="usage-chart__readout"
+                       text={shown ? `${shortDay(shown.day)} · ${shown.value == null ? '–' : format(shown.value)}` : ''}/>
+            </Div>
         </Div>
     )
 };

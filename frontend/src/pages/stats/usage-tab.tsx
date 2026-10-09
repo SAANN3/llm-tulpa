@@ -7,6 +7,7 @@ import {UsageChart} from '../../components/stats/usage-chart.tsx'
 import {useStats} from '../../hooks/use-stats.ts'
 import type {RangeOption} from './ranges.ts'
 import {formatTokenCount} from '../../utils/format.ts'
+import {formatMs} from '../../utils/stats.ts'
 
 /** Replies and tokens over the range */
 export const UsageTab = ({range}: { range: RangeOption }) => {
@@ -18,14 +19,20 @@ export const UsageTab = ({range}: { range: RangeOption }) => {
     if (replies === 0) return <Label variant="secondary" text="No usage in this period."/>
 
     const generated = sum((day) => day.eval_tokens)
+    const prompt = sum((day) => day.prompt_tokens)
+    // The part of a prompt the server actually read (not served from its cache), and how long that took
+    const processedCalls = sum((day) => day.processed_calls)
+    const readMs = processedCalls > 0 ? sum((day) => day.processed_ms) / processedCalls : null
 
     return (
         <>
             <Div className="stats__cards">
-                <StatCard label="Replies" value={String(replies)}/>
+                <StatCard label="Replies" value={String(replies)}
+                          hint={data.call_ms_mean != null ? `${formatMs(data.call_ms_mean)} each on average` : undefined}/>
                 <StatCard label="Generated tokens" value={formatTokenCount(generated)}
                           hint={`${formatTokenCount(Math.round(generated / replies))} per reply`}/>
-                <StatCard label="Prompt tokens" value={formatTokenCount(sum((day) => day.prompt_tokens))}/>
+                <StatCard label="Prompt tokens" value={formatTokenCount(prompt)}
+                          hint={`${formatTokenCount(Math.round(prompt / replies))} per reply${readMs != null ? ` · ${formatMs(readMs)} to read` : ''}`}/>
             </Div>
             <Div className="stats__charts">
                 <UsageChart
@@ -40,7 +47,7 @@ export const UsageTab = ({range}: { range: RangeOption }) => {
                 />
             </Div>
             <Label variant="secondary" className="stats__note"
-                   text="The prompt is the whole context, sent again with every call, so prompt tokens grow with chat length rather than with new text."/>
+                   text="The prompt is the whole context, sent again with every call, so prompt tokens grow with chat length rather than with new text. “To read” is the time the server spent on the part of it that wasn't cached."/>
         </>
     )
 };

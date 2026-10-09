@@ -44,7 +44,6 @@ const HourGrid = ({days, onHover}: ViewProps) => {
                                      ? `${WEEKDAYS[weekday]} ${date}, ${hourLabel(hour)} to ${hourLabel(hour + 1)} · ${count} messages`
                                      : null)}/>
                         ))}
-                        <Div className="heatmap__gutter"/>
                     </Div>
                 )
             })}
@@ -53,10 +52,9 @@ const HourGrid = ({days, onHover}: ViewProps) => {
                 <Div className="heatmap__ticks">
                     {[0, 6, 12, 18, 24].map((hour) => (
                         <Label key={hour} variant="secondary" className={`heatmap__tick heatmap__tick--${hour === 0 ? 'start' : hour === 24 ? 'end' : 'mid'}`}
-                               style={{left: `${(hour / 24) * 100}%`}} text={String(hour)}/>
+                               style={{left: `${(hour / 24) * 100}%`}} text={hour === 24 ? '24 H' : String(hour)}/>
                     ))}
                 </Div>
-                <Label variant="secondary" className="heatmap__gutter" text="H"/>
             </Div>
         </Div>
     )
@@ -86,7 +84,6 @@ const BlockGrid = ({days, onHover}: ViewProps) => {
                                      : null)}/>
                         )
                     })}
-                    <Div className="heatmap__gutter"/>
                 </Div>
             ))}
             <Div className="heatmap__row">
@@ -102,7 +99,6 @@ const BlockGrid = ({days, onHover}: ViewProps) => {
                         </Div>
                     )
                 })}
-                <Label variant="secondary" className="heatmap__gutter" text="H"/>
             </Div>
         </Div>
     )

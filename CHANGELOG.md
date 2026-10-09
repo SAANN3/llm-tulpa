@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- Stats: every start of the model server is recorded with how long it took to be ready, whoever asked for it (a chat, a greeting, a load from the Models page), so Speed shows the median load and how many there were (`loads`, `load_ms_median` in `GET /api/stats/usage`; server-wide, llama.cpp only). Stored in `model_loads` (schema version 17, added in place). A reply that waited for a load also carries its length, with llama.cpp as with Ollama. Usage shows how long a reply takes on average (`call_ms_mean`) and, for prompt tokens, how many a reply sends and how long the server takes to read what wasn't cached. Each chart names its first and last day; the activity grid spans the panel, with the unit on its last tick; a week's chats-per-day bars are narrow; Server says what "Working on" means right now.
 - The sidebar's foot holds the account: your name and role, opening a menu of the pages not used every day (Settings, Usage, Models, and for the owner Plugins and Users) and Log out. Utils keeps Search chats and Folders; the first date group's heading carries the list's title (`Chats · Today`).
 - Search results, folders and a folder's chats are one kind of list, drawn like `tree`: a search result is the chat, its matching messages nested under it.
 - Plugins are listed by kind (Coding, Messaging), each with a one-line summary (`summary` in `GET /api/plugins`, which comes sorted), and a framed settings button.
