@@ -12,7 +12,9 @@ mod template;
 mod tool_defs;
 mod types;
 
+pub use budget::estimated_prompt_tokens;
 pub use llama_cpp::LlamaCppProvider;
 pub use ollama::{ImportProgress, OllamaService};
 pub use provider::{LlmProvider, LlmProviders};
+pub use tool_defs::tool_definitions;
 pub use types::*;

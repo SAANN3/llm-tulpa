@@ -364,6 +364,56 @@ def a_fold_asks_for_notes_summary_and_facts_and_the_next_request_carries_them():
 
 
 @scenario
+def the_context_is_measured_by_part_and_memory_edits_reach_the_next_request():
+    settings()
+    chat = new_chat("memory")
+    context = lambda: ok(f"/api/chats/context?chat_id={chat}")
+    edit = lambda what, body: api(f"/api/chats/{what}", {"chat_id": chat, **body})[0]
+    eq(context()["memory"]["folded"], False, "folded before the first fold")
+    eq(edit("facts", {"facts": ["x"]}), 409, "facts before the first fold")
+    eq(edit("summary", {"summary": "x"}), 409, "a summary before the first fold")
+    script({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000}, {"text": "And again.", "prompt_tokens": 25000},
+           {"text": "Final.", "prompt_tokens": 9000, "completion_tokens": 500}, {"text": "slow", "delay": 1.5}, {"text": "Edited."})
+    for i in range(3):
+        turn(chat, f"part {i}: " + BIG)
+    turn(chat, "what now?")
+
+    c = context()
+    memory, parts = c["memory"], {p["kind"]: p for p in c["parts"]}
+    eq((memory["folded"], memory["goal"], memory["facts"]), (True, "the fake goal", ["fake fact one", "fake fact two"]), "the memory after a fold")
+    has(memory["summary"], "The fake summary of the excerpt", "the summary")
+    has(memory["notes"], "the fake goal", "the notes")
+    eq((c["measured"], c["used"]), (True, 9500), "the measured prompt and the reply, which the next prompt carries")
+    assert abs(sum(p["tokens"] for p in c["parts"]) - 9500) <= len(c["parts"]), "the parts add up to the measurement"
+    eq(parts["tools"]["count"], len(calls("main")[-1]["tool_names"]), "the tools counted")
+    # The parts of the system message are what the request carried, apart from the joins and the summary's heading
+    system = calls("main")[-1]["messages"][0]["content"].encode()
+    lead = sum(parts[k]["chars"] for k in ("system_prompt", "key_facts", "pinned", "summary", "notes"))
+    assert 0 <= len(system) - lead < 100, f"the system message measured: {len(system)} sent, {lead} counted"
+    sent = calls("main")[-1]["messages"][1:]
+    eq((parts["user_messages"]["count"], parts["replies"]["count"]),
+       (sum(m["role"] == "user" for m in sent), sum(m["role"] == "assistant" for m in sent) + 1), "the messages since the fold, and the reply to the last")
+
+    eq(edit("facts", {"facts": ["the user's fact", "  ", "fake fact two"]}), 204, "facts saved")
+    eq(edit("summary", {"summary": "The user's summary."}), 204, "summary saved")
+    eq(edit("notes", {"notes": "The user's notes."}), 204, "notes saved")
+    c = context()
+    eq((c["memory"]["goal"], c["memory"]["facts"]), ("the fake goal", ["the user's fact", "fake fact two"]), "the goal kept, blank facts dropped")
+    eq(c["measured"], False, "an edit drops the measurement")
+
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "go"})
+    wait_for(lambda: len(calls("main")) == 5, what="the slow call")
+    for what, body in (("facts", {"facts": []}), ("summary", {"summary": "x"}), ("notes", {"notes": "x"})):
+        eq(edit(what, body), 409, f"{what} during a run")
+    wait_idle(chat)
+    turn(chat, "and now?")
+    system = calls("main")[-1]["messages"][0]["content"]
+    for part in ("The user's summary.", "- the user's fact", "Goal: the fake goal", "The user's notes."):
+        has(system, part, "the edit in the next request")
+    assert "fake fact one" not in system and "The fake summary" not in system, "the replaced text is gone"
+
+
+@scenario
 def a_fold_in_a_tools_off_chat_has_no_notes_and_no_tool_pointers():
     settings()
     chat = new_chat("fold-off", tools=False)

@@ -86,6 +86,11 @@ pub(super) struct Compaction {
 }
 
 impl Compaction {
+    /// How big the prompt may grow in a `context`-token window before the chat is folded.
+    pub(super) fn trigger_tokens(context: u64) -> u64 {
+        (context as f64 * TRIGGER_FRACTION) as u64
+    }
+
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
         settings_store: Arc<SettingsStore>,
@@ -114,7 +119,7 @@ impl Compaction {
             },
             Err(_) => return,
         };
-        let trigger_tokens = (context as f64 * TRIGGER_FRACTION) as u64;
+        let trigger_tokens = Self::trigger_tokens(context);
         if prompt_eval_count.unwrap_or(0) < trigger_tokens {
             return;
         }

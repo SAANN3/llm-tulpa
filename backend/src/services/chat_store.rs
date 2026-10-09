@@ -944,6 +944,68 @@ impl ChatStore {
         Ok(())
     }
 
+    /// Replaces the summary's text, keeping what it covers and the key facts: the user correcting it.
+    /// Drops the stored prompt-token count like any change to the prompt's front. 409 before the first fold.
+    pub async fn edit_summary(&self, chat_id: i64, summary: String) -> Result<(), ChatStoreErrors> {
+        let chat = self.chat(chat_id).await?;
+        if chat.summary_up_to_message_id.is_none() {
+            return Err(ChatStoreErrors::Conflict("the chat has no summary yet".into()));
+        }
+        chats::ActiveModel { id: Set(chat_id), summary: Set(Some(summary)), last_prompt_tokens: Set(None), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Replaces the key facts' list, keeping the goal (the summarizer's, set once): the user correcting
+    /// them. Blank lines are dropped. Like `edit_summary`, 409 before the first fold, which is when facts
+    /// start going to the model.
+    pub async fn edit_key_facts(&self, chat_id: i64, facts: Vec<String>) -> Result<(), ChatStoreErrors> {
+        let chat = self.chat(chat_id).await?;
+        if chat.summary_up_to_message_id.is_none() {
+            return Err(ChatStoreErrors::Conflict("the chat has no summary yet".into()));
+        }
+        let facts = facts.into_iter().map(|fact| fact.trim().to_string()).filter(|fact| !fact.is_empty()).collect();
+        let key_facts = ChatFacts { goal: chat.key_facts.and_then(|k| k.goal), facts };
+        let key_facts_json = (!key_facts.is_empty()).then(|| serde_json::json!(key_facts));
+        chats::ActiveModel { id: Set(chat_id), key_facts: Set(key_facts_json), last_prompt_tokens: Set(None), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// The user's own word on the notes: like `set_notes`, and drops the stored prompt-token count
+    /// since the prompt's front changes.
+    pub async fn edit_notes(&self, chat_id: i64, notes: Option<String>) -> Result<(), ChatStoreErrors> {
+        self.set_notes(chat_id, notes).await?;
+        self.set_last_prompt_tokens(chat_id, None).await
+    }
+
+    /// How much the chat holds, for its info page: its messages (and how many of them the summary
+    /// replaced), the tokens its replies cost, and its sub-agents' chats.
+    pub async fn chat_counts(&self, chat_id: i64) -> Result<ChatCounts, ChatStoreErrors> {
+        let chat = self.chat(chat_id).await?;
+        let rows = messages::Entity::find().filter(messages::Column::ChatId.eq(chat_id));
+        let messages = rows.clone().count(&self.db).await?;
+        let folded_messages = match chat.summary_up_to_message_id {
+            Some(boundary) => rows.clone().filter(messages::Column::Id.lte(boundary)).count(&self.db).await?,
+            None => 0,
+        };
+        let eval_tokens: Vec<Option<i64>> =
+            rows.select_only().column(messages::Column::EvalTokens).into_tuple().all(&self.db).await?;
+        let subagent_chats = chats::Entity::find()
+            .filter(chats::Column::ParentChatId.eq(chat_id))
+            .filter(chats::Column::IsDeleted.eq(false))
+            .count(&self.db)
+            .await?;
+        Ok(ChatCounts {
+            messages,
+            folded_messages,
+            generated_tokens: eval_tokens.into_iter().flatten().sum(),
+            subagent_chats,
+        })
+    }
+
     /// Saves notes the model wrote with `chat.write_notes` without changing the prompt: the
     /// system message is the front of every request, so a change there makes the model server
     /// read the whole conversation again. They go into the prompt at the next compaction
@@ -1199,6 +1261,7 @@ impl ChatStore {
 
 }
 
+#[derive(Clone)]
 pub struct Chat {
     pub id: i64,
     pub user_id: i64,
@@ -1238,6 +1301,15 @@ pub struct Chat {
     pub tools_enabled: bool,
     /// How the last run ended, until the user has looked at the chat (see `chats.unseen_end`).
     pub unseen_end: Option<String>,
+}
+
+/// How much a chat holds (see `ChatStore::chat_counts`).
+pub struct ChatCounts {
+    pub messages: u64,
+    /// The messages the compaction summary replaced (0 before the first fold)
+    pub folded_messages: u64,
+    pub generated_tokens: i64,
+    pub subagent_chats: u64,
 }
 
 /// A chat's id and the chat that started it as a sub-agent, for a caller that needs nothing else about it.

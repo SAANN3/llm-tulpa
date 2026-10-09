@@ -1,5 +1,9 @@
+mod context;
 mod create;
 mod delete;
+mod edit_facts;
+mod edit_notes;
+mod edit_summary;
 mod export;
 mod find;
 mod get;

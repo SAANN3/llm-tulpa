@@ -55,6 +55,57 @@ struct Inputs {
     folded_user_texts: Vec<(i64, String)>,
 }
 
+/// What `History::build` makes, in its parts: see `Built::into_messages` for how they are joined.
+pub(super) struct Built {
+    /// After a fold: what the summary replaced
+    pub(super) fold: Option<Fold>,
+    /// The model's notes block, after the summary (or alone before the first fold)
+    pub(super) notes: Option<String>,
+    pub(super) messages: Vec<ChatMessage>,
+    /// How many tool results go out as their stub, and how many characters that leaves out
+    pub(super) cleared_results: usize,
+    pub(super) cleared_chars: usize,
+}
+
+pub(super) struct Fold {
+    pub(super) header: String,
+    pub(super) key_facts: Option<String>,
+    pub(super) pinned: Option<String>,
+    pub(super) summary: String,
+}
+
+impl Built {
+    /// The history as sent: after a fold one system message (header, key facts, pinned messages, summary,
+    /// notes) in front of the messages; before one, the notes alone as that message when there are any.
+    /// These bytes are what the model server's cached prompt is matched against (the tests pin them).
+    pub(super) fn into_messages(self) -> Vec<ChatMessage> {
+        let Built { fold, notes, messages, .. } = self;
+        let lead = match fold {
+            Some(fold) => {
+                let mut system_content = fold.header;
+                if let Some(key_facts) = fold.key_facts {
+                    system_content.push_str("\n\n");
+                    system_content.push_str(&key_facts);
+                }
+                if let Some(pinned) = fold.pinned {
+                    system_content.push_str("\n\n");
+                    system_content.push_str(&pinned);
+                }
+                system_content.push_str("\n\nSummary of everything before this point:\n\n");
+                system_content.push_str(&fold.summary);
+                if let Some(notes) = notes {
+                    system_content.push_str("\n\n");
+                    system_content.push_str(&notes);
+                }
+                Some(system_content)
+            }
+            // No summary yet, but notes written early still have to reach the model
+            None => notes,
+        };
+        lead.map(ChatMessage::system).into_iter().chain(messages).collect()
+    }
+}
+
 impl History {
     pub(super) fn new(chat_store: Arc<ChatStore>, settings_store: Arc<SettingsStore>) -> Self {
         Self { chat_store, settings_store }
@@ -67,6 +118,13 @@ impl History {
     /// otherwise this is the whole history, same as before compaction existed.
     pub(super) async fn for_chat(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
         Ok(Self::build(self.load(chat_id).await?))
+    }
+
+    /// The history `for_chat` sends, in its parts, with the chat it was built for.
+    pub(super) async fn parts(&self, chat_id: i64) -> Result<(Chat, Built), ErrorService> {
+        let inputs = self.load(chat_id).await?;
+        let chat = inputs.chat.clone();
+        Ok((chat, Self::build_parts(inputs)))
     }
 
     async fn load(&self, chat_id: i64) -> Result<Inputs, ErrorService> {
@@ -83,8 +141,21 @@ impl History {
     }
 
     fn build(inputs: Inputs) -> Vec<ChatMessage> {
+        Self::build_parts(inputs).into_messages()
+    }
+
+    /// The history as its parts: the leading system block (after a fold: the header, key facts, pinned
+    /// messages and summary; the notes either way) apart from the messages, so the context breakdown can
+    /// measure each part of exactly what a turn sends.
+    fn build_parts(inputs: Inputs) -> Built {
         let Inputs { chat, trim_thinking, mut messages, folded_user_texts } = inputs;
+        let lengths: Vec<usize> = messages.iter().map(|message| message.content.len()).collect();
         clearing::stub_cleared(&mut messages, chat.cleared_up_to_message_id);
+        let (cleared_results, cleared_chars) = messages
+            .iter()
+            .zip(lengths)
+            .filter(|(message, length)| message.content.len() != *length)
+            .fold((0, 0), |(results, chars), (message, length)| (results + 1, chars + length.saturating_sub(message.content.len())));
         // With old thinking trimmed (the user's choice), each trace is replayed at the cap its
         // place relative to the stored boundary gives; otherwise every trace at the default cap
         let to_model = |message: Message| {
@@ -97,47 +168,27 @@ impl History {
         };
         let notes = Self::notes_block(chat.notes.as_deref());
 
-        match (&chat.summary, chat.summary_up_to_message_id) {
-            (Some(summary), Some(_)) => {
-                let mut system_content = String::from(prompts::fold_header(chat.tools_enabled));
-
-                // Prepend key facts (goal + list) if available. Facts are durable —
-                // they persist across folds and don't get rewritten.
-                if let Some(ref key_facts) = chat.key_facts {
-                    system_content.push_str("\n\nKey facts (durable; still in effect unless a later message contradicts them):");
+        let fold = match (&chat.summary, chat.summary_up_to_message_id) {
+            (Some(summary), Some(_)) => Some(Fold {
+                header: prompts::fold_header(chat.tools_enabled).to_string(),
+                // Key facts (goal + list), if available. Facts are durable — they persist across folds and
+                // don't get rewritten.
+                key_facts: chat.key_facts.as_ref().map(|key_facts| {
+                    let mut block = String::from("Key facts (durable; still in effect unless a later message contradicts them):");
                     if let Some(ref goal) = key_facts.goal {
-                        system_content.push_str(&format!("\nGoal: {goal}"));
+                        block.push_str(&format!("\nGoal: {goal}"));
                     }
                     for fact in &key_facts.facts {
-                        system_content.push_str(&format!("\n- {fact}"));
+                        block.push_str(&format!("\n- {fact}"));
                     }
-                }
-
-                if let Some(pinned) = pinned::section(&folded_user_texts, chat.tools_enabled) {
-                    system_content.push_str("\n\n");
-                    system_content.push_str(&pinned);
-                }
-
-                system_content.push_str("\n\nSummary of everything before this point:\n\n");
-                system_content.push_str(summary);
-                if let Some(notes) = notes {
-                    system_content.push_str("\n\n");
-                    system_content.push_str(&notes);
-                }
-
-                let mut history = vec![ChatMessage::system(system_content)];
-                history.extend(messages.into_iter().map(to_model));
-                history
-            }
-            _ => {
-                let mut history: Vec<ChatMessage> = messages.into_iter().map(to_model).collect();
-                // No summary yet, but notes written early still have to reach the model
-                if let Some(notes) = notes {
-                    history.insert(0, ChatMessage::system(notes));
-                }
-                history
-            }
-        }
+                    block
+                }),
+                pinned: pinned::section(&folded_user_texts, chat.tools_enabled),
+                summary: summary.clone(),
+            }),
+            _ => None,
+        };
+        Built { fold, notes, messages: messages.into_iter().map(to_model).collect(), cleared_results, cleared_chars }
     }
 
     /// The model's notes as the block that goes after the summary in the system message, or `None`
@@ -155,6 +206,12 @@ impl History {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
         Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
+    }
+
+    /// The system prompt a turn of `chat` starts with, without what the history leads with.
+    pub(super) async fn base_system_prompt(&self, chat: &Chat) -> Result<String, ErrorService> {
+        let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
     }
 
     /// The user's own prompt is sent as written, tools or not: only the built-in one, which is ours, has a

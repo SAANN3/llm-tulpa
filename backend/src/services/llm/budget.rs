@@ -47,6 +47,12 @@ const MIN_NUM_PREDICT: u64 = 4096;
 /// for the `generate` path where it covers template overhead without tool definitions.
 const PROMPT_TOKEN_SAFETY_MARGIN: u64 = 1024;
 
+/// What `chars` characters of prompt come to in tokens, by the same ratio the reply cap is estimated with,
+/// for a prompt nothing has measured yet.
+pub fn estimated_prompt_tokens(chars: usize) -> u64 {
+    (chars as f64 / PROMPT_CHARS_PER_TOKEN).ceil() as u64
+}
+
 fn request_timeout(num_predict: i32) -> Duration {
     Duration::from_secs_f64(num_predict as f64 / MIN_TOKENS_PER_SEC) + PROMPT_PROCESSING_BUFFER
 }

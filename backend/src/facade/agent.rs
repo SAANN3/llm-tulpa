@@ -24,6 +24,7 @@ use crate::tools::base::ToolContext;
 use crate::tools::subagent::SubagentHandle;
 
 mod compaction;
+mod context;
 mod history;
 mod model_call;
 mod notices;
@@ -35,6 +36,8 @@ mod tool_calls;
 mod turn;
 
 use compaction::Compaction;
+use context::ContextReader;
+pub use context::{ContextBreakdown, ContextPart, ContextPartKind};
 use history::History;
 use notices::Notices;
 use tool_calls::ToolCalls;
@@ -71,6 +74,8 @@ pub struct Agent {
     tool_context: ToolContext,
     /// The model's tool calls: which are pending, whether each is permitted, running them.
     tool_calls: ToolCalls,
+    /// What fills a chat's context, measured the way a turn builds its prompt.
+    context: ContextReader,
     /// Per-user settings: auto-confirm for a sub-agent's run.
     settings_store: Arc<SettingsStore>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
@@ -115,6 +120,7 @@ impl Agent {
             };
         let history = History::new(chat_store.clone(), settings_store.clone());
         let model = ModelCall::new(providers.clone(), presets, launch, context_length);
+        let context = ContextReader::new(chat_store.clone(), tools.clone(), history.clone(), model.clone());
         let compaction = Compaction::new(
             chat_store.clone(),
             settings_store.clone(),
@@ -154,6 +160,7 @@ impl Agent {
             tool_calls,
             chat_store,
             tool_context,
+            context,
             settings_store,
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
@@ -194,6 +201,40 @@ impl Agent {
     /// Whether the chat has a run going on.
     pub fn has_run(&self, chat_id: i64) -> bool {
         self.runner.has_run(chat_id)
+    }
+
+    /// What fills the chat's context: the prompt its next turn would send, part by part.
+    pub async fn context(&self, chat_id: i64) -> Result<ContextBreakdown, ErrorService> {
+        self.context.breakdown(chat_id).await
+    }
+
+    /// The user's corrections to what the chat remembers past a fold: the summary, the key facts (the
+    /// goal stays the summarizer's) and the model's notes. Each changes the front of the prompt, so the
+    /// model server reads the whole prompt once more on the next turn. Refused (409) while the chat has
+    /// a run going on, whose next step would otherwise be sent a prompt the user is still changing.
+    pub async fn edit_summary(&self, chat_id: i64, summary: String) -> Result<(), ErrorService> {
+        self.refuse_while_running(chat_id)?;
+        Ok(self.chat_store.edit_summary(chat_id, summary).await?)
+    }
+
+    /// See `edit_summary`.
+    pub async fn edit_key_facts(&self, chat_id: i64, facts: Vec<String>) -> Result<(), ErrorService> {
+        self.refuse_while_running(chat_id)?;
+        Ok(self.chat_store.edit_key_facts(chat_id, facts).await?)
+    }
+
+    /// See `edit_summary`. Blank clears the notes; notes the model wrote that aren't in the prompt yet are
+    /// replaced too, since the user's text is the newest word.
+    pub async fn edit_notes(&self, chat_id: i64, notes: Option<String>) -> Result<(), ErrorService> {
+        self.refuse_while_running(chat_id)?;
+        Ok(self.chat_store.edit_notes(chat_id, notes).await?)
+    }
+
+    fn refuse_while_running(&self, chat_id: i64) -> Result<(), ErrorService> {
+        if self.has_run(chat_id) {
+            return Err(ErrorService::new(axum::http::StatusCode::CONFLICT, "the chat has a run going on"));
+        }
+        Ok(())
     }
 
     /// The chats with a run going on, in no particular order. Whose they are is for the caller to check.

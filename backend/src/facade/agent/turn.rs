@@ -167,6 +167,18 @@ impl Turn {
         }
     }
 
+    /// The tools a request for `chat` is sent, out of the full set. Which ones depends on whether this chat
+    /// is a sub-agent's — see `subagent::available_to`. Filtering the list (rather than only refusing a call)
+    /// is what keeps a sub-agent from being able to try starting one of its own.
+    pub(super) fn tools_for(chat: &Chat, all: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+        // A chat without tools sends none: the definitions are most of what a small window has to spare
+        if !chat.tools_enabled {
+            return Vec::new();
+        }
+        let is_subagent = chat.parent_chat_id.is_some();
+        all.into_iter().filter(|t| subagent::available_to(t.function_name(), is_subagent)).collect()
+    }
+
     /// The request: the chat's model, provider, tools and call parameters, and the messages with the
     /// system message in front.
     async fn prepare(&self, step: &Step) -> Result<Request, ErrorService> {
@@ -183,16 +195,7 @@ impl Turn {
         let mut chat: Chat = self.chat_store.chat(chat_id).await?;
         self.model.bind(&mut chat);
 
-        // Which tools the model is shown depends on whether this chat is a sub-agent's — see
-        // `subagent::available_to`. Filtering the list (rather than only refusing a call) is what
-        // keeps a sub-agent from being able to try starting one of its own.
-        let is_subagent = chat.parent_chat_id.is_some();
-        let tools: Vec<Arc<dyn Tool>> = tools_snapshot
-            .into_iter()
-            .filter(|t| subagent::available_to(t.function_name(), is_subagent))
-            .collect();
-        // A chat without tools sends none: the definitions are most of what a small window has to spare
-        let tools = if chat.tools_enabled { tools } else { Vec::new() };
+        let tools = Self::tools_for(&chat, tools_snapshot);
         let provider = self.model.provider(&chat)?;
         let params = self.model.params(&chat).await?;
         self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;

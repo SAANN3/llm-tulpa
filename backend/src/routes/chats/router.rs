@@ -8,8 +8,12 @@ use utoipa::OpenApi;
 
 use crate::state::AppState;
 
+use super::context::*;
 use super::create::*;
 use super::delete::*;
+use super::edit_facts::*;
+use super::edit_notes::*;
+use super::edit_summary::*;
 use super::export::*;
 use super::find::*;
 use super::get::*;
@@ -39,11 +43,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/find", get(find_chats))
         .route("/export", get(export_chat))
         .route("/recent_models", get(recent_models))
+        .route("/context", get(chat_context))
+        .route("/facts", post(edit_facts))
+        .route("/summary", post(edit_summary))
+        .route("/notes", post(edit_notes))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models, chat_context, edit_facts, edit_summary, edit_notes),
     components(schemas(
         ChatOut,
         ChatListOut,
@@ -69,6 +77,13 @@ pub fn router() -> Router<Arc<AppState>> {
         AttachmentModeParam,
         RecentModelOut,
         RecentModelsResponse,
+        ContextPartKindOut,
+        ContextPartOut,
+        ChatMemoryOut,
+        ChatContextResponse,
+        EditFactsRequest,
+        EditSummaryRequest,
+        EditNotesRequest,
     )),
 )]
 pub struct ApiDoc;
