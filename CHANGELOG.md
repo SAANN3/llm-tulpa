@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before a request is sent, its size is estimated from the last measured prompt plus what was added since (a large tool result), and the chat is compacted first when that passes the trigger.
 
 ### Changed
+- The chat header is the chat's name and the context gauge. The name opens the chat's menu: Search in chat, Rename, Export, Tools (a switch), the folder (move, or open it) and Delete chat, in place of their separate buttons. In every menu, an entry that deletes something is kept apart at the end in the danger color.
 - The home page's loading mark lights its arms one after another around the circle, like a terminal spinner, instead of turning.
 - Back on a page (and Escape) returns to the page it was opened from, a chat included, instead of always to the home page; a tab opened right on the page goes to its parent.
 - The sidebar's chats, its Utils entries and New chat are links, so a middle click or a long press opens them in a new tab.

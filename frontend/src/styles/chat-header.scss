@@ -9,54 +9,37 @@
   padding: $space-2 $space-4;
 }
 
-.chat-header__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-header__title-group {
   display: flex;
   align-items: center;
-  gap: $space-2;
   // Starts from a readable width, so in a tight header the title isn't squeezed down to a letter
   flex: 1 1 10em;
-  // A flex item won't shrink below its content unless told it may: without this the long name
-  // keeps the group at full width, so the name never truncates and the buttons overlap it
+  // A flex item won't shrink below its content unless told it may: without this a long name keeps the group at full
+  // width, so the name never truncates and pushes the context gauge off the header
   min-width: 0;
 }
 
-.chat-header__title-group .chat-header__name {
-  min-width: 0;
-}
-
-.chat-header__title-group button {
-  flex-shrink: 0;
-}
-
-.chat-header__tools {
+// The chat's name as a button that opens the chat's menu: as wide as the name needs, cut short when the header is
+.chat-header .chat-header__title {
   display: inline-flex;
   align-items: center;
   gap: $space-2;
-  font-size: 12px;
   height: 34px;
   box-sizing: border-box;
-  flex-shrink: 0;
-}
-
-.chat-header__model-label {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  opacity: 0.7;
-  flex-shrink: 0;
-}
-
-.chat-header__model-name {
-  flex: 1;
+  padding: 0 10px;
+  max-width: 100%;
   min-width: 0;
-  white-space: nowrap;
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.chat-header__name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-header__parent {
@@ -70,64 +53,12 @@
   white-space: nowrap;
 }
 
-.chat-header__folder-group {
-  // The assign-folder and jump-to-folder buttons read as one control, not two: a shared
-  // outer border/shadow (mimicking `button[data-variant]`'s own look, same trick as
-  // `.chat-header__context`) with each button's own border/shadow suppressed below and a
-  // divider between them instead.
-  display: inline-flex;
-  height: 34px;
-  box-sizing: border-box;
-  min-width: 0;
-  // The two icon buttons are the one thing here that can't shrink without being cut off
-  flex-shrink: 0;
-  border: $line-border solid currentColor;
-  @include dos-shadow;
-
-  button.chat-header__folder,
-  button.chat-header__folder-jump {
-    height: 100%;
-    box-sizing: border-box;
-    border: none;
-    box-shadow: none;
-
-    &:active:not(:disabled) {
-      transform: none;
-    }
-  }
-
-  button.chat-header__folder {
-    border-right: $line-border solid var(--color-border);
-  }
-}
-
-.chat-header__folder {
-  display: inline-flex;
-  align-items: center;
-  gap: $space-2;
-  font-size: 12px;
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.chat-header__folder-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-header {
   // Nested (not flat) so this beats the generic `button[data-variant]` padding
   // (an element+attribute selector — higher specificity than a single flat class),
-  // which otherwise squeezes these fixed-size icon buttons down to almost nothing —
+  // which otherwise squeezes this fixed-size icon button down to almost nothing —
   // same reason `.composer__footer`'s icon button is nested the same way.
-  .chat-header__search,
-  .chat-header__search-clear,
-  .chat-header__folder-jump,
-  .chat-header__rename {
+  .chat-header__search-clear {
     width: 34px;
     height: 34px;
     box-sizing: border-box;
@@ -138,10 +69,7 @@
     flex-shrink: 0;
   }
 
-  .chat-header__search svg,
-  .chat-header__search-clear svg,
-  .chat-header__folder-jump svg,
-  .chat-header__rename svg {
+  .chat-header__search-clear svg {
     display: block;
   }
 }

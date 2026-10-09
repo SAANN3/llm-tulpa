@@ -1,8 +1,9 @@
-import {useEffect, useState} from 'react'
-import {ArrowLeft, Close, ExternalLink, Folder, Pencil, Search, Share} from 'pixelarticons/react'
+import {useEffect, useRef, useState} from 'react'
+import {ArrowLeft, ChevronDown, Close, ExternalLink, Folder, Pencil, Search, Share, Tools, Trash} from 'pixelarticons/react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
+import {deleteChat} from '../api/chats/delete'
 import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
 import {setChatTools} from '../api/chats/set-tools'
@@ -10,6 +11,8 @@ import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
 import {formatTokenCount} from '../utils/format.ts'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
+import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
+import {ContextMenu, type ContextMenuItem} from './popups/base/context-menu.tsx'
 import {ExportChatPopup} from './popups/export-chat-popup.tsx'
 import {InputPopup} from './popups/base/input-popup.tsx'
 import {SearchMessagesPopup} from './popups/search-messages-popup.tsx'
@@ -40,8 +43,8 @@ export interface ChatHeaderProps {
     runActive: boolean
 }
 
-/** The bar above a chat's messages: its name, its tools switch and folder, the context gauge,
- * and in-chat message search */
+/** The bar above a chat's messages: its name, which opens the chat's menu (search, rename, export, tools, folder,
+ * delete), and the context gauge */
 export const ChatHeader = ({
     chatId,
     name,
@@ -63,6 +66,9 @@ export const ChatHeader = ({
     const [exportOpen, setExportOpen] = useState(false)
     const [renameOpen, setRenameOpen] = useState(false)
     const [folderName, setFolderName] = useState<string | null>(null)
+    const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+    const [confirmingDelete, setConfirmingDelete] = useState(false)
+    const titleRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
         if (folderId == null) {
@@ -89,9 +95,35 @@ export const ChatHeader = ({
         onToolsChanged(!toolsEnabled)
     }
 
+    // The chat list follows by itself (`chat_deleted`); this page has nothing left to show
+    const doDelete = async () => {
+        await deleteChat(chatId)
+        navigate('/')
+    }
+
     const doRename = async (newName: string) => {
         await renameChat(chatId, newName)
     }
+
+    const openMenu = () => {
+        const rect = titleRef.current?.getBoundingClientRect()
+        if (rect) setMenuAt({x: rect.left, y: rect.bottom + 6})
+    }
+
+    const menu: ContextMenuItem[] = [
+        {label: 'Search in chat', icon: <Search width={16} height={16}/>, onSelect: () => setSearchOpen(true)},
+        {label: 'Rename', icon: <Pencil width={16} height={16}/>, onSelect: () => setRenameOpen(true)},
+        {label: 'Export', icon: <Share width={16} height={16}/>, onSelect: () => setExportOpen(true)},
+        // A sub-agent's chat has the tools its parent gave it
+        ...(parentChatId == null ? [{
+            label: runActive ? 'Tools (after this run)' : 'Tools', icon: <Tools width={16} height={16}/>, toggled: toolsEnabled,
+            // Switched only between runs: a run keeps the tools it started with
+            disabled: runActive, onSelect: () => void toggleTools(),
+        }] : []),
+        {label: folderId != null ? `Folder: ${folderName ?? '…'}` : 'Move to folder', icon: <Folder width={16} height={16}/>, onSelect: () => setFolderOpen(true)},
+        ...(folderId != null ? [{label: 'Open the folder', icon: <ExternalLink width={16} height={16}/>, onSelect: () => navigate(`/folders/${folderId}`)}] : []),
+        {label: 'Delete chat', icon: <Trash width={16} height={16}/>, danger: true, onSelect: () => setConfirmingDelete(true)},
+    ]
 
     return (
         <Div className="chat-header">
@@ -102,31 +134,12 @@ export const ChatHeader = ({
                     <span>parent chat</span>
                 </Button>
             ) : null}
-            <Div className="chat-header__title-group">
-                <Label className="chat-header__name" text={name ?? 'Chat'}/>
-                <Button variant="secondary" className="chat-header__rename" onClicked={() => setRenameOpen(true)}>
-                    <Pencil width={16} height={16}/>
-                </Button>
-            </Div>
-            {parentChatId == null ? (
-                <Button variant="secondary" className="chat-header__tools" disabled={runActive}
-                        title={toolsEnabled ? 'The model is sent its tools in this chat. Click to turn them off.' : 'The model has no tools in this chat. Click to turn them on.'}
-                        onClicked={() => void toggleTools()}>
-                    <span className="chat-header__model-label">tools:</span>
-                    <span className="chat-header__model-name">{toolsEnabled ? 'on' : 'off'}</span>
-                </Button>
-            ) : null}
-            <Div className="chat-header__folder-group">
-                <Button variant="secondary" className="chat-header__folder" onClicked={() => setFolderOpen(true)}>
-                    <Folder width={16} height={16}/>
-                    {folderId != null ? <span className="chat-header__folder-name">{folderName ?? '…'}</span> : null}
-                </Button>
-                <Button
-                    className="chat-header__folder-jump"
-                    disabled={folderId == null}
-                    onClicked={() => folderId != null && navigate(`/folders/${folderId}`)}
-                >
-                    <ExternalLink width={16} height={16}/>
+            {/* The chat's name is the menu: everything about the chat but its context is one click behind it */}
+            <Div ref={titleRef} className="chat-header__title-group" onMouseDown={(e) => menuAt && e.stopPropagation()}>
+                <Button variant="secondary" className="chat-header__title" title="Chat menu"
+                        onClicked={() => (menuAt ? setMenuAt(null) : openMenu())}>
+                    <span className="chat-header__name">{name ?? 'Chat'}</span>
+                    <ChevronDown width={14} height={14}/>
                 </Button>
             </Div>
             {contextMax != null ? (
@@ -139,23 +152,20 @@ export const ChatHeader = ({
                     </Div>
                 </Div>
             ) : null}
-            <Button className="chat-header__search" title="Export chat"
-                    onClicked={() => setExportOpen(true)}>
-                <Share width={20} height={20}/>
-            </Button>
-            <Button className="chat-header__search"
-                    onClicked={() => setSearchOpen(true)}>
-                <Search width={20} height={20}/>
-            </Button>
             {hasActiveHighlight ? (
                 <Button
                     className="chat-header__search-clear"
                     variant="secondary"
+                    title="Clear the search highlight"
                     onClicked={onClearHighlight}
                 >
                     <Close width={20} height={20}/>
                 </Button>
             ) : null}
+            <ContextMenu position={menuAt} onClose={() => setMenuAt(null)} items={menu}/>
+            <ConfirmPopup open={confirmingDelete} title="Delete chat" confirmLabel="Delete"
+                          message={`Are you sure that you want to delete "${name ?? 'this chat'}"`}
+                          onConfirm={() => void doDelete()} onClose={() => setConfirmingDelete(false)}/>
             <AssignFolderPopup
                 open={folderOpen}
                 selected={folderId}

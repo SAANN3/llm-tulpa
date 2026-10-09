@@ -75,3 +75,38 @@
   background-color: var(--color-tertiary);
   color: var(--color-secondary);
 }
+
+// An icon, the label taking the rest, and a switch at the end when the item has one
+.popup-menu__item--icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  > span {
+    flex: 1;
+  }
+
+  > svg {
+    flex-shrink: 0;
+  }
+}
+
+.popup-menu__item--danger {
+  color: var(--color-danger);
+  border-top: $line-border dashed var(--color-border);
+}
+
+.popup-menu__item--danger:hover {
+  background-color: var(--color-danger);
+  color: var(--color-secondary);
+}
+
+.popup-menu__item--disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.popup-menu__item--disabled:hover {
+  background-color: transparent;
+  color: inherit;
+}
