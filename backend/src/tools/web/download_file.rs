@@ -50,7 +50,9 @@ impl Tool for DownloadFileTool {
          same whether the URL points at a text page, an image, an archive, or any other file \
          type. Follow up with storage.detect_file_type to identify what was actually downloaded, \
          and storage.read_file to read it back as text (fails cleanly if it isn't actually UTF-8 \
-         text)."
+         text). To read a web page, use web.request instead: it returns the page's readable text, \
+         while a downloaded page is raw HTML, where searching (grep) mostly finds markup, scripts \
+         and CSS rather than what the page says."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {

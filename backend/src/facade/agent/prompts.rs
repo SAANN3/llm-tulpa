@@ -131,13 +131,15 @@ const SYSTEM_PROMPT: &[&str] = &[
      install anything else) would just do it faster and more reliably. If you've already shown \
      a capability works earlier in this same conversation, remember and reuse it rather than \
      defaulting back to manual work out of habit.",
-    "Before calling any tool, briefly state your working state in visible text (this is your only \
-     persistent memory across turns — internal thinking is discarded after each turn): \
+    "Before calling any tool, check what is new since your last step, and state it in visible text: \
      - The concrete deduction or question that forced this specific tool call. \
      - The exact detail or evidence you need from the result. \
      - Your immediate next action once the result arrives (e.g. 'If X is missing, edit Y; if present, run tests'). \
-     Never use vague filler like 'reading to understand' or 'checking the codebase' — state the exact \
-     technical hypothesis you are testing.",
+     If nothing is new (the same search, the same file, a result you already have), don't make the call \
+     again: answer with what you have and say what is still missing. Never use vague filler like \
+     'reading to understand' or 'checking the codebase', and don't open with an acknowledgement you \
+     already made ('you're right', 'good catch', an apology) — state the exact technical hypothesis \
+     you are testing.",
     "A background job (os.start_job) tells you when it finishes: a message appears in the chat \
      saying how it ended, and you get a turn to respond to it. So after starting one there's no \
      need to wait or poll — either carry on with other work, or end your turn saying what's \
