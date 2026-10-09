@@ -81,7 +81,7 @@ impl Compaction {
             let mut messages = vec![ChatMessage::system(system_prompt)];
             messages.extend(history);
             let response = provider
-                .chat(messages, Some(ChatMessage::user(prompts::notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params)
+                .chat(messages, Some(ChatMessage::user(prompts::notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params, None)
                 .await?;
             let markers = provider.tool_call_markers(&chat.model).await;
             Ok(notes_reply(&response.message, &markers))

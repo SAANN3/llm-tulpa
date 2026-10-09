@@ -105,6 +105,18 @@ pub struct TurnState {
     /// order, with what each needs. `Decision::index` points into this list.
     pub pending: Vec<AgentToolCall>,
     pub last_end: Option<RunEnded>,
+    /// What the model call in flight has written so far, while it writes; the `reply_piece` events numbered after
+    /// `seq` continue it.
+    pub reply: Option<ReplySoFarOut>,
+}
+
+/// A reply being written, as far as its pieces were sent (see `ServerEvent::ReplyPiece`).
+#[derive(Serialize, ToSchema)]
+pub struct ReplySoFarOut {
+    pub number: u32,
+    pub seq: u32,
+    pub thinking: String,
+    pub text: String,
 }
 
 /// What `start_prompt` returns at once: the run goes on in the background.
@@ -424,6 +436,12 @@ impl TurnRunner {
                 tool_started_at: snapshot.tool_started_at,
                 pending: vec![],
                 last_end,
+                reply: (snapshot.reply.seq > 0).then(|| ReplySoFarOut {
+                    number: snapshot.reply.number,
+                    seq: snapshot.reply.seq,
+                    thinking: snapshot.reply.thinking,
+                    text: snapshot.reply.text,
+                }),
             });
         }
         // Only for a chat with no run: while one goes on, a pending call is just between the model's
@@ -442,6 +460,7 @@ impl TurnRunner {
             tool_started_at: None,
             pending: if waiting { pending } else { vec![] },
             last_end,
+            reply: None,
         })
     }
 

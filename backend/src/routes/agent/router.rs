@@ -35,6 +35,7 @@ pub fn router() -> Router<Arc<AppState>> {
         StopRequest,
         RunningChat,
         crate::facade::agent::TurnState,
+        crate::facade::agent::ReplySoFarOut,
         crate::facade::agent::TurnStatus,
         crate::facade::agent::RunEnded,
         crate::facade::agent::Decision,

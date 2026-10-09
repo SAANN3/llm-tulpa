@@ -36,6 +36,7 @@ impl OneShot {
                 model,
                 None,
                 &CallParams::default(),
+                None,
             )
             .await?;
         Ok(response)

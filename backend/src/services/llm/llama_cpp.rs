@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use chrono::SecondsFormat;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -33,8 +34,8 @@ use super::template::{ensure_thinking_split, extract_tool_call_markers, parse_th
 use super::tool_defs::{tool_definitions, ToolDefinition};
 use super::types::{
     CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlamaServerStats, LlmErrors, LocalModel,
-    LocalModelDetails, ModelToolCall, ModelToolCallFunction, ResponseMetrics, RunningModel, RunningModels, Sampling,
-    ThinkChoice, ThinkingCapability,
+    LocalModelDetails, ModelToolCall, ModelToolCallFunction, OnPiece, ReplyPiece, ResponseMetrics, RunningModel, RunningModels,
+    Sampling, ThinkChoice, ThinkingCapability,
 };
 use crate::services::error::ErrorService;
 use crate::services::gguf::read_gguf_info;
@@ -96,6 +97,61 @@ impl LlamaCppProvider {
             return Err(LlmErrors::UnexpectedStatus(PROVIDER, status, body));
         }
         let decoded: CompletionResponse = decode_response(res).await?;
+        log_metrics(&decoded);
+        Ok(decoded)
+    }
+
+    /// `complete`, with the reply streamed: each piece goes to `on_piece` as it arrives, and the pieces are put
+    /// back together into the same `CompletionResponse` the whole reply decodes to, so everything after this
+    /// works on it exactly as on a reply that came in one piece. The request and the server's work are the same;
+    /// only how the answer travels differs.
+    async fn complete_streaming(&self, mut payload: Value, num_predict: i32, on_piece: OnPiece<'_>) -> Result<CompletionResponse, LlmErrors> {
+        payload["stream"] = json!(true);
+        // The token counts come in a last chunk of their own only when asked for
+        payload["stream_options"] = json!({"include_usage": true});
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        tracing::info!("calling llama-server /v1/chat/completions (streamed)");
+        let res = self
+            .client
+            .post(&url)
+            .timeout(OutputBudget::timeout_for(num_predict))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "llama-server /v1/chat/completions request failed");
+                LlmErrors::RequestFailed(PROVIDER, e.to_string())
+            })?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            tracing::error!(%status, body, "llama-server /v1/chat/completions returned a non-success status");
+            return Err(LlmErrors::UnexpectedStatus(PROVIDER, status, body));
+        }
+
+        let mut assembled = StreamedReply::default();
+        // Bytes, not text, until a whole line is in: a character can be split between two network chunks
+        let mut pending: Vec<u8> = Vec::new();
+        let mut body = res.bytes_stream();
+        'read: while let Some(chunk) = body.next().await {
+            let chunk = chunk.map_err(|e| LlmErrors::RequestFailed(PROVIDER, e.to_string()))?;
+            pending.extend_from_slice(&chunk);
+            while let Some(end) = pending.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                let line = String::from_utf8_lossy(&line);
+                let Some(data) = line.trim().strip_prefix("data:") else { continue };
+                let data = data.trim();
+                if data == "[DONE]" {
+                    break 'read;
+                }
+                let event: StreamChunk = serde_json::from_str(data).map_err(|e| {
+                    tracing::error!("failed to decode a llama-server stream chunk: {e}\nchunk = {data}");
+                    LlmErrors::DecodeFailed(PROVIDER, e.to_string())
+                })?;
+                assembled.add(event, on_piece);
+            }
+        }
+        let decoded = assembled.into_response();
         log_metrics(&decoded);
         Ok(decoded)
     }
@@ -165,6 +221,7 @@ impl LlmProvider for LlamaCppProvider {
         model: &str,
         known_prompt_tokens: Option<u64>,
         params: &CallParams,
+        on_piece: Option<OnPiece<'_>>,
     ) -> Result<ChatResponse, LlmErrors> {
         // Held per call even when the caller holds the turn, so a call that names no launch still
         // finds a server running.
@@ -188,7 +245,10 @@ impl LlmProvider for LlamaCppProvider {
         self.prefix_watch.check(model, &definitions, &messages);
 
         let payload = build_payload(model, openai_messages(&messages), think, num_predict, definitions.as_deref(), &params.sampling);
-        let decoded = self.complete(payload, num_predict).await?;
+        let decoded = match on_piece {
+            Some(on_piece) => self.complete_streaming(payload, num_predict, on_piece).await?,
+            None => self.complete(payload, num_predict).await?,
+        };
         Ok(decoded.into_chat_response(model))
     }
 
@@ -444,6 +504,130 @@ struct WireFunction {
     /// A JSON *string* on the wire, so it is parsed back into a value (see the module docs).
     #[serde(default)]
     arguments: Option<Value>,
+}
+
+/// One chunk of a streamed reply: the piece each field gained since the last chunk. The last chunks carry no
+/// pieces, only how the reply finished and (asked for with `include_usage`) the token counts and timings.
+#[derive(Deserialize, Default)]
+struct StreamChunk {
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+    #[serde(default)]
+    timings: Option<Timings>,
+}
+
+#[derive(Deserialize, Default)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: StreamDelta,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+/// A piece of one tool call: `index` says which call it continues; the id and name come once, the arguments'
+/// JSON text in pieces to be joined.
+#[derive(Deserialize)]
+struct StreamToolCall {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<StreamFunction>,
+}
+
+#[derive(Deserialize, Default)]
+struct StreamFunction {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// A streamed reply put back together, piece by piece
+#[derive(Default)]
+struct StreamedReply {
+    content: String,
+    reasoning: String,
+    /// By the index the server numbers them with: (id, name, the arguments' JSON text)
+    tool_calls: Vec<(Option<String>, String, String)>,
+    finish_reason: Option<String>,
+    usage: Option<Usage>,
+    timings: Option<Timings>,
+}
+
+impl StreamedReply {
+    fn add(&mut self, chunk: StreamChunk, on_piece: OnPiece<'_>) {
+        for choice in chunk.choices {
+            if let Some(text) = choice.delta.reasoning_content.filter(|t| !t.is_empty()) {
+                self.reasoning.push_str(&text);
+                on_piece(ReplyPiece::Thinking(text));
+            }
+            if let Some(text) = choice.delta.content.filter(|t| !t.is_empty()) {
+                self.content.push_str(&text);
+                on_piece(ReplyPiece::Text(text));
+            }
+            for call in choice.delta.tool_calls.into_iter().flatten() {
+                while self.tool_calls.len() <= call.index {
+                    self.tool_calls.push((None, String::new(), String::new()));
+                }
+                let entry = &mut self.tool_calls[call.index];
+                if call.id.is_some() {
+                    entry.0 = call.id;
+                }
+                if let Some(function) = call.function {
+                    if let Some(name) = function.name {
+                        entry.1.push_str(&name);
+                    }
+                    if let Some(arguments) = function.arguments {
+                        entry.2.push_str(&arguments);
+                    }
+                }
+            }
+            if choice.finish_reason.is_some() {
+                self.finish_reason = choice.finish_reason;
+            }
+        }
+        if chunk.usage.is_some() {
+            self.usage = chunk.usage;
+        }
+        if chunk.timings.is_some() {
+            self.timings = chunk.timings;
+        }
+    }
+
+    /// The reply as the non-streamed answer would have carried it
+    fn into_response(self) -> CompletionResponse {
+        let tool_calls: Vec<WireToolCall> = self
+            .tool_calls
+            .into_iter()
+            .map(|(id, name, arguments)| WireToolCall { id, function: WireFunction { name, arguments: Some(Value::String(arguments)) } })
+            .collect();
+        CompletionResponse {
+            choices: vec![Choice {
+                message: WireMessage {
+                    content: Some(self.content),
+                    reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
+                    tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
+                },
+                finish_reason: self.finish_reason,
+            }],
+            usage: self.usage,
+            timings: self.timings,
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]

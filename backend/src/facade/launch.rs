@@ -86,7 +86,7 @@ impl LaunchFacade {
         let before = self.runtime.log_position();
         let params = CallParams { launch: Some(request), ..CallParams::default() };
         let response = provider
-            .chat(vec![], Some(ChatMessage::user(prompt)), &[], Some(ThinkChoice::Enabled(false)), &model_name, None, &params)
+            .chat(vec![], Some(ChatMessage::user(prompt)), &[], Some(ThinkChoice::Enabled(false)), &model_name, None, &params, None)
             .await?;
 
         let tokens_per_second = |count: Option<u64>, ms: Option<i64>| match (count, ms) {

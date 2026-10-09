@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 
 use super::types::{
-    CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlmErrors, LocalModel, RunningModels, ThinkChoice,
-    ThinkingCapability,
+    CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlmErrors, LocalModel, OnPiece, RunningModels,
+    ThinkChoice, ThinkingCapability,
 };
 use crate::services::error::ErrorService;
 use crate::services::llama_runtime::CallGuard;
@@ -30,7 +30,10 @@ pub trait LlmProvider: Send + Sync {
     /// omitted when empty; running a tool the reply asks for is the caller's job. `think` defaults to
     /// enabled at the provider's own default effort. `known_prompt_tokens` is the measured prompt
     /// size of the previous call, which lets the provider budget the reply's length precisely.
-    /// `params` carries what this call overrides about how the model runs it.
+    /// `params` carries what this call overrides about how the model runs it. With `on_piece`, the reply is also
+    /// handed over piece by piece as the model writes it, for showing it live; what is returned is the same
+    /// complete reply either way. A provider that can't stream ignores it.
+    #[allow(clippy::too_many_arguments)]
     async fn chat(
         &self,
         messages: Vec<ChatMessage>,
@@ -40,6 +43,7 @@ pub trait LlmProvider: Send + Sync {
         model: &str,
         known_prompt_tokens: Option<u64>,
         params: &CallParams,
+        on_piece: Option<OnPiece<'_>>,
     ) -> Result<ChatResponse, LlmErrors>;
 
     /// A one-shot completion from a bare prompt: no roles, history or tools. For the app's own

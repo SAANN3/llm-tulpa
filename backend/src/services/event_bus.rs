@@ -12,7 +12,9 @@ const CHANNEL_CAPACITY: usize = 256;
 /// was asked to answer — see `GET /api/live`. Deliberately just a hint that something
 /// changed (which chat, which job), never the content itself: the actual data is always
 /// read back through the normal API, so a missed or duplicated event can't leave a
-/// client with wrong data, only a late refresh.
+/// client with wrong data, only a late refresh. The one exception is `ReplyPiece`, which carries
+/// the text of a reply being written, for show only: the complete reply is read back as a stored
+/// message all the same, and replaces whatever the pieces showed (missed pieces only show less).
 ///
 /// Adding an event is adding a variant here and nothing else on the backend: every
 /// event goes out on the same stream as an unnamed SSE message whose JSON carries its
@@ -72,6 +74,14 @@ pub enum ServerEvent {
     ChatDeleted { chat_id: i64 },
     /// Messages were taken out of the chat (a rewind, or the reply a regenerate replaced): pages showing it drop them.
     MessagesRemoved { chat_id: i64, message_ids: Vec<i64> },
+    /// What the model wrote since the last piece of the reply it is writing in `chat_id`'s turn (its thinking, its
+    /// text), for a page that shows replies as they are written. Sent a few times a second while the reply is
+    /// written, not per token. `reply` numbers the run's model calls and `seq` the reply's pieces from 1, so a page
+    /// that joined midway (from `GET /api/agent/turn`'s `reply`) or missed one can tell. For show only; see the note
+    /// on `ServerEvent`.
+    ReplyPiece { chat_id: i64, reply: u32, seq: u32, thinking: String, text: String },
+    /// The reply being written in `chat_id`'s turn was unusable and is asked for again: what its pieces showed goes.
+    ReplyRestart { chat_id: i64 },
     /// The user looked at the chat: its note of how the last run ended (`unseen_end`) was cleared. Sent only when
     /// there was one to clear, so every other open page of the same user drops it too.
     ChatSeen { chat_id: i64 },
@@ -130,6 +140,8 @@ impl ServerEvent {
             ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatSeen { chat_id } => Some(*chat_id),
             ServerEvent::MessagesRemoved { chat_id, .. } => Some(*chat_id),
+            ServerEvent::ReplyPiece { chat_id, .. } => Some(*chat_id),
+            ServerEvent::ReplyRestart { chat_id } => Some(*chat_id),
             ServerEvent::ChatCreated { chat_id } => Some(*chat_id),
             ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),

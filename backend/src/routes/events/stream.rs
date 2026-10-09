@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     extract::State,
@@ -52,19 +53,33 @@ pub async fn stream(
 
 /// The bus's events that concern chats `user_id` owns. A subscriber that falls too far behind gets
 /// a `Lagged` error in place of the events it missed — skipped here, since each event is only a
-/// hint (see `stream`).
+/// hint (see `stream`). Whose a chat is is asked once per chat for the stream's whole life: a chat
+/// never changes owner, and a reply being written sends several events a second about the same chat,
+/// which would otherwise be a query each, and a stream slowed by them falls behind and loses events.
 fn events_for(
     events: Receiver<ServerEvent>,
     chats: Arc<ChatStore>,
     user_id: i64,
 ) -> impl Stream<Item = ServerEvent> {
+    let owned: Arc<Mutex<HashMap<i64, bool>>> = Arc::default();
     BroadcastStream::new(events).filter_map(move |received| {
         let chats = chats.clone();
+        let owned = owned.clone();
         async move {
             let event = received.ok()?;
             // An event about no chat in particular (the model server's state) is everyone's
             if let Some(chat_id) = event.chat_id() {
-                chats.owns(user_id, chat_id).await.ok()?.then_some(())?;
+                let known = owned.lock().unwrap().get(&chat_id).copied();
+                let mine = match known {
+                    Some(mine) => mine,
+                    // A failed lookup drops this event and is not remembered, so the next one asks again
+                    None => {
+                        let mine = chats.owns(user_id, chat_id).await.ok()?;
+                        owned.lock().unwrap().insert(chat_id, mine);
+                        mine
+                    }
+                };
+                mine.then_some(())?;
             }
             Some(event)
         }

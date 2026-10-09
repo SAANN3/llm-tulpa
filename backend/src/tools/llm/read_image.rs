@@ -103,7 +103,7 @@ impl Tool for ReadImageTool {
         let provider = ctx.providers.get(&ctx.provider).map_err(|e| {
             ToolError::FailedUnknown(format!("couldn't read the image: {}", e.message.unwrap_or_default()))
         })?;
-        let response = provider.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None, &CallParams::default()).await.map_err(|e| {
+        let response = provider.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None, &CallParams::default(), None).await.map_err(|e| {
             let reason = match e {
                 crate::services::llm::LlmErrors::RequestFailed(_, msg) => msg,
                 crate::services::llm::LlmErrors::UnexpectedStatus(provider, status, body) => {

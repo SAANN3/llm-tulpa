@@ -19,8 +19,8 @@ use super::provider::LlmProvider;
 use super::tool_defs::{tool_definitions, ToolDefinition};
 use super::template::{ensure_thinking_split, extract_tool_call_markers, parse_thinking_capability};
 use super::types::{
-    CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlmErrors, LocalModel, ResponseMetrics, RunningModels, Sampling,
-    ThinkChoice, ThinkingCapability,
+    CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlmErrors, LocalModel, OnPiece, ResponseMetrics, RunningModels,
+    Sampling, ThinkChoice, ThinkingCapability,
 };
 use crate::services::error::ErrorService;
 use crate::services::llama_runtime::{CallGuard, LlamaRuntime};
@@ -253,6 +253,8 @@ impl LlmProvider for OllamaService {
         model: &str,
         known_prompt_tokens: Option<u64>,
         params: &CallParams,
+        // Ollama's replies come whole: nothing is shown before the reply is complete
+        _on_piece: Option<OnPiece<'_>>,
     ) -> Result<ChatResponse, LlmErrors> {
         let url = format!("{}/api/chat", self.base());
 

@@ -42,7 +42,7 @@ use history::History;
 use notices::Notices;
 use tool_calls::ToolCalls;
 use turn::Turn;
-pub use runner::{Allowance, Decision, RunEnded, StartedTurn, TurnState, TurnStatus};
+pub use runner::{Allowance, Decision, ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
 use runner::TurnRunner;
 use model_call::ModelCall;
 pub use prompts::default_system_prompt;

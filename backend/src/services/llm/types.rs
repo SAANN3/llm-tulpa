@@ -315,6 +315,17 @@ fn nanos_to_ms(nanos: Option<u64>) -> Option<i64> {
     nanos.map(|ns| i64::try_from(ns / 1_000_000).unwrap_or(i64::MAX))
 }
 
+/// A piece of a reply as the model writes it, for showing it while it is written (see `LlmProvider::chat`'s
+/// `on_piece`). Pieces are only shown: the reply is used once it is complete, the same as without them.
+#[derive(Clone, Debug)]
+pub enum ReplyPiece {
+    Thinking(String),
+    Text(String),
+}
+
+/// Told about each piece of a reply as it arrives
+pub type OnPiece<'a> = &'a (dyn Fn(ReplyPiece) + Send + Sync);
+
 /// What a provider reports about one call: token counts, and durations in nanoseconds. Every field
 /// is optional because providers differ in what they say.
 #[derive(Default, Clone, Debug)]

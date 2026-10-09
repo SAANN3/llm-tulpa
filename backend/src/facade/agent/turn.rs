@@ -15,7 +15,7 @@ use super::{ChatOut, NoticeOut};
 use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, NewToolCall};
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{EventBus, ServerEvent};
-use crate::services::llm::{CallParams, ChatMessage, ChatResponse, LlmProvider, ThinkChoice};
+use crate::services::llm::{CallParams, ChatMessage, ChatResponse, LlmProvider, ReplyPiece, ThinkChoice};
 use crate::services::tools::ToolService;
 use crate::tools::base::Tool;
 use crate::tools::subagent;
@@ -27,6 +27,56 @@ const RECENT_MESSAGES_LOOKBACK: u64 = 500;
 /// chat (see `compaction::clearing`) on purpose: counting too much only folds a little earlier, counting too little
 /// sends a request the window can't hold.
 const NEW_CONTENT_CHARS_PER_TOKEN: f64 = 3.0;
+
+/// How often the pieces of a reply being written go out at most: a few times a second reads as live, where an event
+/// per token would be hundreds a second on the event stream for nothing more
+const PIECE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Collects the pieces of a reply as the model writes them and sends them as `ServerEvent::ReplyPiece`, at most every
+/// `PIECE_INTERVAL`; `flush` sends what is left once the reply is complete.
+struct PieceBatcher {
+    chat_id: i64,
+    events: Arc<EventBus>,
+    /// Keeps the reply as sent, for a page that opens in the middle of it
+    run: RunTracker,
+    /// The thinking and text since the last event, and when that event went out
+    pending: std::sync::Mutex<(String, String, Instant)>,
+}
+
+impl PieceBatcher {
+    fn new(chat_id: i64, events: Arc<EventBus>, run: RunTracker) -> Self {
+        Self { chat_id, events, run, pending: std::sync::Mutex::new((String::new(), String::new(), Instant::now())) }
+    }
+
+    fn push(&self, piece: ReplyPiece) {
+        let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match piece {
+            ReplyPiece::Thinking(text) => pending.0.push_str(&text),
+            ReplyPiece::Text(text) => pending.1.push_str(&text),
+        }
+        if pending.2.elapsed() >= PIECE_INTERVAL {
+            self.send(&mut pending);
+        }
+    }
+
+    fn flush(&self) {
+        let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.send(&mut pending);
+    }
+
+    fn send(&self, pending: &mut (String, String, Instant)) {
+        pending.2 = Instant::now();
+        if pending.0.is_empty() && pending.1.is_empty() {
+            return;
+        }
+        let thinking = std::mem::take(&mut pending.0);
+        let text = std::mem::take(&mut pending.1);
+        // Recorded before it goes out, under the same lock as the sending, so pieces leave in the order of their
+        // numbers and a state read never lacks a piece that was already sent
+        let (reply, seq) = self.run.reply_piece(&thinking, &text);
+        self.events.publish(ServerEvent::ReplyPiece { chat_id: self.chat_id, reply, seq, thinking, text });
+    }
+}
 
 /// What a step is given: the history to send (every message is already stored; the newest is the one
 /// being answered), and what to do around the model call.
@@ -272,6 +322,10 @@ impl Turn {
         let mut regenerations = Regenerations::default();
         loop {
             step.run.call_started();
+            // The reply is shown as it is written (`ServerEvent::ReplyPiece`); the turn itself goes on with the
+            // complete reply the call returns, the same as without the pieces
+            let pieces = PieceBatcher::new(chat_id, self.events.clone(), step.run.clone());
+            let on_piece = |piece: ReplyPiece| pieces.push(piece);
             let call = request.provider.chat(
                 request.messages.clone(),
                 None,
@@ -280,6 +334,7 @@ impl Turn {
                 &request.model,
                 request.known_prompt_tokens,
                 &request.params,
+                Some(&on_piece),
             );
             // A stop drops the call mid-flight: the request is closed and the server stops generating
             let response = tokio::select! {
@@ -289,12 +344,13 @@ impl Turn {
                 }
                 response = call => response?,
             };
+            pieces.flush();
             step.run.call_finished(response.eval_count(), response.prompt_eval_count());
 
             // The live "thinking" indicator's spend hint (see `ServerEvent::TurnProgress`):
-            // model calls are non-streaming, so a token count exists only at the moment one
-            // returns — publish it there, including for regenerated (unusable) replies,
-            // since their tokens were spent too.
+            // the token counts come with the complete reply (a streamed one's in its last
+            // chunk), so they exist only once a call returns — publish them there, including
+            // for regenerated (unusable) replies, since their tokens were spent too.
             if let Some(eval_tokens) = response.eval_count() {
                 self.events.publish(ServerEvent::TurnProgress {
                     chat_id,
@@ -330,6 +386,8 @@ impl Turn {
                 .rev()
                 .collect();
             tracing::warn!(chat_id, problem = problem.describe(), %thinking_tail, "model reply unusable, regenerating");
+            // What was shown of the reply that is thrown away goes before the new one is written
+            self.events.publish(ServerEvent::ReplyRestart { chat_id });
         }
     }
 
