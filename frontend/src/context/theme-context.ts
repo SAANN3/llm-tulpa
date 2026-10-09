@@ -5,7 +5,8 @@ import type {TimeFormat} from '../utils/time-format.ts'
 
 export interface ThemeContextValue {
     themeName: ThemeName
-    setThemeName: (name: ThemeName) => void
+    /** Changes the theme; with `from`, the new colors are revealed from that element (see `revealTheme`) */
+    setThemeName: (name: ThemeName, from?: Element | null) => void
     themeNames: readonly ThemeName[]
     /** What is behind the pages: nothing, the static dots, or an animated background, with its brightness and speed */
     background: BackgroundSettings

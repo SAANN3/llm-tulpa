@@ -64,6 +64,8 @@ export class BackgroundRunner {
             fg: parseColor(ctx, style.getPropertyValue('--color-primary').trim()),
         }
         this.scene.ink = inkFor(this.scene.colors.bg, this.scene.colors.accent)
+        // Drawn now rather than at the next frame: a theme's reveal takes its picture of the new page right away
+        if (this.scene.cols) this.effect?.draw(0, this.t)
     }
 
     /** A new layout re-fits the effect to it, keeping what it chose at random (the same tree, moved) */

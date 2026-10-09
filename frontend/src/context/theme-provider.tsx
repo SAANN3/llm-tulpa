@@ -1,8 +1,10 @@
 import {useEffect, useState, type ReactNode} from 'react'
+import {flushSync} from 'react-dom'
 import {ThemeContext} from './theme-context.ts'
 import {DEFAULT_BACKGROUND, findBackground, type BackgroundSettings} from '../backgrounds'
 import {themeNames} from '../themes'
 import {syncFaviconWithTheme} from '../utils/favicon.ts'
+import {revealTheme} from '../utils/theme-reveal.ts'
 import {localeTimeFormat, type TimeFormat} from '../utils/time-format.ts'
 
 /** The saved background, or the default. A browser that only has the older dots switch keeps its choice. */
@@ -17,7 +19,13 @@ const loadBackground = (): BackgroundSettings => {
 }
 
 export const ThemeProvider = ({children}: { children: ReactNode }) => {
-    const [themeName, setThemeName] = useState<(typeof themeNames)[number]>(localStorage.getItem('theme_name') as (typeof themeNames)[number] ?? 'dark')
+    const [themeName, setThemeNameState] = useState<(typeof themeNames)[number]>(localStorage.getItem('theme_name') as (typeof themeNames)[number] ?? 'dark')
+    // The attribute is set here as well as in the effect below: the reveal pictures the new page as soon as this
+    // returns, before React would run the effect
+    const setThemeName = (name: (typeof themeNames)[number], from?: Element | null) => revealTheme(from ?? null, () => {
+        document.documentElement.dataset.theme = name
+        flushSync(() => setThemeNameState(name))
+    })
 
     // Kept per browser like the theme: a phone and a desktop may well want different ones
     const [background, setBackgroundState] = useState<BackgroundSettings>(loadBackground)

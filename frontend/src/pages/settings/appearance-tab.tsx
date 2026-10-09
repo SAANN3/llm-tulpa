@@ -63,7 +63,7 @@ export const AppearanceTab = () => {
                                 <Div key={theme}
                                      className={`appearance__item${theme === themeName ? ' appearance__item--on' : ''}${theme === pointedTheme ? ' appearance__item--pointed' : ''}`}
                                      onHover={(on) => on && setPointedTheme(theme)}
-                                     onClick={() => setThemeName(theme)}>
+                                     onClick={(e) => theme !== themeName && setThemeName(theme, e.currentTarget)}>
                                     <Swatches theme={theme}/>
                                     <span>{themeDisplayNames[theme]}</span>
                                 </Div>
