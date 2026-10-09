@@ -22,5 +22,6 @@ pub mod plugin_settings_store;
 pub mod preset_store;
 pub mod process;
 pub mod settings_store;
+pub mod system_load;
 pub mod tools;
 pub mod user_store;

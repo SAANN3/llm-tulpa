@@ -28,8 +28,28 @@ pub struct HfRepo {
     pub id: String,
     pub downloads: u64,
     pub likes: u64,
+    /// When the repository was created, as Hugging Face writes it (RFC 3339)
+    pub created_at: Option<String>,
     /// Whether the author makes people accept terms first; downloading needs a token then
     pub gated: bool,
+}
+
+/// One page of a search, and where the next one starts
+pub struct HfSearchPage {
+    pub repos: Vec<HfRepo>,
+    pub next_cursor: Option<String>,
+}
+
+/// The orders Hugging Face sorts a search by, newest or biggest first: downloads, likes, when it was created, when
+/// it last changed
+pub const SORTS: [&str; 4] = ["downloads", "likes", "createdAt", "lastModified"];
+
+/// The `cursor` of the `rel="next"` link in a `Link` header (`<https://…&cursor=…>; rel="next"`)
+fn next_cursor(link: &str) -> Option<String> {
+    let next = link.split(',').find(|part| part.contains(r#"rel="next""#))?;
+    let url = next.split(['<', '>']).nth(1)?;
+    let query = url.split_once('?')?.1;
+    query.split('&').find_map(|pair| pair.strip_prefix("cursor=")).map(str::to_string)
 }
 
 #[derive(Serialize, ToSchema)]
@@ -72,6 +92,8 @@ struct SearchItem {
     downloads: u64,
     #[serde(default)]
     likes: u64,
+    #[serde(default, rename = "createdAt")]
+    created_at: Option<String>,
     #[serde(default)]
     gated: serde_json::Value,
 }
@@ -123,21 +145,38 @@ impl HfLibrary {
         }
     }
 
-    pub async fn search(&self, query: &str, token: Option<&str>) -> Result<Vec<HfRepo>, ErrorService> {
+    /// One page of repositories with GGUF files, in `sort` order (one of `SORTS`), and the cursor of the
+    /// next page when there is one. `cursor` is what an earlier page returned; Hugging Face pages by it.
+    pub async fn search(&self, query: &str, sort: &str, cursor: Option<&str>, token: Option<&str>) -> Result<HfSearchPage, ErrorService> {
+        if !SORTS.contains(&sort) {
+            return Err(failed(StatusCode::BAD_REQUEST, "unknown sort order"));
+        }
+        let mut params = vec![("search", query), ("filter", "gguf"), ("sort", sort), ("direction", "-1"), ("limit", "30")];
+        if let Some(cursor) = cursor {
+            params.push(("cursor", cursor));
+        }
         let res = self
             .get(API, token)
-            .query(&[("search", query), ("filter", "gguf"), ("sort", "downloads"), ("direction", "-1"), ("limit", "30")])
+            .query(&params)
             .send()
             .await
             .map_err(|e| failed(StatusCode::BAD_GATEWAY, format!("could not reach Hugging Face: {e}")))?;
         if !res.status().is_success() {
             return Err(failed(StatusCode::BAD_GATEWAY, format!("Hugging Face answered {}", res.status())));
         }
+        let next_cursor = res.headers().get(reqwest::header::LINK).and_then(|link| link.to_str().ok()).and_then(next_cursor);
         let items: Vec<SearchItem> = res.json().await.map_err(|e| failed(StatusCode::BAD_GATEWAY, format!("unexpected answer from Hugging Face: {e}")))?;
-        Ok(items
+        let repos = items
             .into_iter()
-            .map(|i| HfRepo { gated: !matches!(i.gated, serde_json::Value::Bool(false) | serde_json::Value::Null), id: i.id, downloads: i.downloads, likes: i.likes })
-            .collect())
+            .map(|i| HfRepo {
+                gated: !matches!(i.gated, serde_json::Value::Bool(false) | serde_json::Value::Null),
+                id: i.id,
+                downloads: i.downloads,
+                likes: i.likes,
+                created_at: i.created_at,
+            })
+            .collect();
+        Ok(HfSearchPage { repos, next_cursor })
     }
 
     async fn tree(&self, repo: &str, token: Option<&str>) -> Result<Vec<TreeItem>, ErrorService> {

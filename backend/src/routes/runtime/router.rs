@@ -11,6 +11,7 @@ use crate::state::AppState;
 use super::devices::*;
 use super::folder::*;
 use super::hardware::*;
+use super::system::*;
 use super::install::*;
 use super::install_status::*;
 use super::load::*;
@@ -36,6 +37,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/folder/browse", get(browse_folders))
         .route("/server", get(get_server_settings).post(set_server_settings))
         .route("/hardware", get(hardware))
+        .route("/system", get(system))
         .route("/install", get(install_status).post(install))
         .route("/test", post(test))
         .route("/models", get(models).post(register).delete(remove_model))
@@ -45,7 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(status, load, stop, logs, devices, get_server_settings, set_server_settings, get_folder, set_folder, browse_folders, hardware, install_status, install, test, models, register, remove_model, setup_complete, rebind_chats),
+    paths(status, load, stop, logs, devices, get_server_settings, set_server_settings, get_folder, set_folder, browse_folders, hardware, system, install_status, install, test, models, register, remove_model, setup_complete, rebind_chats),
     components(schemas(
         LoadRequest,
         LogsOut,
@@ -60,6 +62,8 @@ pub fn router() -> Router<Arc<AppState>> {
         crate::services::llama_runtime::LoadFacts,
         crate::services::llama_runtime::MemoryBuffer,
         crate::facade::placement::Placement,
+        crate::services::system_load::SystemSnapshot,
+        crate::services::system_load::GpuLoad,
         crate::services::gpu_memory::GpuMemory,
         crate::facade::launch::SpeedTest,
         InstallStatusOut,

@@ -15,6 +15,7 @@ use crate::services::{
     model_folder::ModelFolder,
     llm::{LlmProviders, OllamaService},
     model_library::ModelLibrary,
+    system_load::SystemLoad,
     tools::ToolService,
 };
 
@@ -45,6 +46,8 @@ pub struct AppState {
     pub library: Arc<ModelLibrary>,
     /// Hugging Face search and downloads into the model folder
     pub hf: Arc<HfLibrary>,
+    /// What the machine is using right now, for the Hardware view; needs no database
+    pub system_load: Arc<SystemLoad>,
     pub services: Arc<RwLock<Option<AppServices>>>,
     /// Serializes anything that builds `AppServices`. Building them starts the enabled
     /// plugins' background loops, so two builds racing would leave two copies of every bot
@@ -93,6 +96,7 @@ impl AppState {
             library: Arc::new(ModelLibrary::new(ollama.clone(), model_folder.clone())),
             ollama,
             hf: Arc::new(HfLibrary::new(model_folder.clone())),
+            system_load: Arc::new(SystemLoad::new()),
             config: Arc::new(RwLock::new(config)),
             providers,
             tools,

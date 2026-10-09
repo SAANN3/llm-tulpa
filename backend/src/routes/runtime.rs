@@ -14,4 +14,5 @@ mod setup_complete;
 pub mod router;
 mod status;
 mod stop;
+mod system;
 mod test;

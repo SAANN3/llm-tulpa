@@ -61,21 +61,37 @@ pub fn check(path: &str) -> Result<CheckedFolder, ErrorService> {
 }
 
 /// The mount whose path is the longest prefix of `path`: the disk the path lives on.
-fn mount_of<'a>(path: &Path, mounts: &'a [(PathBuf, u64)]) -> Option<&'a (PathBuf, u64)> {
+fn mount_of<'a, T>(path: &Path, mounts: &'a [(PathBuf, T)]) -> Option<&'a (PathBuf, T)> {
     mounts.iter().filter(|(mount, _)| path.starts_with(mount)).max_by_key(|(mount, _)| mount.as_os_str().len())
 }
 
-/// How many bytes can still be written on the disk `path` is on, when the system says. A path that does
-/// not exist yet counts as the nearest folder above it that does.
+/// How big the disk a path is on is, and how much of it can still be written, in bytes
+#[derive(Clone, Copy)]
+pub struct DiskSpace {
+    pub free: u64,
+    pub total: u64,
+}
+
+/// How many bytes can still be written on the disk `path` is on, when the system says (see `disk_space`).
 pub fn free_bytes(path: &Path) -> Option<u64> {
+    disk_space(path).map(|space| space.free)
+}
+
+/// The disk `path` is on, when the system says. A path that does not exist yet counts as the nearest folder
+/// above it that does.
+pub fn disk_space(path: &Path) -> Option<DiskSpace> {
     let mut existing = path;
     while !existing.exists() {
         existing = existing.parent()?;
     }
     let canonical = std::fs::canonicalize(existing).ok()?;
     let disks = sysinfo::Disks::new_with_refreshed_list();
-    let mounts: Vec<(PathBuf, u64)> = disks.list().iter().map(|d| (d.mount_point().to_path_buf(), d.available_space())).collect();
-    let (mount, free) = mount_of(&canonical, &mounts)?;
+    let mounts: Vec<(PathBuf, DiskSpace)> = disks
+        .list()
+        .iter()
+        .map(|d| (d.mount_point().to_path_buf(), DiskSpace { free: d.available_space(), total: d.total_space() }))
+        .collect();
+    let (mount, space) = mount_of(&canonical, &mounts)?;
     // `Disks` leaves some filesystems out (tmpfs, say), so the deepest mount it lists may be a different
     // disk than the one the path is on: then nothing is said, rather than the wrong disk's space
     #[cfg(unix)]
@@ -85,7 +101,7 @@ pub fn free_bytes(path: &Path) -> Option<u64> {
             return None;
         }
     }
-    Some(*free)
+    Some(*space)
 }
 
 #[derive(Serialize, ToSchema)]
