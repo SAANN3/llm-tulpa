@@ -66,7 +66,7 @@ export const ChatHeader = ({
     const [exportOpen, setExportOpen] = useState(false)
     const [renameOpen, setRenameOpen] = useState(false)
     const [folderName, setFolderName] = useState<string | null>(null)
-    const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+    const [menuAt, setMenuAt] = useState<{ x: number; y: number; width: number } | null>(null)
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const titleRef = useRef<HTMLDivElement>(null)
 
@@ -106,8 +106,9 @@ export const ChatHeader = ({
     }
 
     const openMenu = () => {
-        const rect = titleRef.current?.getBoundingClientRect()
-        if (rect) setMenuAt({x: rect.left, y: rect.bottom + 6})
+        // The name's button, not its group: the group stretches across the header
+        const rect = titleRef.current?.firstElementChild?.getBoundingClientRect()
+        if (rect) setMenuAt({x: rect.left, y: rect.bottom + 6, width: rect.width})
     }
 
     const menu: ContextMenuItem[] = [
@@ -163,7 +164,7 @@ export const ChatHeader = ({
                     <Close width={20} height={20}/>
                 </Button>
             ) : null}
-            <ContextMenu position={menuAt} onClose={() => setMenuAt(null)} items={menu}/>
+            <ContextMenu position={menuAt} onClose={() => setMenuAt(null)} items={menu} minWidth={menuAt?.width}/>
             <ConfirmPopup open={confirmingDelete} title="Delete chat" confirmLabel="Delete"
                           message={`Are you sure that you want to delete "${name ?? 'this chat'}"`}
                           onConfirm={() => void doDelete()} onClose={() => setConfirmingDelete(false)}/>
