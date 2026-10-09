@@ -47,6 +47,13 @@ pub(crate) struct UsageDayOut {
 pub(crate) struct UsageResponse {
     /// Every day of the range, oldest first, quiet days included
     days: Vec<UsageDayOut>,
+    /// The average whole call (request to response) over the range, in milliseconds; null without calls
+    call_ms_mean: Option<i64>,
+    /// Starts of the model server over the range, server-wide (a chat, a one-shot prompt or a load from the
+    /// Models page asked for each), and the median time to ready in milliseconds. llama.cpp only: Ollama loads
+    /// its models itself.
+    loads: u64,
+    load_ms_median: Option<i64>,
 }
 
 /// The calling user's usage and speed per day over the last `days` days — every chat of theirs,
@@ -67,10 +74,10 @@ pub async fn usage(
     Query(query): Query<StatsQuery>,
 ) -> Result<Json<UsageResponse>, ErrorService> {
     let services = state.services().await?;
-    let days = services
-        .stats
-        .usage(auth.id, query.days, query.months)
-        .await?
+    let overview = services.stats.usage(auth.id, query.days, query.months).await?;
+    let summary = overview.summary;
+    let days = summary
+        .days
         .into_iter()
         .map(|day| UsageDayOut {
             day: day.day.to_string(),
@@ -90,5 +97,5 @@ pub async fn usage(
         })
         .collect();
 
-    Ok(Json(UsageResponse { days }))
+    Ok(Json(UsageResponse { days, call_ms_mean: summary.call_ms_mean, loads: overview.loads.count, load_ms_median: overview.loads.median_ms }))
 }

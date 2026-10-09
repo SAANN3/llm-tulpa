@@ -92,9 +92,11 @@ impl ModelCall {
     /// turn left at a permission prompt that nobody answers lets go. While held, another user who
     /// needs a different profile is told to wait instead of reloading under the turn and discarding
     /// its cached prompt.
-    pub(super) async fn hold(&self, chat: &Chat, provider: &dyn LlmProvider, launch: Option<&LaunchRequest>) -> Result<(), ErrorService> {
+    /// Returns how long the claim waited for the model to load, when this was the call that loaded it.
+    pub(super) async fn hold(&self, chat: &Chat, provider: &dyn LlmProvider, launch: Option<&LaunchRequest>) -> Result<Option<i64>, ErrorService> {
         let chat_id = chat.id;
         let guard = provider.acquire(launch).await?;
+        let loaded_ms = guard.loaded_ms;
         let generation = {
             let mut holds = self.turn_holds.lock().unwrap();
             let generation = holds.get(&chat_id).map_or(0, |h| h.generation + 1);
@@ -116,7 +118,7 @@ impl ModelCall {
                 holds.remove(&chat_id);
             }
         });
-        Ok(())
+        Ok(loaded_ms)
     }
 
     /// Lets go of the claim `hold` made: the turn is over.

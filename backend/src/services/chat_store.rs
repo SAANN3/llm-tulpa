@@ -17,7 +17,7 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use stats::{ContextUsage, DailyUsage, ModelUsage, StatsRange, ToolUsage};
+pub use stats::{ContextUsage, ModelUsage, StatsRange, ToolUsage, UsageSummary};
 
 use crate::services::error::ErrorService;
 use crate::services::folder_store::{FolderStore, FolderStoreErrors};

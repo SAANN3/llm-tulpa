@@ -299,6 +299,16 @@ impl ChatResponse {
     pub fn load_duration_ms(&self) -> Option<i64> {
         nanos_to_ms(self.metrics.load_duration)
     }
+
+    /// The call waited `load_ms` for its model to load before it was sent: a provider that loads the
+    /// model itself (Ollama) reports this in the response; one whose server the backend starts
+    /// (llama.cpp) can't, so the backend's own measurement is put in its place.
+    pub fn with_load_ms(mut self, load_ms: Option<i64>) -> Self {
+        if let Some(ms) = load_ms {
+            self.metrics.load_duration = Some(u64::try_from(ms).unwrap_or(0).saturating_mul(1_000_000));
+        }
+        self
+    }
 }
 
 fn nanos_to_ms(nanos: Option<u64>) -> Option<i64> {

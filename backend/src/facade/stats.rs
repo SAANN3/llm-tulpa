@@ -4,12 +4,20 @@ use chrono::NaiveDate;
 
 use crate::services::llama_runtime::LlamaRuntime;
 use crate::services::{
-    chat_store::{ChatStore, ContextUsage, DailyUsage, ModelUsage, StatsRange, ToolUsage},
+    chat_store::{ChatStore, ContextUsage, ModelUsage, StatsRange, ToolUsage, UsageSummary},
     error::ErrorService,
     job_store::{JobKind, JobRecord, JobStatus, JobStore},
+    launch_store::{LaunchStore, LoadSummary},
     llm::{LlamaServerStats, LlmProviders, RunningModel},
     settings_store::SettingsStore,
 };
+
+/// Usage over a range: the replies' summary, and the model loads of the same stretch of time
+pub struct UsageOverview {
+    pub summary: UsageSummary,
+    /// Server-wide: every start of the model server, whoever asked for it
+    pub loads: LoadSummary,
+}
 
 const DEFAULT_DAYS: u32 = 30;
 const MAX_DAYS: u32 = 365;
@@ -67,6 +75,7 @@ pub struct ServerSnapshot {
 #[derive(Clone)]
 pub struct StatsFacade {
     chat_store: Arc<ChatStore>,
+    launch_store: Arc<LaunchStore>,
     job_store: Arc<JobStore>,
     settings_store: Arc<SettingsStore>,
     providers: LlmProviders,
@@ -77,13 +86,14 @@ pub struct StatsFacade {
 impl StatsFacade {
     pub fn new(
         chat_store: Arc<ChatStore>,
+        launch_store: Arc<LaunchStore>,
         job_store: Arc<JobStore>,
         settings_store: Arc<SettingsStore>,
         providers: LlmProviders,
         runtime: Arc<LlamaRuntime>,
         context_length: u64,
     ) -> Self {
-        Self { chat_store, job_store, settings_store, providers, runtime, context_length }
+        Self { chat_store, launch_store, job_store, settings_store, providers, runtime, context_length }
     }
 
     fn ended_cleanly(job: &JobRecord) -> bool {
@@ -119,9 +129,10 @@ impl StatsFacade {
     }
 
     /// Replies and what they cost per day of the range, quiet days included
-    pub async fn usage(&self, user_id: i64, days: Option<u32>, months: Option<u32>) -> Result<Vec<DailyUsage>, ErrorService> {
+    pub async fn usage(&self, user_id: i64, days: Option<u32>, months: Option<u32>) -> Result<UsageOverview, ErrorService> {
         let range = self.range(user_id, days, months).await?;
-        Ok(self.chat_store.usage_daily(user_id, range).await?)
+        let loads = self.launch_store.loads_since(range.since()).await?;
+        Ok(UsageOverview { summary: self.chat_store.usage_daily(user_id, range).await?, loads })
     }
 
     pub async fn breakdown(&self, user_id: i64, days: Option<u32>, months: Option<u32>) -> Result<Breakdown, ErrorService> {

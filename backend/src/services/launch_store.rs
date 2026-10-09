@@ -1,15 +1,16 @@
 mod entities;
 
 use axum::http::StatusCode;
-use entities::launch_profiles;
-use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder, SqlErr};
+use entities::{launch_profiles, model_loads};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder, QuerySelect, SqlErr};
 
 use crate::services::error::ErrorService;
 
 /// Owns the `launch_profiles` table: how a model is started (which projector, how much context,
 /// what the KV cache is stored as, whether it drafts tokens with MTP). Global rather than per user,
 /// because it is the hardware's business: the owner writes profiles, everyone reads and chooses
-/// among them. A model can have several, e.g. a long-context one and a vision one.
+/// among them. A model can have several, e.g. a long-context one and a vision one. Also owns
+/// `model_loads`: every start of the model server under a profile, and how long it took.
 pub struct LaunchStore {
     db: DatabaseConnection,
 }
@@ -161,9 +162,44 @@ fn is_safe_relative_path(path: &str) -> bool {
         && path.split(['/', '\\']).all(|part| part != ".." && part != ".")
 }
 
+/// The loads of a stretch of time: how many, and the middle one's length
+pub struct LoadSummary {
+    pub count: u64,
+    pub median_ms: Option<i64>,
+}
+
 impl LaunchStore {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    /// Records that the model server was started under `profile_id` (a profile of `model_id`) and was
+    /// ready `duration_ms` later.
+    pub async fn record_load(&self, model_id: i64, profile_id: i64, duration_ms: i64) -> Result<(), LaunchStoreErrors> {
+        model_loads::ActiveModel {
+            model_id: Set(Some(model_id)),
+            profile_id: Set(Some(profile_id)),
+            duration_ms: Set(duration_ms),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    /// The loads that started at or after `since`, server-wide.
+    pub async fn loads_since(&self, since: DateTimeUtc) -> Result<LoadSummary, LaunchStoreErrors> {
+        let mut durations: Vec<i64> = model_loads::Entity::find()
+            .filter(model_loads::Column::StartedAt.gte(since))
+            .select_only()
+            .column(model_loads::Column::DurationMs)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        durations.sort_unstable();
+        // The lower middle of an even count, like the other medians in the stats (nearest rank)
+        let median_ms = (!durations.is_empty()).then(|| durations[(durations.len() - 1) / 2]);
+        Ok(LoadSummary { count: durations.len() as u64, median_ms })
     }
 
     /// Every profile, or one model's, oldest first within each model.

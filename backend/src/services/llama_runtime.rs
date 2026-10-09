@@ -57,11 +57,15 @@ pub struct LlamaRuntime {
     mtp_heads: Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, bool)>>,
     /// Run before a model server is started: frees what another provider holds on the GPU.
     before_start: Mutex<Option<BeforeStart>>,
+    /// Told about every start that became ready, and how long it took (see `set_after_load`)
+    after_load: Mutex<Option<AfterLoad>>,
     /// Woken whenever a claim is released, for the requests queued behind it
     released: tokio::sync::Notify,
 }
 
 type BeforeStart = Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
+/// `(model id, profile id, milliseconds from starting the process to ready)`
+type AfterLoad = Arc<dyn Fn(i64, i64, i64) + Send + Sync>;
 
 #[derive(Default)]
 struct Inner {
@@ -126,11 +130,14 @@ impl Tuning {
 /// idle timer.
 pub struct CallGuard {
     release: Option<Box<dyn FnOnce() + Send + Sync>>,
+    /// How long this claim waited for the model to load, when it was the one that loaded it (the
+    /// start of `llama-server` to ready; waiting in line for another chat isn't counted)
+    pub loaded_ms: Option<i64>,
 }
 
 impl CallGuard {
     pub fn none() -> Self {
-        Self { release: None }
+        Self { release: None, loaded_ms: None }
     }
 }
 
@@ -244,6 +251,7 @@ impl LlamaRuntime {
             fallback: Mutex::new(None),
             mtp_heads: Mutex::new(HashMap::new()),
             before_start: Mutex::new(None),
+            after_load: Mutex::new(None),
             released: tokio::sync::Notify::new(),
         });
         runtime.clone().spawn_idle_watcher();
@@ -262,6 +270,12 @@ impl LlamaRuntime {
     /// Registers what runs before every start of the server (see `before_start`).
     pub fn set_before_start(&self, hook: impl Fn() -> futures_util::future::BoxFuture<'static, ()> + Send + Sync + 'static) {
         *lock(&self.before_start) = Some(Arc::new(hook));
+    }
+
+    /// Registers what is told about every load that finished: the server was started for a profile and became
+    /// ready, whoever asked (a chat, a one-shot prompt, the Models page). Set once a database exists to keep it.
+    pub fn set_after_load(&self, hook: impl Fn(i64, i64, i64) + Send + Sync + 'static) {
+        *lock(&self.after_load) = Some(Arc::new(hook));
     }
 
     /// Stops the server so another provider can have the GPU, unless somebody is in the middle of a
@@ -349,8 +363,12 @@ impl LlamaRuntime {
         if let Some(guard) = self.try_claim(&wanted, &args, any_loaded) {
             return Ok(guard);
         }
-        self.ensure_loaded(&wanted, args.clone()).await?;
-        self.try_claim(&wanted, &args, true).ok_or_else(|| RuntimeErrors::LoadFailed("the server stopped right after loading".into()).into())
+        let load = self.ensure_loaded(&wanted, args.clone()).await?;
+        let mut guard = self
+            .try_claim(&wanted, &args, true)
+            .ok_or_else(|| ErrorService::from(RuntimeErrors::LoadFailed("the server stopped right after loading".into())))?;
+        guard.loaded_ms = Some(load.as_millis() as i64);
+        Ok(guard)
     }
 
     /// The command line for a launch. The model file's header is read (once per file) to see whether
@@ -423,6 +441,7 @@ impl LlamaRuntime {
         let runtime = self.clone();
         let holder = wanted.holder.clone();
         Some(CallGuard {
+            loaded_ms: None,
             release: Some(Box::new(move || {
                 let mut inner = lock(&runtime.inner);
                 if let Some(holders) = inner.holds.get_mut(&profile_id) {
@@ -454,7 +473,7 @@ impl LlamaRuntime {
     /// with the switch lock held, so requests wanting a different profile are served in the order
     /// they came, and what is running is never cut off: a turn, a greeting or a summary finishes
     /// first. Refused with a 423 only after `QUEUE_LIMIT`.
-    async fn ensure_loaded(self: &Arc<Self>, wanted: &LaunchRequest, args: Vec<String>) -> Result<(), ErrorService> {
+    async fn ensure_loaded(self: &Arc<Self>, wanted: &LaunchRequest, args: Vec<String>) -> Result<Duration, ErrorService> {
         let queued_at = Instant::now();
         let mut announced = false;
         let outcome = loop {
@@ -561,7 +580,9 @@ impl LlamaRuntime {
         Ok(())
     }
 
-    async fn start(self: &Arc<Self>, request: &LaunchRequest, args: Vec<String>) -> Result<(), RuntimeErrors> {
+    /// Starts the server for `request` and waits until it is ready; returns how long that took, from starting the
+    /// process (waiting in line for another chat's turn, and stopping what ran before, aren't counted).
+    async fn start(self: &Arc<Self>, request: &LaunchRequest, args: Vec<String>) -> Result<Duration, RuntimeErrors> {
         let binary = self.binary_path();
         if !binary.is_file() {
             return Err(RuntimeErrors::NotInstalled(binary));
@@ -637,10 +658,18 @@ impl LlamaRuntime {
 
         match self.wait_ready(exited_rx).await {
             Ok(()) => {
-                lock(&self.inner).state = State::Ready;
-                lock(&self.inner).last_activity = Some(Instant::now());
+                let took = {
+                    let mut inner = lock(&self.inner);
+                    inner.state = State::Ready;
+                    inner.last_activity = Some(Instant::now());
+                    inner.loaded.as_ref().map(|loaded| loaded.started.elapsed()).unwrap_or_default()
+                };
                 self.publish(ModelStateKind::Ready, Some(request), None);
-                Ok(())
+                let hook = lock(&self.after_load).clone();
+                if let Some(hook) = hook {
+                    hook(request.profile.model_id, request.profile.id, took.as_millis() as i64);
+                }
+                Ok(took)
             }
             Err(reason) => {
                 let (stopping, exited) = {

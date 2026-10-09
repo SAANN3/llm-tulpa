@@ -205,6 +205,19 @@ pub async fn bootstrap(
     let model_store = Arc::new(ModelStore::new(db.clone()));
     let folder_store = Arc::new(FolderStore::new(db.clone()));
     let launch_store = Arc::new(LaunchStore::new(db.clone()));
+    // Every load the model server finishes is kept for the Speed stats. In the background, so a slow write never
+    // holds up the request that was waiting for the model; a failed one only loses that entry.
+    runtime.set_after_load({
+        let launch_store = launch_store.clone();
+        move |model_id, profile_id, duration_ms| {
+            let launch_store = launch_store.clone();
+            tokio::spawn(async move {
+                if let Err(e) = launch_store.record_load(model_id, profile_id, duration_ms).await {
+                    tracing::warn!("couldn't record a model load: {e:?}");
+                }
+            });
+        }
+    });
     let preset_store = Arc::new(PresetStore::new(db.clone()));
     let chat_store = Arc::new(ChatStore::new(
         db.clone(),
@@ -239,6 +252,7 @@ pub async fn bootstrap(
     let prompt = PromptFacade::new(providers.clone());
     let stats = StatsFacade::new(
         chat_store.clone(),
+        launch_store.clone(),
         job_store.clone(),
         settings_store.clone(),
         providers.clone(),

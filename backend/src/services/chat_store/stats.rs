@@ -88,6 +88,13 @@ pub struct DailyUsage {
     pub slow_calls: u64,
 }
 
+/// The range's days, and what can't be added up from them: the average call over all of it.
+pub struct UsageSummary {
+    pub days: Vec<DailyUsage>,
+    /// The average whole call (request to response) over the replies that carry its length
+    pub call_ms_mean: Option<i64>,
+}
+
 pub struct ModelUsage {
     pub provider: String,
     pub model: String,
@@ -203,7 +210,7 @@ impl ChatStore {
 
     /// Per day of the range (every day, empty ones included): replies, tokens, timings and how
     /// long the calls took.
-    pub async fn usage_daily(&self, user_id: i64, range: StatsRange) -> Result<Vec<DailyUsage>, ChatStoreErrors> {
+    pub async fn usage_daily(&self, user_id: i64, range: StatsRange) -> Result<UsageSummary, ChatStoreErrors> {
         let rows = self.stat_rows(user_id, &range).await?;
 
         let mut call_times: HashMap<NaiveDate, Vec<i64>> = HashMap::new();
@@ -257,6 +264,8 @@ impl ChatStore {
             }
         }
 
+        let all_calls: Vec<i64> = call_times.values().flatten().copied().collect();
+        let call_ms_mean = (!all_calls.is_empty()).then(|| all_calls.iter().sum::<i64>() / all_calls.len() as i64);
         for (day, times) in call_times {
             let times = sorted(times);
             if let Some(usage) = days.get_mut(&day) {
@@ -265,7 +274,7 @@ impl ChatStore {
             }
         }
 
-        Ok(days.into_values().collect())
+        Ok(UsageSummary { days: days.into_values().collect(), call_ms_mean })
     }
 
     /// Replies per model the user's chats were bound to, busiest first

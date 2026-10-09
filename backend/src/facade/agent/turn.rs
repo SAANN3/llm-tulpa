@@ -75,6 +75,8 @@ struct Request {
     messages: Vec<ChatMessage>,
     /// Files `ui.attach_file` queued in this turn: they land on the reply that ends it.
     attached_files: Vec<i64>,
+    /// How long this step waited for the model to load, when it was the one that loaded it
+    loaded_ms: Option<i64>,
 }
 
 /// What asking the model came to.
@@ -160,10 +162,13 @@ impl Turn {
         let thought_duration_ms = i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX);
         match asked {
             Asked::Stopped => Ok(StepOut::Stopped),
-            Asked::CutOff(response) => self.continue_after_cut_off(step, response, thought_duration_ms).await,
-            Asked::Reply(response) => {
-                self.store_reply(step, request.attached_files, response, thought_duration_ms).await.map(StepOut::Reply)
+            Asked::CutOff(response) => {
+                self.continue_after_cut_off(step, response.with_load_ms(request.loaded_ms), thought_duration_ms).await
             }
+            Asked::Reply(response) => self
+                .store_reply(step, request.attached_files, response.with_load_ms(request.loaded_ms), thought_duration_ms)
+                .await
+                .map(StepOut::Reply),
         }
     }
 
@@ -198,7 +203,7 @@ impl Turn {
         let tools = Self::tools_for(&chat, tools_snapshot);
         let provider = self.model.provider(&chat)?;
         let params = self.model.params(&chat).await?;
-        self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;
+        let loaded_ms = self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;
 
         // `History::for_chat` leads with its own system message (the compaction summary)
         // once a chat has one — folded into this same system message rather than sent
@@ -254,6 +259,7 @@ impl Turn {
             tools,
             messages: messages_with_system,
             attached_files,
+            loaded_ms,
         })
     }
 
