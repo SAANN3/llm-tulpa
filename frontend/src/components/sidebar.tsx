@@ -1,17 +1,16 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight, Plus, Settings2, User, Folder, Plug, Logout, Analytics, Search, Cpu, Check, Lock, WarningDiamond} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Plus, Folder, Search, Check, Lock, WarningDiamond} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
+import {AccountMenu} from './account-menu.tsx'
 import {ChatEntry} from './chat-entry.tsx'
 import type {LazyListHandle} from './lazy-list.tsx'
 import {LazyList} from './lazy-list.tsx'
 import {AssignFolderPopup} from './popups/assign-folder-popup.tsx'
-import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
 import {Button, Div, Label, Link} from './primitives'
 import {ThinkingAnimation} from './thinking-animation.tsx'
 import {setChatFolder} from '../api/chats/set-folder'
 import type {ChatOut, UnseenEnd} from '../api/chats/types'
-import {useAuth} from '../context/use-auth.ts'
 import {useRuns} from '../context/use-runs.ts'
 import {onSidebarWindowResized, setSidebarCollapsed, useSidebarCollapsed} from '../context/sidebar-state.ts'
 import {useChats} from '../hooks/use-chats.ts'
@@ -53,14 +52,6 @@ const groupByRecency = (chats: ChatOut[]): [RecencyGroup, ChatOut[]][] => {
 export const Sidebar = () => {
     const navigate = useNavigate()
     const location = useLocation()
-    const {user, logout} = useAuth()
-    const [confirmingLogout, setConfirmingLogout] = useState(false)
-    // In both layouts of the sidebar, so the rail's button asks too
-    const logoutPopup = (
-        <ConfirmPopup open={confirmingLogout} title="Log out" confirmLabel="Log out"
-                      message="Log out of this browser? Your chats stay as they are." onConfirm={logout}
-                      onClose={() => setConfirmingLogout(false)}/>
-    )
     const [searchParams] = useSearchParams()
     const idParam = searchParams.get('id')
     const selectedChatId = idParam == null ? null : Number(idParam)
@@ -91,19 +82,11 @@ export const Sidebar = () => {
         </Button>
     )
 
-    // Collapse-safe utils: hide plugins/users if not owner
+    // The rail's icons: what the full sidebar lists above the chats; the rest is in the account menu at the bottom
     const utilsCollapsed = [
         {label: 'New chat', path: '/', icon: <Plus width={16} height={16}/>},
         {label: 'Search chats', path: '/search', icon: <Search width={16} height={16}/>},
-        {label: 'Settings', path: '/settings', icon: <Settings2 width={16} height={16}/>},
         {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>},
-        {label: 'Usage', path: '/stats', icon: <Analytics width={16} height={16}/>},
-        {label: 'Models', path: '/models', icon: <Cpu width={16} height={16}/>},
-        ...(user?.role === 'owner' ? [
-            {label: 'Plugins', path: '/plugins', icon: <Plug width={16} height={16}/>},
-            {label: 'Users', path: '/users', icon: <User width={16} height={16}/>},
-        ] : []),
-        {label: 'Log out', path: null, icon: <Logout width={16} height={16}/>, action: () => setConfirmingLogout(true)},
     ]
 
     // The shrunk rail: toggle + utils icons, no text
@@ -114,19 +97,16 @@ export const Sidebar = () => {
                     {toggle}
                 </Div>
                 <Div className="sidebar__utils-collapsed">
-                    {utilsCollapsed.map(item => item.path != null ? (
+                    {utilsCollapsed.map(item => (
                         <Link key={item.label} to={item.path} variant="primary" title={item.label}
                               className="link-button sidebar__utils-item sidebar__utils-item--compact">
                             {item.icon}
                         </Link>
-                    ) : (
-                        <Button key={item.label} className="sidebar__utils-item sidebar__utils-item--compact" title={item.label}
-                                onClicked={item.action}>
-                            {item.icon}
-                        </Button>
                     ))}
                 </Div>
-                {logoutPopup}
+                <Div className="sidebar__account">
+                    <AccountMenu compact/>
+                </Div>
             </Div>
         )
     }
@@ -140,24 +120,16 @@ export const Sidebar = () => {
             <Label className="section-heading" text="Utils"/>
             <Div className="vbox">
                 <ChatEntry label="Search chats" selected={location.pathname === '/search'} icon={<Search width={18} height={18}/>} href="/search"/>
-                <ChatEntry label="Settings" selected={location.pathname.startsWith('/settings')} icon={<Settings2 width={18} height={18}/>} href="/settings"/>
-                <ChatEntry label="Folders" selected={location.pathname === '/folders'} icon={<Folder width={18} height={18}/>} href="/folders"/>
-                <ChatEntry label="Usage" selected={location.pathname.startsWith('/stats')} icon={<Analytics width={18} height={18}/>} href="/stats"/>
-                <ChatEntry label="Models" selected={location.pathname.startsWith('/models')} icon={<Cpu width={18} height={18}/>} href="/models"/>
-                {user?.role === 'owner' ? (
-                    <>
-                        <ChatEntry label="Plugins" selected={location.pathname === '/plugins'} icon={<Plug width={18} height={18}/>} href="/plugins"/>
-                        <ChatEntry label="Users" selected={location.pathname === '/users'} icon={<User width={18} height={18}/>} href="/users"/>
-                    </>
-                ) : null}
-                <ChatEntry label="Log out" selected={false} icon={<Logout width={18} height={18}/>} onClicked={() => setConfirmingLogout(true)}/>
+                <ChatEntry label="Folders" selected={location.pathname.startsWith('/folders')} icon={<Folder width={18} height={18}/>} href="/folders"/>
             </Div>
-            <Label className="section-heading" text="Chats"/>
+            {/* "Chats" heads the first date group itself ("Chats · Today"), so the list doesn't open with two titles in a
+                row; with no chats yet it stands alone */}
+            {chats.length === 0 ? <Label className="section-heading" text="Chats"/> : null}
             <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">
                 <Div className="vbox sidebar__groups">
-                    {groupByRecency(chats).map(([group, groupChats]) => (
+                    {groupByRecency(chats).map(([group, groupChats], i) => (
                         <Div className="vbox sidebar__group" key={group}>
-                            <Label className="section-heading sidebar__group-heading" text={group}/>
+                            <Label className="section-heading sidebar__group-heading" text={i === 0 ? `Chats · ${group}` : group}/>
                             {groupChats.map((c) => (
                                 <ChatEntry
                                     key={c.id}
@@ -187,7 +159,9 @@ export const Sidebar = () => {
                 }}
                 onClose={() => setAssigningChat(null)}
             />
-            {logoutPopup}
+            <Div className="sidebar__account">
+                <AccountMenu/>
+            </Div>
         </Div>
     )
 };

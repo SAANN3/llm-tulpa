@@ -34,8 +34,9 @@ interface DialogProps extends PopupBaseProps {
 interface MenuProps extends PopupBaseProps {
     position: { x: number; y: number }
     /** Which corner of the menu sits at `position`: the top left (the default) opens it below and to the right,
-     * the bottom right opens it above and to the left, for a control at the bottom of the page */
-    corner?: 'top-left' | 'bottom-right'
+     * the bottom right above and to the left, the bottom left above and to the right (for a control at the bottom of
+     * the page: at its right edge, or its left) */
+    corner?: 'top-left' | 'bottom-right' | 'bottom-left'
     /** Never narrower than this many pixels (the control it opens from, so it reads as that control's list); it is
      * as wide as its items otherwise */
     minWidth?: number
@@ -80,7 +81,9 @@ export const Popup = (props: PopupProps) => {
                  style={{
                      ...(props.corner === 'bottom-right'
                          ? {right: window.innerWidth - props.position.x, bottom: window.innerHeight - props.position.y}
-                         : {left: props.position.x, top: props.position.y}),
+                         : props.corner === 'bottom-left'
+                             ? {left: props.position.x, bottom: window.innerHeight - props.position.y}
+                             : {left: props.position.x, top: props.position.y}),
                      minWidth: props.minWidth,
                  }}>
                 {children}

@@ -95,3 +95,63 @@
   font-size: 11px;
 }
 
+
+// The account, at the foot of the sidebar under the chats
+.sidebar__account {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: $space-2;
+  border-top: $line-border solid var(--color-border);
+}
+
+.sidebar--collapsed .sidebar__account {
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+}
+
+.account-menu__anchor {
+  display: flex;
+}
+
+// The name, the role and an arrow, as a quiet row: a framed button only on hover; nested to outrank the button style
+.sidebar .account-menu {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  min-width: 0;
+  padding: 6px 8px;
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
+
+  &:hover {
+    border-color: var(--color-border);
+    background: var(--color-surface-strong);
+  }
+}
+
+.sidebar .account-menu--compact {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.account-menu__name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__role {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}

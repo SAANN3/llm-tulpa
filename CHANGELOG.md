@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- The sidebar's foot holds the account: your name and role, opening a menu of the pages not used every day (Settings, Usage, Models, and for the owner Plugins and Users) and Log out. Utils keeps Search chats and Folders; the first date group's heading carries the list's title (`Chats · Today`).
 - Search results, folders and a folder's chats are one kind of list, drawn like `tree`: a search result is the chat, its matching messages nested under it.
 - Plugins are listed by kind (Coding, Messaging), each with a one-line summary (`summary` in `GET /api/plugins`, which comes sorted), and a framed settings button.
 - Users: one row per account with a delete button that asks first, and New user in a popup (`n`).

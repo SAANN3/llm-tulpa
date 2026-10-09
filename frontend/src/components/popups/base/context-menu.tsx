@@ -22,12 +22,14 @@ export interface ContextMenuProps {
     items: ContextMenuItem[]
     /** See `Popup`'s menu `minWidth` */
     minWidth?: number
+    /** See `Popup`'s menu `corner` */
+    corner?: 'top-left' | 'bottom-right' | 'bottom-left'
 }
 
 /** A small menu at a point, such as a row's right-click or a "more" button. Picking an item closes the menu first,
  * then runs the item (a switch item stays open). */
-export const ContextMenu = ({position, onClose, items, minWidth}: ContextMenuProps) => (
-    <Popup open={position != null} onClose={onClose} position={position ?? {x: 0, y: 0}} minWidth={minWidth}>
+export const ContextMenu = ({position, onClose, items, minWidth, corner}: ContextMenuProps) => (
+    <Popup open={position != null} onClose={onClose} position={position ?? {x: 0, y: 0}} minWidth={minWidth} corner={corner}>
         {items.map((item) => (
             <Div
                 key={item.label}
