@@ -93,7 +93,7 @@ const ProfileForm = ({modelFile, profile, projectors, hasMtp, layers, trainedCon
                    hint={`Empty sizes it to free memory.${trainedContext ? ` The model was trained for ${trainedContext}.` : ''}`}>
                 <Input text={context} onChanged={setContext} placeholder="auto"/>
             </Field>
-            <Div className="models__fields">
+            <Div className="models__fields models__fields--compact">
                 <Div className="field">
                     <Label className="field__label" text="KV cache K"/>
                     <Select values={CACHE_TYPES} selected={cacheK} onChosen={setCacheK}/>

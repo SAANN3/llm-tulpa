@@ -10,7 +10,8 @@ export const Input = ({
     type = 'text',
     autoFocus,
     onHovered,
-    onKeyDown
+    onKeyDown,
+    onBlur,
 }: ThemedProps<InputProps>) => (
     <input
         type={type}
@@ -24,5 +25,6 @@ export const Input = ({
         onMouseEnter={() => onHovered?.(true)}
         onMouseLeave={() => onHovered?.(false)}
         onKeyDown={onKeyDown}
+        onBlur={onBlur}
     />
 );

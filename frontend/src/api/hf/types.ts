@@ -2,6 +2,8 @@ export interface HfRepo {
     id: string
     downloads: number
     likes: number
+    /** When the repository was created (RFC 3339) */
+    created_at: string | null
     /** The author makes people accept terms first; downloading needs a token in the settings */
     gated: boolean
 }

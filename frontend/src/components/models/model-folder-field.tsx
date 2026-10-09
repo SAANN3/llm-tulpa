@@ -2,6 +2,7 @@ import {useCallback, useEffect, useState} from 'react'
 import {getModelFolder, setModelFolder, type ModelFolder} from '../../api/runtime/folder'
 import {ModelFolderPopup} from '../popups/model-folder-popup.tsx'
 import {Button, Div, Label} from '../primitives'
+import {SettingsRow} from '../settings-fields.tsx'
 
 export interface ModelFolderFieldProps {
     /** Called after the folder was changed, so the lists of model files can be read again */
@@ -26,20 +27,16 @@ export const ModelFolderField = ({onChanged}: ModelFolderFieldProps) => {
 
     return (
         <Div className="models__section">
-            <Div className="models__model-head">
-                <Div className="models__profile-main">
-                    <Label variant="secondary" className="models__heading" text="Model folder"/>
-                    <Label className="models__meta" text={folder?.path ?? 'No folder chosen yet'}/>
-                    {folder?.path && folder.writable === false ? (
-                        <Label variant="secondary" className="models__error" text="Not writable: models run from it, but downloads can't be saved here."/>
-                    ) : null}
-                    {folder && folder.missing_models.length > 0 ? (
-                        <Label variant="secondary" className="models__error"
-                               text={`Models you added earlier that are not in this folder, so they can't load from here: ${folder.missing_models.join(', ')}. Choose the folder they were in, or move the files here.`}/>
-                    ) : null}
-                </Div>
+            <SettingsRow label="Model folder" help={folder?.path ?? 'No folder chosen yet'}>
                 <Button variant="secondary" text={folder?.path ? 'Change' : 'Choose'} onClicked={() => setOpen(true)}/>
-            </Div>
+            </SettingsRow>
+            {folder?.path && folder.writable === false ? (
+                <Label variant="secondary" className="models__error" text="Not writable: models run from it, but downloads can't be saved here."/>
+            ) : null}
+            {folder && folder.missing_models.length > 0 ? (
+                <Label variant="secondary" className="models__error"
+                       text={`Models you added earlier that are not in this folder, so they can't load from here: ${folder.missing_models.join(', ')}. Choose the folder they were in, or move the files here.`}/>
+            ) : null}
             <ModelFolderPopup open={open} current={folder?.path ?? null} onChoose={choose} onClose={() => setOpen(false)}/>
         </Div>
     )

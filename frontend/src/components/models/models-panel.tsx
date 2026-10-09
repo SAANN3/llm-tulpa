@@ -135,8 +135,9 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
         <Div className="models__section">
             {isOwner ? <ModelFolderField onChanged={onChanged}/> : null}
             {isOwner ? <ServerSettingsField/> : null}
-            <Label variant="secondary" className="field__help"
-                   text="Loading a model here doesn't make it your default. New chats start on the model and launch profile chosen in Settings, and load them if something else is loaded. To change the default, use Settings → Models & keys → Default model."/>
+            <Label variant="secondary" className="models__heading" text="Models and their launch profiles"/>
+            <Label variant="secondary" className="field__help models__heading-help"
+                   text="Loading one here doesn't make it your default: new chats start on the model chosen in Settings → Models & keys."/>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
             {note ? <Label variant="secondary" className="models__meta" text={note}/> : null}
 
@@ -173,9 +174,9 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                                         ) : null}
                                     </Div>
                                     <Div className="models__profile-actions">
-                                        {active ? <Label variant="secondary" className="models__meta" text="loaded"/> :
-                                            <Button variant="secondary" text="Load" disabled={busy != null}
-                                                    onClicked={() => void onLoad(profile)}/>}
+                                        {/* The loaded one keeps a button in Load's place, so the rows line up and say the same thing */}
+                                        <Button variant="secondary" text={active ? 'Loaded' : 'Load'} disabled={active || busy != null}
+                                                onClicked={() => void onLoad(profile)}/>
                                         <Button variant="secondary" text={busy === profile.id ? 'Running…' : 'Test'}
                                                 disabled={busy != null} onClicked={() => void onTest(profile)}/>
                                         {isOwner ? <Button variant="secondary" text="Edit" onClicked={() => setEditing({model, profile})}/> : null}
@@ -198,18 +199,22 @@ export const ModelsPanel = ({status, models, profiles, files, isOwner, onChanged
                         <Label variant="secondary" className="models__meta" text="Every .gguf file in the model folder is added."/>
                     ) : null}
                     {addable.map((file) => (
-                        <Div key={file.path} className="models__file">
-                            <Div className="models__profile-main">
-                                <Label className="models__profile-name" text={file.path}/>
-                                <Label variant="secondary" className="models__meta"
+                        // Two lines: the name with its facts at the right end, then the projector and Add at the
+                        // right end of the next; the name never breaks
+                        <Div key={file.path} className="models__file models__file--wrapping">
+                            <Div className="models__file-about">
+                                <Label className="models__profile-name models__file-name" text={file.path}/>
+                                <Label variant="secondary" className="models__meta models__file-facts"
                                        text={[file.quantization, formatBytes(file.size_bytes), file.has_mtp ? 'has MTP head' : null].filter(Boolean).join(' · ')}/>
                             </Div>
-                            {file.compatible_projectors.length > 0 ? (
-                                <Select values={[NO_PROJECTOR, ...file.compatible_projectors]}
-                                        selected={projectors[file.path] ?? file.suggested_projector ?? NO_PROJECTOR}
-                                        onChosen={(value) => setProjectors((prev) => ({...prev, [file.path]: value}))}/>
-                            ) : null}
-                            <Button variant="secondary" text="Add" onClicked={() => void onRegister(file)}/>
+                            <Div className="models__file-controls">
+                                {file.compatible_projectors.length > 0 ? (
+                                    <Select values={[NO_PROJECTOR, ...file.compatible_projectors]}
+                                            selected={projectors[file.path] ?? file.suggested_projector ?? NO_PROJECTOR}
+                                            onChosen={(value) => setProjectors((prev) => ({...prev, [file.path]: value}))}/>
+                                ) : null}
+                                <Button variant="secondary" text="Add" onClicked={() => void onRegister(file)}/>
+                            </Div>
                         </Div>
                     ))}
                 </>

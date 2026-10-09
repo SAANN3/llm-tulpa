@@ -1,0 +1,54 @@
+@use 'tokens' as *;
+
+.model-log__panel {
+  width: min(1200px, calc(100vw - #{$space-8}));
+}
+
+.model-log__body {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  height: calc(100vh - 160px);
+}
+
+.model-log__head {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.model-log__meta {
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-log__spacer {
+  flex: 1;
+}
+
+.model-log__error {
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+// A terminal: a darker well, lines as the server wrote them, scrolled on its own
+.model-log__lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  background: color-mix(in srgb, black 25%, var(--color-secondary));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.model-log__line {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

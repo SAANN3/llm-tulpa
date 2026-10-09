@@ -44,6 +44,8 @@ export interface InputProps {
   autoFocus?: boolean
   onHovered?: (hovering: boolean) => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
+  /** When the field loses the focus: the moment to save what was typed */
+  onBlur?: () => void
 }
 
 export interface TextFieldProps {

@@ -18,6 +18,7 @@ import Folders from './pages/folders.tsx'
 import Search from './pages/search.tsx'
 import Home from './pages/home.tsx'
 import Login from './pages/login.tsx'
+import ModelLog from './pages/model-log.tsx'
 import Models from './pages/models.tsx'
 import Plugins from './pages/plugins.tsx'
 import Settings from './pages/settings.tsx'
@@ -115,6 +116,7 @@ const App = () => (
                                         <Route path="/settings/:tab?" element={<Settings/>}/>
                                         <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
                                         <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
+                                        <Route path="/models/log" element={<ModelLog/>}/>
                                         <Route path="/models/:tab?" element={<Models/>}/>
                                         <Route element={<RequireOwner/>}>
                                             <Route path="/plugins" element={<Plugins/>}/>

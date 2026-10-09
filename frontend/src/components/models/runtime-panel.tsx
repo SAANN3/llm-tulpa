@@ -1,11 +1,11 @@
 import {useState} from 'react'
+import {useNavigate} from 'react-router-dom'
 import {loadProfile} from '../../api/runtime/load'
 import {stopRuntime} from '../../api/runtime/stop'
 import type {RuntimeStatus} from '../../api/runtime/types'
 import {errorReason} from '../../utils/error-reason.ts'
 import {useUptime} from '../../hooks/use-uptime.ts'
 import {formatDurationShort} from '../../utils/format.ts'
-import {RuntimeLogsPopup} from '../popups/runtime-logs-popup.tsx'
 import {Button, Div, Label} from '../primitives'
 
 export interface RuntimePanelProps {
@@ -29,7 +29,7 @@ const HEADLINE: Record<RuntimeStatus['state'], string> = {
 
 /** What the model server is doing right now, with where the model went and who is using it */
 export const RuntimePanel = ({status, profileName, isOwner, defaultProfileId, onChanged}: RuntimePanelProps) => {
-    const [logsOpen, setLogsOpen] = useState(false)
+    const navigate = useNavigate()
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const uptime = useUptime(status?.uptime_secs ?? null)
@@ -78,7 +78,7 @@ export const RuntimePanel = ({status, profileName, isOwner, defaultProfileId, on
                                 onClicked={() => void onLoad()}/>
                     ) : null}
                     {isOwner && status.state === 'ready' ? <Button variant="secondary" text="Stop" onClicked={() => void onStop()}/> : null}
-                    {isOwner ? <Button variant="secondary" text="Log" onClicked={() => setLogsOpen(true)}/> : null}
+                    {isOwner ? <Button variant="secondary" text="Log" onClicked={() => navigate('/models/log')}/> : null}
                 </Div>
             </Div>
 
@@ -107,7 +107,6 @@ export const RuntimePanel = ({status, profileName, isOwner, defaultProfileId, on
                 <Label variant="secondary" className="models__meta" text={`In use by ${status.holders.join(', ')}`}/>
             ) : null}
 
-            <RuntimeLogsPopup open={logsOpen} onClose={() => setLogsOpen(false)}/>
         </Div>
     )
 };

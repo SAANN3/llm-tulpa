@@ -1,10 +1,10 @@
-import {useEffect, useState, type CSSProperties} from 'react'
+import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import '../../styles/model-picker.scss'
 import '../../styles/models.scss'
 import {getModelFolder, type ModelFolder} from '../../api/runtime/folder'
 import {startHfDownload} from '../../api/hf/download'
 import {listHfFiles} from '../../api/hf/files'
-import {searchHf} from '../../api/hf/search'
+import {searchHf, type HfSort} from '../../api/hf/search'
 import {listHfTasks} from '../../api/hf/tasks'
 import type {HfFile, HfRepo, HfTask} from '../../api/hf/types'
 import {errorReason} from '../../utils/error-reason.ts'
@@ -20,6 +20,16 @@ export interface HfPanelProps {
     onRunningChange?: (running: boolean) => void
 }
 
+/** The orders a search can be shown in, as the words above the list */
+const SORTS: { sort: HfSort; label: string }[] = [
+    {sort: 'downloads', label: 'Most downloaded'},
+    {sort: 'likes', label: 'Most liked'},
+    {sort: 'createdAt', label: 'Newest'},
+    {sort: 'lastModified', label: 'Recently updated'},
+]
+
+const shortDate = (at: string) => new Date(at).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
+
 /** How long typing has to pause before the search runs */
 const SEARCH_DEBOUNCE_MS = 400
 
@@ -33,6 +43,16 @@ const DISK_MARGIN_BYTES = 512 * 1024 * 1024
 export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the Models tab', onRunningChange}: HfPanelProps) => {
     const [query, setQuery] = useState('')
     const [repos, setRepos] = useState<HfRepo[] | null>(null)
+    const [sort, setSort] = useState<HfSort>('downloads')
+    // Where the next page of the search starts; null on the last page
+    const [nextCursor, setNextCursor] = useState<string | null>(null)
+    const [loadingMore, setLoadingMore] = useState(false)
+    const endMarker = useRef<HTMLDivElement>(null)
+    // The cursor the list is at, for a page that arrives late to tell whether it still belongs to it
+    const cursorNow = useRef<string | null>(null)
+    useEffect(() => {
+        cursorNow.current = nextCursor
+    }, [nextCursor])
     const [hasToken, setHasToken] = useState(false)
     const [showGated, setShowGated] = useState(false)
     const [open, setOpen] = useState<string | null>(null)
@@ -71,16 +91,17 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [running])
 
-    // Searches as the typing pauses; an empty query lists the most downloaded models. `stale` drops the
-    // answer of a search that a newer keystroke has already replaced.
+    // Searches as the typing pauses (at once for a change of order); an empty query lists every GGUF repository.
+    // `stale` drops the answer of a search that a newer keystroke has already replaced.
     useEffect(() => {
         let stale = false
         const timer = setTimeout(() => {
             setError(null)
-            searchHf(query.trim()).then((result) => {
+            searchHf(query.trim(), sort).then((result) => {
                 if (stale) return
                 setOpen(null)
                 setRepos(result.repos)
+                setNextCursor(result.next_cursor)
                 setHasToken(result.has_token)
             }).catch((e) => {
                 if (!stale) setError(errorReason(e, 'The search failed.'))
@@ -90,7 +111,27 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
             stale = true
             clearTimeout(timer)
         }
-    }, [query])
+    }, [query, sort])
+
+    // The next page, when the end of the list scrolls into view. A search that changes meanwhile replaces the
+    // list (the effect above), and a page that arrives after that is dropped: its cursor no longer matches.
+    useEffect(() => {
+        const marker = endMarker.current
+        if (!marker || nextCursor == null || loadingMore) return
+        const watch = new IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return
+            watch.disconnect()
+            const cursor = nextCursor
+            setLoadingMore(true)
+            searchHf(query.trim(), sort, cursor).then((result) => {
+                if (cursorNow.current !== cursor) return
+                setRepos((prev) => [...(prev ?? []), ...result.repos])
+                setNextCursor(result.next_cursor)
+            }).catch((e) => setError(errorReason(e, 'Could not load more.'))).finally(() => setLoadingMore(false))
+        })
+        watch.observe(marker)
+        return () => watch.disconnect()
+    }, [nextCursor, loadingMore, query, sort])
 
     const openRepo = async (repo: HfRepo) => {
         setError(null)
@@ -169,11 +210,28 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
                 {tasks.filter((t) => t.state === 'running').map((t) => taskRow(t))}
             </Div>
             {folder?.path ? (
-                <Label variant="secondary" className="models__meta"
-                       text={`Saved to ${folder.path}, in a folder per repository (${folder.path}/<owner>/<repository>/).` +
-                           (folder.free_bytes != null ? ` ${formatBytes(folder.free_bytes)} free on that disk.` : '')}/>
+                <Div className="hf-panel__disk">
+                    <Div className="hf-panel__disk-line">
+                        <Label variant="secondary" className="models__meta" text={`Saved to ${folder.path}, a folder per repository`}/>
+                        {folder.free_bytes != null ? (
+                            <Label variant="secondary" className="models__meta"
+                                   text={folder.total_bytes ? `${formatBytes(folder.free_bytes)} free of ${formatBytes(folder.total_bytes)}` : `${formatBytes(folder.free_bytes)} free`}/>
+                        ) : null}
+                    </Div>
+                    {folder.free_bytes != null && folder.total_bytes ? (
+                        <Div className="hf-panel__disk-bar">
+                            <Div className="hf-panel__disk-used" style={{width: `${(1 - folder.free_bytes / folder.total_bytes) * 100}%`}}/>
+                        </Div>
+                    ) : null}
+                </Div>
             ) : null}
-            {!query.trim() && repos != null ? <Label variant="secondary" className="models__meta" text="Most downloaded"/> : null}
+            <Div className="hf-panel__sorts">
+                {SORTS.map((option) => (
+                    <Button key={option.sort} variant="secondary"
+                            className={`hf-panel__sort${option.sort === sort ? ' hf-panel__sort--on' : ''}`}
+                            text={option.label} onClicked={() => setSort(option.sort)}/>
+                ))}
+            </Div>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
 
             {tasks.filter((t) => t.state !== 'running').map((t) => taskRow(t))}
@@ -195,7 +253,8 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
                         <Div className="models__profile-main">
                             <Label className="models__model-name" text={repo.id}/>
                             <Label variant="secondary" className="models__meta"
-                                   text={`${repo.downloads} downloads · ${repo.likes} likes`}/>
+                                   text={[`${repo.downloads.toLocaleString()} downloads`, `${repo.likes.toLocaleString()} likes`,
+                                       repo.created_at ? `added ${shortDate(repo.created_at)}` : null].filter(Boolean).join(' · ')}/>
                             {repo.gated ? (
                                 <Label variant="secondary" className={hasToken ? 'models__meta' : 'models__error'}
                                        text={hasToken ? 'Gated: your token is used for the download.'
@@ -215,6 +274,10 @@ export const HfPanel = ({onDownloaded, doneHint = 'downloaded — add it on the 
                     )) : null}
                 </Div>
             ))}
+            {/* Seen by the page loader when it scrolls into view */}
+            <Div ref={endMarker} className="hf-panel__end">
+                {loadingMore ? <Label variant="secondary" className="models__meta" text="Loading more…"/> : null}
+            </Div>
         </Div>
     )
 };

@@ -37,7 +37,7 @@ const summary = (p: Preset): string =>
     ].filter(Boolean).join(' · ') || 'the server\'s defaults'
 
 /** The starting point that fills nothing in */
-const EMPTY = 'Empty'
+const EMPTY = 'Nothing (empty)'
 
 /** A preset's name, with what it applies to when that isn't just the model on screen */
 const presetTitle = (p: Preset): string =>
@@ -133,7 +133,7 @@ export const PresetsPanel = ({models, loadedModelId}: PresetsPanelProps) => {
         if (fileInput.current) fileInput.current.value = ''
     }
 
-    // New preset starts from the chosen template's values (Empty fills nothing in)
+    // New preset starts from the chosen template's values (Nothing fills nothing in)
     const startingPoint = (): PresetIn => {
         const chosenTemplate = templates.find((t) => t.name === template)
         return chosenTemplate ? {...chosenTemplate, name: '', model_id: modelId} : blank(modelId)
@@ -141,7 +141,8 @@ export const PresetsPanel = ({models, loadedModelId}: PresetsPanelProps) => {
 
     return (
         <Div className="models__section">
-            <Div className="models__fields">
+            {/* The label over its selector, like the other fields */}
+            <Div className="field models__preset-model">
                 <Label className="field__label" text="Model"/>
                 <Select values={models.map(label)} selected={label(models.find((m) => m.id === modelId) ?? models[0])}
                         onChosen={(value) => setModelId(models.find((m) => label(m) === value)?.id ?? null)}/>
@@ -178,7 +179,7 @@ export const PresetsPanel = ({models, loadedModelId}: PresetsPanelProps) => {
                 <Button text="New preset" onClicked={() => setEditing({id: null, initial: startingPoint()})}/>
                 {templates.length > 0 ? (
                     <>
-                        <Label variant="secondary" className="models__meta" text="starting from"/>
+                        <Label variant="secondary" className="models__meta" text="copied from"/>
                         <Select values={[EMPTY, ...templates.map((t) => t.name)]} selected={template} onChosen={setTemplate}/>
                     </>
                 ) : null}

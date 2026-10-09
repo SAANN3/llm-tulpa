@@ -45,6 +45,63 @@
   gap: $space-2;
 }
 
+// Where downloads go, and how full that disk is
+.hf-panel__disk {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.hf-panel__disk-line {
+  display: flex;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
+.hf-panel__disk-bar {
+  height: 8px;
+  border: $line-border solid var(--color-border);
+}
+
+.hf-panel__disk-used {
+  height: 100%;
+  background: color-mix(in srgb, var(--color-tertiary) 55%, var(--color-secondary));
+}
+
+// The order of the list as words, the chosen one underlined in the accent (like the Stats periods)
+.hf-panel__sorts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-4;
+}
+
+.hf-panel__sorts .hf-panel__sort[data-variant] {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+
+  &:hover:not(:disabled) {
+    background: transparent;
+    color: var(--color-tertiary);
+    opacity: 1;
+  }
+}
+
+.hf-panel__sorts .hf-panel__sort--on[data-variant] {
+  opacity: 1;
+  color: var(--color-tertiary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.hf-panel__end {
+  min-height: 1px;
+  text-align: center;
+}
+
 .hf-panel__pinned {
   position: sticky;
   top: 0;
@@ -114,7 +171,31 @@
 }
 
 .models__model-name {
+  // The name takes the room, so New profile and Remove stay together at the right
+  flex: 1;
+  min-width: 0;
   font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// The note under a heading sits close to it
+.models__heading-help {
+  margin-top: -#{$space-2};
+}
+
+.models__preset-model {
+  max-width: 560px;
+}
+
+.models .models__number {
+  width: 90px;
+}
+
+.models__saved {
+  font-size: 11px;
+  color: var(--color-tertiary);
 }
 
 .models__profile,
@@ -125,6 +206,52 @@
   gap: $space-3;
   padding: $space-2 $space-3;
   border: $line-border solid var(--color-border);
+}
+
+.models__file--wrapping {
+  flex-direction: column;
+  align-items: stretch;
+  gap: $space-2;
+}
+
+// The first line: the name on the left, its facts at the right end (under it, still at the right, when the
+// name is that long)
+.models__file-about {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  column-gap: $space-4;
+}
+
+// One unbroken line, cut with an ellipsis only when it is longer than the whole row
+.models__file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models__file-facts {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+// The second line: the projector and Add at its right end
+.models__file-controls {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+// Every row's projector choice the same width, so the controls line up down the list; a long projector name is cut.
+// Centered with Add (a select aligns to the top by default)
+.models__file-controls [data-select] {
+  align-self: center;
+  width: 300px;
+  max-width: 300px;
 }
 
 .models__profile--active {
@@ -146,24 +273,15 @@
 }
 
 .models__pre,
-.models__log {
-  margin: 0;
-  padding: $space-2 $space-3;
-  border: $line-border solid var(--color-border);
-  font-size: 12px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.models__log {
-  max-height: 50vh;
+.models .models__folder-path,
+.popup .models__folder-path {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .models__folders {
   display: flex;
   flex-direction: column;
-  gap: $space-2;
   padding: $space-2;
   border: $line-border solid var(--color-border);
   max-height: 40vh;
@@ -172,12 +290,6 @@
 
 .models__folders-empty {
   padding: $space-2 $space-3;
-}
-
-.models__log-line {
-  margin: 0;
-  font-family: inherit;
-  white-space: pre-wrap;
 }
 
 // Fields side by side: each takes an equal share of the row
@@ -190,4 +302,78 @@
     flex: 1;
     min-width: 0;
   }
+}
+
+// Fields as wide as their controls, side by side (two selects): equal shares would leave a gap between them
+.models__fields--compact > .field {
+  flex: 0 0 auto;
+}
+
+// The Hardware tab's bars: the name, the bar (the model server's share bright over the rest dim), the figures
+.hardware {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: $space-2 $space-4;
+}
+
+.hardware__label {
+  font-size: 13px;
+}
+
+.hardware__bar {
+  position: relative;
+  height: 12px;
+  border: $line-border solid var(--color-border);
+}
+
+.hardware__used,
+.hardware__held {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.hardware__used {
+  background: color-mix(in srgb, var(--color-tertiary) 45%, var(--color-secondary));
+}
+
+.hardware__held {
+  background: var(--color-tertiary);
+}
+
+.hardware__value {
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.hardware__key {
+  font-size: 11px;
+}
+
+.hardware__server {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-3;
+  border: $line-border solid var(--color-border);
+}
+
+.hardware__facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: $space-3;
+}
+
+.hardware__fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.hardware__fact-value {
+  font-size: 16px;
 }
