@@ -27,49 +27,6 @@
   opacity: 0.8;
 }
 
-// A real drawn line (not a Unicode "├──" glyph) so it can span a row's full box height —
-// including the margin below it, via the negative `bottom` on `::before` — and land exactly
-// on the next row's top edge. Text glyphs can't do this: a font's line-height and a row's own
-// internal padding leave dead space no character can bridge, which is why the connectors
-// looked "disconnected" between rows despite sitting right next to each other.
-.folders__tree-row {
-  position: relative;
-  padding-left: 28px;
-  margin-bottom: $space-2;
-}
-
-.folders__tree-row:last-child {
-  margin-bottom: 0;
-}
-
-.folders__tree-row::before {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 0;
-  bottom: -#{$space-2};
-  width: $line-border;
-  // `currentColor` — same as this page's own text and `button[data-variant]`'s own
-  // `border: $line-border solid currentColor` — rather than a separate theme var, so the
-  // connector always reads as the same foreground color as everything else on the page.
-  background: currentColor;
-}
-
-.folders__tree-row:last-child::before {
-  bottom: 50%;
-}
-
-.folders__tree-row::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-0.5px);
-  width: 16px;
-  height: $line-border;
-  background: currentColor;
-}
-
 .folders__back {
   width: 34px;
   height: 34px;

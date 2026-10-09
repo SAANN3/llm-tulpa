@@ -2,6 +2,7 @@ import {useState} from 'react'
 import {useNavigate} from 'react-router-dom'
 
 import '../styles/folders.scss'
+import '../styles/tree.scss'
 import {FolderEntry} from '../components/folder-entry.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
 import {NewFolderPopup} from '../components/popups/new-folder-popup.tsx'
@@ -30,9 +31,9 @@ const Folders = () => {
                 </Div>
                 <Input className="folders__search" text={query} onChanged={setQuery} placeholder="Search folders"/>
                 <LazyList onBottomReached={loadOlder} className="folders__list">
-                    <Div className="vbox">
+                    <Div className="vbox tree">
                         {folders.map((f) => (
-                            <Div key={f.id} className="folders__tree-row">
+                            <Div key={f.id} className="tree__row">
                                 <FolderEntry
                                     label={f.name}
                                     selected={false}

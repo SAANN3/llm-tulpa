@@ -3,6 +3,7 @@ import {ArrowLeft} from 'pixelarticons/react'
 import {useNavigate, useParams} from 'react-router-dom'
 
 import '../styles/folders.scss'
+import '../styles/tree.scss'
 import {deleteFolder} from '../api/folders/delete'
 import {getFolders} from '../api/folders/get'
 import {renameFolder} from '../api/folders/rename'
@@ -97,9 +98,9 @@ const Folder = () => {
                     />
                 </Div>
                 <LazyList onBottomReached={loadOlder} className="folders__list">
-                    <Div className="vbox">
+                    <Div className="vbox tree">
                         {chats.map((c) => (
-                            <Div key={c.id} className="folders__tree-row">
+                            <Div key={c.id} className="tree__row">
                                 <ChatEntry
                                     label={c.name}
                                     selected={false}

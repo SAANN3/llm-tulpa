@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 
 import '../styles/chat-search.scss'
 import '../styles/chat-finder.scss'
+import '../styles/tree.scss'
 import {findChats} from '../api/chats/find'
 import type {ChatFindOut, MessageSearchOut} from '../api/chats/types'
 import {highlightText} from '../utils/highlight.tsx'
@@ -115,37 +116,40 @@ export const ChatFinder = ({query, onQueryChanged, onSelect}: ChatFinderProps) =
             )}
 
             {found && found.length > 0 && (
-                <Div className="vbox chat-search__results">
+                <Div className="vbox tree chat-finder__results">
                     {found.map((chat) => (
-                        <Div key={chat.chat_id} className="vbox chat-finder__chat">
-                            <Div className="list-row chat-search__row" onClick={() => onSelect({chatId: chat.chat_id})}>
-                                <Div className="chat-search__row-header">
-                                    <Label className="chat-finder__name" text={chat.name}/>
-                                    <Label variant="secondary" className="chat-search__meta"
-                                           text={[
-                                               chat.name_matched ? 'name' : null,
-                                               chat.message_matches > 0 ? `${chat.message_matches} message${chat.message_matches === 1 ? '' : 's'}` : null,
-                                           ].filter(Boolean).join(' · ')}/>
-                                </Div>
-                                {chat.name_matched ? (
-                                    <Div className="chat-search__snippet">{highlightText(chat.name, trimmed)}</Div>
+                        <Div key={chat.chat_id} className="tree__row chat-finder__chat">
+                            {/* The name with what matched highlighted; how many messages matched at the right */}
+                            <Div className="list-row chat-finder__row" onClick={() => onSelect({chatId: chat.chat_id})}>
+                                <span className="chat-finder__name">{chat.name_matched ? highlightText(chat.name, trimmed) : chat.name}</span>
+                                {chat.message_matches > 0 ? (
+                                    <Label variant="secondary" className="chat-finder__count"
+                                           text={`${chat.message_matches} message${chat.message_matches === 1 ? '' : 's'}`}/>
                                 ) : null}
                             </Div>
-                            {chat.messages.map((hit) => (
-                                <Div key={hit.id} className="list-row chat-search__row chat-finder__hit"
-                                     onClick={() => onSelect({chatId: chat.chat_id, jump: {hit, query: trimmed}})}>
-                                    <Label variant="secondary" className="chat-search__meta"
-                                           text={`${hit.role} · ${new Date(hit.created_at).toLocaleDateString()}, ${formatTime(hit.created_at)}`}/>
-                                    <Div className="chat-search__snippet">
-                                        {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}
-                                        <span className="chat-search__match">{hit.matched}</span>
-                                        {hit.after ? <span className="chat-search__dim">{hit.after}…</span> : null}
-                                    </Div>
+                            {chat.messages.length > 0 ? (
+                                <Div className="vbox tree tree--nested">
+                                    {chat.messages.map((hit) => (
+                                        <Div key={hit.id} className="tree__row">
+                                            <Div className="list-row chat-finder__hit"
+                                                 onClick={() => onSelect({chatId: chat.chat_id, jump: {hit, query: trimmed}})}>
+                                                <Label variant="secondary" className="chat-finder__meta"
+                                                       text={`${hit.role} · ${new Date(hit.created_at).toLocaleDateString()}, ${formatTime(hit.created_at)}`}/>
+                                                <span className="chat-finder__snippet">
+                                                    {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}
+                                                    <span className="chat-search__match">{hit.matched}</span>
+                                                    {hit.after ? <span className="chat-search__dim">{hit.after}…</span> : null}
+                                                </span>
+                                            </Div>
+                                        </Div>
+                                    ))}
+                                    {chat.message_matches > chat.messages.length ? (
+                                        <Div className="tree__row">
+                                            <Label variant="secondary" className="chat-finder__more"
+                                                   text={`…and ${chat.message_matches - chat.messages.length} more in this chat`}/>
+                                        </Div>
+                                    ) : null}
                                 </Div>
-                            ))}
-                            {chat.message_matches > chat.messages.length ? (
-                                <Label variant="secondary" className="chat-finder__more"
-                                       text={`…and ${chat.message_matches - chat.messages.length} more in this chat`}/>
                             ) : null}
                         </Div>
                     ))}

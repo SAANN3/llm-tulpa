@@ -1,0 +1,58 @@
+@use 'tokens' as *;
+
+// A list drawn like `tree`: a line down the left joining the rows, a branch to each. Folders, a folder's chats and the
+// search results use it, so the three listings read alike. A row may hold a nested `.tree` of its own (a chat's
+// matching messages): the line goes on past it to the next row.
+//
+// A real drawn line (not a Unicode "├──" glyph) so it can span a row's full box height —
+// including the margin below it, via the negative `bottom` on `::before` — and land exactly
+// on the next row's top edge. Text glyphs can't do this: a font's line-height and a row's own
+// internal padding leave dead space no character can bridge, which is why the connectors
+// looked "disconnected" between rows despite sitting right next to each other.
+.tree__row {
+  position: relative;
+  padding-left: 28px;
+  margin-bottom: $space-2;
+  // Where the branch meets the row: the middle of a one-line row; a row with a nested list sets it to its first line
+  --tree-branch-y: 50%;
+}
+
+.tree__row:last-child {
+  margin-bottom: 0;
+}
+
+.tree__row::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: -#{$space-2};
+  width: $line-border;
+  // `currentColor` — same as the page's own text and `button[data-variant]`'s own
+  // `border: $line-border solid currentColor` — rather than a separate theme var, so the
+  // connector always reads as the same foreground color as everything else on the page.
+  background: currentColor;
+  opacity: 0.6;
+}
+
+// The last row's line stops at its branch, like `└`
+.tree__row:last-child::before {
+  bottom: auto;
+  height: var(--tree-branch-y);
+}
+
+.tree__row::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: var(--tree-branch-y);
+  transform: translateY(-0.5px);
+  width: 16px;
+  height: $line-border;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.tree--nested {
+  margin-top: $space-1;
+}
