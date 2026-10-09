@@ -49,6 +49,13 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
         setSidebarSeeThroughState(seeThrough)
     }
 
+    // Per browser, on until switched off: the backend always sends the pieces, a browser only chooses to show them
+    const [streamReplies, setStreamRepliesState] = useState(() => localStorage.getItem('stream_replies') !== 'off')
+    const setStreamReplies = (stream: boolean) => {
+        localStorage.setItem('stream_replies', stream ? 'on' : 'off')
+        setStreamRepliesState(stream)
+    }
+
     useEffect(() => {
         document.documentElement.dataset.sidebar = sidebarSeeThrough ? 'see-through' : 'solid'
     }, [sidebarSeeThrough])
@@ -66,7 +73,7 @@ export const ThemeProvider = ({children}: { children: ReactNode }) => {
     }, [background])
 
     return (
-        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground, timeFormat, setTimeFormat, sidebarSeeThrough, setSidebarSeeThrough}}>
+        <ThemeContext.Provider value={{themeName, setThemeName, themeNames, background, setBackground, timeFormat, setTimeFormat, sidebarSeeThrough, setSidebarSeeThrough, streamReplies, setStreamReplies}}>
             {children}
         </ThemeContext.Provider>
     )

@@ -79,6 +79,16 @@ export interface TurnState {
     /** While waiting for permission: the pending tool calls in order; `Decision.index` points into this list. */
     pending: AgentToolCall[]
     last_end: RunEnded | null
+    /** What the model call in flight has written so far; the `reply_piece` events numbered after `seq` continue it */
+    reply: ReplySoFar | null
+}
+
+/** A reply being written, as far as its pieces were sent: `number` counts the run's model calls, `seq` the pieces */
+export interface ReplySoFar {
+    number: number
+    seq: number
+    thinking: string
+    text: string
 }
 
 /** Returned by `startTurn`: the run goes on in the background. */

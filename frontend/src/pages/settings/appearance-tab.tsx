@@ -34,7 +34,7 @@ const Swatches = ({theme}: { theme: ThemeName }) => (
  * page. Pointing at an entry shows it in the preview; clicking applies it (a theme with its reveal). It all applies at
  * once and is kept in this browser, not saved with the account's settings. */
 export const AppearanceTab = () => {
-    const {themeName, setThemeName, background, setBackground, timeFormat, sidebarSeeThrough, setSidebarSeeThrough} = useTheme()
+    const {themeName, setThemeName, background, setBackground, timeFormat, sidebarSeeThrough, setSidebarSeeThrough, streamReplies, setStreamReplies} = useTheme()
     const [themeFilter, setThemeFilter] = useState('')
     const [backgroundFilter, setBackgroundFilter] = useState('')
     const [pointedTheme, setPointedTheme] = useState<ThemeName | null>(null)
@@ -96,7 +96,7 @@ export const AppearanceTab = () => {
 
             <Div className="appearance__side">
                 <AppearancePreview theme={shownTheme} background={shownBackground} strength={background.strength} speed={background.speed}
-                                   sidebarSeeThrough={sidebarSeeThrough} timeFormat={timeFormat}
+                                   sidebarSeeThrough={sidebarSeeThrough} timeFormat={timeFormat} streamReplies={streamReplies}
                                    note={`${themeDisplayNames[shownTheme]} · ${backgroundName}${previewing ? ' · click to use' : ''}`}/>
                 <Div className="appearance__look">
                     <Label text="Brightness"/>
@@ -107,6 +107,11 @@ export const AppearanceTab = () => {
                     <Div className="appearance__inline">
                         <ToggleSwitch toggled={sidebarSeeThrough} onToggled={setSidebarSeeThrough}/>
                         <Label variant="secondary" text="the background shows faintly behind it"/>
+                    </Div>
+                    <Label text="Live replies"/>
+                    <Div className="appearance__inline">
+                        <ToggleSwitch toggled={streamReplies} onToggled={setStreamReplies}/>
+                        <Label variant="secondary" text="a reply shows as it is written"/>
                     </Div>
                     <Label text="Time format"/>
                     <TimeFormatChoice/>

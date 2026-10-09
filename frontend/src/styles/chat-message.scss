@@ -123,3 +123,20 @@ button.chat-message__copy {
     transition: opacity 0.3s ease 0.4s, visibility 0s linear 0.7s;
   }
 }
+
+// A reply being written: its newest lines of thinking only, pinned to the bottom (a reversed column starts scrolled
+// there), so a long thought doesn't push the page down line by line
+.live-reply__thinking {
+  display: flex;
+  flex-direction: column-reverse;
+  max-height: 10.5em;
+  overflow: hidden;
+  margin-top: 0;
+}
+
+// The `_` where the next words land, after whatever block the text ends in
+.live-reply__text > :last-child::after {
+  content: '_';
+  margin-left: 1px;
+  animation: caret-blink 1.1s step-end infinite;
+}

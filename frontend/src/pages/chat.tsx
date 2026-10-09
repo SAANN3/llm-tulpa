@@ -1,5 +1,5 @@
 import axios from 'axios'
-import {Fragment, useEffect, useRef, useState} from 'react'
+import {Fragment, useEffect, useLayoutEffect, useRef, useState} from 'react'
 import {Navigate, useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
 import type {ThinkChoice} from '../api/agent/types'
@@ -10,6 +10,7 @@ import {setChatProfile} from '../api/chats/set-profile'
 import type {MessageSearchOut} from '../api/chats/types'
 import {ChatHeader} from '../components/chat-header.tsx'
 import {ChatMessage} from '../components/chat-message.tsx'
+import {LiveReplyMessage} from '../components/live-reply.tsx'
 import {DateSeparator} from '../components/date-separator.tsx'
 import type {LazyListHandle} from '../components/lazy-list.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
@@ -27,8 +28,10 @@ import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {useMessages} from '../hooks/use-messages.ts'
 import type {TurnView} from '../hooks/use-turn.ts'
 import {useTurn} from '../hooks/use-turn.ts'
+import {useLiveReply} from '../hooks/use-live-reply.ts'
 import {useServerEvent} from '../hooks/use-server-events.ts'
 import {useSettings} from '../context/use-settings.ts'
+import {useTheme} from '../context/use-theme.ts'
 import {consumePendingPrompt, peekPendingPrompt} from '../utils/pending-prompt.ts'
 import {isSameDay} from '../utils/dates'
 import type {ModelChoice} from '../utils/model-choice.ts'
@@ -60,10 +63,35 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const fetchNewRef = useRef(fetchNew)
     fetchNewRef.current = fetchNew
     const runEndedRef = useRef<(end: RunEnded, view: TurnView) => void>(() => undefined)
-    const {view: turn, send, regenerate, answer, stop} = useTurn(chatId, {
+    const {view: turn, send, regenerate, answer, stop, refresh: refreshTurn} = useTurn(chatId, {
         onMessagesChanged: () => void fetchNewRef.current(),
         onRunEnded: (end, view) => runEndedRef.current(end, view),
     })
+    const {streamReplies} = useTheme()
+    const live = useLiveReply(chatId, streamReplies)
+    // A reply shown live goes once its stored message is on the page, before the frame that would show both. Not on a
+    // read that ends at the user's prompt: that one was asked before the reply was stored
+    // Opened (or reloaded, or back on the page) in the middle of a reply: it starts from what the state says was written
+    const seedLiveRef = useRef(live.seed)
+    seedLiveRef.current = live.seed
+    useEffect(() => {
+        if (turn.reply != null) seedLiveRef.current(turn.reply)
+    }, [turn.reply])
+    // A reply still missing its start a second later (a piece was lost, or the read on opening came too early) is
+    // read again from the state, once: if that doesn't fill it either, the stored message will. A second's wait so
+    // the read the page makes on opening anyway isn't doubled, and once per gap so a bad connection isn't flooded
+    const refreshTurnRef = useRef(refreshTurn)
+    refreshTurnRef.current = refreshTurn
+    useEffect(() => {
+        if (!live.missing) return
+        const timer = setTimeout(() => void refreshTurnRef.current(), 1000)
+        return () => clearTimeout(timer)
+    }, [live.missing])
+    const settleLiveRef = useRef(live.settle)
+    settleLiveRef.current = live.settle
+    useLayoutEffect(() => {
+        if (messages[messages.length - 1]?.role !== 'user') settleLiveRef.current()
+    }, [messages])
     // A run is going on, or waits for the user: the composer and the edit controls are off
     const busy = turn.status !== 'idle'
     // How the last run ended, for one that ended without an answer (an answered run has nothing to say)
@@ -393,6 +421,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             </Fragment>
                         )
                     })}
+                    {live.replies.map((reply, i) => <LiveReplyMessage key={i} thinking={reply.thinking} text={reply.text}/>)}
                     {busy ? <RunStatus view={turn} onStop={() => void stop()}/> : null}
                     {endLine != null ? <NoticeMessage content={endLine}/> : null}
                 </LazyList>

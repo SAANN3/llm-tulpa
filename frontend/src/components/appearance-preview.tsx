@@ -17,6 +17,8 @@ export interface AppearancePreviewProps {
     speed: number
     sidebarSeeThrough: boolean
     timeFormat: TimeFormat
+    /** The reply is typed out over and over, as a live reply shows */
+    streamReplies: boolean
     /** What is shown, in the corner */
     note: string
 }
@@ -27,7 +29,32 @@ export interface AppearancePreviewProps {
  * like, whole, with no preview of its own to write for any background. The theme is set on the miniature alone
  * (`data-theme` on it), so the page around it keeps its colors.
  */
-export const AppearancePreview = ({theme, background, strength, speed, sidebarSeeThrough, timeFormat, note}: AppearancePreviewProps) => {
+const REPLY = 'Like this: the page in front, the background behind it.'
+
+/** How much of `text` is typed so far: a few letters at a time, then a rest with all of it shown, then again */
+const useTyping = (text: string, on: boolean): number => {
+    const [typed, setTyped] = useState(text.length)
+    useEffect(() => {
+        if (!on) {
+            setTyped(text.length)
+            return
+        }
+        let shown = 0
+        let rest = 0
+        const id = setInterval(() => {
+            if (shown < text.length) shown = Math.min(text.length, shown + 3)
+            else if (++rest > 25) {
+                shown = 0
+                rest = 0
+            }
+            setTyped(shown)
+        }, 80)
+        return () => clearInterval(id)
+    }, [text, on])
+    return typed
+}
+
+export const AppearancePreview = ({theme, background, strength, speed, sidebarSeeThrough, timeFormat, streamReplies, note}: AppearancePreviewProps) => {
     const boxRef = useRef<HTMLDivElement>(null)
     const pageRef = useRef<HTMLDivElement>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -35,6 +62,8 @@ export const AppearancePreview = ({theme, background, strength, speed, sidebarSe
     const [size] = useState(() => ({width: window.innerWidth, height: window.innerHeight}))
     const [scale, setScale] = useState(0.4)
     const effect = findBackground(background)
+    const typed = useTyping(REPLY, streamReplies)
+    const typing = typed < REPLY.length
 
     // Shrinks the window-sized page to the box it is shown in
     useLayoutEffect(() => {
@@ -102,8 +131,11 @@ export const AppearancePreview = ({theme, background, strength, speed, sidebarSe
                     <div className="appearance-preview__messages">
                         <div className="appearance-preview__bubble">How does this theme look with the background?</div>
                         <span className="appearance-preview__time appearance-preview__time--user">{at(14, 11)}</span>
-                        <div className="appearance-preview__reply">Like this: the page in front, the background behind it.</div>
-                        <span className="appearance-preview__time">{`${at(14, 12)}, spent 312 tokens`}</span>
+                        <div className="appearance-preview__reply">
+                            {REPLY.slice(0, typed)}
+                            {typing ? <span className="caret">_</span> : null}
+                        </div>
+                        <span className="appearance-preview__time" style={{visibility: typing ? 'hidden' : 'visible'}}>{`${at(14, 12)}, spent 312 tokens`}</span>
                     </div>
                     <div className="appearance-preview__composer">Message…</div>
                 </div>

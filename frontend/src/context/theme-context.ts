@@ -17,6 +17,9 @@ export interface ThemeContextValue {
     /** The sidebar lets the background show faintly through it instead of covering it */
     sidebarSeeThrough: boolean
     setSidebarSeeThrough: (seeThrough: boolean) => void
+    /** A reply is shown as the model writes it, not only once it is done */
+    streamReplies: boolean
+    setStreamReplies: (stream: boolean) => void
 }
 
 export const ThemeContext = createContext<ThemeContextValue | null>(null)

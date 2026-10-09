@@ -3,7 +3,7 @@ import {answer as sendAnswer} from '../api/agent/answer.ts'
 import {regenerateChat} from '../api/agent/regenerate-chat.ts'
 import {startTurn} from '../api/agent/start-turn.ts'
 import {stopTurn} from '../api/agent/stop.ts'
-import type {AgentToolCall, Decision, RunEnded, StartTurnOut, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
+import type {AgentToolCall, Decision, ReplySoFar, RunEnded, StartTurnOut, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
 import {getTurnState} from '../api/agent/turn-state.ts'
 import {useServerEvent} from './use-server-events.ts'
 
@@ -21,6 +21,8 @@ export interface TurnView {
     /** While waiting for permission: the pending tool calls, in order */
     pending: AgentToolCall[]
     lastEnd: RunEnded | null
+    /** The reply being written when the state was read (events don't change it: `useLiveReply` follows those) */
+    reply: ReplySoFar | null
 }
 
 const IDLE: TurnView = {
@@ -34,6 +36,7 @@ const IDLE: TurnView = {
     toolStartedAt: null,
     pending: [],
     lastEnd: null,
+    reply: null,
 }
 
 const toMillis = (iso: string | null): number | null => (iso == null ? null : Date.parse(iso))
@@ -49,6 +52,7 @@ const fromState = (state: TurnState): TurnView => ({
     toolStartedAt: toMillis(state.tool_started_at),
     pending: state.pending,
     lastEnd: state.last_end,
+    reply: state.reply,
 })
 
 export interface TurnHandlers {

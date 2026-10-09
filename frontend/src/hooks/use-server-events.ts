@@ -17,6 +17,10 @@ export type ServerEvent =
     | { type: 'chat_renamed'; chat_id: number; name: string }
     | { type: 'chat_deleted'; chat_id: number }
     | { type: 'messages_removed'; chat_id: number; message_ids: number[] }
+    /** What the model wrote of the reply since the last piece, for showing it live; the stored message is what counts */
+    | { type: 'reply_piece'; chat_id: number; reply: number; seq: number; thinking: string; text: string }
+    /** The reply being written was thrown away and is asked for again: what was shown of it goes */
+    | { type: 'reply_restart'; chat_id: number }
     | { type: 'model_state'; state: 'loading' | 'ready' | 'stopped' | 'failed' | 'queued'; profile_id: number | null; model: string | null; detail: string | null }
 
 type Listener = (event: ServerEvent) => void
@@ -60,7 +64,8 @@ const dispatch = (data: string) => {
         return
     }
 
-    debugLog('sse', 'event', event.type, 'chat_id' in event ? event.chat_id : '', 'reason' in event ? event.reason : '')
+    // A reply's pieces come ten times a second and would bury every other line
+    if (event.type !== 'reply_piece') debugLog('sse', 'event', event.type, 'chat_id' in event ? event.chat_id : '', 'reason' in event ? event.reason : '')
     for (const listener of listeners) {
         try {
             listener(event)
