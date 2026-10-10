@@ -16,7 +16,7 @@ llm-tulpa runs its own model server, and the setup happens on screen:
 No environment variables to set, no `llama-server` flags to remember, nothing to edit by hand for a normal install.
 
 <p align="center">
-  <img src="./readme/setup-wizard.png" alt="The setup wizard, step by step: welcome, timezone, database, owner account, password, provider, llama.cpp before and after installing, model, theme, notifications, done" width="720">
+  <img src="./readme/setup-wizard.png" alt="The setup wizard, step by step: basics, database, account, the model's provider, llama.cpp before and after installing, the model file, the look, all set" width="720">
 </p>
 <p align="center"><em>The whole setup, in order: a name and password, your hardware's llama.cpp build, and the model to start with.</em></p>
 
