@@ -125,8 +125,13 @@ $setup-rail: 200px;
 
 .setup__db-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  // minmax(0, …): an input's own minimum width would otherwise push the pair past the control column
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: $space-3;
+
+  > * {
+    min-width: 0;
+  }
 }
 
 .setup__error {
