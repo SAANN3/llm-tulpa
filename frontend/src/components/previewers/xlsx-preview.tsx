@@ -3,9 +3,11 @@ import {useEffect, useState} from 'react'
 import {read, utils, type WorkBook} from 'xlsx'
 import {getFileDownloadUrl} from '../../api/files/download'
 import {Button, Div, Label} from '../primitives'
+import {useWindowTools} from '../popups/base/window-tools.ts'
 import type {PreviewerProps} from './types'
 
-/** Parses a spreadsheet via SheetJS and shows one sheet at a time as a plain table */
+/** Parses a spreadsheet via SheetJS and shows one sheet at a time as a table in the theme's colors; the sheets are in
+ * the window's tool row (keys 1-9) */
 const XlsxPreview = ({file}: PreviewerProps) => {
     const [workbook, setWorkbook] = useState<WorkBook | null>(null)
     const [activeSheet, setActiveSheet] = useState<string | null>(null)
@@ -31,6 +33,24 @@ const XlsxPreview = ({file}: PreviewerProps) => {
         }
     }, [file.id])
 
+    const sheets = workbook?.SheetNames ?? []
+    const rows = workbook && activeSheet ? utils.sheet_to_json<unknown[]>(workbook.Sheets[activeSheet], {header: 1, defval: ''}) : []
+
+    useWindowTools({
+        node: sheets.length > 1 ? sheets.map((name) => (
+            <Button key={name} variant="secondary" className={`preview-tool${name === activeSheet ? ' preview-tool--on' : ''}`} text={name}
+                    onClicked={() => setActiveSheet(name)}/>
+        )) : undefined,
+        scalable: true,
+        meta: workbook ? `${sheets.length > 1 ? `${sheets.length} sheets · ` : ''}${rows.length} rows` : undefined,
+        actions: sheets.length > 1 ? [{
+            keys: sheets.slice(0, 9).map((_, i) => String(i + 1)),
+            shown: `1-${Math.min(sheets.length, 9)}`,
+            label: 'sheet',
+            run: (key: string) => setActiveSheet(sheets[Number(key) - 1]),
+        }] : [],
+    }, [workbook, activeSheet, rows.length])
+
     if (failed) {
         return (
             <Div style={{padding: 20}}>
@@ -47,46 +67,17 @@ const XlsxPreview = ({file}: PreviewerProps) => {
         )
     }
 
-    const rows = utils.sheet_to_json<unknown[]>(workbook.Sheets[activeSheet], {header: 1, defval: ''})
-
     return (
-        <Div>
-            {workbook.SheetNames.length > 1 ? (
-                <Div style={{
-                    display: 'flex',
-                    gap: 4,
-                    padding: 8,
-                    flexWrap: 'wrap',
-                    borderBottom: '1px solid var(--color-border)'
-                }}>
-                    {workbook.SheetNames.map((name) => (
-                        <Button
-                            key={name}
-                            text={name}
-                            variant={name === activeSheet ? 'primary' : 'secondary'}
-                            onClicked={() => setActiveSheet(name)}
-                            style={{fontSize: 12, padding: '4px 8px'}}
-                        />
-                    ))}
-                </Div>
-            ) : null}
-            <Div style={{padding: 8, background: 'white', overflow: 'auto'}}>
-                <table style={{borderCollapse: 'collapse', fontSize: 12, color: 'black'}}>
-                    <tbody>
-                    {rows.map((row, i) => (
-                        <tr key={i}>
-                            {row.map((cell, j) => (
-                                <td key={j}
-                                    style={{border: '1px solid #ccc', padding: '2px 6px', whiteSpace: 'nowrap'}}>
-                                    {String(cell)}
-                                </td>
-                            ))}
-                        </tr>
-                    ))}
-                    </tbody>
-                </table>
-            </Div>
-        </Div>
+        <table className="sheet-preview">
+            <tbody>
+            {rows.map((row, i) => (
+                <tr key={i}>
+                    <th>{i + 1}</th>
+                    {row.map((cell, j) => <td key={j}>{String(cell)}</td>)}
+                </tr>
+            ))}
+            </tbody>
+        </table>
     )
 };
 

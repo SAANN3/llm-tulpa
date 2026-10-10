@@ -3,6 +3,7 @@ import {renderAsync} from 'docx-preview'
 import {useEffect, useRef, useState} from 'react'
 import {getFileDownloadUrl} from '../../api/files/download'
 import {Div, Label} from '../primitives'
+import {useWindowTools} from '../popups/base/window-tools.ts'
 import type {PreviewerProps} from './types'
 
 const SYMBOL_FONTS = ['wingdings', 'wingdings2', 'wingdings3', 'webdings', 'symbol']
@@ -40,6 +41,7 @@ const DocxPreview = ({file}: PreviewerProps) => {
     const containerRef = useRef<HTMLDivElement>(null)
     const [loading, setLoading] = useState(true)
     const [failed, setFailed] = useState(false)
+    useWindowTools({scalable: true}, [])
 
     useEffect(() => {
         let cancelled = false

@@ -9,6 +9,7 @@ import {AttachmentPreview} from './attachment-preview.tsx'
 import {Button, Div, Label} from './primitives'
 import {getMediaKind} from './previewers/registry'
 import {WindowsPopup} from './popups/base/windows-popup.tsx'
+import {ZoomableImage} from './previewers/zoomable-image.tsx'
 
 export type AttachmentProps = {
     size?: number
@@ -159,18 +160,7 @@ export const Attachment = (props: AttachmentProps) => {
                 defaultSize={props.kind === 'file' ? DEFAULT_FILE_PREVIEW_SIZE : undefined}
             >
                 {props.kind === 'image' ? (
-                    <img
-                        src={toDataUrl(props.image)}
-                        alt=""
-                        style={{
-                            display: 'block',
-                            width: '100%',
-                            height: '100%',
-                            maxWidth: '90vw',
-                            maxHeight: '90vh',
-                            objectFit: 'contain'
-                        }}
-                    />
+                    <ZoomableImage src={toDataUrl(props.image)} alt=""/>
                 ) : file ? (
                     <AttachmentPreview file={file}/>
                 ) : (

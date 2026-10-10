@@ -1,8 +1,9 @@
 import {useFileBlobUrl} from '../../hooks/use-file-blob-url.ts'
 import {Div, Label} from '../primitives'
 import type {PreviewerProps} from './types'
+import {ZoomableImage} from './zoomable-image.tsx'
 
-/** An img fed from the file's blob, keeping aspect ratio as the popup resizes */
+/** An image fed from the file's blob, fitted to the window or zoomed */
 const ImagePreview = ({file}: PreviewerProps) => {
     const {url, failed} = useFileBlobUrl(file.id)
 
@@ -22,13 +23,7 @@ const ImagePreview = ({file}: PreviewerProps) => {
         )
     }
 
-    return (
-        <img
-            src={url}
-            alt={file.file_name}
-            style={{width: '100%', height: '100%', objectFit: 'contain', display: 'block'}}
-        />
-    )
+    return <ZoomableImage src={url} alt={file.file_name}/>
 };
 
 export default ImagePreview

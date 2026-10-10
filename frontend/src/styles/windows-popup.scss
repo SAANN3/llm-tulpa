@@ -1,0 +1,223 @@
+@use 'tokens' as *;
+
+// A preview window: placed and sized by its component (left/top/width/height), drawn by the Frame inside it
+.preview-window {
+  position: fixed;
+  display: flex;
+}
+
+.preview-window--max {
+  inset: $space-3;
+}
+
+.preview-window__frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+
+  > .frame__box {
+    flex: 1;
+  }
+}
+
+// A file's name as it is, not in capitals like a panel's title, and cut short rather than pushed past the buttons
+.preview-window .dos-frame__title {
+  z-index: 2;
+  max-width: calc(100% - 160px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  // The bar under it moves the window, the title included
+  pointer-events: none;
+}
+
+.preview-window__body.dos-frame__body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+// Clear of the bar, which lies over the top of the frame
+.preview-window__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $space-2;
+  min-height: 30px;
+  padding: 26px $space-4 $space-2;
+  border-bottom: $line-border solid var(--color-border);
+  font-size: 12px;
+}
+
+.preview-window__meta {
+  margin-left: auto;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.preview-window__content {
+  // The offsets content measures against (an image keeping the point under the pointer when it zooms)
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+// As tall as the content area, so a fitted image or a frame (PDF, HTML) fills it
+.preview-window__scaled {
+  min-height: 100%;
+  height: 100%;
+}
+
+// The handle for moving the window: the frame's top edge and a strip under it, the title included
+.preview-window__bar {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  right: 0;
+  height: 40px;
+  z-index: 1;
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-window__buttons {
+  position: absolute;
+  top: -11px;
+  right: $space-3;
+  z-index: 3;
+  display: flex;
+  gap: $space-1;
+  padding: 0 $space-1;
+  background: var(--color-secondary);
+
+  > button[data-variant] {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+  }
+}
+
+// The sides, the bottom and the corners resize; the top is the bar, so only its corners do
+.preview-window__edge {
+  position: absolute;
+  z-index: 4;
+  touch-action: none;
+}
+
+.preview-window__edge--e,
+.preview-window__edge--w {
+  top: $space-3;
+  bottom: $space-3;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.preview-window__edge--e {
+  right: -6px;
+}
+
+.preview-window__edge--w {
+  left: -6px;
+}
+
+.preview-window__edge--s {
+  left: $space-3;
+  right: $space-3;
+  bottom: -6px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.preview-window__edge--ne,
+.preview-window__edge--nw,
+.preview-window__edge--se,
+.preview-window__edge--sw {
+  width: 16px;
+  height: 16px;
+}
+
+.preview-window__edge--nw {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.preview-window__edge--se {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize;
+}
+
+.preview-window__edge--ne {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.preview-window__edge--sw {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+// A window behind another: its frame and its lines dimmed, its content as it is
+.preview-window--back {
+  .frame__box {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-secondary));
+  }
+
+  .dos-frame__title,
+  .frame__hints,
+  .preview-window__buttons {
+    opacity: 0.55;
+  }
+}
+
+// While a window is moved or resized: nothing on the page gets selected, and the cursor stays the drag's everywhere
+body.preview-window-holding,
+body.preview-window-holding * {
+  user-select: none !important;
+  cursor: var(--preview-window-cursor) !important;
+}
+
+// Tool row controls the previewers put in the window
+.preview-tool[data-variant] {
+  padding: 2px 8px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.preview-tool--on[data-variant] {
+  border-color: var(--color-tertiary);
+  color: var(--color-tertiary);
+}
+
+// A spreadsheet's sheet, its row numbers down the left, in the theme's colors
+.sheet-preview {
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th,
+  td {
+    border: $line-border solid var(--color-border);
+    padding: 3px $space-2;
+    white-space: nowrap;
+  }
+
+  th {
+    position: sticky;
+    left: 0;
+    background: var(--color-surface-strong);
+    font-weight: 400;
+    opacity: 0.8;
+    text-align: right;
+  }
+}
