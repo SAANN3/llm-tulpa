@@ -71,7 +71,8 @@ export interface RadioButtonProps {
 }
 
 export interface ChoiceGroupProps {
-  options: { value: string; label: string }[]
+  /** `help`, when given, is a line under the option's label saying what it means; the cells then share the width */
+  options: { value: string; label: string; help?: string }[]
   chosen: string
   onChosen: (value: string) => void
   /** What the choice is about, for a screen reader */

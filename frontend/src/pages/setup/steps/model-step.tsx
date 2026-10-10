@@ -5,7 +5,7 @@ import {registerModel} from '../../../api/runtime/register'
 import {LlamaModelPick, type LlamaPick} from '../../../components/llama-model-pick.tsx'
 import {HfPanel} from '../../../components/models/hf-panel.tsx'
 import {OllamaAddressField} from '../../../components/ollama-address-field.tsx'
-import {Div, Label, RadioButton} from '../../../components/primitives'
+import {ChoiceGroup, Div, Label} from '../../../components/primitives'
 import {ModelPicker} from '../../../components/model-picker.tsx'
 import {errorReason} from '../../../utils/error-reason.ts'
 import type {StepDef, WizardContext} from '../types.ts'
@@ -13,10 +13,10 @@ import type {StepDef, WizardContext} from '../types.ts'
 const LLAMA = 'llama.cpp (built in)'
 const OLLAMA = 'ollama'
 
-// Two cards with a radio button each: the choice and what it means are read together
+// Each with what it means, read together with the choice
 const PROVIDERS = [
-    {id: LLAMA, help: 'Downloaded and run by the backend, and every model setting is editable in the app.'},
-    {id: OLLAMA, help: 'For those who already run Ollama.'},
+    {value: LLAMA, label: LLAMA, help: 'Downloaded and run by the backend, and every model setting is editable in the app.'},
+    {value: OLLAMA, label: OLLAMA, help: 'For those who already run Ollama.'},
 ]
 
 /** Where the model runs, then (for the built-in llama.cpp) its engine and the model file, or (for
@@ -44,18 +44,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
         body: (
             <Div className="setup__step">
                 <Label className="setup__lead" text="Where does the model run?"/>
-                <Div className="setup__choices">
-                    {PROVIDERS.map((option) => (
-                        <Div key={option.id} className={`setup__choice${provider === option.id ? ' setup__choice--active' : ''}`}
-                             onClick={() => setProvider(option.id)}>
-                            <RadioButton name="provider" value={option.id} checked={provider === option.id} onChanged={setProvider}/>
-                            <Div className="setup__choice-text">
-                                <Label text={option.id}/>
-                                <Label variant="secondary" className="field__help" text={option.help}/>
-                            </Div>
-                        </Div>
-                    ))}
-                </Div>
+                <ChoiceGroup label="Where the model runs" options={PROVIDERS} chosen={provider} onChosen={setProvider}/>
             </Div>
         ),
     }

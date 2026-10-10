@@ -26,7 +26,8 @@ export const ChoiceGroup = ({
     }
 
     return (
-        <div role="radiogroup" aria-label={label} style={style} className={className} data-variant={variant} data-choice-group>
+        <div role="radiogroup" aria-label={label} style={style} className={className} data-variant={variant} data-choice-group
+             data-choice-help={options.some((o) => o.help) ? '' : undefined}>
             {options.map((option, i) => (
                 <button
                     key={option.value}
@@ -41,7 +42,12 @@ export const ChoiceGroup = ({
                     onClick={() => onChosen(option.value)}
                     onKeyDown={onKeyDown}
                 >
-                    {option.label}
+                    {option.help ? (
+                        <>
+                            <span data-choice-label>{option.label}</span>
+                            <span data-choice-text>{option.help}</span>
+                        </>
+                    ) : option.label}
                 </button>
             ))}
         </div>

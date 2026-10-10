@@ -129,39 +129,6 @@ $setup-rail: 200px;
   gap: $space-3;
 }
 
-// The providers side by side, each a card with its radio button and what it means
-.setup__choices {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: $space-3;
-}
-
-// One provider to choose among: a radio button and what it means
-.setup__choice {
-  display: flex;
-  align-items: flex-start;
-  gap: $space-3;
-  padding: $space-3;
-  border: $line-border solid var(--color-border);
-  cursor: pointer;
-}
-
-// The radio is a flex item next to wrapping text: unless told not to, a long line squeezes it into an oval
-.setup__choice > input {
-  flex-shrink: 0;
-}
-
-.setup__choice--active {
-  border-color: var(--color-tertiary);
-}
-
-.setup__choice-text {
-  display: flex;
-  flex-direction: column;
-  gap: $space-1;
-  min-width: 0;
-}
-
 .setup__error {
   color: var(--color-danger);
   font-size: 12px;
