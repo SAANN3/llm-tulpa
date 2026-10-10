@@ -1,5 +1,6 @@
 import {useEffect, useLayoutEffect, useRef, useState} from 'react'
 import '../styles/appearance-preview.scss'
+import '../styles/chat-message.scss'
 import {findBackground, type BackgroundId} from '../backgrounds'
 import {BackgroundRunner} from '../backgrounds/engine/runner.ts'
 import type {PageLayout} from '../backgrounds/engine/types.ts'
@@ -133,7 +134,7 @@ export const AppearancePreview = ({theme, background, strength, speed, sidebarSe
                         <span className="appearance-preview__time appearance-preview__time--user">{at(14, 11)}</span>
                         <div className="appearance-preview__reply">
                             {REPLY.slice(0, typed)}
-                            {typing ? <span className="caret">_</span> : null}
+                            {typing ? <span className="live-reply__cursor"/> : null}
                         </div>
                         <span className="appearance-preview__time" style={{visibility: typing ? 'hidden' : 'visible'}}>{`${at(14, 12)}, spent 312 tokens`}</span>
                     </div>

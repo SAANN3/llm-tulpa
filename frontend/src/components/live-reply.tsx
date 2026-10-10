@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import '../styles/chat-message.scss'
 import {CodeBlock} from './code-block.tsx'
 import {Div} from './primitives'
+import {useTyped} from '../hooks/use-typed.ts'
 
 export interface LiveReplyProps {
     thinking: string
@@ -29,11 +30,13 @@ const MARKDOWN_COMPONENTS = {pre: CodeBlock}
 
 /**
  * A reply as the model is writing it, shaped like the message it becomes: its thinking while it thinks, then the text,
- * each with a blinking `_` where the next words land. The thinking shows its newest lines only; the stored message
- * keeps all of it.
+ * typed out at an even pace (`useTyped`) with a blinking block where the next words land. The thinking shows its newest
+ * lines only; the stored message keeps all of it.
  */
 export const LiveReplyMessage = ({thinking, text}: LiveReplyProps) => {
-    const [thought, reply] = splitThink(thinking, text)
+    const [fullThought, fullReply] = splitThink(thinking, text)
+    const thought = useTyped(fullThought)
+    const reply = useTyped(fullReply)
     const writing = reply.trim() !== ''
     return (
         <Div className="chat-message chat-message--assistant live-reply">
@@ -48,7 +51,7 @@ export const LiveReplyMessage = ({thinking, text}: LiveReplyProps) => {
                     <Div className="chat-message__thinking-body live-reply__thinking">
                         <div>
                             {thought.trimStart()}
-                            <span className="caret">_</span>
+                            <span className="live-reply__cursor"/>
                         </div>
                     </Div>
                 )}
