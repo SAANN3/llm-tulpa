@@ -23,7 +23,7 @@ use utoipa::ToSchema;
 use super::event_bus::{EventBus, ModelStateKind, ServerEvent};
 use super::error::ErrorService;
 use super::gguf::read_gguf_info;
-use super::launch_store::LaunchProfile;
+use super::launch_store::{split_extra_args, LaunchProfile};
 use super::llm::LaunchRequest;
 use crate::config::LlamaCppConfig;
 
@@ -1089,7 +1089,12 @@ pub fn build_args(config: &LlamaCppConfig, request: &LaunchRequest, has_mtp: boo
     }
     args.extend(["--jinja".to_string(), "--metrics".to_string()]);
     args.extend(bare);
-    args.extend(profile.extra_args.split_whitespace().map(str::to_string));
+    // A profile saved before quotes were understood can still hold an unclosed one: it gets the plain
+    // split it always had rather than failing to start.
+    match split_extra_args(&profile.extra_args) {
+        Some(words) => args.extend(words),
+        None => args.extend(profile.extra_args.split_whitespace().map(str::to_string)),
+    }
     args
 }
 
@@ -1184,6 +1189,15 @@ mod tests {
         assert!(!joined.contains("--spec-type"));
         let with_head = build_args(&LlamaCppConfig::default(), &request(profile()), true).join(" ");
         assert!(with_head.contains("--spec-type draft-mtp,ngram-mod --spec-draft-n-max 3"));
+        // A quoted value stays one argument; a backslash stays as typed
+        let mut quoted = profile();
+        quoted.extra_args = r##"--reasoning-budget-message "I'll answer now." --lora 'C:\m\a b.gguf' --x="" -v"##.into();
+        let args = build_args(&LlamaCppConfig::default(), &request(quoted), false);
+        assert_eq!(&args[args.len() - 6..], &["--reasoning-budget-message", "I'll answer now.", "--lora", r"C:\m\a b.gguf", "--x=", "-v"]);
+        // An unclosed quote saved before quotes were understood still starts, split on spaces as before
+        let mut unclosed = profile();
+        unclosed.extra_args = "--alias \"a b".into();
+        assert!(build_args(&LlamaCppConfig::default(), &request(unclosed), false).ends_with(&["--alias".into(), "\"a".into(), "b".into()]));
     }
 
     #[test]

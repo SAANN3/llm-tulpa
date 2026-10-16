@@ -148,6 +148,9 @@ impl LaunchInput {
         if self.extra_args.len() > 500 || self.extra_args.chars().any(|c| c.is_control()) {
             return invalid("extra arguments must be one line of up to 500 characters");
         }
+        if split_extra_args(&self.extra_args).is_none() {
+            return invalid("a quote in the extra arguments is never closed");
+        }
         Ok(())
     }
 }
@@ -160,6 +163,44 @@ fn is_safe_relative_path(path: &str) -> bool {
         && !path.contains(':')
         && !path.chars().any(|c| c.is_control())
         && path.split(['/', '\\']).all(|part| part != ".." && part != ".")
+}
+
+/// A profile's extra arguments as separate words: spaces separate them, and single or double quotes keep
+/// a value with spaces together (`--reasoning-budget-message "I'll answer now."`). A backslash is kept as
+/// it is, unlike in a shell, so a Windows path needs no escaping. `None` when a quote is never closed.
+pub fn split_extra_args(text: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    // A word can be just a pair of quotes, so whether one has started is tracked apart from its text
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            None => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if in_word {
+        words.push(word);
+    }
+    Some(words)
 }
 
 /// The loads of a stretch of time: how many, and the middle one's length
@@ -382,6 +423,7 @@ mod tests {
         assert!(bad(|i| i.spec_draft_n_max = 0));
         assert!(bad(|i| i.ngram_match = 4));
         assert!(bad(|i| i.extra_args = "--x\n--y".into()));
+        assert!(bad(|i| i.extra_args = "--reasoning-budget-message \"never closed".into()));
         let mut ok = LaunchInput::default();
         ok.mmproj_file = Some("vision/mmproj-F16.gguf".into());
         ok.context_length = Some(131072);

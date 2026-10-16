@@ -137,7 +137,7 @@ const ProfileForm = ({modelFile, profile, projectors, hasMtp, layers, trainedCon
                            text="Off keeps the vision projector in RAM: it takes no VRAM, and reading an image takes a few seconds longer. Replies are not slower."/>
                 </>
             ) : null}
-            <Field label="Extra arguments" hint="Passed to llama-server as they are, split on spaces (no shell).">
+            <Field label="Extra arguments" hint="Passed to llama-server as they are, split on spaces; quotes keep a value with spaces together (no shell).">
                 <Input text={extra} onChanged={setExtra} placeholder="--no-mmap"/>
             </Field>
             {error ? <Label variant="secondary" className="models__error" text={error}/> : null}
