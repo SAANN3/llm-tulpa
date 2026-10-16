@@ -28,21 +28,21 @@ cd llm-tulpa
 ```
 Then open `http://localhost:5173` and follow the setup wizard. You need Docker; `./start-docker.sh` finds your GPU by itself.
 
-The Docker image runs the Vulkan build of llama.cpp, which works on any GPU but is several times slower than ROCm (AMD) or CUDA (Nvidia): about 25 tokens/s against about 100 on one 16 GB AMD card with Qwen3.6-35B-A3B. For full speed run the backend on the host with `./start-native.sh` (see the details below).
+The Docker image runs llama.cpp inside the container, which works on any GPU but is several times slower than running it on the host: about 25 tokens/s against 70–100 on one 16 GB AMD card with Qwen3.6-35B-A3B. For full speed run the backend on the host with `./start-native.sh` (see the details below).
 
 <details>
-<summary>The details: models, what the wizard asks, and running without Docker for ROCm or CUDA speed</summary>
+<summary>The details: models, what the wizard asks, and running without Docker for full speed</summary>
 
 **A model.** Anything llama.cpp can run that supports tool calling works, but this project was built and tested against **[Qwen3.6-35B-A3B](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF)**, specifically the `UD-Q4_K_XL` quant (`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`). Drop the `.gguf` in `llm/` (or a folder you point `MODEL_DIR` at), or search and download one from Hugging Face on the app's Models page. The app downloads and runs llama.cpp itself: the setup wizard looks at your hardware, installs the right build and has you pick the model file; every model setting (context, KV cache, GPU layers, MTP, vision projector, sampling) is editable in the app afterwards. Ollama still works as a second provider (`--profile ollama`; see [`llm/README.md`](./llm/README.md)).
 
 **The wizard.** On first run, at `http://localhost:5173`, a setup wizard walks you through it — timezone, an **owner account** (username + password), the model server (it looks at your hardware, suggests the right llama.cpp build, downloads it — or uses a `llama-server` you point it at — and has you pick the model file), a theme, and notifications. With Postgres from the bundled compose file, the wizard's database step is one form (`localhost`, port `5432`, user/password `postgres`); the connection is saved to `backend/data/settings.json`, which also holds every other backend setting — see [`backend/README.md`](./backend/README.md). After setup you sign in with the owner account; the owner can add more users from the in-app Users page (there's no open self-registration), and each user's chats and settings are their own.
 
-### Running the backend natively (for ROCm or CUDA speed)
-The Docker image has the Vulkan build of llama.cpp, which works everywhere but is several times slower than ROCm (AMD) or CUDA (Nvidia). For the full speed run the backend on the host and keep the database, SearXNG and the frontend in Docker:
+### Running the backend natively (for full speed)
+The Docker image has the Vulkan build of llama.cpp, which works everywhere but runs several times slower inside the container than on the host. For the full speed run the backend on the host and keep the database, SearXNG and the frontend in Docker:
 ```bash
 ./start-native.sh
 ```
-It starts those three in Docker (and stops the backend container), then runs `cargo run --release`, which rebuilds only what changed — the first build takes several minutes. Its settings live in `backend/data-native/settings.json`, apart from the Docker ones; a first run seeds that file from `backend/data/settings.json` (database block and secret included) with `model_dir` taken from `MODEL_DIR` in your `.env` (or choose the folder in the app), and `target/release/data` is a link to that folder, so a `cargo clean` doesn't take your settings with it. Open `http://localhost:5173`; in the setup wizard's llama.cpp step the suggested build is ROCm or CUDA when the host has its libraries (for AMD, `hipblas` — the wizard names what is missing). Run only one backend at a time: `./start-docker.sh` refuses to start while a native one runs, and `./start-native.sh` stops the container.
+It starts those three in Docker (and stops the backend container), then runs `cargo run --release`, which rebuilds only what changed — the first build takes several minutes. Its settings live in `backend/data-native/settings.json`, apart from the Docker ones; a first run seeds that file from `backend/data/settings.json` (database block and secret included) with `model_dir` taken from `MODEL_DIR` in your `.env` (or choose the folder in the app), and `target/release/data` is a link to that folder, so a `cargo clean` doesn't take your settings with it. Open `http://localhost:5173`; in the setup wizard's llama.cpp step the suggested build is ROCm or CUDA when the host has its libraries (for AMD, `hipblas` — the wizard names what is missing). On the host the Vulkan build is worth trying too: on the RX 6800 below it wrote faster than ROCm (see [This setup](#this-setup)). Run only one backend at a time: `./start-docker.sh` refuses to start while a native one runs, and `./start-native.sh` stops the container.
 
 </details>
 
@@ -79,14 +79,29 @@ llm-tulpa runs one local model at a time — any tool-calling-capable model work
 - CPU: AMD Ryzen 5 3600 — 6 cores / 12 threads
 - RAM: 39GB
 
-Writing speed on this card, MTP on, 8-bit KV cache, flash attention, context sized automatically (mean of five runs over three code prompts — a long conversation is slower):
+Writing speed on this card, MTP on, 8-bit KV cache, flash attention, context sized automatically (mean of five runs over three code prompts — a long conversation is slower; ROCm on the host, Vulkan in the Docker image):
 
 | Model | ROCm (native) | Vulkan (Docker image) |
 |---|---|---|
 | Qwen3.6-35B-A3B `UD-IQ3_XXS-MTP` | ~100 tok/s (context ~90k) | ~25 tok/s (~52k) |
 | Qwen3.8-27B `UD-IQ3_S` | ~36 tok/s (~65k) | ~11.5 tok/s (~46k) |
 
-ROCm needs the host's `hipblas` (the setup wizard says when it is missing) and the llama.cpp ROCm build, so for the best speed on an AMD card run the backend natively; the Docker image has Vulkan, which works without extra libraries. On Nvidia the CUDA builds are offered the same way.
+The Vulkan column is the Docker image: most of the gap is the container, not Vulkan. Run on the host, the same Vulkan build was faster than ROCm on this card (2026-10-16, llama.cpp b11347, Qwen3.6-35B-A3B `UD-IQ3_S` fully on the GPU, no MTP, 8-bit KV cache, 98k context, one 6k-token and one 38k-token prompt):
+
+| On the host | Writing (6k / 38k prompt) | Reading the prompt (6k / 38k) | VRAM left free | CPU busy |
+|---|---|---|---|---|
+| ROCm | ~55 / ~49 tok/s | ~820 / ~725 tok/s | ~0.7 GB | ~1.3 cores |
+| Vulkan | ~70 / ~64 tok/s | ~690 / ~510 tok/s | ~1.1 GB | ~0.4 cores |
+| Vulkan, `-ub 1024` | ~72 / ~64 tok/s | ~870 / ~600 tok/s | ~1.0 GB | ~0.4 cores |
+
+Notes from the same tests:
+- Keep about 1 GB of VRAM free. A profile that doesn't fit doesn't fail to load: it spills into system RAM, writes at 1–5 tok/s and makes the whole desktop stutter. With only 0.5–0.6 GB free, long prompts on Vulkan made the GPU time out and reset. Loading an image needs room for a moment too, so on this card the 35B-A3B reads images with the vision projector in RAM (about 7 s an image instead of 1–2).
+- On this model the 4-bit KV cache cost very little: the same recall of 12 planted facts at 87k tokens as 8-bit (10 of 12 each), perplexity +0.25% against +0.08% for 8-bit, and the same speed on Vulkan, for twice the context (131k with 1.1 GB to spare).
+- MTP speeds writing up by about 20% on ROCm but only about 4% on Vulkan, for 0.6–0.8 GB of VRAM.
+- `IQ3_XXS`, `IQ3_S` and AesSedai's `IQ3_S` of Qwen3.6-35B-A3B came out the same against `UD-Q4_K_XL` (mean KL divergence 0.045–0.047).
+- As a coding agent in this app, with one problem per chat and a way to check the result, Qwen3.6-35B-A3B fixed a bug from its symptom and built a small feature to a written spec in 2–7 minutes; Qwen3.8-27B did the same in about 12. A two-part phone CSS fix across a whole page set failed more often than it passed (Qwen3.6-35B-A3B passed it twice in six tries, across its quants), and its failed runs ended with it saying it was done while its own measuring tool said otherwise. gpt-oss-20b, Devstral Small 2, Qwen3-Coder-30B and GLM-4.7-Flash solved little of it.
+
+ROCm needs the host's `hipblas` (the setup wizard says when it is missing) and the llama.cpp ROCm build; Vulkan works without extra libraries. On Nvidia the CUDA builds are offered the same way.
 
 ## Docs
 - [`backend/README.md`](./backend/README.md) + [`backend/TOOLS.md`](./backend/TOOLS.md) + [`backend/PLUGINS.md`](./backend/PLUGINS.md) — the Rust backend, how the tool system works, and how the plugin system works.
