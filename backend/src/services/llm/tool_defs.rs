@@ -45,6 +45,15 @@ pub struct ToolProperty {
     #[serde(rename = "type")]
     property_type: String,
     description: String,
+    /// An array's element type; left out otherwise, so every other parameter's bytes stay as they were
+    #[serde(skip_serializing_if = "Option::is_none")]
+    items: Option<ToolItems>,
+}
+
+#[derive(Serialize)]
+pub struct ToolItems {
+    #[serde(rename = "type")]
+    item_type: String,
 }
 
 
@@ -63,6 +72,7 @@ pub fn tool_definitions(tools: &[&dyn Tool]) -> Vec<ToolDefinition> {
                         ToolProperty {
                             property_type: property.property_type.to_string(),
                             description: property.description,
+                            items: property.items.map(|item| ToolItems { item_type: item.to_string() }),
                         },
                     )
                 })

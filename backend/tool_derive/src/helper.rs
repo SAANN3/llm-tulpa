@@ -21,6 +21,13 @@ pub fn field_properties(fields: &Punctuated<Field, Token![,]>) -> Result<Vec<Tok
                 None => (&field.ty, true),
             };
             let property_type = property_type_for(schema_ty)?;
+            let items = match vec_inner_type(schema_ty) {
+                Some(element) => {
+                    let element_type = property_type_for(element)?;
+                    quote! { Some(#element_type) }
+                }
+                None => quote! { None },
+            };
             let description = description_for(field)?;
 
             Ok(quote! {
@@ -29,6 +36,7 @@ pub fn field_properties(fields: &Punctuated<Field, Token![,]>) -> Result<Vec<Tok
                     property_type: #property_type,
                     description: #description.to_string(),
                     required: #required,
+                    items: #items,
                 }
             })
         })
@@ -39,9 +47,18 @@ pub fn field_properties(fields: &Punctuated<Field, Token![,]>) -> Result<Vec<Tok
 /// (not a renamed/aliased import), same scope of "good enough, not exhaustive" as
 /// `property_type_for` below.
 fn option_inner_type(ty: &Type) -> Option<&Type> {
+    generic_inner_type(ty, "Option")
+}
+
+/// If `ty` is `Vec<T>`, returns `T`: the element type an array parameter's `items` describes.
+fn vec_inner_type(ty: &Type) -> Option<&Type> {
+    generic_inner_type(ty, "Vec")
+}
+
+fn generic_inner_type<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
     let Type::Path(type_path) = ty else { return None };
     let segment = type_path.path.segments.last()?;
-    if segment.ident != "Option" {
+    if segment.ident != wrapper {
         return None;
     }
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None };

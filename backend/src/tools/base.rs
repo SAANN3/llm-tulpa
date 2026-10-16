@@ -257,6 +257,11 @@ pub struct PropertyInfo {
     /// from the field's own type — `false` for `Option<T>`, `true` otherwise — so a
     /// tool's args struct is the one place this is decided.
     pub required: bool,
+    /// For an `Array`, the type of its elements (`Vec<i64>` gives `Integer`), which the schema sends as
+    /// `items`: a chat template that writes the parameter out as a type (gpt-oss's) reads it, and
+    /// llama.cpp's template engine fails the whole request when it isn't there. `None` for anything else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<PropertyType>,
 }
 
 /// JSON Schema primitive types, restricted to what Ollama's tool-calling schema
