@@ -1,0 +1,269 @@
+@use '../tokens' as *;
+
+@media (max-width: $mobile-max) {
+  // Page container
+  .chat-info {
+    padding: $space-2 !important;
+    gap: $space-2 !important;
+    box-sizing: border-box !important;
+  }
+
+  .page.chat-info:has(> .frame) {
+    padding-block: $space-2 !important;
+  }
+
+  // Header row
+  .chat-info__header {
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+
+    .section-heading {
+      font-size: 11px !important;
+      flex-shrink: 0 !important;
+    }
+  }
+
+  .chat-info__status {
+    font-size: 11px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    flex: 1 1 0 !important;
+  }
+
+  // Frame panel & body scroll
+  .chat-info__panel {
+    min-height: 0 !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-info__body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 0 !important;
+  }
+
+  // Vertical stack of panes — unclamp from flex: 1 so the frame body scrolls naturally
+  .chat-info__stack {
+    flex: none !important;
+    min-height: min-content !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: $space-3 !important;
+    padding-bottom: $space-5 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-info__pane {
+    flex: none !important;
+    min-height: auto !important;
+    padding: 10px !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+  }
+
+  .chat-info__pane--grow {
+    flex: none !important;
+    min-height: auto !important;
+  }
+
+  .chat-info__pane-title {
+    font-size: 11px !important;
+    gap: 6px !important;
+  }
+
+  .chat-info__dim {
+    font-size: 11px !important;
+  }
+
+  .chat-info__big {
+    font-size: 18px !important;
+  }
+
+  // --- Context Tab (/info/context) ---
+
+  // Gauge bar
+  .chat-info__gauge {
+    height: 18px !important;
+    background: var(--color-secondary) !important;
+    border: $line-border solid var(--color-border) !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    overflow: hidden !important;
+
+    i {
+      display: block !important;
+      height: 100% !important;
+      min-width: 2px !important; // Guarantees tiny token counts remain visibly colored
+      box-sizing: border-box !important;
+    }
+  }
+
+  .chat-info__fold-mark {
+    top: -2px !important;
+    bottom: -2px !important;
+  }
+
+  // Responsive 2-line Legend: [swatch] [name] [tokens] on line 1, [note] [%] on line 2
+  .chat-info__legend {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important; // Override desktop align-items: center so rows stretch to full width
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    margin-top: 4px !important;
+  }
+
+  .chat-info__legend-row {
+    display: grid !important;
+    width: 100% !important; // Take 100% full width of the card
+    box-sizing: border-box !important;
+    grid-template-columns: 14px minmax(0, 1fr) auto !important;
+    grid-template-rows: auto auto !important;
+    column-gap: 8px !important;
+    row-gap: 2px !important;
+    align-items: baseline !important;
+    padding-bottom: 6px !important;
+    border-bottom: 1px dashed color-mix(in srgb, var(--color-border) 40%, transparent) !important;
+
+    &:last-child {
+      border-bottom: none !important;
+      padding-bottom: 0 !important;
+    }
+  }
+
+  .chat-info__swatch {
+    grid-column: 1 !important;
+    grid-row: 1 / span 2 !important;
+    width: 12px !important;
+    height: 12px !important;
+    align-self: center !important;
+    display: inline-block !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-info__legend-row > span:nth-child(2) {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    min-width: 0 !important;
+  }
+
+  .chat-info__note {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    font-size: 11px !important;
+    opacity: 0.65 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    min-width: 0 !important;
+  }
+
+  .chat-info__num {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+    font-size: 12px !important;
+    text-align: right !important;
+    justify-self: end !important;
+    white-space: nowrap !important;
+  }
+
+  .chat-info__share {
+    grid-column: 3 !important;
+    grid-row: 2 !important;
+    font-size: 11px !important;
+    opacity: 0.65 !important;
+    text-align: right !important;
+    justify-self: end !important;
+    white-space: nowrap !important;
+  }
+
+  // Details pane
+  .chat-info__details {
+    display: grid !important;
+    grid-template-columns: 95px 1fr !important;
+    gap: 6px 10px !important;
+    font-size: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+
+    > span {
+      min-width: 0 !important;
+      word-break: break-word !important;
+    }
+  }
+
+  // --- Memory Tab (/info/memory) ---
+
+  // Facts container
+  .chat-info__facts {
+    max-height: none !important;
+    overflow-y: visible !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+    margin-top: 4px !important;
+  }
+
+  .chat-info__fact {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-info .chat-info__fact-text {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    border: $line-border solid var(--color-border) !important;
+    padding: 6px 8px !important;
+    font-size: 13px !important;
+    background: var(--color-surface) !important;
+    border-radius: 0 !important;
+    box-sizing: border-box !important;
+    line-height: 1.4 !important;
+  }
+
+  // Always show delete [x] button on mobile touchscreens with comfortable touch target
+  .chat-info .chat-info__fact-remove {
+    opacity: 0.75 !important;
+    display: inline-flex !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    flex-shrink: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: $line-border solid var(--color-border) !important;
+    background: var(--color-secondary) !important;
+    cursor: pointer !important;
+  }
+
+  // Summary & Notes textareas
+  .chat-info .chat-info__editor {
+    min-height: 110px !important;
+    border: $line-border solid var(--color-border) !important;
+    padding: 8px !important;
+    background: var(--color-surface) !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    line-height: 1.4 !important;
+    font-size: 13px !important;
+  }
+}

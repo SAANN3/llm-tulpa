@@ -1,0 +1,54 @@
+@use '../tokens' as *;
+
+// Mobile styles for Search Page (/search)
+@media (max-width: $mobile-max) {
+  .search-page {
+    padding: $space-3 $space-2 !important;
+    overflow-x: hidden !important;
+    width: 100vw !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-search {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-search__input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-finder__results {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-finder__hit {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+    padding-top: $space-1 !important;
+    padding-bottom: $space-1 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .chat-finder__meta {
+    width: 100% !important;
+  }
+
+  .chat-finder__snippet {
+    width: 100% !important;
+    max-width: 100% !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    display: block !important;
+    line-height: 1.35 !important;
+  }
+}

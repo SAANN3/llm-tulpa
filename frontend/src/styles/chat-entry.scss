@@ -6,6 +6,9 @@
   justify-content: space-between;
   align-items: center;
   gap: $space-2;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 // The run marks and the menu trigger share one inset from the row's right edge, so they line up whichever

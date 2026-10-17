@@ -4,6 +4,7 @@
 .page {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
 }
@@ -42,6 +43,9 @@
   padding: 6px 8px;
   font-size: 14px;
   line-height: 1.35;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 // A row can be a link (the sidebar's): no underline, and the text's own color unless a variant (the selected row)

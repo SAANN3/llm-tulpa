@@ -1,0 +1,124 @@
+@use '../tokens' as *;
+
+// Mobile styles for Popups and Dialog modals
+@media (max-width: $mobile-max) {
+  .popup.popup--dialog {
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .popup__dialog {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .popup__backdrop {
+    background: color-mix(in srgb, black 65%, transparent) !important;
+  }
+
+  .popup__frame {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100dvh - 24px) !important;
+
+    .dos-frame__title {
+      max-width: 60% !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+    }
+
+    > .popup__body {
+      padding: $space-5 $space-3 $space-3 !important;
+      gap: $space-2 !important;
+      min-height: 0 !important;
+      flex: 1 1 auto !important;
+      overflow-y: auto !important;
+    }
+  }
+
+  // Ensure fields and form inputs stay fully inside dialog
+  .popup .field {
+    width: 100%;
+    min-width: 0;
+
+    input[type='text'],
+    input[type='number'],
+    [data-select] {
+      width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+  }
+
+  // Profile editor fields layout: KV cache selects 2-columns, MTP rows responsive
+  .popup .models__fields {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: $space-2 !important;
+
+    > .field {
+      width: 100% !important;
+      flex: 1 1 auto !important;
+    }
+  }
+
+  .popup .models__fields--compact {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: $space-2 !important;
+  }
+
+  .popup .field__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: $space-2;
+  }
+
+  .popup__actions {
+    display: flex;
+    flex-shrink: 0 !important;
+    gap: $space-2;
+    width: 100%;
+    margin-top: $space-2;
+
+    > button {
+      flex: 1;
+      min-height: 36px;
+    }
+  }
+
+  // Menus anchored to buttons (such as ModelMenu)
+  .popup.popup--menu {
+    max-width: calc(100vw - 16px) !important;
+    box-sizing: border-box !important;
+  }
+
+  .popup.popup--menu:has(.model-menu__panel),
+  .popup.popup--menu.model-menu__popup {
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    max-width: calc(100vw - 16px) !important;
+    box-sizing: border-box !important;
+  }
+
+  .model-menu__panel {
+    width: 100% !important;
+    min-width: min(260px, calc(100vw - 24px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    box-sizing: border-box !important;
+  }
+}
+

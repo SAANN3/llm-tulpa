@@ -1,4 +1,9 @@
 @use 'tokens' as *;
+@use 'mobile/appearance';
+
+.appearance__mobile-nav {
+  display: none;
+}
 
 // The theme list, the background list, and the preview with its settings taking the rest
 .appearance {

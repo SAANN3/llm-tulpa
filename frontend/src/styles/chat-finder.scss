@@ -5,12 +5,21 @@
   --tree-branch-y: 17px;
 }
 
+.chat-finder__results,
+.chat-finder__chat {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .chat-finder__row,
 .chat-finder__hit {
   display: flex;
   align-items: baseline;
   gap: $space-3;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   user-select: none;
 }
 
@@ -28,11 +37,18 @@
   font-size: 12px;
 }
 
+.chat-finder__role {
+  display: inline-block;
+  width: 9.5ch;
+  flex-shrink: 0;
+}
+
 .chat-finder__hit {
   font-size: 13px;
 }
 
 .chat-finder__snippet {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

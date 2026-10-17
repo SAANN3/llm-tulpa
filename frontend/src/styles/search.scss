@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/search';
 
 .search-page {
   flex: 1;
@@ -7,6 +8,7 @@
   gap: $space-3;
   padding: $space-4 $space-6;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .search-page__title {

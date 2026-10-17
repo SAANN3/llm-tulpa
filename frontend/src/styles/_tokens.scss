@@ -8,6 +8,9 @@ $space-5: 20px;
 $space-6: 24px;
 $space-8: 32px;
 
+// Widest window that gets the phone layout; `utils/viewport.ts` holds the same number for code
+$mobile-max: 768px;
+
 $frame-border: 3px;
 $line-border: 1px;
 $shadow-offset: 4px;

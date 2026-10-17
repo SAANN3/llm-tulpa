@@ -1,0 +1,51 @@
+@use '../tokens' as *;
+
+// Mobile styles for Plugins Page (/plugins)
+@media (max-width: $mobile-max) {
+  .page.plugins {
+    padding: $space-2 !important;
+    gap: $space-3 !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+    width: 100vw !important;
+  }
+
+  .plugins__title {
+    font-size: 13px !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  .plugins__panel {
+    width: calc(100vw - 16px) !important;
+    max-width: calc(100vw - 16px) !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+  }
+
+  .plugins__body {
+    max-height: calc(100dvh - 120px) !important;
+    gap: $space-3 !important;
+    overflow-x: hidden !important;
+  }
+
+  .plugins__list {
+    max-height: calc(100dvh - 200px) !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+  }
+
+  .plugins__row {
+    gap: $space-2 !important;
+    padding: $space-2 0 !important;
+  }
+
+  .plugins__controls {
+    gap: $space-2 !important;
+  }
+
+  // Plugin settings form inside frame on mobile
+  .plugin-settings__scroll {
+    max-height: calc(100dvh - 240px) !important;
+    overflow-x: hidden !important;
+  }
+}

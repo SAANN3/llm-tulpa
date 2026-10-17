@@ -4,6 +4,10 @@
   display: flex;
   flex-direction: column;
   gap: $space-2;
+
+  > [data-label]:first-child {
+    min-height: 2.6em;
+  }
 }
 
 .usage-chart__bars {

@@ -1,0 +1,89 @@
+@use '../tokens' as *;
+
+// Mobile styles for TUI Frame and top-edge tabs
+@media (max-width: $mobile-max) {
+  .page:has(> .frame) {
+    padding-block: $space-2;
+  }
+
+  .frame .frame__tabs-bar {
+    display: flex !important;
+    align-items: flex-end !important;
+    position: relative;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    margin-bottom: -2px;
+    gap: 0;
+  }
+
+  .frame .frame__tabs {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    padding: 0 4px;
+    margin-bottom: 0;
+    mask-image: none !important;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  .frame .frame__tabs-arrow {
+    display: flex !important;
+    flex: 0 0 28px !important;
+    width: 28px !important;
+    min-width: 28px !important;
+    height: 30px !important;
+    box-sizing: border-box !important;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-secondary) !important;
+    border: $line-border solid var(--color-border) !important;
+    border-bottom: none !important;
+    color: var(--color-tertiary) !important;
+    cursor: pointer;
+    padding: 0;
+    margin-bottom: 2px;
+    box-shadow: none !important;
+    transform: none !important;
+    transition: opacity 0.15s ease, background-color 0.1s ease;
+    z-index: 2;
+
+    &:disabled {
+      opacity: 0.2 !important;
+      cursor: default !important;
+      color: var(--color-border) !important;
+    }
+
+    &:not(:disabled):hover,
+    &:not(:disabled):active {
+      background: var(--color-surface) !important;
+      color: var(--color-primary) !important;
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+  }
+
+  .frame .frame__tab[data-variant] {
+    flex: none;
+    white-space: nowrap;
+    padding: 6px 11px 5px;
+    font-size: 12px;
+  }
+
+  .frame .frame__hints {
+    margin: 0 $space-3;
+    column-gap: $space-3;
+    font-size: 11px;
+    padding: $space-1 0 $space-2;
+  }
+}

@@ -1,0 +1,113 @@
+@use '../tokens' as *;
+
+@media (max-width: $mobile-max) {
+  .chat__list {
+    overflow-x: hidden !important;
+  }
+
+  .tool-message {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    padding-left: 8px !important;
+    overflow: hidden !important;
+  }
+
+  .tool-message__card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .tool-message__header {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    position: relative !important;
+    padding: 8px 32px 8px 10px !important; // 32px right padding reserves space for the absolute caret
+    gap: 6px !important;
+    overflow: hidden !important;
+  }
+
+  .tool-message__dot {
+    flex-shrink: 0 !important;
+  }
+
+  .tool-message__name {
+    font-size: 12px !important;
+    flex-shrink: 0 !important;
+    max-width: 35% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    display: block !important;
+  }
+
+  .tool-message__summary {
+    display: block !important;
+    font-size: 11px !important;
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .tool-message__chip {
+    font-size: 10px !important;
+    padding: 1px 5px !important;
+    max-width: 35% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    flex-shrink: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  .tool-message__open {
+    font-size: 10px !important;
+    padding: 1px 4px !important;
+    max-width: 80px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+
+  .tool-message__caret {
+    position: absolute !important;
+    right: 12px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    width: 14px !important;
+    height: 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    pointer-events: none !important;
+  }
+
+  .tool-message__detail {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    padding: 8px 10px !important;
+  }
+
+  .tool-message__block {
+    min-width: 0 !important;
+  }
+
+  .tool-message__pre {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+}

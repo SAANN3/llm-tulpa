@@ -1,0 +1,41 @@
+@use '../tokens' as *;
+
+// Mobile styles for Users Page (/users)
+@media (max-width: $mobile-max) {
+  .page.users {
+    padding: $space-2 !important;
+    gap: $space-3 !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+    width: 100vw !important;
+  }
+
+  .users__title {
+    font-size: 13px !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  .users__panel {
+    width: calc(100vw - 16px) !important;
+    max-width: calc(100vw - 16px) !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+  }
+
+  .users__body {
+    max-height: calc(100dvh - 120px) !important;
+    gap: $space-3 !important;
+    overflow-x: hidden !important;
+  }
+
+  .users__list {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+
+  .users__row {
+    padding: 0 $space-2 !important;
+    gap: $space-2 !important;
+  }
+}

@@ -1,0 +1,24 @@
+@use '../tokens' as *;
+
+// Mobile styles for Windows Preview Popup
+@media (max-width: $mobile-max) {
+  .preview-window {
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+
+  .preview-window--max {
+    inset: $space-2 !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+
+  .preview-window .dos-frame__title {
+    max-width: calc(100% - 100px) !important;
+  }
+
+  .preview-window__tools {
+    padding: 22px $space-2 $space-2 !important;
+    gap: $space-1 !important;
+  }
+}

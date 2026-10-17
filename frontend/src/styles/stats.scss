@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/stats';
 
 .stats {
   gap: $space-5;

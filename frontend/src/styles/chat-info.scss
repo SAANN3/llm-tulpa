@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/chat-info';
 
 // Laid out like the system prompt page (a header row, then the panel filling the rest), with no sidebar: a page about
 // one chat, opened from that chat and left back to it
@@ -176,6 +177,7 @@
   flex: 1;
   resize: none;
   overflow: hidden;
+  field-sizing: content;
   padding: 4px 6px;
   border: $line-border solid transparent;
   background: transparent;

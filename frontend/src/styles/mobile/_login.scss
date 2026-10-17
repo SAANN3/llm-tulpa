@@ -1,0 +1,44 @@
+@use '../tokens' as *;
+
+// Mobile styles for Login page
+@media (max-width: $mobile-max) {
+  .login {
+    gap: $space-3 !important;
+    padding: $space-2 !important;
+    transition: transform 0.2s ease;
+  }
+
+  .login:has(input:focus) {
+    transform: translateY(-6%);
+  }
+
+  .login__title {
+    font-size: 14px !important;
+    letter-spacing: 0.1em !important;
+  }
+
+  .login__panel {
+    width: calc(100vw - 24px) !important;
+    max-width: 380px !important;
+  }
+
+  .login__body {
+    gap: $space-3 !important;
+    padding: $space-4 $space-3 !important;
+  }
+
+  .login .field {
+    width: 100%;
+    min-width: 0;
+
+    > input[type='text'] {
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+  }
+
+  .login__submit {
+    width: 100% !important;
+    min-height: 38px;
+  }
+}

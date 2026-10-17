@@ -1,5 +1,21 @@
 @use 'mixins' as *;
 @use 'tokens' as *;
+@use 'mobile/popup';
+
+// Catches taps outside a dialog; only the phone layout dims the page behind it (mobile/_popup.scss)
+.popup__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: transparent;
+}
+
+.popup-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: transparent;
+}
 
 .popup {
   position: fixed;
@@ -11,6 +27,8 @@
   border: $frame-border double var(--color-primary);
   border-radius: 0;
   overflow: hidden;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
   @include dos-shadow(var(--color-shadow));
 }
 

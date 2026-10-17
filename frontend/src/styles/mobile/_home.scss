@@ -1,0 +1,47 @@
+@use '../tokens' as *;
+
+// Mobile styles for Home page (/)
+@media (max-width: $mobile-max) {
+  .home {
+    padding: $space-2 $space-2 $space-3 !important;
+    overflow: hidden !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    justify-content: center !important;
+  }
+
+  .home__stage {
+    gap: $space-3 !important;
+    overflow: hidden !important;
+    justify-content: center !important;
+    flex: 1 1 auto !important;
+    max-height: 100% !important;
+  }
+
+  .home__status {
+    font-size: 11px !important;
+  }
+
+  .home__greeting {
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+    max-width: 28ch !important;
+    padding: 0 $space-2 !important;
+  }
+
+  .home__composer {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  // When mobile keyboard is up or vertical space is tight, keep greeting small or hide so composer is always 100% visible
+  @media (max-height: 540px) {
+    .home__greeting {
+      display: none !important;
+    }
+
+    .home__stage {
+      gap: $space-2 !important;
+    }
+  }
+}

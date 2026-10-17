@@ -1,0 +1,52 @@
+@use '../tokens' as *;
+
+@media (max-width: $mobile-max) {
+  // Hide physical keyboard hints on touch mobile devices (frees ~110px width)
+  .composer__hint {
+    display: none !important;
+  }
+
+  .composer__footer {
+    gap: 6px !important;
+  }
+
+  .composer__controls {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    justify-content: flex-end !important;
+    gap: 6px !important;
+  }
+
+  // Model Menu inside composer footer
+  .model-menu {
+    min-width: 0 !important;
+    max-width: calc(100% - 75px) !important;
+    flex: 0 1 auto !important;
+  }
+
+  .model-menu__button {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding: 0 8px !important;
+    gap: 4px !important;
+  }
+
+  .model-menu__name {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .model-menu__level {
+    flex-shrink: 0 !important;
+    font-size: 11px !important;
+    margin-left: 2px !important;
+  }
+
+  .composer__send {
+    flex-shrink: 0 !important;
+    padding: 0 12px !important;
+  }
+}

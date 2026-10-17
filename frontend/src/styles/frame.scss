@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/frame';
 
 .frame {
   display: flex;
@@ -69,6 +70,17 @@
 // nothing of theirs lies over the frame's border. The selected tab's sides are the frame's own 3px double line
 // (1px line, 1px gap, 1px line), and a 3px strip under it opens the frame's top border and joins the lines: the
 // frame's outer line turns up into the tab's outer line, its inner line into the tab's inner line.
+.frame__tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+  width: 100%;
+}
+
+.frame__tabs-arrow {
+  display: none;
+}
+
 .frame__tabs {
   display: flex;
   flex-wrap: wrap;
@@ -122,4 +134,49 @@
 .frame__tab-key {
   opacity: 0.6;
   margin-right: 0.5em;
+}
+
+.frame__close-box {
+  position: absolute;
+  top: 0;
+  right: $space-4;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  background: var(--color-secondary);
+  z-index: 10;
+}
+
+.frame__close[data-variant] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  background: var(--color-secondary);
+  color: var(--color-primary);
+  border: $line-border solid currentColor;
+  box-shadow: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+
+  &:hover:not(:disabled),
+  &:focus-visible:not(:disabled) {
+    background: var(--color-tertiary);
+    color: var(--color-secondary);
+  }
+
+  &:active:not(:disabled) {
+    transform: translate(1px, 1px);
+    box-shadow: none;
+  }
+
+  svg {
+    display: block;
+    flex-shrink: 0;
+  }
 }

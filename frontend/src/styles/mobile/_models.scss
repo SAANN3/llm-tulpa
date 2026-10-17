@@ -1,0 +1,481 @@
+@use '../tokens' as *;
+
+// Mobile styles for Models Page (/models) and sub-panels
+@media (max-width: $mobile-max) {
+  .page.models {
+    gap: $space-3;
+    padding-block: $space-2;
+  }
+
+  .models {
+    .models__title {
+      font-size: 13px;
+      letter-spacing: 0.12em;
+    }
+
+    .models__panel {
+      width: calc(100vw - 12px);
+      max-width: 100%;
+      margin: 0 auto;
+      box-sizing: border-box;
+      overflow-x: hidden !important;
+    }
+
+    .models__body {
+      height: calc(100dvh - 120px);
+      gap: $space-3;
+      overflow-x: hidden !important;
+    }
+
+    .models__scroll {
+      padding-right: 0;
+      gap: $space-3;
+      overflow-x: hidden !important;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    // ---------------- RUNTIME PANEL ----------------
+    .models__runtime {
+      padding: $space-2 $space-3;
+      gap: $space-2;
+      box-sizing: border-box;
+      max-width: 100%;
+    }
+
+    // Row 1: Ready [gap] [stop] [log]
+    .models__runtime-head {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: $space-2 !important;
+      width: 100%;
+
+      .models__state {
+        flex: 0 0 auto !important;
+        font-size: 13px;
+        font-weight: bold;
+      }
+
+      .models__runtime-actions {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        flex-shrink: 0;
+        gap: $space-1;
+
+        > button {
+          min-height: 32px;
+          padding: 0 $space-3;
+        }
+      }
+    }
+
+    // Ready button toggle: compact, left-aligned, minimal size
+    .models__state--toggle {
+      flex: 0 0 auto !important;
+      width: auto !important;
+      background: var(--color-secondary) !important;
+      border: $line-border solid var(--color-primary) !important;
+      border-radius: 0 !important;
+      min-height: 32px !important;
+      padding: 0 $space-2 !important;
+      cursor: pointer !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 4px !important;
+      color: var(--color-tertiary) !important;
+      font-family: inherit !important;
+      font-size: 12.5px !important;
+      font-weight: bold !important;
+      box-shadow: $shadow-offset $shadow-offset 0 0 var(--color-border) !important;
+      transition: transform 0.05s ease, background-color 0.1s ease, color 0.1s ease !important;
+
+      &:hover,
+      &:focus-visible {
+        background-color: var(--color-tertiary) !important;
+        color: var(--color-secondary) !important;
+
+        .models__state-chevron {
+          color: var(--color-secondary) !important;
+        }
+      }
+
+      &:active {
+        transform: translate($shadow-offset, $shadow-offset) !important;
+        box-shadow: none !important;
+      }
+    }
+
+    .models__state-chevron {
+      display: inline-flex !important;
+      width: 16px !important;
+      height: 16px !important;
+      flex-shrink: 0;
+      color: inherit;
+    }
+
+    // When details are collapsed, hidden completely. When open, displayed as column.
+    .models__runtime-details {
+      display: none;
+      flex-direction: column;
+      gap: $space-1;
+      border-top: 1px dashed var(--color-border);
+      padding-top: $space-2;
+      margin-top: $space-1;
+
+      &.models__runtime-details--open {
+        display: flex;
+      }
+    }
+
+    .models__state {
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .models__meta {
+      font-size: 11.5px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    // ---------------- MODELS & PROFILES LIST ----------------
+    .models__model {
+      padding: $space-2 $space-3;
+      gap: $space-2;
+      box-sizing: border-box;
+      max-width: 100%;
+    }
+
+    .models__model-head {
+      flex-direction: column;
+      align-items: stretch;
+      gap: $space-2;
+
+      > .models__model-name {
+        white-space: normal;
+        word-break: break-all;
+        font-size: 13px;
+      }
+
+      > button {
+        min-height: 34px;
+      }
+    }
+
+    // Card layout for profiles: model info on top, button grid underneath
+    .models__profile {
+      flex-direction: column;
+      align-items: stretch;
+      gap: $space-2;
+      padding: $space-2 $space-3;
+      box-sizing: border-box;
+      max-width: 100%;
+    }
+
+    .models__profile-main {
+      width: 100%;
+      word-break: break-word;
+
+      .models__profile-name {
+        font-weight: 600;
+        font-size: 12.5px;
+      }
+    }
+
+    .models__profile-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(75px, 1fr));
+      width: 100%;
+      gap: $space-1;
+
+      > button {
+        min-height: 34px;
+        padding: 0 $space-2;
+      }
+    }
+
+    // Registerable .gguf files
+    .models__file,
+    .models__file--wrapping {
+      flex-direction: column;
+      align-items: stretch;
+      gap: $space-2;
+      padding: $space-2 $space-3;
+      box-sizing: border-box;
+      max-width: 100%;
+    }
+
+    .models__file-about {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+    }
+
+    .models__file-name {
+      white-space: normal;
+      word-break: break-all;
+      font-size: 12.5px;
+    }
+
+    .models__file-facts {
+      margin-left: 0;
+      font-size: 11px;
+    }
+
+    .models__file-controls {
+      align-self: stretch;
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      gap: $space-2;
+
+      [data-select] {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+
+      > button {
+        width: 100%;
+        min-height: 34px;
+      }
+    }
+
+    // ---------------- DOWNLOAD TAB (HF PANEL) ----------------
+    .hf-panel__disk-line {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+    }
+
+    // Sort buttons: strict 2x2 grid so they never leave an awkward orphan 4th item
+    .hf-panel__sorts {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      gap: $space-2 !important;
+
+      .hf-panel__sort[data-variant] {
+        width: 100% !important;
+        text-align: center;
+        white-space: nowrap;
+        font-size: 12px;
+        padding: 6px 4px;
+      }
+    }
+
+    // Long repo files inside HF list
+    .models__model .models__profile {
+      > button {
+        width: 100%;
+        min-height: 34px;
+      }
+    }
+
+    // ---------------- PRESETS TAB ----------------
+    .models__preset-model {
+      max-width: 100%;
+
+      [data-select] {
+        width: 100%;
+      }
+    }
+
+    // Preset cards: in use placed on the top-right of the card across ALL presets (server defaults and custom)
+    .models__preset {
+      position: relative !important;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: $space-2 !important;
+      padding: $space-2 $space-3 !important;
+      box-sizing: border-box;
+      max-width: 100%;
+
+      .models__profile-main {
+        width: 100%;
+        padding-right: 65px;
+        box-sizing: border-box;
+      }
+
+      // "in use" on Server defaults (direct child)
+      > .models__meta {
+        position: absolute !important;
+        top: $space-2 !important;
+        right: $space-3 !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
+      }
+
+      // "in use" on custom presets (inside profile actions)
+      .models__profile-actions > .models__meta {
+        position: absolute !important;
+        top: $space-2 !important;
+        right: $space-3 !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
+      }
+
+      > button {
+        width: 100%;
+        min-height: 34px;
+      }
+
+      .models__profile-actions {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(75px, 1fr)) !important;
+        width: 100%;
+        gap: $space-1;
+
+        > button {
+          min-height: 34px;
+          padding: 0 $space-2;
+        }
+      }
+    }
+
+    // Strict 3-row layout requested in feedback
+    .models__toolbar {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      width: 100%;
+      gap: $space-2;
+      box-sizing: border-box;
+
+      // Row 1: [New preset] (100% width)
+      > button:first-child {
+        grid-column: 1 / -1 !important;
+        width: 100% !important;
+        min-height: 36px;
+      }
+
+      // Row 2: "copied from" + [Nothing empty ▾] (100% width)
+      > .models__meta {
+        grid-column: 1 / -1 !important;
+        margin-bottom: -4px;
+      }
+
+      > [data-select] {
+        grid-column: 1 / -1 !important;
+        width: 100% !important;
+      }
+
+      // Row 3: [Export] (50%) + [Import] (50%)
+      > button:nth-of-type(2) {
+        grid-column: 1 !important;
+        width: 100% !important;
+        min-height: 36px;
+      }
+
+      > button:nth-of-type(3) {
+        grid-column: 2 !important;
+        width: 100% !important;
+        min-height: 36px;
+      }
+    }
+
+    // ---------------- HARDWARE TAB ----------------
+    // 2 rows per metric: Row 1 = Label + Value; Row 2 = Full width bar underneath
+    .hardware {
+      display: grid !important;
+      grid-template-columns: 1fr auto !important;
+      grid-auto-flow: dense !important;
+      row-gap: 2px !important;
+      column-gap: $space-2 !important;
+      align-items: center !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+      overflow: hidden;
+
+      .hardware__label {
+        grid-column: 1 !important;
+        font-size: 12.5px;
+      }
+
+      .hardware__value {
+        grid-column: 2 !important;
+        text-align: right !important;
+        font-size: 11.5px;
+      }
+
+      .hardware__bar {
+        grid-column: 1 / -1 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        height: 10px !important;
+        margin-bottom: $space-2;
+      }
+    }
+
+    .hardware__server {
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .hardware__facts {
+      display: grid !important;
+      grid-template-columns: repeat(2, 1fr) !important;
+      gap: $space-2 !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .settings-row {
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+      column-gap: $space-2 !important;
+    }
+
+    .models__pre {
+      white-space: pre-wrap !important;
+      word-break: break-all !important;
+      max-width: 100% !important;
+      overflow-x: auto !important;
+    }
+
+    // ---------------- OLLAMA TAB (MODEL PICKER) ----------------
+    .model-picker__list {
+      max-height: none;
+      overflow: visible;
+    }
+
+    // Keep checkbox on the same horizontal row with filename like PC, with proper margins and padding
+    .model-picker__row {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      gap: $space-3 !important;
+      flex-wrap: wrap !important;
+      padding: $space-2 $space-3 !important;
+      box-sizing: border-box;
+      max-width: 100%;
+
+      > [data-variant='secondary'][type='checkbox'],
+      > input[type='checkbox'],
+      .checkbox {
+        flex-shrink: 0;
+        margin-right: $space-2 !important;
+        margin-left: 2px !important;
+      }
+
+      .model-picker__info {
+        flex: 1 1 180px;
+        min-width: 0;
+      }
+
+      .model-picker__name {
+        white-space: normal;
+        word-break: break-all;
+      }
+
+      .model-picker__projector {
+        max-width: 100% !important;
+        width: 100% !important;
+        margin-top: $space-1;
+      }
+    }
+  }
+}

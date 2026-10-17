@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/windows-popup';
 
 // A preview window: placed and sized by its component (left/top/width/height), drawn by the Frame inside it
 .preview-window {

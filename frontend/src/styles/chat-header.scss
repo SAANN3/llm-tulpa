@@ -1,5 +1,6 @@
 @use 'tokens' as *;
 @use 'mixins' as *;
+@use 'mobile/chat-header';
 
 // No bar of its own: the title and the header's solid controls sit straight on the page's (dotted) background
 .chat-header {

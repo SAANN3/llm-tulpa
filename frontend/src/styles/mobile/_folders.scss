@@ -1,0 +1,59 @@
+@use '../tokens' as *;
+
+// Mobile styles for Folders (/folders and /folders/:id)
+@media (max-width: $mobile-max) {
+  .folders {
+    padding: $space-3 $space-2 !important;
+    gap: $space-2 !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow-x: hidden !important;
+    width: 100vw !important;
+    box-sizing: border-box !important;
+  }
+
+  .folders__header {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
+
+  .folders__header--detail {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: $space-2 !important;
+
+    .folders__header-top {
+      width: 100% !important;
+      gap: $space-2 !important;
+    }
+
+    .folders__actions {
+      display: flex !important;
+      align-items: center !important;
+      gap: $space-2 !important;
+      width: 100% !important;
+
+      > button {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+        padding: $space-2 0 !important;
+      }
+    }
+  }
+
+  .folders__search {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .folders__list {
+    flex: 1 !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+}

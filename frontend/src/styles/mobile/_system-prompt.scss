@@ -1,0 +1,116 @@
+@use '../tokens' as *;
+
+// Mobile styles for System Prompt Page (/settings/system-prompt)
+@media (max-width: $mobile-max) {
+  .page.system-prompt {
+    padding: $space-2 $space-3 !important;
+    gap: $space-2 !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    box-sizing: border-box !important;
+  }
+
+  .system-prompt__header {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: $space-2 !important;
+    flex-shrink: 0 !important;
+  }
+
+  .system-prompt__spacer {
+    display: none !important;
+  }
+
+  .system-prompt__header-bar {
+    display: flex !important;
+    align-items: center !important;
+    gap: $space-2 !important;
+    width: 100% !important;
+
+    .system-prompt__back,
+    > button,
+    > button[data-variant] {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex-shrink: 0 !important;
+    }
+
+    .section-heading {
+      font-size: 14px !important;
+      white-space: nowrap !important;
+    }
+
+    .system-prompt__status {
+      font-size: 11px !important;
+      margin-left: auto !important;
+      text-align: right !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+      opacity: 0.7;
+    }
+  }
+
+  .system-prompt__actions {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    gap: $space-2 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+
+    .system-prompt__action,
+    > button,
+    > button[data-variant] {
+      min-width: 0 !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      text-align: center !important;
+      white-space: nowrap !important;
+      box-sizing: border-box !important;
+
+      &:nth-child(1) {
+        flex: 1 1 0 !important;
+      }
+      &:nth-child(2) {
+        flex: 1.4 1 0 !important;
+      }
+      &:nth-child(3) {
+        flex: 0.7 1 0 !important;
+      }
+    }
+  }
+
+  .system-prompt__panes {
+    flex-direction: column !important;
+    gap: $space-2 !important;
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+  }
+
+  .system-prompt__pane {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    padding: $space-2 !important;
+    gap: $space-1 !important;
+
+    .section-heading {
+      font-size: 11px !important;
+      letter-spacing: 0.08em;
+      opacity: 0.8;
+    }
+  }
+
+  .system-prompt__editor {
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+  }
+
+  .system-prompt__default {
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+  }
+}

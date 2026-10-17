@@ -1,0 +1,120 @@
+@use '../tokens' as *;
+
+// Mobile styles for Appearance Tab (/settings/appearance and /setup)
+@media (max-width: $mobile-max) {
+  .appearance {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    gap: $space-2 !important;
+
+    .appearance__mobile-nav {
+      display: flex !important;
+      gap: $space-2;
+      flex-shrink: 0;
+      width: 100%;
+    }
+
+    .appearance__mobile-tab {
+      flex: 1 1 0;
+      min-width: 0;
+      font-size: 11px;
+      padding: 6px 4px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    // Display the active tab's view
+    &.appearance--tab-themes .appearance__list--themes {
+      display: flex !important;
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100%;
+    }
+
+    &.appearance--tab-backgrounds .appearance__list--backgrounds {
+      display: flex !important;
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100%;
+    }
+
+    &.appearance--tab-preview .appearance__side--preview {
+      display: flex !important;
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+      width: 100%;
+    }
+
+    // Hide inactive views based on the active tab class
+    &.appearance--tab-themes {
+      .appearance__list--backgrounds,
+      .appearance__side--preview {
+        display: none !important;
+      }
+    }
+
+    &.appearance--tab-backgrounds {
+      .appearance__list--themes,
+      .appearance__side--preview {
+        display: none !important;
+      }
+    }
+
+    &.appearance--tab-preview {
+      .appearance__list--themes,
+      .appearance__list--backgrounds {
+        display: none !important;
+      }
+    }
+
+    // Fallback: default to themes
+    &:not(.appearance--tab-backgrounds):not(.appearance--tab-preview) {
+      .appearance__list--themes {
+        display: flex !important;
+        flex: 1 1 0;
+        min-height: 0;
+        width: 100%;
+      }
+      .appearance__list--backgrounds,
+      .appearance__side--preview {
+        display: none !important;
+      }
+    }
+
+    .appearance__items {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .appearance-preview {
+      max-height: 200px !important;
+      width: auto !important;
+      margin: 0 auto !important;
+      flex-shrink: 0 !important;
+    }
+
+    .appearance__look {
+      display: grid !important;
+      grid-template-columns: auto 1fr !important;
+      align-items: center !important;
+      gap: $space-2 $space-3 !important;
+      font-size: 12px !important;
+      width: 100% !important;
+    }
+
+    .appearance__inline {
+      display: flex;
+      align-items: center;
+      gap: $space-2;
+      flex-wrap: wrap;
+
+      .label--secondary {
+        font-size: 11px;
+      }
+    }
+  }
+}

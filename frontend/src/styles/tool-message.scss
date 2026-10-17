@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/tool-message';
 
 .tool-message {
   max-width: 70ch;
@@ -32,8 +33,9 @@
 }
 
 .tool-message__summary {
+  display: block;
   font-size: 12px;
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -49,6 +51,7 @@
   border: $line-border solid var(--color-border);
   border-radius: 0;
   padding: 1px 6px;
+  flex-shrink: 0;
 }
 
 .tool-message__open {
@@ -65,6 +68,7 @@
   display: inline-flex;
   align-items: center;
   opacity: 0.7;
+  flex-shrink: 0;
 }
 
 .tool-message__detail {

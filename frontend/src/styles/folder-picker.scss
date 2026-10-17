@@ -33,9 +33,23 @@
   align-self: center;
 }
 
-// The choice group keeps its own width rather than stretching across the form
 .folder-picker__mode {
-  align-self: flex-start;
+  display: flex;
+  gap: $space-2;
+  width: 100%;
+  box-sizing: border-box;
+
+  > button {
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  // A choice group draws its own dividers between the cells
+  &[data-choice-group] {
+    gap: 0;
+  }
 }
 
 .folder-picker__error {

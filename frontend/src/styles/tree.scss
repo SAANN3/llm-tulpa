@@ -13,6 +13,12 @@
   position: relative;
   padding-left: 28px;
   margin-bottom: $space-2;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   // Where the branch meets the row: the middle of a one-line row; a row with a nested list sets it to its first line
   --tree-branch-y: 50%;
 }

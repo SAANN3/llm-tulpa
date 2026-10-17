@@ -1,0 +1,183 @@
+@use '../tokens' as *;
+
+// Mobile styles for Settings Page (/settings) and sub-tabs
+@media (max-width: $mobile-max) {
+  .page.settings {
+    gap: $space-3;
+    padding-block: $space-2;
+  }
+
+  .settings__title {
+    font-size: 13px;
+    letter-spacing: 0.12em;
+  }
+
+  .settings__panel {
+    width: calc(100vw - 12px) !important;
+    max-width: 100vw !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+  }
+
+  .settings__body {
+    height: calc(100dvh - 110px) !important;
+    max-height: calc(100dvh - 110px) !important;
+    gap: $space-3 !important;
+  }
+
+  .settings__content {
+    padding-right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  .settings__actions {
+    gap: $space-2 !important;
+    width: 100%;
+
+    .settings__action {
+      flex: 1 1 0;
+      min-width: 0;
+      text-align: center;
+    }
+  }
+
+  // --- Responsive Settings Rows ---
+  .settings-row {
+    column-gap: $space-3;
+    padding: $space-2 0;
+
+    .settings-row__label {
+      font-size: 14px;
+    }
+
+    .settings-row__help {
+      font-size: 11.5px;
+      line-height: 1.4;
+    }
+
+    // Rows with complex controls: stack to row 2 so descriptions get 100% width
+    &:has(.settings-row__value),
+    &:has(.settings-row__name-tz),
+    &:has(input[type='password']),
+    &:has(.input[type='password']),
+    &.settings-row--stacked {
+      grid-template-columns: minmax(0, 1fr) !important;
+
+      .settings-row__text {
+        width: 100%;
+      }
+
+      .settings-row__control {
+        justify-self: stretch !important;
+        width: 100% !important;
+        margin-top: $space-1;
+      }
+    }
+
+    // Behaviour: Step limit per turn — full-sized input on row 1 beside label, help spans full width below
+    &:has(.settings-row__number) {
+      grid-template-columns: minmax(0, 1fr) auto !important;
+      column-gap: $space-3 !important;
+      row-gap: $space-1 !important;
+      align-items: center !important;
+
+      .settings-row__text {
+        display: contents !important;
+      }
+
+      .settings-row__label {
+        grid-column: 1 !important;
+        grid-row: 1 !important;
+        align-self: center !important;
+        font-size: 14px !important;
+      }
+
+      .settings-row__control {
+        grid-column: 2 !important;
+        grid-row: 1 !important;
+        justify-self: end !important;
+        align-self: center !important;
+        margin-top: 0 !important;
+      }
+
+      .settings-row__help {
+        grid-column: 1 / -1 !important;
+        grid-row: 2 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        font-size: 12px !important;
+        line-height: 1.4 !important;
+      }
+
+      .settings-row__number {
+        width: 110px !important;
+        font-size: 13px !important;
+        padding: 0.45em 0.6em !important;
+        text-align: right !important;
+        box-sizing: border-box !important;
+      }
+    }
+
+    // Models & keys: Default model selector
+    &:has(.settings-row__value) {
+      .settings-row__control {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: $space-2 !important;
+        width: 100% !important;
+
+        .settings-row__value {
+          flex: 1 1 0;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12px;
+        }
+
+        .btn {
+          flex-shrink: 0;
+        }
+      }
+    }
+
+    // Models & keys: Hugging Face token input + button
+    &:has(input[type='password']),
+    &:has(.input[type='password']) {
+      .settings-row__control {
+        display: flex !important;
+        align-items: center !important;
+        gap: $space-2 !important;
+        width: 100% !important;
+
+        .input {
+          flex: 1 1 0;
+          min-width: 0;
+        }
+
+        .btn {
+          flex-shrink: 0;
+        }
+      }
+    }
+
+    // Profile: Name and timezone
+    .settings-row__name-tz {
+      width: 100%;
+      gap: $space-2;
+
+      .settings-row__name {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+
+      .settings-row__tz {
+        width: 60px;
+        flex-shrink: 0;
+      }
+    }
+  }
+}

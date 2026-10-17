@@ -1,4 +1,5 @@
 @use 'tokens' as *;
+@use 'mobile/system-prompt';
 
 .system-prompt {
   gap: $space-4;
@@ -7,6 +8,18 @@
 }
 
 .system-prompt__header {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.system-prompt__header-bar {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.system-prompt__actions {
   display: flex;
   align-items: center;
   gap: $space-3;
