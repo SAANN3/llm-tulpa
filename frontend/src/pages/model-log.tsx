@@ -62,11 +62,11 @@ const ModelLog = () => {
             <Frame className="model-log__panel" bodyClassName="model-log__body" title="Model server log"
                    actions={[{keys: ['c'], label: 'copy', run: () => void copy()}]} onEscape={goBack} escapeLabel="back">
                 <Div className="model-log__head">
-                    <Button variant="secondary" text="Back" onClicked={goBack}/>
+                    <Button variant="secondary" className="model-log__back" text="Back" onClicked={goBack}/>
                     <Label variant="secondary" className="model-log__meta"
                            text={[status?.model ?? 'nothing loaded', `${lines.length} lines`, 'live'].join(' · ')}/>
                     <Div className="model-log__spacer"/>
-                    <Button variant="secondary" text={copied ? 'Copied' : 'Copy'} disabled={lines.length === 0} onClicked={() => void copy()}/>
+                    <Button variant="secondary" className="model-log__copy" text={copied ? 'Copied' : 'Copy'} disabled={lines.length === 0} onClicked={() => void copy()}/>
                 </Div>
                 {error ? <Label variant="secondary" className="model-log__error" text={error}/> : null}
                 <Div ref={box} className="model-log__lines"

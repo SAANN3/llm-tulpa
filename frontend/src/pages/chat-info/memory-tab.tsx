@@ -29,7 +29,8 @@ const FactRow = ({text, readOnly, focus, onChanged, onRemove, onEnter}: {
     useLayoutEffect(() => {
         const field = ref.current
         if (!field) return
-        field.style.height = '0'
+        if (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('field-sizing', 'content')) return
+        field.style.height = 'auto'
         field.style.height = `${field.scrollHeight}px`
     }, [text])
     useLayoutEffect(() => {

@@ -15,6 +15,7 @@ import {useRuns} from '../context/use-runs.ts'
 import {onSidebarWindowResized, setSidebarCollapsed, useSidebarCollapsed} from '../context/sidebar-state.ts'
 import {useChats} from '../hooks/use-chats.ts'
 import {daysBefore} from '../utils/dates'
+import {isMobileViewport} from '../utils/viewport.ts'
 
 const RECENCY_GROUPS = ['Today', 'Yesterday', 'Earlier'] as const
 type RecencyGroup = (typeof RECENCY_GROUPS)[number]
@@ -48,6 +49,28 @@ const groupByRecency = (chats: ChatOut[]): [RecencyGroup, ChatOut[]][] => {
     return RECENCY_GROUPS.filter((g) => buckets.has(g)).map((g) => [g, buckets.get(g)!])
 };
 
+interface UtilItem {
+    label: string
+    path: string
+    icon: (size: number) => React.ReactNode
+    match?: (pathname: string) => boolean
+}
+
+const UTILS: UtilItem[] = [
+    {
+        label: 'Search chats',
+        path: '/search',
+        icon: (size) => <Search width={size} height={size}/>,
+        match: (pathname) => pathname === '/search',
+    },
+    {
+        label: 'Folders',
+        path: '/folders',
+        icon: (size) => <Folder width={size} height={size}/>,
+        match: (pathname) => pathname.startsWith('/folders'),
+    },
+]
+
 /** The chat-list sidebar, shared between the chat and home routes */
 export const Sidebar = () => {
     const navigate = useNavigate()
@@ -70,7 +93,26 @@ export const Sidebar = () => {
         return () => window.removeEventListener('resize', onResize)
     }, [])
 
+    // Auto-collapse sidebar on mobile only when navigating to another route
+    const lastLocationKey = useRef(location.pathname + location.search)
+    useEffect(() => {
+        const currentKey = location.pathname + location.search
+        if (currentKey !== lastLocationKey.current) {
+            lastLocationKey.current = currentKey
+            if (isMobileViewport()) {
+                setSidebarCollapsed(true)
+            }
+        }
+    }, [location.pathname, location.search])
 
+    const handleSidebarClick = (e: React.MouseEvent) => {
+        if (isMobileViewport()) {
+            const target = e.target as HTMLElement
+            if (target.closest('a, .chat-entry__link') && !target.closest('.sidebar__toggle, .account-menu__anchor')) {
+                setSidebarCollapsed(true)
+            }
+        }
+    }
 
     const toggle = (
         <Button
@@ -85,8 +127,11 @@ export const Sidebar = () => {
     // The rail's icons: what the full sidebar lists above the chats; the rest is in the account menu at the bottom
     const utilsCollapsed = [
         {label: 'New chat', path: '/', icon: <Plus width={16} height={16}/>},
-        {label: 'Search chats', path: '/search', icon: <Search width={16} height={16}/>},
-        {label: 'Folders', path: '/folders', icon: <Folder width={16} height={16}/>},
+        ...UTILS.map((item) => ({
+            label: item.label,
+            path: item.path,
+            icon: item.icon(16),
+        })),
     ]
 
     // The shrunk rail: toggle + utils icons, no text
@@ -112,56 +157,70 @@ export const Sidebar = () => {
     }
 
     return (
-        <Div className="vbox sidebar">
-            <Div className="sidebar__top">
-                {toggle}
-                <Link to="/" variant="primary" className="link-button sidebar__new-chat">New chat</Link>
-            </Div>
-            <Label className="section-heading" text="Utils"/>
-            <Div className="vbox">
-                <ChatEntry label="Search chats" selected={location.pathname === '/search'} icon={<Search width={18} height={18}/>} href="/search"/>
-                <ChatEntry label="Folders" selected={location.pathname.startsWith('/folders')} icon={<Folder width={18} height={18}/>} href="/folders"/>
-            </Div>
-            {/* "Chats" heads the first date group itself ("Chats · Today"), so the list doesn't open with two titles in a
-                row; with no chats yet it stands alone */}
-            {chats.length === 0 ? <Label className="section-heading" text="Chats"/> : null}
-            <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">
-                <Div className="vbox sidebar__groups">
-                    {groupByRecency(chats).map(([group, groupChats], i) => (
-                        <Div className="vbox sidebar__group" key={group}>
-                            <Label className="section-heading sidebar__group-heading" text={i === 0 ? `Chats · ${group}` : group}/>
-                            {groupChats.map((c) => (
-                                <ChatEntry
-                                    key={c.id}
-                                    label={c.name}
-                                    selected={c.id === selectedChatId}
-                                    href={`/chat?id=${c.id}`}
-                                    onRename={(name) => rename(c.id, name)}
-                                    onDelete={() => {
-                                        deleteChat(c.id).then(() => {
-                                            if (location.pathname === '/chat' && selectedChatId === c.id) navigate('/')
-                                        })
-                                    }}
-                                    onAssignFolder={() => setAssigningChat(c)}
-                                    icon={runIcon(working.has(c.id), c.id === selectedChatId && !document.hidden ? null : c.unseen_end)}
-                                />
-                            ))}
-                        </Div>
+        <>
+            <div
+                className="sidebar__backdrop"
+                onClick={() => setSidebarCollapsed(true)}
+            />
+            <div className="sidebar__top-placeholder" />
+            <Div className="vbox sidebar" onClick={handleSidebarClick}>
+                <Div className="sidebar__top">
+                    {toggle}
+                    <Link to="/" variant="primary" className="link-button sidebar__new-chat">New chat</Link>
+                </Div>
+                <Label className="section-heading" text="Utils"/>
+                <Div className="vbox">
+                    {UTILS.map((item) => (
+                        <ChatEntry
+                            key={item.path}
+                            label={item.label}
+                            selected={item.match ? item.match(location.pathname) : location.pathname === item.path}
+                            icon={item.icon(18)}
+                            href={item.path}
+                        />
                     ))}
                 </Div>
-            </LazyList>
-            <AssignFolderPopup
-                open={assigningChat != null}
-                selected={assigningChat?.folder_id ?? null}
-                onSelect={async (folderId) => {
-                    if (assigningChat) await setChatFolder(assigningChat.id, folderId)
-                    setAssigningChat(null)
-                }}
-                onClose={() => setAssigningChat(null)}
-            />
-            <Div className="sidebar__account">
-                <AccountMenu/>
+                {/* "Chats" heads the first date group itself ("Chats · Today"), so the list doesn't open with two titles in a
+                    row; with no chats yet it stands alone */}
+                {chats.length === 0 ? <Label className="section-heading" text="Chats"/> : null}
+                <LazyList ref={chatsListRef} onBottomReached={loadOlder} className="sidebar__list">
+                    <Div className="vbox sidebar__groups">
+                        {groupByRecency(chats).map(([group, groupChats], i) => (
+                            <Div className="vbox sidebar__group" key={group}>
+                                <Label className="section-heading sidebar__group-heading" text={i === 0 ? `Chats · ${group}` : group}/>
+                                {groupChats.map((c) => (
+                                    <ChatEntry
+                                        key={c.id}
+                                        label={c.name}
+                                        selected={c.id === selectedChatId}
+                                        href={`/chat?id=${c.id}`}
+                                        onRename={(name) => rename(c.id, name)}
+                                        onDelete={() => {
+                                            deleteChat(c.id).then(() => {
+                                                if (location.pathname === '/chat' && selectedChatId === c.id) navigate('/')
+                                            })
+                                        }}
+                                        onAssignFolder={() => setAssigningChat(c)}
+                                        icon={runIcon(working.has(c.id), c.id === selectedChatId && !document.hidden ? null : c.unseen_end)}
+                                    />
+                                ))}
+                            </Div>
+                        ))}
+                    </Div>
+                </LazyList>
+                <AssignFolderPopup
+                    open={assigningChat != null}
+                    selected={assigningChat?.folder_id ?? null}
+                    onSelect={async (folderId) => {
+                        if (assigningChat) await setChatFolder(assigningChat.id, folderId)
+                        setAssigningChat(null)
+                    }}
+                    onClose={() => setAssigningChat(null)}
+                />
+                <Div className="sidebar__account">
+                    <AccountMenu/>
+                </Div>
             </Div>
-        </Div>
+        </>
     )
 };

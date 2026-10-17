@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useRef, useState} from 'react'
 
 import '../styles/folder-picker.scss'
 import {chatName as chatNameApi} from '../api/prompts/chat-name'
@@ -21,6 +21,12 @@ export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatForm
     const [draft, setDraft] = useState('')
     const [generating, setGenerating] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    const switchMode = (newMode: CreateMode) => {
+        setMode(newMode)
+        inputRef.current?.focus()
+    }
 
     const onCreate = async () => {
         const text = draft.trim()
@@ -44,10 +50,11 @@ export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatForm
     return (
         <Div className="vbox folder-picker__create">
             <Div className="folder-picker__mode">
-                <Button variant={mode === 'describe' ? undefined : 'secondary'} text="Describe it" onClicked={() => setMode('describe')}/>
-                <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write name yourself" onClicked={() => setMode('name')}/>
+                <Button variant={mode === 'describe' ? undefined : 'secondary'} text="Describe it" onClicked={() => switchMode('describe')}/>
+                <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write a name" onClicked={() => switchMode('name')}/>
             </Div>
             <Input
+                inputRef={inputRef}
                 autoFocus
                 text={draft}
                 onChanged={setDraft}

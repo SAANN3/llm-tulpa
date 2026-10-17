@@ -146,8 +146,10 @@ export const ChatHeader = ({
             </Div>
             {contextMax != null ? (
                 <Div className="chat-header__context">
-                    <Label className="chat-header__context-label"
-                           text={`context ${contextUsed != null ? formatTokenCount(contextUsed) : '—'} / ${formatTokenCount(contextMax)}`}/>
+                    <Label className="chat-header__context-label">
+                        <span className="chat-header__context-prefix">context </span>
+                        <span>{contextUsed != null ? formatTokenCount(contextUsed) : '—'} / {formatTokenCount(contextMax)}</span>
+                    </Label>
                     <Div className="chat-header__context-bar">
                         <Div className="chat-header__context-fill"
                              style={{width: `${contextUsed != null ? Math.min(100, (contextUsed / contextMax) * 100) : 0}%`}}/>

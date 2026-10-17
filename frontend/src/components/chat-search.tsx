@@ -5,6 +5,7 @@ import {searchMessages} from '../api/chats/search'
 import type {MessageSearchOut} from '../api/chats/types'
 import {Checkbox, Div, Input, Label} from './primitives'
 import {useFormatTime} from '../hooks/use-format-time.ts'
+import {getVisibleBefore} from '../utils/snippet.ts'
 
 export interface ChatSearchProps {
     chatId: number
@@ -181,7 +182,9 @@ export const ChatSearch = ({chatId, onSelect, onClose}: ChatSearchProps) => {
                                 />
                             </Div>
                             <Div className="chat-search__snippet">
-                                {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}
+                                {getVisibleBefore(hit.before, hit.matched) ? (
+                                    <span className="chat-search__dim">…{getVisibleBefore(hit.before, hit.matched)}</span>
+                                ) : null}
                                 <span className="chat-search__match">{hit.matched}</span>
                                 {hit.after ? <span className="chat-search__dim">{hit.after}…</span> : null}
                             </Div>

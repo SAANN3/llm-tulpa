@@ -12,8 +12,10 @@ export const Input = ({
     onHovered,
     onKeyDown,
     onBlur,
+    inputRef,
 }: ThemedProps<InputProps>) => (
     <input
+        ref={inputRef}
         type={type}
         style={style}
         className={className}

@@ -6,6 +6,7 @@ import '../styles/tree.scss'
 import {findChats} from '../api/chats/find'
 import type {ChatFindOut, MessageSearchOut} from '../api/chats/types'
 import {highlightText} from '../utils/highlight.tsx'
+import {getVisibleBefore} from '../utils/snippet.ts'
 import {Checkbox, Div, Input, Label} from './primitives'
 import {useFormatTime} from '../hooks/use-format-time.ts'
 
@@ -133,10 +134,14 @@ export const ChatFinder = ({query, onQueryChanged, onSelect}: ChatFinderProps) =
                                         <Div key={hit.id} className="tree__row">
                                             <Div className="list-row chat-finder__hit"
                                                  onClick={() => onSelect({chatId: chat.chat_id, jump: {hit, query: trimmed}})}>
-                                                <Label variant="secondary" className="chat-finder__meta"
-                                                       text={`${hit.role} · ${new Date(hit.created_at).toLocaleDateString()}, ${formatTime(hit.created_at)}`}/>
+                                                <Label variant="secondary" className="chat-finder__meta">
+                                                    <span className="chat-finder__role">{hit.role}</span>
+                                                    <span className="chat-finder__date">· {new Date(hit.created_at).toLocaleDateString()}, {formatTime(hit.created_at)}</span>
+                                                </Label>
                                                 <span className="chat-finder__snippet">
-                                                    {hit.before ? <span className="chat-search__dim">…{hit.before}</span> : null}
+                                                    {getVisibleBefore(hit.before, hit.matched) ? (
+                                                        <span className="chat-search__dim">…{getVisibleBefore(hit.before, hit.matched)}</span>
+                                                    ) : null}
                                                     <span className="chat-search__match">{hit.matched}</span>
                                                     {hit.after ? <span className="chat-search__dim">{hit.after}…</span> : null}
                                                 </span>

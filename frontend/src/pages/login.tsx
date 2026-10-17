@@ -66,7 +66,7 @@ const Login = () => {
                                    onKeyDown={onKeyDown}/>
                 </Div>
                 {error ? <Label variant="secondary" className="login__error" text={error}/> : null}
-                <Button text={busy ? 'Signing in…' : 'Sign in'} onClicked={onSubmit} disabled={!canSubmit}/>
+                <Button className="login__submit" text={busy ? 'Signing in…' : 'Sign in'} onClicked={onSubmit} disabled={!canSubmit}/>
             </Frame>
         </Div>
     )

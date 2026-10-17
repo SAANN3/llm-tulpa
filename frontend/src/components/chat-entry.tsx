@@ -37,8 +37,12 @@ export const ChatEntry = ({label, selected, href, onClicked, onRename, onDelete,
         // Inside the row's link: neither the link's click nor the browser following it
         e.preventDefault()
         e.stopPropagation()
-        const rect = triggerRef.current?.getBoundingClientRect()
-        if (rect) setMenuPosition({x: rect.left, y: rect.bottom})
+        if (e.clientX || e.clientY) {
+            setMenuPosition({x: e.clientX, y: e.clientY})
+        } else {
+            const rect = triggerRef.current?.getBoundingClientRect()
+            if (rect) setMenuPosition({x: rect.left, y: rect.bottom})
+        }
     }
 
     const openAtCursor = (e: MouseEvent<HTMLElement>) => {

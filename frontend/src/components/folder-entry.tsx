@@ -29,8 +29,12 @@ export const FolderEntry = ({label, selected, onClicked, onRename, onDelete}: Fo
 
     const openAtTrigger = (e: MouseEvent<HTMLDivElement>) => {
         e.stopPropagation()
-        const rect = triggerRef.current?.getBoundingClientRect()
-        if (rect) setMenuPosition({x: rect.left, y: rect.bottom})
+        if (e.clientX || e.clientY) {
+            setMenuPosition({x: e.clientX, y: e.clientY})
+        } else {
+            const rect = triggerRef.current?.getBoundingClientRect()
+            if (rect) setMenuPosition({x: rect.left, y: rect.bottom})
+        }
     }
 
     const openAtCursor = (e: MouseEvent<HTMLDivElement>) => {

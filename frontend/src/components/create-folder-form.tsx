@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useRef, useState} from 'react'
 
 import '../styles/folder-picker.scss'
 import {folderName} from '../api/prompts/folder-name'
@@ -21,6 +21,12 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
     const [draft, setDraft] = useState('')
     const [generating, setGenerating] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    const switchMode = (newMode: CreateMode) => {
+        setMode(newMode)
+        inputRef.current?.focus()
+    }
 
     const onCreate = async () => {
         const text = draft.trim()
@@ -44,9 +50,10 @@ export const CreateFolderForm = ({createFolder, onCreated, onCancel}: CreateFold
     return (
         <Div className="vbox folder-picker__create">
             <ChoiceGroup className="folder-picker__mode" label="How to name the folder" chosen={mode}
-                         onChosen={(chosen) => setMode(chosen as CreateMode)}
+                         onChosen={(chosen) => switchMode(chosen as CreateMode)}
                          options={[{value: 'describe', label: 'Describe it'}, {value: 'name', label: 'Write a name'}]}/>
             <Input
+                inputRef={inputRef}
                 autoFocus
                 text={draft}
                 onChanged={setDraft}

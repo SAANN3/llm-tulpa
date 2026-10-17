@@ -9,8 +9,13 @@ import {sameChoice, type ModelChoice} from '../utils/model-choice.ts'
 import {shortModelName} from '../utils/model-name.ts'
 import {profileSummary} from '../utils/profile-summary.ts'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
-import {Popup} from './popups/base/popup.tsx'
+import {EDGE_GAP, Popup} from './popups/base/popup.tsx'
 import {Button, Div, Label} from './primitives'
+
+/** An anchor closer than this to the left edge opens its menu rightward from its left side */
+const NEAR_LEFT_EDGE = 200
+/** About how wide the menu grows; the anchor needs this much room to its right to open rightward */
+const MENU_WIDTH = 280
 
 /** The thinking levels a model offers and the one chosen; `off` is always among them */
 export interface ThinkingLevels {
@@ -84,10 +89,19 @@ export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinkin
     useEffect(loadRecent, [loadRecent])
     useServerEvent('run_started', loadRecent)
 
+    const [corner, setCorner] = useState<'bottom-left' | 'bottom-right'>('bottom-left')
+
     const open = () => {
         const rect = anchorRef.current?.getBoundingClientRect()
         if (!rect) return
-        setMenuAt({x: rect.right, y: rect.top - 8})
+        const preferLeft = rect.left < NEAR_LEFT_EDGE || rect.left + MENU_WIDTH <= window.innerWidth - EDGE_GAP
+        if (preferLeft) {
+            setCorner('bottom-left')
+            setMenuAt({x: Math.max(EDGE_GAP, rect.left), y: rect.top - 8})
+        } else {
+            setCorner('bottom-right')
+            setMenuAt({x: Math.min(window.innerWidth - EDGE_GAP, rect.right), y: rect.top - 8})
+        }
     }
 
     // Only what the chats record, in their order: a pick the new chat hasn't been started with yet shows on the
@@ -121,7 +135,7 @@ export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinkin
                     </span>
                 ) : null}
             </Button>
-            <Popup open={menuAt != null} onClose={() => setMenuAt(null)} position={menuAt ?? {x: 0, y: 0}} corner="bottom-right">
+            <Popup open={menuAt != null} onClose={() => setMenuAt(null)} position={menuAt ?? {x: 0, y: 0}} corner={corner} className="model-menu__popup">
                 <Div className="model-menu__panel">
                     <Label variant="secondary" className="model-menu__section" text="Thinking"/>
                     {thinking ? thinking.levels.map((level) => (

@@ -1,4 +1,4 @@
-import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
+import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, Ref, UIEvent } from 'react'
 
 // `variant` is forwarded as a `data-variant` attribute, not resolved to a color here — see
 // THEMING.md for where variant colors may (and may not) be defined; getting that wrong causes
@@ -25,7 +25,8 @@ export interface DivProps {
 }
 
 export interface LabelProps {
-  text: string
+  text?: string
+  children?: ReactNode
 }
 
 export interface ButtonProps {
@@ -37,6 +38,7 @@ export interface ButtonProps {
 }
 
 export interface InputProps {
+  inputRef?: Ref<HTMLInputElement>
   text: string
   onChanged: (text: string) => void
   placeholder?: string

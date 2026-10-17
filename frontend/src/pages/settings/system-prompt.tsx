@@ -58,16 +58,20 @@ const SystemPrompt = () => {
     return (
         <Div className="page vbox system-prompt">
             <Div className="system-prompt__header">
-                <Button variant="secondary" text="Back" onClicked={goBack}/>
-                <Label className="section-heading" text="System prompt"/>
-                <Label variant="secondary" className="system-prompt__status"
-                       text={error ?? (saving ? 'Saving…' : custom ? 'Custom prompt active' : 'Built-in default active')}/>
+                <Div className="system-prompt__header-bar">
+                    <Button className="system-prompt__back" variant="secondary" text="Back" onClicked={goBack}/>
+                    <Label className="section-heading" text="System prompt"/>
+                    <Label variant="secondary" className="system-prompt__status"
+                           text={error ?? (saving ? 'Saving…' : custom ? 'Custom prompt active' : 'Built-in default active')}/>
+                </Div>
                 <Div className="system-prompt__spacer"/>
-                <Button variant="secondary" text="Copy default" disabled={saving}
-                        onClicked={() => setDraft(defaultPrompt)}/>
-                <Button variant="secondary" text="Reset to default" disabled={saving} onClicked={onReset}/>
-                <Button text="Save" disabled={saving || !dirty}
-                        onClicked={() => void save(draft.trim() || null)}/>
+                <Div className="system-prompt__actions">
+                    <Button className="system-prompt__action" variant="secondary" text="Copy default" disabled={saving}
+                            onClicked={() => setDraft(defaultPrompt)}/>
+                    <Button className="system-prompt__action" variant="secondary" text="Reset to default" disabled={saving} onClicked={onReset}/>
+                    <Button className="system-prompt__action" text="Save" disabled={saving || !dirty}
+                            onClicked={() => void save(draft.trim() || null)}/>
+                </Div>
             </Div>
             <Div className="system-prompt__panes">
                 <Div className="system-prompt__pane">

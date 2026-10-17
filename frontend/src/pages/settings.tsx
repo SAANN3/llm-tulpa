@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {useNavigate, useParams} from 'react-router-dom'
 import '../styles/settings.scss'
 import {Frame} from '../components/frame.tsx'
@@ -33,6 +33,16 @@ const Settings = () => {
     const [draft, setDraft] = useState<SettingsDraft>(() => draftOf(settings))
     const onDraft = (change: Partial<SettingsDraft>) => setDraft((now) => ({...now, ...change}))
     const onBack = useGoBack()
+
+    // The form is filled once, when the settings arrive on a reload. Later changes (the Models & keys tab saves as you
+    // click) must not overwrite what is typed and not yet saved.
+    const draftFilled = useRef(settings != null)
+    useEffect(() => {
+        if (settings && !draftFilled.current) {
+            draftFilled.current = true
+            setDraft(draftOf(settings))
+        }
+    }, [settings])
 
     const tz = validateTimezone(draft.timezoneText)
     const steps = parseMaxTurnSteps(draft.maxTurnStepsText)

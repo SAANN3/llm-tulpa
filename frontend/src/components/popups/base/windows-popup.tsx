@@ -5,6 +5,7 @@ import '../../../styles/windows-popup.scss'
 import {Frame, type FrameAction} from '../../frame.tsx'
 import {Button, Div} from '../../primitives'
 import {WindowToolsContext, type WindowTools} from './window-tools.ts'
+import {isMobileViewport} from '../../../utils/viewport.ts'
 
 export interface WindowsPopupProps {
     open: boolean
@@ -105,6 +106,76 @@ export const WindowsPopup = ({open, onClose, title, children, onDownload, defaul
         return () => content.removeEventListener('wheel', onWheel)
     }, [open, placed])
 
+    // Touch pinch-to-zoom on mobile
+    useEffect(() => {
+        const content = contentRef.current
+        if (!open || !content) return
+
+        let lastDist: number | null = null
+
+        const getDistance = (t1: Touch, t2: Touch) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+
+        const onTouchStart = (e: TouchEvent) => {
+            if (e.touches.length === 2) {
+                const current = toolsRef.current
+                if (!current?.onZoom && !current?.scalable) return
+                lastDist = getDistance(e.touches[0], e.touches[1])
+            } else {
+                lastDist = null
+            }
+        }
+
+        const onTouchMove = (e: TouchEvent) => {
+            if (e.touches.length === 2 && lastDist != null && lastDist > 0) {
+                const current = toolsRef.current
+                if (!current?.onZoom && !current?.scalable) return
+                e.preventDefault()
+
+                const dist = getDistance(e.touches[0], e.touches[1])
+                if (dist > 0) {
+                    const factor = dist / lastDist
+                    lastDist = dist
+
+                    const rect = content.getBoundingClientRect()
+                    const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+                    const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+                    const at = {x: midX - rect.left, y: midY - rect.top}
+
+                    if (current.onZoom) {
+                        current.onZoom(factor, at, content)
+                    } else if (current?.scalable) {
+                        setScale((now) => {
+                            const next = clamp(now * factor, MIN_SCALE, MAX_SCALE)
+                            anchorRef.current = {
+                                ...at,
+                                contentX: content.scrollLeft + at.x,
+                                contentY: content.scrollTop + at.y,
+                                ratio: next / now,
+                            }
+                            return next
+                        })
+                    }
+                }
+            }
+        }
+
+        const onTouchEnd = () => {
+            lastDist = null
+        }
+
+        content.addEventListener('touchstart', onTouchStart, {passive: true})
+        content.addEventListener('touchmove', onTouchMove, {passive: false})
+        content.addEventListener('touchend', onTouchEnd, {passive: true})
+        content.addEventListener('touchcancel', onTouchEnd, {passive: true})
+
+        return () => {
+            content.removeEventListener('touchstart', onTouchStart)
+            content.removeEventListener('touchmove', onTouchMove)
+            content.removeEventListener('touchend', onTouchEnd)
+            content.removeEventListener('touchcancel', onTouchEnd)
+        }
+    }, [open, placed])
+
     // Scrolls so the point that was under the pointer is under it again at the new scale
     useLayoutEffect(() => {
         const content = contentRef.current
@@ -118,13 +189,16 @@ export const WindowsPopup = ({open, onClose, title, children, onDownload, defaul
     // Joins the stack while open; placed in the middle of the window, a step down and right of each window open already
     useEffect(() => {
         if (!open) return
+        const isMobile = isMobileViewport()
         const size = defaultSize ?? DEFAULT_SIZE
-        const width = Math.min(size.width, window.innerWidth - 32)
-        const height = Math.min(size.height, window.innerHeight - 32)
-        const step = order.length * STAGGER
+        const maxW = isMobile ? window.innerWidth - 16 : window.innerWidth - 32
+        const maxH = isMobile ? window.innerHeight - 24 : window.innerHeight - 32
+        const width = Math.min(size.width, maxW)
+        const height = Math.min(size.height, maxH)
+        const step = isMobile ? 0 : order.length * STAGGER
         setBox({
-            x: clamp((window.innerWidth - width) / 2 + step, 0, window.innerWidth - width),
-            y: clamp((window.innerHeight - height) / 2 + step, 0, window.innerHeight - height),
+            x: clamp((window.innerWidth - width) / 2 + step, 8, Math.max(8, window.innerWidth - width - 8)),
+            y: clamp((window.innerHeight - height) / 2 + step, 8, Math.max(8, window.innerHeight - height - 8)),
             width,
             height,
         })

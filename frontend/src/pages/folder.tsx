@@ -74,28 +74,32 @@ const Folder = () => {
         <Div className="page">
             <Sidebar/>
             <Div className="vbox folders">
-                <Div className="folders__header">
-                    <Button variant="secondary" className="folders__back" onClicked={goBack}>
-                        <ArrowLeft width={16} height={16}/>
-                    </Button>
-                    {folderName != null ? (
-                        <TypewriterLabel className="mono folders__title" text={`~/folders/${folderName}`} charIntervalMs={30}/>
-                    ) : (
-                        <Label className="mono folders__title" text="~/folders/…"/>
-                    )}
-                    <Button variant="secondary" className="folders__new-chat" onClicked={onCreateChat} text="New chat"/>
-                    <Button
-                        variant="secondary"
-                        text="Rename"
-                        onClicked={() => setRenaming(true)}
-                        disabled={folderName == null}
-                    />
-                    <Button
-                        variant="secondary"
-                        text="Delete"
-                        onClicked={() => setConfirmingDelete(true)}
-                        disabled={folderName == null}
-                    />
+                <Div className="folders__header folders__header--detail">
+                    <Div className="folders__header-top">
+                        <Button variant="secondary" className="folders__back" onClicked={goBack}>
+                            <ArrowLeft width={16} height={16}/>
+                        </Button>
+                        {folderName != null ? (
+                            <TypewriterLabel className="mono folders__title" text={`~/folders/${folderName}`} charIntervalMs={30}/>
+                        ) : (
+                            <Label className="mono folders__title" text="~/folders/…"/>
+                        )}
+                    </Div>
+                    <Div className="folders__actions">
+                        <Button variant="secondary" className="folders__new-chat" onClicked={onCreateChat} text="New chat"/>
+                        <Button
+                            variant="secondary"
+                            text="Rename"
+                            onClicked={() => setRenaming(true)}
+                            disabled={folderName == null}
+                        />
+                        <Button
+                            variant="secondary"
+                            text="Delete"
+                            onClicked={() => setConfirmingDelete(true)}
+                            disabled={folderName == null}
+                        />
+                    </Div>
                 </Div>
                 <LazyList onBottomReached={loadOlder} className="folders__list">
                     <Div className="vbox tree">

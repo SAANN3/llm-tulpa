@@ -2,7 +2,7 @@ import {useState} from 'react'
 import '../../styles/appearance.scss'
 import {backgroundEffects, findBackground, type BackgroundId} from '../../backgrounds'
 import {AppearancePreview} from '../../components/appearance-preview.tsx'
-import {Div, Input, Label, Slider, ToggleSwitch} from '../../components/primitives'
+import {Button, Div, Input, Label, Slider, ToggleSwitch} from '../../components/primitives'
 import {TimeFormatChoice} from '../../components/settings-fields.tsx'
 import {useTheme} from '../../context/use-theme.ts'
 import {themeDisplayNames, themeGroups, type ThemeName} from '../../themes'
@@ -40,6 +40,7 @@ export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
     const [backgroundFilter, setBackgroundFilter] = useState('')
     const [pointedTheme, setPointedTheme] = useState<ThemeName | null>(null)
     const [pointedBackground, setPointedBackground] = useState<BackgroundId | null>(null)
+    const [mobileTab, setMobileTab] = useState<'themes' | 'backgrounds' | 'preview'>('themes')
 
     const shownTheme = pointedTheme ?? themeName
     const shownBackground = pointedBackground ?? background.id
@@ -53,8 +54,29 @@ export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
     const backgroundRows = grouped(BACKGROUNDS.filter((b) => matches(`${b.name} ${b.group}`, backgroundFilter)))
 
     return (
-        <Div className="appearance">
-            <Div className="appearance__list" onHover={(on) => !on && setPointedTheme(null)}>
+        <Div className={`appearance appearance--tab-${mobileTab}`}>
+            <Div className="appearance__mobile-nav">
+                <Button
+                    className="appearance__mobile-tab"
+                    variant={mobileTab === 'themes' ? 'primary' : 'secondary'}
+                    text="Themes"
+                    onClicked={() => setMobileTab('themes')}
+                />
+                <Button
+                    className="appearance__mobile-tab"
+                    variant={mobileTab === 'backgrounds' ? 'primary' : 'secondary'}
+                    text="Backgrounds"
+                    onClicked={() => setMobileTab('backgrounds')}
+                />
+                <Button
+                    className="appearance__mobile-tab"
+                    variant={mobileTab === 'preview' ? 'primary' : 'secondary'}
+                    text={controls ? "Options" : "Preview"}
+                    onClicked={() => setMobileTab('preview')}
+                />
+            </Div>
+
+            <Div className="appearance__list appearance__list--themes" onHover={(on) => !on && setPointedTheme(null)}>
                 <Input className="appearance__filter" text={themeFilter} onChanged={setThemeFilter} placeholder="Filter themes"/>
                 <Div className="appearance__items">
                     {themeRows.map((group) => (
@@ -75,7 +97,7 @@ export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
                 </Div>
             </Div>
 
-            <Div className="appearance__list" onHover={(on) => !on && setPointedBackground(null)}>
+            <Div className="appearance__list appearance__list--backgrounds" onHover={(on) => !on && setPointedBackground(null)}>
                 <Input className="appearance__filter" text={backgroundFilter} onChanged={setBackgroundFilter} placeholder="Filter backgrounds"/>
                 <Div className="appearance__items">
                     {backgroundRows.map(([group, items]) => (
@@ -95,7 +117,7 @@ export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
                 </Div>
             </Div>
 
-            <Div className="appearance__side">
+            <Div className="appearance__side appearance__side--preview">
                 <AppearancePreview theme={shownTheme} background={shownBackground} strength={background.strength} speed={background.speed}
                                    sidebarSeeThrough={sidebarSeeThrough} timeFormat={timeFormat} streamReplies={streamReplies}
                                    note={`${themeDisplayNames[shownTheme]} · ${backgroundName}${previewing ? ' · click to use' : ''}`}/>
