@@ -2,7 +2,7 @@
 A local-first LLM chat agent with real tool-calling — reads/writes files, inspects the machine it runs on, gated behind a permission system so nothing actually happens without your say-so. Rust/axum backend, React frontend, llama.cpp for inference (Ollama optional) — nothing leaves your machine.
 
 <p align="center">
-  <img src="./readme/chat-tool-usage.png" alt="Chat with the agent listing a project folder through a tool call, asking for permission first" width="720">
+  <img src="./readme/chat-tool-usage.png" alt="A chat where the agent ran a shell command through a tool call, the call opened to show its arguments and result" width="720">
 </p>
 <p align="center"><em>Asked to read a project folder — the agent thinks about it (collapsed above), then stops to ask permission before running <code>storage.list_directory</code>.</em></p>
 
@@ -67,7 +67,13 @@ It starts those three in Docker (and stops the backend container), then runs `ca
 | | | |
 |:---:|:---:|:---:|
 | <img src="./readme/home-screen.png" width="260"><br><sub>Home — a fresh chat starts with a generated greeting, and the model for it can be picked right there.</sub> | <img src="./readme/models-tab.png" width="260"><br><sub>Models — what is loaded and where it went, each model's launch profiles with Load, Test and Edit.</sub> | <img src="./readme/models-download.png" width="260"><br><sub>Download — search Hugging Face and download into your model folder; the free space is shown.</sub> |
-| <img src="./readme/chat-choose-model.png" width="260"><br><sub>Choose model — one chooser with a tab per provider, each launch profile with its settings.</sub> | <img src="./readme/settings-page.png" width="260"><br><sub>Settings — name, timezone, a theme picker with a live mini-preview, and the default model with its launch profile.</sub> | <img src="./readme/plugins-page.png" width="260"><br><sub>Plugins — enable Telegram, Discord, or VK to talk to the agent from your own chat app.</sub> |
+| <img src="./readme/chat-choose-model.png" width="260"><br><sub>Choose model — one chooser with a tab per provider, each launch profile with its settings.</sub> | <img src="./readme/settings-page.png" width="260"><br><sub>Settings — the Appearance tab: themes and animated backgrounds, with a live preview of the page.</sub> | <img src="./readme/plugins-page.png" width="260"><br><sub>Plugins — enable Telegram, Discord, or VK to talk to the agent from your own chat app.</sub> |
+
+On a phone the same pages reflow: the sidebar slides over the page, tabs scroll sideways, and a menu or dialog stays inside the screen.
+
+| | | | |
+|:---:|:---:|:---:|:---:|
+| <img src="./readme/mobile-home.png" width="170"><br><sub>Home</sub> | <img src="./readme/mobile-sidebar.png" width="170"><br><sub>The chat list</sub> | <img src="./readme/mobile-models.png" width="170"><br><sub>Models</sub> | <img src="./readme/mobile-chat.png" width="170"><br><sub>A chat with a tool call</sub> |
 
 ## Why this model
 llm-tulpa runs one local model at a time — any tool-calling-capable model works, but it's worth knowing why this one specifically: it's a mixture-of-experts model, and despite its size, only a fraction of its weights are actually active per token. On a VRAM-constrained card that mattered more than raw parameter count — a same-generation *dense* model of comparable size, mostly spilled to system RAM, ran at a barely-usable ~1.5 tokens/sec on the 6GB card this project started on, while the MoE model held nearly the same speed as a much smaller dense model (~8 t/s there) while clearly outperforming it on real tasks (long single-shot generations, multi-step reasoning). If you're VRAM-constrained, it's worth looking for an MoE quant before ruling out anything bigger than what fits entirely in VRAM.
