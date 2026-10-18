@@ -36,6 +36,8 @@ export class TuiScene {
     strength = 1
     /** The theme's own correction (see `inkFor`), set with the colors */
     ink = 1
+    /** Leaves the canvas clear instead of painting it in the theme's background, so what is behind it shows through */
+    transparent = false
     /** The area drawing is limited to: the innermost of the pushed clips, none when nothing is pushed */
     private clip: TuiRect | null = null
     private clips: TuiRect[] = []
@@ -78,8 +80,12 @@ export class TuiScene {
 
     // ---- drawing ----
 
-    /** Paints the whole canvas with the theme's background */
+    /** Paints the whole canvas with the theme's background, or empties it when `transparent` */
     clear(): void {
+        if (this.transparent) {
+            this.ctx.clearRect(0, 0, this.W, this.H)
+            return
+        }
         this.ctx.fillStyle = rgba(this.colors.bg, 1)
         this.ctx.fillRect(0, 0, this.W, this.H)
     }

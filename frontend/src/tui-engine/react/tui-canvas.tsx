@@ -30,6 +30,9 @@ export interface TuiCanvasProps {
     /** The faint grid of dots behind everything, at `dotAlpha` opacity */
     baseDots?: boolean
     dotAlpha?: number
+    /** Draws no background of its own, so the page (or a background effect) behind the canvas shows through the empty
+     * cells. The symbols keep the theme's colors whatever is behind them. */
+    transparent?: boolean
     /** The brightness: 1 is how faint a background is drawn */
     strength?: number
     /** A tree built outside React, to draw instead of the one the components make */
@@ -47,7 +50,7 @@ export interface TuiCanvasProps {
  * keyboard to the widgets: Tab walks the focusable ones, Enter or Space presses one, Escape gives the keyboard back to
  * the page. The canvas takes the keyboard only while it has the focus, so the page's own keys work around it.
  */
-export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMode = TuiRenderMode.OnDemand, baseDots = false, dotAlpha, strength = INTERFACE_STRENGTH, rootWidget, onInit, onTick, children}: TuiCanvasProps) => {
+export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMode = TuiRenderMode.OnDemand, baseDots = false, dotAlpha, transparent = false, strength = INTERFACE_STRENGTH, rootWidget, onInit, onTick, children}: TuiCanvasProps) => {
     const containerRef = useRef<HTMLDivElement>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [ownRoot] = useState(() => new TuiWidget())
@@ -58,9 +61,9 @@ export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMod
 
     // The frame loop and the handlers live as long as the canvas and read what changes (the callbacks, the render mode)
     // from here, so a new function on every render can't restart them
-    const latest = useRef({fps, renderMode, baseDots, dotAlpha, strength, onInit, onTick, root})
+    const latest = useRef({fps, renderMode, baseDots, dotAlpha, transparent, strength, onInit, onTick, root})
     useEffect(() => {
-        latest.current = {fps, renderMode, baseDots, dotAlpha, strength, onInit, onTick, root}
+        latest.current = {fps, renderMode, baseDots, dotAlpha, transparent, strength, onInit, onTick, root}
     })
 
     const dirty = useRef(true)
@@ -75,7 +78,7 @@ export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMod
         if (!frame.current && loop.current) frame.current = requestAnimationFrame(loop.current)
     }, [])
 
-    useEffect(requestRedraw, [requestRedraw, root, renderMode, baseDots, dotAlpha, strength])
+    useEffect(requestRedraw, [requestRedraw, root, renderMode, baseDots, dotAlpha, transparent, strength])
 
     useEffect(() => {
         const canvas = canvasRef.current
@@ -97,7 +100,7 @@ export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMod
         let acc = 0
         const tick = (now: number) => {
             frame.current = 0
-            const {fps, renderMode, baseDots, dotAlpha, strength, onTick, root} = latest.current
+            const {fps, renderMode, baseDots, dotAlpha, transparent, strength, onTick, root} = latest.current
             const continuous = renderMode === TuiRenderMode.Continuous
             let dt = Math.min(MAX_FRAME_SECONDS, (now - last) / 1000)
             last = now
@@ -121,6 +124,7 @@ export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMod
             dirty.current = false
 
             s.strength = strength
+            s.transparent = transparent
             s.begin(baseDots ? dotAlpha : null)
             root.w = s.fitCols
             root.h = s.fitRows
