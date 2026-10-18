@@ -1,0 +1,18 @@
+// A canvas of the character-grid engine: it fills the box it is put in (the box sets the size)
+.tui-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    // The focused widget is lit on the canvas itself; a ring round the whole canvas would say nothing more
+    outline: none;
+    user-select: none;
+    // A vertical drag over the canvas still scrolls the page (the press then ends as a cancel)
+    touch-action: pan-y;
+  }
+}
