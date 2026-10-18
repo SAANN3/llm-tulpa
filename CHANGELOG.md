@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+### Added
+- A canvas for interface components drawn in the same character grid as the animated backgrounds (`frontend/src/tui-engine`): `TuiCanvas` with `TuiBox`, `TuiText`, `TuiButton` and `TuiCustom` for anything drawn by a function. Sizes and positions are cells, shares of the parent (`'60%'`, `'100% - 2'`), px or `'center'` and follow the canvas as it resizes; text is measured by symbol, so emoji and CJK take two cells and nothing is split; the pointer works with a mouse and a finger, and while the canvas has the focus Tab walks its buttons, Enter or Space presses one and Escape gives the keyboard back to the page. A canvas draws only when something changed unless it is told to animate, so a page may hold many.
+
+### Fixed
+- An animated background drew for the old screen density when the window was moved to a monitor with another scale, and stayed blurred or too sharp until the window was resized; it is redrawn at once.
 
 ## [0.2.1] - 2026-10-17
 ### Added
