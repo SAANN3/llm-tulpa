@@ -1,6 +1,6 @@
-import {rand} from '../engine/random.ts'
-import type {Level} from '../engine/types.ts'
-import type {Scene} from '../engine/scene.ts'
+import {rand} from '../runtime/random.ts'
+import type {Level} from '../runtime/types.ts'
+import type {Scene} from '../runtime/scene.ts'
 
 export interface FirefliesOptions {
     /** Fireflies per cell */

@@ -1,6 +1,6 @@
-import {noise, rand} from '../engine/random.ts'
-import {level} from '../engine/scene.ts'
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import {noise, rand} from '../runtime/random.ts'
+import {level} from '../runtime/scene.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 import {CloudsLayer} from '../layers/clouds.ts'
 import {StaticLayer} from '../layers/static-layer.ts'
 

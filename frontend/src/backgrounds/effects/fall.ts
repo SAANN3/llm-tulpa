@@ -1,5 +1,5 @@
-import {rand} from '../engine/random.ts'
-import type {Effect, EffectFactory, Level} from '../engine/types.ts'
+import {rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory, Level} from '../runtime/types.ts'
 
 export interface FallOptions {
     /** Speed in rows per second, from..to */

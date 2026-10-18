@@ -1,5 +1,5 @@
-import {clamp, h3, noise, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import {clamp, h3, noise, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 
 export interface DotsOptions {
     /** Brightness of the dots, % */

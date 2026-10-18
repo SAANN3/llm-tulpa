@@ -1,5 +1,5 @@
-import {clamp, hash, noise, rand, smooth} from '../engine/random.ts'
-import {level, type Scene} from '../engine/scene.ts'
+import {clamp, hash, noise, rand, smooth} from '../runtime/random.ts'
+import {level, type Scene} from '../runtime/scene.ts'
 
 export type CloudKind = 'cu' | 'st'
 

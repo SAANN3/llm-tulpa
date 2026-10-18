@@ -1,5 +1,5 @@
-import {rand} from '../engine/random.ts'
-import type {Scene} from '../engine/scene.ts'
+import {rand} from '../runtime/random.ts'
+import type {Scene} from '../runtime/scene.ts'
 
 export interface StarsOptions {
     /** Seconds between shooting stars, from..to */

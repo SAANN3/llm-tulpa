@@ -1,5 +1,5 @@
-import {clamp, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import {clamp, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 
 const RAMP = ['.', ':', '-', '=', '+', '*', '#']
 

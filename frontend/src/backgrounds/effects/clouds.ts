@@ -1,4 +1,4 @@
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 import {CloudsLayer, type CloudsOptions} from '../layers/clouds.ts'
 
 /** A sky of clouds drifting across the window */

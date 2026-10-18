@@ -1,5 +1,5 @@
-import {hash, noise, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory, Level} from '../engine/types.ts'
+import {hash, noise, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory, Level} from '../runtime/types.ts'
 import {StaticLayer} from '../layers/static-layer.ts'
 
 const BOAT = ['    |\\   ', ' ___|_\\__', ' \\______/']

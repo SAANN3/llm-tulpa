@@ -165,13 +165,14 @@ every other id is an animated background drawn on one canvas behind everything
 variables, read from `<html>` whenever `data-theme` changes, so a theme needs nothing for them.
 
 They live in `src/backgrounds/`:
-- `engine/scene.ts` — `Scene`, the one renderer: a grid of characters over the window, each cell a
-  character and a level (1–4 the accent at rising opacity, 5 the text color), drawn as text one
-  level at a time; plus what an effect needs to know about the page (the floor above the composer,
-  the area right of the sidebar, a centered panel's sides).
-- `engine/runner.ts` — loads the chosen effect, draws it at its own frame rate, stops while the
+- `runtime/scene.ts` — `Scene`, the engine's character grid (`src/tui-engine/core/scene.ts`, which the
+  interface widgets draw through too: each cell a character and a level, 1–4 the accent at rising
+  opacity, 5 the text color, drawn as text one level at a time) plus what an effect needs to know
+  about the page (the floor above the composer, the area right of the sidebar, a centered panel's
+  sides).
+- `runtime/runner.ts` — loads the chosen effect, draws it at its own frame rate, stops while the
   tab is hidden, a quarter speed with "reduce motion".
-- `engine/random.ts` — `rand` for what may change, `mulberry` / `hash` / `noise` for what must
+- `runtime/random.ts` — `rand` for what may change, `mulberry` / `hash` / `noise` for what must
   come out the same every frame (a tree's leaves, a ridge).
 - `layers/` — pieces several effects share (stars, fireflies, embers, clouds, a static layer).
 - `effects/` — one file per family; each exports a factory taking its options and returning
@@ -185,6 +186,6 @@ entry in `index.ts`.
 The scenes are drawn as light on dark: stars, the moon, fire and lit windows are bright marks on a
 dark sky. On a light theme the same marks come out dark on a light sky, like a photo negative.
 That is a decision, not a bug: a light theme keeps its light page, and the scenes are not redrawn
-for it. What *is* corrected is how strongly they show: `inkFor` in `engine/scene.ts` raises the
+for it. What *is* corrected is how strongly they show: `inkFor` in `tui-engine/core/color.ts` raises the
 ink where the accent is close to the background or the page is light, so a light theme shows them
 about as clearly as the dark themes they were tuned on.

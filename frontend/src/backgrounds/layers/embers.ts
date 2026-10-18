@@ -1,5 +1,5 @@
-import {rand} from '../engine/random.ts'
-import type {Scene} from '../engine/scene.ts'
+import {rand} from '../runtime/random.ts'
+import type {Scene} from '../runtime/scene.ts'
 
 export interface EmbersOptions {
     /** How far an ember rises before it is out, as a share of the window's height, from..to */

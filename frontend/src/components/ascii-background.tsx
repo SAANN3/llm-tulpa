@@ -1,9 +1,10 @@
 import {useEffect, useRef} from 'react'
 import '../styles/ascii-background.scss'
 import {findBackground, type BackgroundEffect} from '../backgrounds'
-import {measurePage} from '../backgrounds/engine/page-layout.ts'
-import {BackgroundRunner} from '../backgrounds/engine/runner.ts'
+import {measurePage} from '../backgrounds/runtime/page-layout.ts'
+import {BackgroundRunner} from '../backgrounds/runtime/runner.ts'
 import {useTheme} from '../context/use-theme.ts'
+import {watchPixelRatio} from '../tui-engine/core/pixel-ratio.ts'
 
 interface CanvasProps {
     effect: BackgroundEffect
@@ -32,6 +33,7 @@ const BackgroundCanvas = ({effect, strength, speed}: CanvasProps) => {
             runner.setLayout(measurePage())
         }
         window.addEventListener('resize', onResize)
+        const ratioWatch = watchPixelRatio(onResize)
 
         // The theme's colors change with `data-theme` on <html>, which the theme provider sets after this renders
         const themeWatch = new MutationObserver(() => runner.setColors(getComputedStyle(root)))
@@ -51,6 +53,7 @@ const BackgroundCanvas = ({effect, strength, speed}: CanvasProps) => {
 
         return () => {
             window.removeEventListener('resize', onResize)
+            ratioWatch()
             themeWatch.disconnect()
             pageWatch.disconnect()
             cancelAnimationFrame(pending)

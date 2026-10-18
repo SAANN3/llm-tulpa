@@ -1,5 +1,5 @@
-import {rand} from '../engine/random.ts'
-import type {Effect, EffectFactory, Level} from '../engine/types.ts'
+import {rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory, Level} from '../runtime/types.ts'
 import {FirefliesLayer} from '../layers/fireflies.ts'
 
 /** A sprite and its mirror image, for swimming the other way */

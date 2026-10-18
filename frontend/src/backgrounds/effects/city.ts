@@ -1,5 +1,5 @@
-import {hash, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import {hash, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 import {CloudsLayer} from '../layers/clouds.ts'
 import {StaticLayer} from '../layers/static-layer.ts'
 

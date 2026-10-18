@@ -1,4 +1,4 @@
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 import {EmbersLayer, type EmbersOptions} from '../layers/embers.ts'
 import {FirefliesLayer, type FirefliesOptions} from '../layers/fireflies.ts'
 import {StarsLayer, type StarsOptions} from '../layers/stars.ts'

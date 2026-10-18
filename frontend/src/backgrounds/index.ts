@@ -1,4 +1,4 @@
-import type {EffectFactory} from './engine/types.ts'
+import type {EffectFactory} from './runtime/types.ts'
 
 /** One animated background as the picker lists it. `load` fetches its code only when it is chosen. */
 export interface BackgroundEffect {

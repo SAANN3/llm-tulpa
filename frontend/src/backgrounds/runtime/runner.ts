@@ -1,19 +1,11 @@
 import type {BackgroundEffect} from '../index.ts'
 import {sameLayout} from './page-layout.ts'
-import {inkFor, Scene} from './scene.ts'
-import type {Effect, PageLayout, Rgb} from './types.ts'
+import {readColors} from '../../tui-engine/core/color.ts'
+import {Scene} from './scene.ts'
+import type {Effect, PageLayout} from './types.ts'
 
 /** With the system's "reduce motion" on, everything moves at a quarter of its speed */
 const REDUCED_MOTION_SPEED = 0.25
-
-/** Reads a CSS color as RGB through the canvas, which accepts any CSS color syntax and hands back `#rrggbb` */
-function parseColor(ctx: CanvasRenderingContext2D, value: string): Rgb {
-    ctx.fillStyle = '#000'
-    ctx.fillStyle = value
-    const hex = String(ctx.fillStyle)
-    if (!hex.startsWith('#')) return [0, 0, 0]
-    return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as Rgb
-}
 
 /**
  * Runs one animated background on a canvas: loads the chosen effect, draws it at the effect's own frame rate, and
@@ -57,13 +49,7 @@ export class BackgroundRunner {
     }
 
     setColors(style: CSSStyleDeclaration): void {
-        const {ctx} = this.scene
-        this.scene.colors = {
-            bg: parseColor(ctx, style.getPropertyValue('--color-secondary').trim()),
-            accent: parseColor(ctx, style.getPropertyValue('--color-tertiary').trim()),
-            fg: parseColor(ctx, style.getPropertyValue('--color-primary').trim()),
-        }
-        this.scene.ink = inkFor(this.scene.colors.bg, this.scene.colors.accent)
+        this.scene.setColors(readColors(this.scene.ctx, style))
         // Drawn now rather than at the next frame: a theme's reveal takes its picture of the new page right away
         if (this.scene.cols) this.effect?.draw(0, this.t)
     }

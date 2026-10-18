@@ -1,5 +1,5 @@
-import {clamp, hash, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory} from '../engine/types.ts'
+import {clamp, hash, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory} from '../runtime/types.ts'
 
 interface Blob { x: number; r: number; py: number; per: number; wx: number; wper: number; ax: number; y0: number; ay: number }
 

@@ -1,5 +1,5 @@
-import {clamp, hash, mulberry, rand} from '../engine/random.ts'
-import type {Effect, EffectFactory, Level} from '../engine/types.ts'
+import {clamp, hash, mulberry, rand} from '../runtime/random.ts'
+import type {Effect, EffectFactory, Level} from '../runtime/types.ts'
 
 /** One character of a tree: where it sits relative to the pot's top centre, its level, the foliage pad it sways
  * with (-1 for wood), and its order in the growth */

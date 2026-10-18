@@ -1,9 +1,6 @@
 import type {Scene} from './scene.ts'
 
-/** A grid cell's brightness: 0 is empty, 1 to 4 are the accent at rising opacity, 5 is the text color */
-export type Level = 0 | 1 | 2 | 3 | 4 | 5
-
-export type Rgb = [number, number, number]
+export type {Level, Rgb} from '../../tui-engine/core/types.ts'
 
 /** What the background needs to know about the page in front of it, measured from the real page */
 export interface PageLayout {

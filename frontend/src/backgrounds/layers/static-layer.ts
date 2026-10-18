@@ -1,5 +1,5 @@
-import type {Level} from '../engine/types.ts'
-import type {Scene} from '../engine/scene.ts'
+import type {Level} from '../runtime/types.ts'
+import type {Scene} from '../runtime/scene.ts'
 
 /** A scene's fixed part (buildings, hills, a path): built once in `init`, copied onto the grid every frame */
 export class StaticLayer {
