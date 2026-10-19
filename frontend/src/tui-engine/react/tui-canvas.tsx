@@ -14,6 +14,9 @@ const DEFAULT_FPS = 60
 /** How bright the interface draws, where a background is drawn at 1: a background is tuned to stay faint behind a
  * page, a widget is what the user reads */
 const INTERFACE_STRENGTH = 2
+/** The glyphs of a 13px font reach a little above their row's top; in the first row of a canvas that is the canvas's
+ * edge, and the top of a bracket is cut off. A background has the page's whole height and its first row is never seen. */
+const INTERFACE_TEXT_SHIFT_PX = 2
 /** The longest stretch one frame counts for, so a canvas that was paused carries on instead of jumping ahead */
 const MAX_FRAME_SECONDS = 0.25
 
@@ -125,6 +128,7 @@ export const TuiCanvas = ({className, style, label, fps = DEFAULT_FPS, renderMod
 
             s.strength = strength
             s.transparent = transparent
+            s.textShiftY = INTERFACE_TEXT_SHIFT_PX
             s.begin(baseDots ? dotAlpha : null)
             root.w = s.fitCols
             root.h = s.fitRows

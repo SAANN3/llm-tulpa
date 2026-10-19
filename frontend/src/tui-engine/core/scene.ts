@@ -36,6 +36,8 @@ export class TuiScene {
     strength = 1
     /** The theme's own correction (see `inkFor`), set with the colors */
     ink = 1
+    /** Pixels the text is drawn lower inside its row, for a canvas whose glyphs would otherwise be cut off at its top edge */
+    textShiftY = 0
     /** Leaves the canvas clear instead of painting it in the theme's background, so what is behind it shows through */
     transparent = false
     /** The area drawing is limited to: the innermost of the pushed clips, none when nothing is pushed */
@@ -109,7 +111,7 @@ export class TuiScene {
     baseDots(alpha: number): void {
         this.ctx.fillStyle = rgba(this.colors.accent, Math.min(0.9, alpha * this.strength * this.ink))
         const line = '·'.repeat(this.cols)
-        for (let r = 0; r < this.rows; r++) this.ctx.fillText(line, 0, r * this.ch)
+        for (let r = 0; r < this.rows; r++) this.ctx.fillText(line, 0, r * this.ch + this.textShiftY)
     }
 
     /** Draws the grid: one pass per level, each row as a single string with the other levels' cells left blank */
@@ -128,8 +130,8 @@ export class TuiScene {
                     else if (hasWide && c + 1 < cols && chars[o + c + 1] === '') { (wide ??= []).push(c); s += ' ' }
                     else s += chars[o + c]
                 }
-                if (any) this.ctx.fillText(s, 0, r * this.ch)
-                if (wide) for (const c of wide) this.ctx.fillText(chars[o + c], c * this.cw, r * this.ch)
+                if (any) this.ctx.fillText(s, 0, r * this.ch + this.textShiftY)
+                if (wide) for (const c of wide) this.ctx.fillText(chars[o + c], c * this.cw, r * this.ch + this.textShiftY)
             }
         }
     }
