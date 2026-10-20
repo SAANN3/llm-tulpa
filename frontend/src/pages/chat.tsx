@@ -69,6 +69,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
     })
     const {streamReplies} = useTheme()
     const live = useLiveReply(chatId, streamReplies)
+    const lastLive = live.replies[live.replies.length - 1]
+    // The thinking is over once the reply has text
+    const writing = lastLive != null && !lastLive.stored && lastLive.text !== ''
     // A reply shown live goes once its stored message is on the page, before the frame that would show both. Not on a
     // read that ends at the user's prompt: that one was asked before the reply was stored
     // Opened (or reloaded, or back on the page) in the middle of a reply: it starts from what the state says was written
@@ -422,9 +425,10 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         )
                     })}
                     {live.replies.map((reply, i) => <LiveReplyMessage key={i} thinking={reply.thinking} text={reply.text}/>)}
-                    {busy ? <RunStatus view={turn} onStop={() => void stop()}/> : null}
                     {endLine != null ? <NoticeMessage content={endLine}/> : null}
                 </LazyList>
+                {/* Pinned above the input, not at the end of the messages: it stays in view however far the chat is scrolled */}
+                {busy ? <RunStatus view={turn} writing={writing} onStop={() => void stop()}/> : null}
                 <ModelStateBanner watching={turn.status === 'running'}/>
                 {turn.status === 'waiting_for_permission' ? (
                     <ToolConfirmation key={turn.lastEnd?.ended_at} pending={turn.pending} onConfirm={handleConfirm}/>

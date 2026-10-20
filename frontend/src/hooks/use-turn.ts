@@ -3,7 +3,7 @@ import {answer as sendAnswer} from '../api/agent/answer.ts'
 import {regenerateChat} from '../api/agent/regenerate-chat.ts'
 import {startTurn} from '../api/agent/start-turn.ts'
 import {stopTurn} from '../api/agent/stop.ts'
-import type {AgentToolCall, Decision, ReplySoFar, RunEnded, StartTurnOut, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
+import type {AgentToolCall, CallStatus, Decision, ReplySoFar, RunEnded, StartTurnOut, StepList, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
 import {getTurnState} from '../api/agent/turn-state.ts'
 import {useServerEvent} from './use-server-events.ts'
 
@@ -23,6 +23,10 @@ export interface TurnView {
     lastEnd: RunEnded | null
     /** The reply being written when the state was read (events don't change it: `useLiveReply` follows those) */
     reply: ReplySoFar | null
+    /** What the model call in flight is doing (reading the prompt, generating), as last reported */
+    call: CallStatus | null
+    /** The lists of steps of the work going on (a compaction, a plan), oldest first */
+    steps: StepList[]
 }
 
 const IDLE: TurnView = {
@@ -37,6 +41,8 @@ const IDLE: TurnView = {
     pending: [],
     lastEnd: null,
     reply: null,
+    call: null,
+    steps: [],
 }
 
 const toMillis = (iso: string | null): number | null => (iso == null ? null : Date.parse(iso))
@@ -53,6 +59,8 @@ const fromState = (state: TurnState): TurnView => ({
     pending: state.pending,
     lastEnd: state.last_end,
     reply: state.reply,
+    call: state.call,
+    steps: state.steps,
 })
 
 export interface TurnHandlers {
@@ -136,6 +144,18 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         sawEvent()
         // Events carry what one model call generated; the state read on opening has the total so far
         setView((prev) => ({...prev, evalTokens: prev.evalTokens + event.eval_tokens, step: Math.max(prev.step, event.step)}))
+    })
+
+    useServerEvent('call_progress', (event) => {
+        if (event.chat_id !== chatId) return
+        sawEvent()
+        setView((prev) => ({...prev, call: event.call}))
+    })
+
+    useServerEvent('run_steps', (event) => {
+        if (event.chat_id !== chatId) return
+        sawEvent()
+        setView((prev) => ({...prev, steps: event.lists}))
     })
 
     useServerEvent('tool_started', (event) => {

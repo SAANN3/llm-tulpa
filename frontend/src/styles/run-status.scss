@@ -2,16 +2,19 @@
 
 .run-status {
   align-items: flex-start;
-  gap: $space-1;
+  gap: $space-2;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  // A framed box reads as one block: solid, so the dotted background doesn't show inside it
+  background: var(--color-secondary);
 }
 
-.run-status__line {
-  display: flex;
-  align-items: center;
-  gap: $space-3;
+// The canvas fills the width the status has; its height is set by the rows it needs
+.run-activity {
+  align-self: stretch;
 }
 
-.run-status__label {
-  font-size: 12px;
-  opacity: 0.6;
+// Bottom right of the block, where the eyes end up after reading the title line
+.run-status__stop {
+  align-self: flex-end;
 }

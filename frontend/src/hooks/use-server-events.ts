@@ -1,6 +1,6 @@
 import {useEffect, useRef} from 'react'
 import {BACKEND_URL} from '../config'
-import type {RunEndReason} from '../api/agent/types'
+import type {CallStatus, RunEndReason, StepList} from '../api/agent/types'
 import {getToken} from '../utils/auth-token'
 import {debugLog, isDebug} from '../utils/debug.ts'
 
@@ -21,6 +21,10 @@ export type ServerEvent =
     | { type: 'reply_piece'; chat_id: number; reply: number; seq: number; thinking: string; text: string }
     /** The reply being written was thrown away and is asked for again: what was shown of it goes */
     | { type: 'reply_restart'; chat_id: number }
+    /** What the model call in flight is doing, as a whole picture each time; null once it is over */
+    | { type: 'call_progress'; chat_id: number; call: CallStatus | null }
+    /** The lists of steps of the work going on, every one there is, as a whole picture each time; empty once none is left */
+    | { type: 'run_steps'; chat_id: number; lists: StepList[] }
     | { type: 'model_state'; state: 'loading' | 'ready' | 'stopped' | 'failed' | 'queued'; profile_id: number | null; model: string | null; detail: string | null }
 
 type Listener = (event: ServerEvent) => void
@@ -64,8 +68,8 @@ const dispatch = (data: string) => {
         return
     }
 
-    // A reply's pieces come ten times a second and would bury every other line
-    if (event.type !== 'reply_piece') debugLog('sse', 'event', event.type, 'chat_id' in event ? event.chat_id : '', 'reason' in event ? event.reason : '')
+    // A reply's pieces and its progress come several times a second and would bury every other line
+    if (event.type !== 'reply_piece' && event.type !== 'call_progress') debugLog('sse', 'event', event.type, 'chat_id' in event ? event.chat_id : '', 'reason' in event ? event.reason : '')
     for (const listener of listeners) {
         try {
             listener(event)

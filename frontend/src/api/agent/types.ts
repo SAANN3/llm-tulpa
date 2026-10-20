@@ -81,6 +81,64 @@ export interface TurnState {
     last_end: RunEnded | null
     /** What the model call in flight has written so far; the `reply_piece` events numbered after `seq` continue it */
     reply: ReplySoFar | null
+    /** What the model call in flight is doing; the `call_progress` events replace it */
+    call: CallStatus | null
+    /** The lists of steps of the work going on (a compaction, a plan), oldest first; the `run_steps` events replace them */
+    steps: StepList[]
+}
+
+/** What a model call is for: the reply, or one of the three a compaction makes */
+export type CallKind = 'reply' | 'notes' | 'summary' | 'facts'
+
+/** How far the model server has got reading the prompt; `processed` counts the cached part too, so it starts at `cached` */
+export interface PromptProgress {
+    total: number
+    cached: number
+    processed: number
+    elapsed_ms: number
+}
+
+/** What a model call has generated so far, and the server's own speed figure for it */
+export interface Generation {
+    tokens: number
+    tokens_per_second: number
+}
+
+/** The model call in flight. `prompt` is null from a server that doesn't report it, `generation` until the first token. */
+export interface CallStatus {
+    kind: CallKind
+    prompt: PromptProgress | null
+    generation: Generation | null
+}
+
+export type StepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+
+/** Work made of steps: what it is called and its steps in order */
+export interface StepList {
+    /** Names the list within its run */
+    id: number
+    title: string
+    steps: RunStep[]
+}
+
+/** One step of a `StepList`. Nothing in it says what the step does: any step is drawn from these fields. */
+export interface RunStep {
+    /** Names the step within its list */
+    id: string
+    label: string
+    state: StepState
+    /** What the step is doing or came to, in a few words: why it was skipped or failed, what it produced */
+    detail: string | null
+    /** How far the step has got, when it can count its work */
+    progress: StepProgress | null
+    /** The model call the step makes, while it runs and what it came to after; kept with the step, so a page opened midway has it too */
+    call: CallStatus | null
+}
+
+export interface StepProgress {
+    done: number
+    /** Null for work with no end in sight */
+    total: number | null
 }
 
 /** A reply being written, as far as its pieces were sent: `number` counts the run's model calls, `seq` the pieces */
