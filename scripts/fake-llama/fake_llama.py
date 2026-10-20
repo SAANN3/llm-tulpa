@@ -5,11 +5,15 @@ The backend is pointed at it with `llama_cpp.external_url` (it then neither star
 `/v1/chat/completions` is scripted over its own control endpoints:
 
   POST /__script   a JSON list of replies, used one per main-chat request, in order (empty: the reply "OK.")
+  POST /__slow     a JSON object like a reply item's "prompt_delay" / "piece_delay" / "cached", applied to the compaction's own
+                   requests (they have no item of their own), so a page can be looked at while a fold goes on
   POST /__reset    forget the script and the recorded calls
   GET  /__calls    every request seen so far: its kind, whether it carried tools, the messages, the reply cap
 
 A reply item: {"text", "thinking", "tool_calls": [{"name", "arguments"}], "finish": "stop"|"length"|"tool_calls",
-"prompt_tokens", "completion_tokens", "delay": seconds, "status": 400, "body": <error body>,
+"prompt_tokens", "completion_tokens", "delay": seconds, "status": 400, "body": <error body>, "cached": tokens the server
+already held (`prompt_progress.cache`), "prompt_delay": seconds between the prompt-progress chunks (a streamed request that asks
+for `return_progress` gets them, four per prompt, before the first token),
 "match": {"system_contains": "...", "system_lacks": "..."}}. An item with `match` is only used for a request whose system
 message fits it (the first fitting item in the queue is taken), so two chats talking to the fake at once, a parent and its
 sub-agent, each get their own replies.
@@ -27,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LOCK = threading.Lock()
 SCRIPT = []
 CALLS = []
+SLOW = {}
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18300
 N_CTX = int(sys.argv[2]) if len(sys.argv) > 2 else 40960
 
@@ -107,10 +112,16 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 SCRIPT.extend(body)
             return self.send_json(200, {"queued": len(SCRIPT)})
+        if self.path == "/__slow":
+            with LOCK:
+                SLOW.clear()
+                SLOW.update(body)
+            return self.send_json(200, {})
         if self.path == "/__reset":
             with LOCK:
                 SCRIPT.clear()
                 CALLS.clear()
+                SLOW.clear()
             return self.send_json(200, {})
         if self.path != "/v1/chat/completions":
             return self.send_json(404, {"error": "not found"})
@@ -126,6 +137,8 @@ class Handler(BaseHTTPRequestHandler):
                     if want.get("system_contains", system) in system and (not want.get("system_lacks") or want["system_lacks"] not in system):
                         item = SCRIPT.pop(index)
                         break
+        if kind != "main":
+            item = dict(SLOW)
         with LOCK:
             CALLS.append({
                 "n": len(CALLS) + 1, "kind": kind, "has_tools": bool(body.get("tools")), "tool_names": [t["function"]["name"] for t in body.get("tools") or []],
@@ -160,18 +173,20 @@ class Handler(BaseHTTPRequestHandler):
         usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
         timings = {"prompt_ms": 5.0, "predicted_ms": 10.0, "prompt_n": prompt_tokens}
         if body.get("stream"):
-            return self.send_stream(item, message, calls, finish, usage, timings)
+            return self.send_stream(item, message, calls, finish, usage, timings, body)
         self.send_json(200, {
             "id": "fake", "object": "chat.completion", "model": "fake",
             "choices": [{"index": 0, "finish_reason": finish, "message": message}],
             "usage": usage, "timings": timings,
         })
 
-    def send_stream(self, item, message, calls, finish, usage, timings):
+    def send_stream(self, item, message, calls, finish, usage, timings, body):
         """The same reply as llama-server streams it (`stream: true`): the thinking and the text in small pieces, each
         tool call's name and then its arguments' JSON in pieces, the finish reason, then (asked for with
         `stream_options.include_usage`) a chunk with only the token counts and timings, and `[DONE]`. `piece_delay` in
-        a script item spaces the pieces out, for checking what a page sees while the reply is written."""
+        a script item spaces the pieces out, for checking what a page sees while the reply is written. A request that
+        asks for `return_progress` first gets the prompt's progress, and one that asks for `timings_per_token` gets the
+        speed so far with every chunk, as llama-server sends them."""
         # No length is known up front, so the end of the body is the end of the connection
         self.close_connection = True
         self.send_response(200)
@@ -179,12 +194,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         pause = float(item.get("piece_delay", 0))
+        generated = [0]
 
         def chunk(delta=None, finish_reason=None, extra=None):
-            body = {"id": "fake", "object": "chat.completion.chunk", "model": "fake",
-                    "choices": [] if delta is None and finish_reason is None else [{"index": 0, "delta": delta or {}, "finish_reason": finish_reason}]}
-            body.update(extra or {})
-            self.wfile.write(b"data: " + json.dumps(body).encode() + b"\n\n")
+            out = {"id": "fake", "object": "chat.completion.chunk", "model": "fake",
+                   "choices": [] if delta is None and finish_reason is None else [{"index": 0, "delta": delta or {}, "finish_reason": finish_reason}]}
+            if delta and body.get("timings_per_token"):
+                generated[0] += 1
+                out["timings"] = {**timings, "predicted_n": generated[0], "predicted_per_second": 20.0}
+            out.update(extra or {})
+            self.wfile.write(b"data: " + json.dumps(out).encode() + b"\n\n")
             self.wfile.flush()
             if pause:
                 time.sleep(pause)
@@ -193,6 +212,16 @@ class Handler(BaseHTTPRequestHandler):
             return [text[i:i + size] for i in range(0, len(text), size)]
 
         try:
+            if body.get("return_progress"):
+                total, cached = usage["prompt_tokens"], min(int(item.get("cached", 0)), usage["prompt_tokens"])
+                began = time.time()
+                for processed in (cached, cached + (total - cached) // 3, cached + 2 * (total - cached) // 3, total):
+                    out = {"id": "fake", "object": "chat.completion.chunk", "model": "fake",
+                           "choices": [{"index": 0, "delta": {"role": "assistant", "content": None}}],
+                           "prompt_progress": {"total": total, "cache": cached, "processed": processed, "time_ms": int((time.time() - began) * 1000)}}
+                    self.wfile.write(b"data: " + json.dumps(out).encode() + b"\n\n")
+                    self.wfile.flush()
+                    time.sleep(float(item.get("prompt_delay", 0)))
             for piece in pieces(message.get("reasoning_content", "")):
                 chunk({"reasoning_content": piece})
             for piece in pieces(message.get("content", "")):

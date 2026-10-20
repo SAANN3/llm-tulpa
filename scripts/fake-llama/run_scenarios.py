@@ -273,6 +273,30 @@ def stop_drops_the_call_in_flight():
 
 
 @scenario
+def stop_in_the_middle_of_a_fold_ends_the_run_and_clears_the_steps():
+    """A fold is part of the run: stopping while its calls are going drops them, the run ends as stopped and the checklist
+    is gone from the state (and from the pages, which are told no list is left)."""
+    settings()
+    chat = new_chat("fold-stop")
+    events = collect_events()
+    script({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000}, {"text": "And again.", "prompt_tokens": 25000})
+    turn(chat, "part 0: " + BIG)
+    turn(chat, "part 1: " + BIG)
+    request(FAKE, "/__slow", {"prompt_delay": 1.0, "piece_delay": 0.02})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "part 2: " + BIG})
+    wait_for(lambda: state(chat).get("steps"), what="a fold under way")
+    t0 = time.time()
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 204, "stop")
+    s = wait_idle(chat, 10)
+    assert time.time() - t0 < 3, "the run ends at once, not when the fold would have"
+    eq(s["last_end"]["reason"], "stopped", "run end")
+    eq(s["steps"], [], "no steps in the state")
+    time.sleep(0.3)
+    last = [e["lists"] for e in events if e.get("chat_id") == chat and e["type"] == "run_steps"][-1]
+    eq(last, [], "the pages are told no list is left")
+
+
+@scenario
 def permission_waits_and_answers_continue():
     settings(auto_confirm=False)
     chat = new_chat("permission")
@@ -417,6 +441,7 @@ def the_context_is_measured_by_part_and_memory_edits_reach_the_next_request():
 def a_fold_in_a_tools_off_chat_has_no_notes_and_no_tool_pointers():
     settings()
     chat = new_chat("fold-off", tools=False)
+    events = collect_events()
     script({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000}, {"text": "And again.", "prompt_tokens": 25000},
            {"text": "Final."})
     for i in range(3):
@@ -424,6 +449,14 @@ def a_fold_in_a_tools_off_chat_has_no_notes_and_no_tool_pointers():
     kinds = [c["kind"] for c in calls()]
     assert "notes" not in kinds, "no notes request without tools"
     assert "summary" in kinds, "the fold itself still happens"
+    # The checklist says why the notes step was skipped, and keeps what the other steps did
+    time.sleep(0.5)
+    last = [e["lists"][0]["steps"] for e in events if e.get("chat_id") == chat and e["type"] == "run_steps" and e["lists"]][-1]
+    by_kind = {step["id"]: step for step in last}
+    eq(by_kind["notes"]["state"], "skipped", "the notes step")
+    has(by_kind["notes"]["detail"], "no tools", "why it was skipped")
+    assert by_kind["summary"]["call"]["prompt"]["total"] > 0, "the summary step keeps what its call read"
+    assert by_kind["summary"]["call"]["generation"]["tokens"] > 0, "and what it wrote"
     turn(chat, "what now?")
     system = calls("main")[-1]["messages"][0]["content"]
     has(system, "Earlier parts of this conversation were summarized", "the fold header")
@@ -571,6 +604,107 @@ def the_reply_is_streamed_and_the_stored_one_matches_the_pieces():
     eq("".join(p["text"] for p in pieces), text, "the text pieces")
     assert 2 <= len(pieces) < len(text) // 7, f"pieces are batched, not one per token: {len(pieces)}"
     assert all(c["stream"] == (c["kind"] == "main") for c in calls()), "only the turn streams"
+
+
+@scenario
+def the_prompt_being_read_and_the_speed_are_reported_for_the_call_in_flight():
+    """A streamed call asks the server for its progress on the prompt and its speed: a page is told how far the prompt is
+    read (the cached part counted as read), then how fast the reply comes, and the call ends with nothing. The same
+    picture is in the turn's state for a page that opens midway."""
+    settings()
+    chat = new_chat("progress")
+    events = collect_events()
+    script({"text": "A reply with some length to it, so there are several pieces.", "prompt_tokens": 2000, "cached": 800,
+            "prompt_delay": 0.4, "piece_delay": 0.02})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "go"})
+    wait_for(lambda: ((state(chat).get("call") or {}).get("prompt") or {}).get("processed", 0) > 800, what="the prompt being read")
+    midway = state(chat)["call"]
+    eq(midway["kind"], "reply", "the call in the state")
+    assert midway["prompt"]["total"] == 2000 and midway["prompt"]["cached"] == 800, midway
+    assert midway["prompt"]["processed"] < 2000 and midway["generation"] is None, midway
+    wait_idle(chat)
+    time.sleep(0.3)
+    calls_seen = [e["call"] for e in events if e.get("chat_id") == chat and e["type"] == "call_progress"]
+    assert calls_seen[0] == {"kind": "reply", "prompt": None, "generation": None}, calls_seen[0]
+    processed = [c["prompt"]["processed"] for c in calls_seen if c and c["prompt"] and c["generation"] is None]
+    eq(processed[0], 800, "the first report is the cached part")
+    assert processed == sorted(processed) and processed[-1] == 2000, processed
+    speeds = [c["generation"] for c in calls_seen if c and c["generation"]]
+    assert speeds and speeds[0]["tokens"] >= 1 and speeds[0]["tokens_per_second"] == 20.0, speeds
+    eq(calls_seen[-1], None, "the call ends with nothing")
+    eq(state(chat)["call"], None, "no call in the state once it is over")
+
+
+@scenario
+def a_fold_reports_its_steps_and_each_calls_progress():
+    """The fold's three model calls are steps of a checklist a page can show: every one is waiting, then running, then
+    done, in order, and each call reports its own prompt and speed. When the fold is over the checklist is gone."""
+    settings()
+    chat = new_chat("fold-steps")
+    events = collect_events()
+    script({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000}, {"text": "And again.", "prompt_tokens": 25000})
+    for i in range(3):
+        turn(chat, f"part {i}: " + BIG)
+    time.sleep(0.5)
+    snapshots = [e["lists"] for e in events if e.get("chat_id") == chat and e["type"] == "run_steps"]
+    assert snapshots, "a fold was reported"
+    # Each fold is a run of snapshots ending with the one that says no list is left
+    folds, current = [], []
+    for snapshot in snapshots:
+        if not snapshot:
+            folds.append(current)
+            current = []
+        else:
+            eq(len(snapshot), 1, "one list at a time here")
+            current.append(snapshot[0])
+    eq(current, [], "the last fold was ended")
+    assert folds, "a fold ended"
+    ids = ["notes", "summary", "facts"]
+    for fold in folds:
+        eq(fold[0]["title"], "Compacting the chat", "the work is named")
+        eq(len({snap["id"] for snap in fold}), 1, "one list throughout")
+        eq([(step["id"], step["state"]) for step in fold[0]["steps"]], [(i, "pending") for i in ids], "all waiting at the start")
+        eq([step["label"] for step in fold[0]["steps"]], ["Saving notes", "Summarizing", "Extracting facts"], "the labels come from the backend")
+        for step_id in ids:
+            states = [next(step["state"] for step in snap["steps"] if step["id"] == step_id) for snap in fold]
+            # Each step is only ever waiting, then running, then done
+            eq([a for i, a in enumerate(states) if i == 0 or a != states[i - 1]], ["pending", "running", "done"], f"the {step_id} step")
+    # A finished step says what it produced, and keeps what its call came to
+    for fold in folds:
+        done = {step["id"]: step for step in fold[-1]["steps"]}
+        assert "messages folded" in (done["summary"]["detail"] or ""), done["summary"]
+        assert "facts found" in (done["facts"]["detail"] or ""), done["facts"]
+        assert done["summary"]["call"]["prompt"], done["summary"]
+    # A step's call is reported with its step: the prompt, then the speed
+    for step_id in ids:
+        mine = [next(step for step in e["lists"][0]["steps"] if step["id"] == step_id)["call"]
+                for e in events if e.get("chat_id") == chat and e["type"] == "run_steps" and e["lists"]]
+        mine = [c for c in mine if c]
+        assert any(c["prompt"] for c in mine) and any(c["generation"] for c in mine), f"the {step_id} call reported its prompt and speed"
+    # ... and not as the run's own call
+    assert not any(e["call"] and e["call"]["kind"] != "reply" for e in events if e.get("chat_id") == chat and e["type"] == "call_progress")
+    eq(state(chat)["steps"], [], "no checklist in the state afterwards")
+
+
+@scenario
+def a_page_opened_during_a_fold_gets_its_steps_from_the_state():
+    """The steps of the work going on are in the turn's state, so a page that is opened (or a chat switched to) in the
+    middle of a fold shows what a page that watched it from the start does: its title, the steps done, the one running."""
+    settings()
+    chat = new_chat("fold-restore")
+    script({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000}, {"text": "And again.", "prompt_tokens": 25000})
+    turn(chat, "part 0: " + BIG)
+    turn(chat, "part 1: " + BIG)
+    request(FAKE, "/__slow", {"prompt_delay": 0.4, "piece_delay": 0.02})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "part 2: " + BIG})
+    wait_for(lambda: state(chat).get("steps"), what="a fold under way")
+    midway = state(chat)["steps"]
+    eq(len(midway), 1, "one list")
+    eq(midway[0]["title"], "Compacting the chat", "the work's title in the state")
+    assert any(step["state"] == "running" for step in midway[0]["steps"]), midway
+    wait_for(lambda: any(step["state"] == "done" and step["detail"] for lst in state(chat)["steps"] for step in lst["steps"]), what="a step done")
+    wait_idle(chat)
+    eq(state(chat)["steps"], [], "no steps in the state once it is over")
 
 
 @scenario
