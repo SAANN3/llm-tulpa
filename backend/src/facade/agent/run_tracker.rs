@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use sea_orm::prelude::DateTimeUtc;
 use tokio_util::sync::CancellationToken;
 
+use crate::services::event_bus::{CallStatus, StepList};
+
 /// The numbers a page restores "thinking for 1m 30s, N tokens" from after a reload.
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
@@ -27,6 +29,13 @@ pub(super) struct RunSnapshot {
     pub(super) ended: bool,
     /// What the model call in flight has written so far, as far as it was sent out in pieces.
     pub(super) reply: ReplySoFar,
+    /// What the model call in flight is doing (reading the prompt, generating), as last reported, whichever
+    /// call it is.
+    pub(super) call: Option<CallStatus>,
+    /// The lists of steps of the work going on (a compaction, a plan), oldest first.
+    pub(super) steps: Vec<StepList>,
+    /// The id the next list of steps gets
+    next_list: u64,
 }
 
 /// The reply a model call is writing, as sent out so far (`ServerEvent::ReplyPiece`). A page that opens in the middle
@@ -61,6 +70,9 @@ impl RunTracker {
             tool_started_at: None,
             ended: false,
             reply: ReplySoFar::default(),
+            call: None,
+            steps: Vec::new(),
+            next_list: 1,
         };
         Self { info: Arc::new(Mutex::new(info)), stop: CancellationToken::new() }
     }
@@ -122,6 +134,35 @@ impl RunTracker {
         reply.text.push_str(text);
         reply.seq += 1;
         (reply.number, reply.seq)
+    }
+
+    /// What the call in flight is doing, as last reported (`None` once it is over)
+    pub(super) fn set_call(&self, call: Option<CallStatus>) {
+        self.info.lock().unwrap().call = call;
+    }
+
+    /// A new id for a list of steps
+    pub(super) fn new_list_id(&self) -> u64 {
+        let mut info = self.info.lock().unwrap();
+        info.next_list += 1;
+        info.next_list - 1
+    }
+
+    /// Adds `list` or replaces the one with its id; returns every list there is now
+    pub(super) fn set_list(&self, list: StepList) -> Vec<StepList> {
+        let mut info = self.info.lock().unwrap();
+        match info.steps.iter_mut().find(|have| have.id == list.id) {
+            Some(have) => *have = list,
+            None => info.steps.push(list),
+        }
+        info.steps.clone()
+    }
+
+    /// Takes the list with `id` away; returns every list left
+    pub(super) fn remove_list(&self, id: u64) -> Vec<StepList> {
+        let mut info = self.info.lock().unwrap();
+        info.steps.retain(|have| have.id != id);
+        info.steps.clone()
     }
 
     pub(super) fn call_finished(&self, eval_tokens: Option<u64>, prompt_tokens: Option<u64>) {

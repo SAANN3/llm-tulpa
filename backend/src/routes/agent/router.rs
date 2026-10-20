@@ -44,6 +44,14 @@ pub fn router() -> Router<Arc<AppState>> {
         crate::facade::agent::AgentToolPermission,
         crate::facade::agent::AgentScopeGrant,
         crate::services::event_bus::RunEndReason,
+        crate::services::event_bus::CallKind,
+        crate::services::event_bus::CallStatus,
+        crate::services::event_bus::StepList,
+        crate::services::event_bus::RunStep,
+        crate::services::event_bus::StepProgress,
+        crate::services::event_bus::StepState,
+        crate::services::llm::PromptProgress,
+        crate::services::llm::Generation,
     )),
 )]
 pub struct ApiDoc;

@@ -6,10 +6,13 @@
 //! saves them as pending (changing the front of the prompt would make the model server read the whole
 //! conversation again); they join the prompt at the next compaction.
 
+use super::super::live::StepsReport;
+use super::NOTES;
 use super::super::prompts;
 use super::Compaction;
 use crate::services::error::ErrorService;
-use crate::services::llm::{ChatMessage, ThinkChoice};
+use crate::services::event_bus::{CallKind, StepState};
+use crate::services::llm::{ChatMessage, ReplyPiece, ThinkChoice};
 use crate::tools::base::Tool;
 use crate::tools::chat::write_notes::MAX_NOTES_CHARS;
 use crate::tools::subagent;
@@ -37,6 +40,15 @@ fn notes_reply(message: &ChatMessage, markers: &[String]) -> Option<String> {
     Some(text.to_string())
 }
 
+/// What asking for the notes came to
+enum Asked {
+    /// Not asked, and why: a sub-agent's chat, a chat without tools, or too little room left in the window
+    Not(&'static str),
+    /// The model answered, with nothing to store (`UNCHANGED`, or a reply that can't be notes)
+    Nothing,
+    Notes(String),
+}
+
 impl Compaction {
 
     /// Asks the model to rewrite its working notes right before a fold drops the plans from
@@ -48,17 +60,23 @@ impl Compaction {
     /// Qwen template starts the system prompt with a reasoning-effort line, so asking with thinking off
     /// changes the prompt from its first token and the server reuses none of its cache (measured: 0 of
     /// 35k prompt tokens, against all but a few with the same setting).
-    pub(super) async fn save_notes_before_fold(&self, chat_id: i64, think: Option<ThinkChoice>, known_prompt_tokens: Option<u64>) {
-        let outcome: Result<Option<String>, ErrorService> = async {
+    pub(super) async fn save_notes_before_fold(
+        &self,
+        chat_id: i64,
+        think: Option<ThinkChoice>,
+        known_prompt_tokens: Option<u64>,
+        report: Option<&StepsReport>,
+    ) {
+        let outcome: Result<Asked, ErrorService> = async {
             let chat = self.chat_store.chat(chat_id).await?;
             if chat.parent_chat_id.is_some() {
                 // A sub-agent's chat ends with its result; nobody reads its notes later
-                return Ok(None);
+                return Ok(Asked::Not("a sub-agent's chat"));
             }
             if !chat.tools_enabled {
                 // Notes are part of working with tools; a chat without them is a plain conversation, and the
                 // model it runs on is often too small to keep notes worth their cost
-                return Ok(None);
+                return Ok(Asked::Not("the chat has no tools"));
             }
             // With thinking on the model reasons before it writes the notes, and a reply that runs out of room
             // mid-reasoning is thrown away after minutes of generation (measured: two requests of 4,096 tokens,
@@ -66,7 +84,7 @@ impl Compaction {
             let context = self.model.context_of(&chat).await?;
             if known_prompt_tokens.is_some_and(|known| context.saturating_sub(known) < NOTES_ASK_MIN_ROOM_TOKENS) {
                 tracing::info!(chat_id, "notes request skipped: not enough room left in the window to think and write");
-                return Ok(None);
+                return Ok(Asked::Not("not enough room left in the window"));
             }
             let provider = self.model.provider(&chat)?;
             let params = self.model.params(&chat).await?;
@@ -80,21 +98,36 @@ impl Compaction {
             let system_prompt = self.history.system_prompt(&chat, &mut history).await?;
             let mut messages = vec![ChatMessage::system(system_prompt)];
             messages.extend(history);
+            let call = report.map(|report| report.call(&NOTES, CallKind::Notes));
+            let on_piece = |piece: ReplyPiece| {
+                if let Some(call) = &call {
+                    call.piece(&piece);
+                }
+            };
             let response = provider
-                .chat(messages, Some(ChatMessage::user(prompts::notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params, None)
+                .chat(messages, Some(ChatMessage::user(prompts::notes_ask())), &tools, think, &chat.model, known_prompt_tokens, &params, Some(&on_piece))
                 .await?;
             let markers = provider.tool_call_markers(&chat.model).await;
-            Ok(notes_reply(&response.message, &markers))
+            Ok(notes_reply(&response.message, &markers).map_or(Asked::Nothing, Asked::Notes))
         }
         .await;
 
+        if let Some(report) = report {
+            let failed = outcome.as_ref().err().map(|e| e.message.clone().unwrap_or_else(|| "the request failed".to_string()));
+            match &outcome {
+                Ok(Asked::Not(why)) => report.set(&NOTES, StepState::Skipped, Some(why)),
+                Ok(Asked::Notes(notes)) => report.set(&NOTES, StepState::Done, Some(&format!("notes saved, {} lines", notes.lines().count()))),
+                Ok(Asked::Nothing) => report.set(&NOTES, StepState::Done, Some("notes unchanged")),
+                Err(_) => report.set(&NOTES, StepState::Failed, failed.as_deref()),
+            }
+        }
         match outcome {
-            Ok(Some(notes)) => {
+            Ok(Asked::Notes(notes)) => {
                 if let Err(e) = self.chat_store.set_notes(chat_id, Some(notes)).await {
                     tracing::warn!(chat_id, "couldn't save the notes before a fold: {e:?}");
                 }
             }
-            Ok(None) => {}
+            Ok(Asked::Not(_) | Asked::Nothing) => {}
             Err(e) => tracing::warn!(
                 chat_id,
                 "asking for notes before a fold failed: {}",

@@ -8,18 +8,25 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
 use super::history::History;
+use super::live::{Live, StepDef, StepsReport};
 use super::model_call::ModelCall;
 use super::prompts;
 use crate::facade::one_shot::OneShot;
 use crate::services::chat_store::{ChatFacts, ChatStore, Message};
 use crate::services::error::ErrorService;
-use crate::services::llm::{ChatMessage, ThinkChoice};
+use crate::services::event_bus::{CallKind, StepState};
+use crate::services::llm::{ChatMessage, ReplyPiece, ThinkChoice};
 use crate::services::settings_store::SettingsStore;
 use crate::services::tools::ToolService;
 use clearing::CLEARED_ENOUGH_FRACTION;
 
 pub(super) mod clearing;
 mod notes;
+
+/// The steps of a compaction as a page lists them: the notes the model writes before a fold, the summary, the facts
+const NOTES: StepDef = StepDef::fixed("notes", "Saving notes");
+const SUMMARY: StepDef = StepDef::fixed("summary", "Summarizing");
+const FACTS: StepDef = StepDef::fixed("facts", "Extracting facts");
 
 /// `trigger_tokens`/`keep_chars` (below) are derived from the
 /// real, configured context window rather than hardcoded — otherwise they'd silently
@@ -109,7 +116,22 @@ impl Compaction {
     /// prompt via `History::for_chat`. Best-effort: a failure here doesn't fail the turn
     /// that already succeeded, it just means history stays as big as it is and gets
     /// another chance to trigger this again.
-    pub(super) async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>) {
+    ///
+    /// A fold is part of the run it happens in, so the user's stop ends it too: its model calls are dropped, which
+    /// closes their requests. The summary and the facts are stored only at the very end, in one write, so a fold
+    /// that is stopped leaves the chat as it was (the notes it may have saved already are kept, as they are
+    /// whenever the fold fails later).
+    pub(super) async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>, live: Option<&Live>) {
+        let Some(live) = live else {
+            return self.compact_if_needed(chat_id, prompt_eval_count, think, None).await;
+        };
+        tokio::select! {
+            _ = live.stopped() => tracing::info!(chat_id, "compaction dropped: the run was stopped"),
+            _ = self.compact_if_needed(chat_id, prompt_eval_count, think, Some(live)) => {}
+        }
+    }
+
+    async fn compact_if_needed(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>, live: Option<&Live>) {
         // The thresholds follow the window the chat's own model runs under (its launch profile's
         // context), not one global number. A failed lookup is a reason to skip this check, not to fail.
         let context = match self.chat_store.chat(chat_id).await {
@@ -136,6 +158,10 @@ impl Compaction {
             "compaction triggered for chat_id {chat_id}"
         );
 
+        // What a page shows while this goes on; it ends when the value is dropped, whichever way this returns
+        let report = live.map(|live| live.steps("Compacting the chat", &[NOTES, SUMMARY, FACTS]));
+        let report = report.as_ref();
+
         // Dropping old tool results is cheaper than a model-written summary and loses nothing the
         // model can't fetch again; fold only when that wasn't enough
         let mut notes_saved = false;
@@ -143,7 +169,7 @@ impl Compaction {
             Ok(Some(plan)) => {
                 // The notes are asked for while the prompt is still the one the model server holds:
                 // applying the plan rewrites it, and the request would be a cold read of the whole history
-                self.save_notes_before_fold(chat_id, think.clone(), prompt_eval_count).await;
+                self.save_notes_before_fold(chat_id, think.clone(), prompt_eval_count, report).await;
                 notes_saved = true;
                 let freed_chars = plan.freed_chars();
                 match self.chat_store.set_context_boundaries(chat_id, plan.cleared_up_to, plan.thinking_trimmed_up_to).await {
@@ -152,6 +178,9 @@ impl Compaction {
                         let target = (context as f64 * CLEARED_ENOUGH_FRACTION) as u64;
                         if estimated < target {
                             tracing::info!(chat_id, freed_chars, estimated, "old tool results cleared, no fold needed");
+                            if let Some(report) = report {
+                                report.skip_waiting("old tool results cleared instead");
+                            }
                             return;
                         }
                         tracing::info!(chat_id, freed_chars, estimated, "old tool results cleared, still above the target: folding");
@@ -166,7 +195,7 @@ impl Compaction {
             ),
         }
 
-        match self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize, notes_saved, think, prompt_eval_count).await {
+        match self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize, notes_saved, think, prompt_eval_count, report).await {
             Ok(()) => {
                 self.backoff.lock().unwrap().remove(&chat_id);
             }
@@ -185,7 +214,15 @@ impl Compaction {
     /// rather than discarding it. No-ops if everything already fits — that means
     /// `trigger_tokens` fired on a single outsized turn rather than a long
     /// history, which folding can't help with.
-    async fn compact(&self, chat_id: i64, keep_chars: usize, notes_saved: bool, think: Option<ThinkChoice>, known_prompt_tokens: Option<u64>) -> Result<(), ErrorService> {
+    async fn compact(
+        &self,
+        chat_id: i64,
+        keep_chars: usize,
+        notes_saved: bool,
+        think: Option<ThinkChoice>,
+        known_prompt_tokens: Option<u64>,
+        report: Option<&StepsReport>,
+    ) -> Result<(), ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         let after_id = chat.summary_up_to_message_id.unwrap_or(0);
 
@@ -218,6 +255,9 @@ impl Compaction {
                 keep_chars,
                 "compaction skipped: recent history already fits within keep_chars"
             );
+            if let Some(report) = report {
+                report.skip_waiting("nothing old enough to fold");
+            }
             return Ok(());
         }
 
@@ -236,16 +276,36 @@ impl Compaction {
         // server holds is still the one about to be folded, so asking for the notes costs almost
         // nothing. (After a clearing pass they were already asked for, ahead of it.)
         if !notes_saved {
-            self.save_notes_before_fold(chat_id, think.clone(), known_prompt_tokens).await;
+            self.save_notes_before_fold(chat_id, think.clone(), known_prompt_tokens, report).await;
         }
 
-        let summary = self.summarize(chat.summary.clone(), to_fold, &chat.provider, &chat.model).await?;
-        let facts = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.provider, &chat.model).await;
+        let summary = self.summarize(chat.summary.clone(), to_fold, &chat.provider, &chat.model, report).await;
+        if let Some(report) = report {
+            match &summary {
+                Ok(text) => report.set(
+                    &SUMMARY,
+                    StepState::Done,
+                    Some(&format!("{} messages folded into a summary of {} characters", to_fold.len(), text.chars().count())),
+                ),
+                Err(e) => report.set(&SUMMARY, StepState::Failed, Some(e.message.as_deref().unwrap_or("the request failed"))),
+            }
+        }
+        let summary = summary?;
+        let (facts, facts_state) = self.extract_facts(to_fold, chat.key_facts.clone(), &chat.provider, &chat.model, report).await;
         let existing_facts_count = chat.key_facts.as_ref().map_or(0, |f| f.facts.len());
+        // A failed extraction hands back the old facts: nothing was extracted
+        let extracted = if facts_state == StepState::Failed { 0 } else { facts.facts.len() };
         let merged = Self::merge_facts(chat.key_facts.clone().unwrap_or_default(), facts.goal, facts.facts);
         // The list is bounded and a fuller fact replaces a shorter one, so it can end up no longer than before:
         // saturating, not a subtraction that could underflow.
         let facts_added = merged.facts.len().saturating_sub(existing_facts_count);
+        if let Some(report) = report {
+            let outcome = match facts_state {
+                StepState::Failed => "the reply could not be used, the old facts stay".to_string(),
+                _ => format!("{extracted} facts found, {facts_added} new, {} kept in all", merged.facts.len()),
+            };
+            report.set(&FACTS, facts_state, Some(&outcome));
+        }
 
         self.chat_store
             .set_summary(chat_id, summary, merged, new_boundary_id)
@@ -277,6 +337,7 @@ impl Compaction {
         to_fold: &[Message],
         provider: &str,
         model: &str,
+        report: Option<&StepsReport>,
     ) -> Result<String, ErrorService> {
         // The image data itself never goes into the transcript (it's not text, and this
         // call carries no vision guarantee) — but a message that had one needs to say
@@ -296,6 +357,12 @@ impl Compaction {
         // sections) is not stored, because everything folded is lost with it. When both are refused
         // the caller keeps the previous summary and boundary, so history stays as it is and the next
         // trigger tries again.
+        let call = report.map(|report| report.call(&SUMMARY, CallKind::Summary));
+        let on_piece = |piece: ReplyPiece| {
+            if let Some(call) = &call {
+                call.piece(&piece);
+            }
+        };
         self.one_shot
             .ask_checked(
                 provider,
@@ -304,6 +371,7 @@ impl Compaction {
                 |closing| ChatMessage::user(prompts::summarizer_user(&prior, &transcript, closing)),
                 &[prompts::SUMMARY_CLOSING, prompts::SUMMARY_SHARPER_CLOSING],
                 summary_problem,
+                Some(&on_piece),
             )
             .await
     }
@@ -344,7 +412,8 @@ impl Compaction {
         existing_key_facts: Option<ChatFacts>,
         provider: &str,
         model: &str,
-    ) -> ChatFacts {
+        report: Option<&StepsReport>,
+    ) -> (ChatFacts, StepState) {
         let existing = existing_key_facts.as_ref();
         let existing_goal = existing.and_then(|f| f.goal.clone());
         let existing_facts_str = prompts::existing_facts_block(existing.map_or(&[][..], |f| f.facts.as_slice()));
@@ -356,7 +425,13 @@ impl Compaction {
 
         // Best-effort (see above): a provider that can't be found is the same failure as one that
         // can't answer, and falls back the same way.
-        let result = self.one_shot.ask(provider, model, system, user).await;
+        let call = report.map(|report| report.call(&FACTS, CallKind::Facts));
+        let on_piece = |piece: ReplyPiece| {
+            if let Some(call) = &call {
+                call.piece(&piece);
+            }
+        };
+        let result = self.one_shot.ask(provider, model, system, user, Some(&on_piece)).await;
         match result {
             Err(err) => {
                 let es: ErrorService = err;
@@ -364,10 +439,13 @@ impl Compaction {
                     error = es.message.as_deref().unwrap_or("unknown error"),
                     "fact extraction ollama call failed, using existing facts"
                 );
-                ChatFacts {
-                    goal: existing_goal,
-                    facts: existing.map_or(vec![], |f| f.facts.clone()),
-                }
+                (
+                    ChatFacts {
+                        goal: existing_goal,
+                        facts: existing.map_or(vec![], |f| f.facts.clone()),
+                    },
+                    StepState::Failed,
+                )
             }
             Ok(response) => {
                 let raw = response.message.content;
@@ -387,10 +465,13 @@ impl Compaction {
                             );
                         }
 
-                        ChatFacts {
-                            goal: trimmed_goal,
-                            facts: new_facts,
-                        }
+                        (
+                            ChatFacts {
+                                goal: trimmed_goal,
+                                facts: new_facts,
+                            },
+                            StepState::Done,
+                        )
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -398,10 +479,13 @@ impl Compaction {
                             raw = %raw,
                             "fact extraction parse failed, using existing facts"
                         );
-                        ChatFacts {
-                            goal: existing_goal,
-                            facts: existing.map_or(vec![], |f| f.facts.clone()),
-                        }
+                        (
+                            ChatFacts {
+                                goal: existing_goal,
+                                facts: existing.map_or(vec![], |f| f.facts.clone()),
+                            },
+                            StepState::Failed,
+                        )
                     }
                 }
             }

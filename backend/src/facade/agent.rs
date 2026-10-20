@@ -26,6 +26,7 @@ use crate::tools::subagent::SubagentHandle;
 mod compaction;
 mod context;
 mod history;
+mod live;
 mod model_call;
 mod notices;
 mod prompts;

@@ -321,6 +321,31 @@ fn nanos_to_ms(nanos: Option<u64>) -> Option<i64> {
 pub enum ReplyPiece {
     Thinking(String),
     Text(String),
+    /// How far the server has got reading the prompt, before the first token of the reply
+    Prompt(PromptProgress),
+    /// How much has been generated so far and how fast
+    Generation(Generation),
+}
+
+/// How far a model server has got reading a prompt (llama.cpp reports it when asked, see `return_progress`)
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+pub struct PromptProgress {
+    /// Tokens in the prompt
+    pub total: u64,
+    /// The part the server already held from an earlier request: it isn't read again
+    pub cached: u64,
+    /// Tokens read so far, the cached ones included (so it starts at `cached`)
+    pub processed: u64,
+    /// Milliseconds spent reading the prompt so far
+    pub elapsed_ms: u64,
+}
+
+/// What a model call has generated so far
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+pub struct Generation {
+    pub tokens: u64,
+    /// The server's own figure for the call so far
+    pub tokens_per_second: f64,
 }
 
 /// Told about each piece of a reply as it arrives

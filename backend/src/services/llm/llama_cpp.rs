@@ -34,8 +34,8 @@ use super::template::{ensure_thinking_split, extract_tool_call_markers, parse_th
 use super::tool_defs::{tool_definitions, ToolDefinition};
 use super::types::{
     CallParams, ChatMessage, ChatResponse, GenerateResponse, LaunchRequest, LlamaServerStats, LlmErrors, LocalModel,
-    LocalModelDetails, ModelToolCall, ModelToolCallFunction, OnPiece, ReplyPiece, ResponseMetrics, RunningModel, RunningModels,
-    Sampling, ThinkChoice, ThinkingCapability,
+    LocalModelDetails, ModelToolCall, ModelToolCallFunction, OnPiece, PromptProgress, ReplyPiece, ResponseMetrics, RunningModel,
+    RunningModels, Sampling, ThinkChoice, ThinkingCapability, Generation,
 };
 use crate::services::error::ErrorService;
 use crate::services::gguf::read_gguf_info;
@@ -106,9 +106,7 @@ impl LlamaCppProvider {
     /// works on it exactly as on a reply that came in one piece. The request and the server's work are the same;
     /// only how the answer travels differs.
     async fn complete_streaming(&self, mut payload: Value, num_predict: i32, on_piece: OnPiece<'_>) -> Result<CompletionResponse, LlmErrors> {
-        payload["stream"] = json!(true);
-        // The token counts come in a last chunk of their own only when asked for
-        payload["stream_options"] = json!({"include_usage": true});
+        stream_flags(&mut payload);
         let url = format!("{}/v1/chat/completions", self.base_url);
         tracing::info!("calling llama-server /v1/chat/completions (streamed)");
         let res = self
@@ -344,6 +342,17 @@ impl LlmProvider for LlamaCppProvider {
     }
 }
 
+/// What a streamed request adds to the payload of a plain one
+fn stream_flags(payload: &mut Value) {
+    payload["stream"] = json!(true);
+    // The token counts come in a last chunk of their own only when asked for
+    payload["stream_options"] = json!({"include_usage": true});
+    // Without these the server says nothing until the first token: how far it has got reading the prompt, and
+    // the speed so far with every chunk (the figures `timings` carries once, at the end, otherwise)
+    payload["return_progress"] = json!(true);
+    payload["timings_per_token"] = json!(true);
+}
+
 /// Reads the response body as text before parsing it, so a parse failure can still log what the
 /// server actually sent — a bare decode error doesn't say what the body looked like.
 async fn decode_response<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> Result<T, LlmErrors> {
@@ -516,6 +525,19 @@ struct StreamChunk {
     usage: Option<Usage>,
     #[serde(default)]
     timings: Option<Timings>,
+    /// Sent before the first token, once per batch of the prompt the server reads
+    #[serde(default)]
+    prompt_progress: Option<WirePromptProgress>,
+}
+
+#[derive(Deserialize)]
+struct WirePromptProgress {
+    total: u64,
+    #[serde(default)]
+    cache: u64,
+    processed: u64,
+    #[serde(default)]
+    time_ms: u64,
 }
 
 #[derive(Deserialize, Default)]
@@ -570,6 +592,18 @@ struct StreamedReply {
 
 impl StreamedReply {
     fn add(&mut self, chunk: StreamChunk, on_piece: OnPiece<'_>) {
+        if let Some(progress) = chunk.prompt_progress {
+            on_piece(ReplyPiece::Prompt(PromptProgress {
+                total: progress.total,
+                cached: progress.cache,
+                processed: progress.processed,
+                elapsed_ms: progress.time_ms,
+            }));
+        }
+        // The speed so far comes with every chunk of the reply; a chunk before the first token has none to report
+        if let Some(Timings { predicted_n: Some(tokens @ 1..), predicted_per_second: Some(tokens_per_second), .. }) = chunk.timings {
+            on_piece(ReplyPiece::Generation(Generation { tokens, tokens_per_second }));
+        }
         for choice in chunk.choices {
             if let Some(text) = choice.delta.reasoning_content.filter(|t| !t.is_empty()) {
                 self.reasoning.push_str(&text);
@@ -638,7 +672,7 @@ struct Usage {
     completion_tokens: Option<u64>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone, Copy)]
 struct Timings {
     #[serde(default)]
     prompt_ms: Option<f64>,
@@ -647,6 +681,11 @@ struct Timings {
     /// How many prompt tokens the server actually evaluated: the rest came from its cache.
     #[serde(default)]
     prompt_n: Option<u64>,
+    /// Tokens generated so far, and the speed they came at
+    #[serde(default)]
+    predicted_n: Option<u64>,
+    #[serde(default)]
+    predicted_per_second: Option<f64>,
 }
 
 /// A tool call's arguments arrive as a JSON string; a value that doesn't parse is passed through
@@ -882,6 +921,48 @@ mod tests {
         assert_eq!(response.prompt_processed_tokens(), Some(20));
         assert_eq!(response.eval_duration_ms(), Some(70));
         assert_eq!(response.prompt_eval_duration_ms(), Some(12));
+    }
+
+    #[test]
+    fn a_streamed_call_reports_the_prompt_being_read_and_then_the_speed() {
+        use std::sync::Mutex;
+        let chunks = [
+            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":null}}],"prompt_progress":{"total":3000,"cache":1000,"processed":1000,"time_ms":0}}"#,
+            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":null}}],"timings":{"prompt_n":2000,"prompt_ms":900.0,"predicted_n":0,"predicted_per_second":0.0},"prompt_progress":{"total":3000,"cache":1000,"processed":3000,"time_ms":900}}"#,
+            r#"{"choices":[{"index":0,"delta":{"content":"Hi"}}],"timings":{"prompt_n":2000,"prompt_ms":900.0,"predicted_n":3,"predicted_ms":150.0,"predicted_per_second":20.0}}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3000,"completion_tokens":4},"timings":{"prompt_n":2000,"prompt_ms":900.0,"predicted_n":4,"predicted_ms":200.0,"predicted_per_second":20.0}}"#,
+        ];
+        let seen = Mutex::new(Vec::new());
+        let on_piece = |piece: ReplyPiece| seen.lock().unwrap().push(piece);
+        let mut reply = StreamedReply::default();
+        for chunk in chunks {
+            reply.add(serde_json::from_str::<StreamChunk>(chunk).unwrap(), &on_piece);
+        }
+
+        let seen = seen.into_inner().unwrap();
+        let prompts: Vec<_> = seen.iter().filter_map(|p| if let ReplyPiece::Prompt(p) = p { Some(*p) } else { None }).collect();
+        // `processed` counts the cached part too, so the first report is already at `cached`
+        assert_eq!((prompts[0].total, prompts[0].cached, prompts[0].processed), (3000, 1000, 1000));
+        assert_eq!((prompts[1].processed, prompts[1].elapsed_ms), (3000, 900));
+        // No speed before the first token, then one per chunk that has it
+        let speeds: Vec<_> = seen.iter().filter_map(|p| if let ReplyPiece::Generation(g) = p { Some(g.tokens) } else { None }).collect();
+        assert_eq!(speeds, vec![3, 4]);
+        assert!(seen.iter().any(|p| matches!(p, ReplyPiece::Text(t) if t == "Hi")));
+        // The reply is the same as without the progress: the last chunk's figures are the call's
+        let response = reply.into_response();
+        assert_eq!(response.metrics().eval_count, Some(4));
+        assert_eq!(response.metrics().prompt_eval_processed, Some(2000));
+    }
+
+    #[test]
+    fn the_streamed_request_asks_for_the_prompt_progress_and_the_speed() {
+        let mut payload = build_payload("m", vec![], None, 10, None, &Sampling::default());
+        assert!(payload.get("return_progress").is_none() && payload["stream"] == json!(false));
+        stream_flags(&mut payload);
+        assert_eq!(payload["stream"], json!(true));
+        assert_eq!(payload["return_progress"], json!(true));
+        assert_eq!(payload["timings_per_token"], json!(true));
+        assert_eq!(payload["stream_options"]["include_usage"], json!(true));
     }
 
     #[test]

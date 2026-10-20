@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use super::compaction::Compaction;
 use super::history::History;
+use super::live::Live;
 use super::model_call::{ModelCall, Regenerations, ReplyProblem};
 use super::prompts;
 use super::run_tracker::RunTracker;
@@ -14,7 +15,7 @@ use super::tool_calls::ToolCalls;
 use super::{ChatOut, NoticeOut};
 use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, NewToolCall};
 use crate::services::error::ErrorService;
-use crate::services::event_bus::{EventBus, ServerEvent};
+use crate::services::event_bus::{CallKind, EventBus, ServerEvent};
 use crate::services::llm::{CallParams, ChatMessage, ChatResponse, LlmProvider, ReplyPiece, ThinkChoice};
 use crate::services::tools::ToolService;
 use crate::tools::base::Tool;
@@ -53,6 +54,8 @@ impl PieceBatcher {
         match piece {
             ReplyPiece::Thinking(text) => pending.0.push_str(&text),
             ReplyPiece::Text(text) => pending.1.push_str(&text),
+            // Not text: `CallReport` reports those
+            ReplyPiece::Prompt(_) | ReplyPiece::Generation(_) => return,
         }
         if pending.2.elapsed() >= PIECE_INTERVAL {
             self.send(&mut pending);
@@ -171,9 +174,10 @@ impl Turn {
     /// bigger than everything before it, and a check made on the last measurement alone lets the next
     /// request through to a 400 from the server that no retry fixes. `extra_chars` is what the caller is
     /// about to add and hasn't stored yet (the user's prompt).
-    pub(super) async fn make_room(&self, chat_id: i64, think: Option<ThinkChoice>, extra_chars: usize) {
+    pub(super) async fn make_room(&self, chat_id: i64, think: Option<ThinkChoice>, extra_chars: usize, run: Option<&RunTracker>) {
         let estimated = self.estimated_prompt_tokens(chat_id, extra_chars).await;
-        self.compaction.maybe_compact(chat_id, estimated, think).await;
+        let live = run.map(|run| Live::new(chat_id, self.events.clone(), run.clone()));
+        self.compaction.maybe_compact(chat_id, estimated, think, live.as_ref()).await;
     }
 
     /// `None` when the chat has no measurement yet (nothing has been sent), or can't be read: a failed
@@ -325,7 +329,11 @@ impl Turn {
             // The reply is shown as it is written (`ServerEvent::ReplyPiece`); the turn itself goes on with the
             // complete reply the call returns, the same as without the pieces
             let pieces = PieceBatcher::new(chat_id, self.events.clone(), step.run.clone());
-            let on_piece = |piece: ReplyPiece| pieces.push(piece);
+            let report = Live::new(chat_id, self.events.clone(), step.run.clone()).call(CallKind::Reply);
+            let on_piece = |piece: ReplyPiece| {
+                report.piece(&piece);
+                pieces.push(piece);
+            };
             let call = request.provider.chat(
                 request.messages.clone(),
                 None,
@@ -345,6 +353,8 @@ impl Turn {
                 response = call => response?,
             };
             pieces.flush();
+            // Over before the checks below, which can take a moment (a template lookup) with nothing to report
+            drop(report);
             step.run.call_finished(response.eval_count(), response.prompt_eval_count());
 
             // The live "thinking" indicator's spend hint (see `ServerEvent::TurnProgress`):
@@ -448,7 +458,8 @@ impl Turn {
 
         // Check compaction against total tokens (prompt + generated thoughts), not just prompt_eval_count,
         // so compaction frees headroom BEFORE the recursive continuation turn if context is full.
-        self.compaction.maybe_compact(chat_id, total_tokens, step.think.clone()).await;
+        let live = Live::new(chat_id, self.events.clone(), step.run.clone());
+        self.compaction.maybe_compact(chat_id, total_tokens, step.think.clone(), Some(&live)).await;
 
         // Persist the continuation prompt into the chat store so the database message
         // sequence is strictly alternating (assistant -> notice -> assistant),
@@ -585,7 +596,8 @@ impl Turn {
         };
 
         let total_tokens = prompt_eval_count.map(|pt| pt + eval_count.unwrap_or(0));
-        self.compaction.maybe_compact(chat_id, total_tokens, step.think).await;
+        let live = Live::new(chat_id, self.events.clone(), step.run.clone());
+        self.compaction.maybe_compact(chat_id, total_tokens, step.think, Some(&live)).await;
 
         Ok(out)
     }

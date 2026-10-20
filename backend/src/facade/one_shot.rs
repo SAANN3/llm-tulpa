@@ -10,7 +10,7 @@
 
 use crate::services::{
     error::ErrorService,
-    llm::{CallParams, ChatMessage, ChatResponse, LlmProviders, ThinkChoice},
+    llm::{CallParams, ChatMessage, ChatResponse, LlmProviders, OnPiece, ThinkChoice},
 };
 
 #[derive(Clone)]
@@ -23,8 +23,16 @@ impl OneShot {
         Self { providers }
     }
 
-    /// One reply to `system` with `data` as the user message, on the given model.
-    pub async fn ask(&self, provider: &str, model: &str, system: String, data: ChatMessage) -> Result<ChatResponse, ErrorService> {
+    /// One reply to `system` with `data` as the user message, on the given model. With `on_piece` the reply is also
+    /// handed over as it is written (see `LlmProvider::chat`); what is returned is the same either way.
+    pub async fn ask(
+        &self,
+        provider: &str,
+        model: &str,
+        system: String,
+        data: ChatMessage,
+        on_piece: Option<OnPiece<'_>>,
+    ) -> Result<ChatResponse, ErrorService> {
         let response = self
             .providers
             .get(provider)?
@@ -36,7 +44,7 @@ impl OneShot {
                 model,
                 None,
                 &CallParams::default(),
-                None,
+                on_piece,
             )
             .await?;
         Ok(response)
@@ -46,7 +54,8 @@ impl OneShot {
     /// in order, each with the user message `data_for` builds from that closing (a later closing is
     /// the sharper one). `check` gets the reply and the model's own tool-call tags, and names what is
     /// wrong with it, or `None` when it is fine. When every attempt is refused the error carries the
-    /// last problem, and the caller decides what to keep.
+    /// last problem, and the caller decides what to keep. `on_piece` hears every attempt.
+    #[allow(clippy::too_many_arguments)]
     pub async fn ask_checked(
         &self,
         provider: &str,
@@ -55,11 +64,12 @@ impl OneShot {
         data_for: impl Fn(&str) -> ChatMessage,
         closings: &[&str],
         check: impl Fn(&ChatMessage, &[String]) -> Option<&'static str>,
+        on_piece: Option<OnPiece<'_>>,
     ) -> Result<String, ErrorService> {
         let markers = self.providers.get(provider)?.tool_call_markers(model).await;
         let mut last_problem = "";
         for closing in closings {
-            let response = self.ask(provider, model, system.clone(), data_for(closing)).await?;
+            let response = self.ask(provider, model, system.clone(), data_for(closing), on_piece).await?;
             match check(&response.message, &markers) {
                 None => return Ok(response.message.content.trim().to_string()),
                 Some(problem) => {

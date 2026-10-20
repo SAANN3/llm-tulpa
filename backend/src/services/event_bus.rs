@@ -3,6 +3,8 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use utoipa::ToSchema;
 
+use crate::services::llm::{Generation, PromptProgress};
+
 /// How many undelivered events a slow subscriber may fall behind by before it starts
 /// missing the oldest ones. Events are tiny and come a few at a time (a run's messages and tool
 /// calls, a finished background job), so this only ever matters for a connection stalled for a long time.
@@ -85,6 +87,16 @@ pub enum ServerEvent {
     /// The user looked at the chat: its note of how the last run ended (`unseen_end`) was cleared. Sent only when
     /// there was one to clear, so every other open page of the same user drops it too.
     ChatSeen { chat_id: i64 },
+    /// What the model call in flight in `chat_id`'s run is doing, as a whole snapshot each time: reading the prompt
+    /// (it takes a while on a long chat) or generating, with the speed so far. `None` once the call is over. Sent as
+    /// the server reports it, the speed a few times a second. For show only, like `ReplyPiece`.
+    CallProgress { chat_id: i64, call: Option<CallStatus> },
+    /// The lists of steps the work going on in `chat_id`'s run is made of (a compaction, a plan), oldest first, each step
+    /// with how it is going: every list there is, as a whole snapshot each time, empty once none is left. Work that
+    /// starts while other work goes on (a fold in the middle of a plan) is a list of its own beside it. A snapshot each
+    /// time, so a page that missed one is right after the next. Sent whenever a step changes: its state, what it says,
+    /// how far it has got, or the model call it makes.
+    RunSteps { chat_id: i64, lists: Vec<StepList> },
     /// The model server started loading, became ready, stopped or failed. Not about any one chat:
     /// everyone is told, so a page can say "the model is being applied, don't close it".
     ModelState {
@@ -96,6 +108,72 @@ pub enum ServerEvent {
         /// Why it failed or stopped, when there is something to say
         detail: Option<String>,
     },
+}
+
+/// What a model call is for: the reply itself, or one of the three calls a compaction makes
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CallKind {
+    Reply,
+    /// The question that makes the model write its working notes before a fold
+    Notes,
+    Summary,
+    Facts,
+}
+
+/// The model call in flight: what it is for and how far it has got
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+pub struct CallStatus {
+    pub kind: CallKind,
+    /// Set once the server has reported on the prompt; `None` from a server that doesn't (Ollama)
+    pub prompt: Option<PromptProgress>,
+    /// Set once the first token is out
+    pub generation: Option<Generation>,
+}
+
+/// Work made of steps, as a page lists them: what the work is called and its steps in order
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
+pub struct StepList {
+    /// Names the list within its run
+    pub id: u64,
+    pub title: String,
+    pub steps: Vec<RunStep>,
+}
+
+/// One step of a `StepList`. Nothing in it is specific to what the step does: a page draws any step from these fields.
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
+pub struct RunStep {
+    /// Names the step within its list
+    pub id: String,
+    /// What the page calls it
+    pub label: String,
+    pub state: StepState,
+    /// What the step is doing or came to, in a few words: why it was skipped or failed, what it produced
+    pub detail: Option<String>,
+    /// How far the step has got, when it can count its work
+    pub progress: Option<StepProgress>,
+    /// The model call the step makes: how far it has got while it runs, what it came to once it ended. Kept with the
+    /// step, so a page opened in the middle of the work shows what the finished steps did.
+    pub call: Option<CallStatus>,
+}
+
+/// How much of a step's work is done
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct StepProgress {
+    pub done: u64,
+    /// Not known for work that has no end in sight
+    pub total: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StepState {
+    Pending,
+    Running,
+    Done,
+    Failed,
+    /// Not needed this time (the notes of a chat without tools, a fold that wasn't reached)
+    Skipped,
 }
 
 /// Why a run ended.
@@ -142,6 +220,8 @@ impl ServerEvent {
             ServerEvent::MessagesRemoved { chat_id, .. } => Some(*chat_id),
             ServerEvent::ReplyPiece { chat_id, .. } => Some(*chat_id),
             ServerEvent::ReplyRestart { chat_id } => Some(*chat_id),
+            ServerEvent::CallProgress { chat_id, .. } => Some(*chat_id),
+            ServerEvent::RunSteps { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatCreated { chat_id } => Some(*chat_id),
             ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),

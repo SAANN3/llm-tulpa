@@ -24,7 +24,7 @@ use super::history::History;
 use super::{AgentToolCall, AgentToolPermission, ChatOut};
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
-use crate::services::event_bus::{EventBus, RunEndReason, ServerEvent};
+use crate::services::event_bus::{CallStatus, EventBus, RunEndReason, ServerEvent, StepList};
 use crate::services::file_store::FileStore;
 use crate::services::llm::ThinkChoice;
 use crate::services::settings_store::SettingsStore;
@@ -108,6 +108,10 @@ pub struct TurnState {
     /// What the model call in flight has written so far, while it writes; the `reply_piece` events numbered after
     /// `seq` continue it.
     pub reply: Option<ReplySoFarOut>,
+    /// What the model call in flight is doing, as last reported (see `ServerEvent::CallProgress`).
+    pub call: Option<CallStatus>,
+    /// The lists of steps of the work going on (a compaction, a plan), oldest first (see `ServerEvent::RunSteps`).
+    pub steps: Vec<StepList>,
 }
 
 /// A reply being written, as far as its pieces were sent (see `ServerEvent::ReplyPiece`).
@@ -442,6 +446,8 @@ impl TurnRunner {
                     thinking: snapshot.reply.thinking,
                     text: snapshot.reply.text,
                 }),
+                call: snapshot.call,
+                steps: snapshot.steps,
             });
         }
         // Only for a chat with no run: while one goes on, a pending call is just between the model's
@@ -461,6 +467,8 @@ impl TurnRunner {
             pending: if waiting { pending } else { vec![] },
             last_end,
             reply: None,
+            call: None,
+            steps: vec![],
         })
     }
 
@@ -474,7 +482,7 @@ impl TurnRunner {
         think: Option<ThinkChoice>,
     ) -> Result<ChatOut, ErrorService> {
         self.store_user_message(chat_id, prompt, images, vec![]).await?;
-        self.turn.make_room(chat_id, think.clone(), 0).await;
+        self.turn.make_room(chat_id, think.clone(), 0, None).await;
         let notices = self.notices.flush_job_notices(chat_id).await?;
         let messages = self.history.for_chat(chat_id).await?;
         let step = Step { chat_id, messages, think, notices, can_auto_continue: true, step_limit: None, run: RunTracker::new() };
@@ -713,7 +721,7 @@ impl TurnRunner {
             // Not for a regenerate: its prompt is the one the old reply was made from, minus that reply, and
             // folding now could fold the very reply (and its question) that is about to be replaced
             if replace.is_none() {
-                self.turn.make_room(chat_id, think.clone(), 0).await;
+                self.turn.make_room(chat_id, think.clone(), 0, Some(&run)).await;
             }
             if !notices.is_empty() {
                 self.events.publish(ServerEvent::MessagesChanged { chat_id });

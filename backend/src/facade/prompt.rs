@@ -92,7 +92,7 @@ impl PromptFacade {
         let fallback = fallback_chat_name(&content);
         let result = self
             .one_shot
-            .ask(&model.provider, &model.name, system, ChatMessage::user_with_images(content, images))
+            .ask(&model.provider, &model.name, system, ChatMessage::user_with_images(content, images), None)
             .await?;
 
         // A small or heavily quantized model can answer with nothing, and a chat without a name is
@@ -122,7 +122,7 @@ impl PromptFacade {
 
         let result = self
             .one_shot
-            .ask(&model.provider, &model.name, system, ChatMessage::user_with_images(content, vec![]))
+            .ask(&model.provider, &model.name, system, ChatMessage::user_with_images(content, vec![]), None)
             .await?;
 
         Ok(GreetOut {
