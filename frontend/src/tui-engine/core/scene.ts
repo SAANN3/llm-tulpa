@@ -11,6 +11,13 @@ const ALPHA = [0.13, 0.20, 0.30, 0.42, 0.50]
 /** A computed brightness as a level, rounded and kept in range */
 export const level = (n: number): Level => Math.max(0, Math.min(5, Math.round(n))) as Level
 
+/** The last code point of ASCII: the font has these at the width of a cell, so they are not measured */
+const ASCII_END = 0x7e
+/** A symbol whose width is this far (px) from a cell's is drawn at its own cell rather than in the row */
+const ADVANCE_TOLERANCE = 0.01
+/** Beyond this (px) a symbol is also squeezed or stretched to its cell: closer than that, moving it is enough */
+const SQUEEZE_FROM = 0.3
+
 /**
  * The one renderer the animated backgrounds and the interface widgets both draw through: a grid of characters over a
  * canvas. A drawing step fills the grid with `put` (a character and a level per cell) and `flush` draws it as text, one
@@ -45,6 +52,8 @@ export class TuiScene {
     private clips: TuiRect[] = []
     /** Whether a wide symbol was written since the grid was cleared; keeps the checks for one off the common path */
     private hasWide = false
+    /** The width in px of a symbol in the font that draws it, once measured: see `flush` */
+    private advances = new Map<string, number>()
 
     constructor(ctx: CanvasRenderingContext2D) {
         this.ctx = ctx
@@ -74,6 +83,7 @@ export class TuiScene {
         this.ctx.font = FONT
         this.ctx.textBaseline = 'top'
         this.cw = this.ctx.measureText('M').width
+        this.advances.clear()
         this.cols = Math.ceil(width / this.cw) + 1
         this.rows = Math.ceil(height / this.ch) + 1
         this.chars = new Array<string>(this.cols * this.rows).fill(' ')
@@ -114,26 +124,65 @@ export class TuiScene {
         for (let r = 0; r < this.rows; r++) this.ctx.fillText(line, 0, r * this.ch + this.textShiftY)
     }
 
-    /** Draws the grid: one pass per level, each row as a single string with the other levels' cells left blank */
+    /**
+     * A symbol outside the ASCII range that the font draws at some width other than a cell's: the font has no glyph for it
+     * (box drawing and braille are not in the subsets the page loads) and another font, which differs by device, draws it.
+     * In a row string every such symbol would push the rest of the row out of line.
+     */
+    private misfit(ch: string): number | null {
+        if (ch === '' || ch.charCodeAt(0) <= ASCII_END) return null
+        let advance = this.advances.get(ch)
+        if (advance === undefined) {
+            advance = this.ctx.measureText(ch).width
+            this.advances.set(ch, advance)
+        }
+        return Math.abs(advance - this.cw) > ADVANCE_TOLERANCE ? advance : null
+    }
+
+    /**
+     * Draws the grid: one pass per level, each row as a single string with the other levels' cells left blank. The wide
+     * symbols and the ones `misfit` finds are drawn on their own at their cell, the latter squeezed or stretched to it.
+     */
     flush(): void {
         const {cols, rows, chars, levels, hasWide} = this
         for (let L = 1; L <= 5; L++) {
-            this.ctx.fillStyle = rgba(L === 5 ? this.colors.fg : this.colors.accent, Math.min(0.9, ALPHA[L - 1] * this.strength * this.ink * (L === 5 ? 0.8 : 1)))
+            this.ctx.fillStyle = this.levelStyle(L)
             for (let r = 0; r < rows; r++) {
                 let s = '', any = false
                 let wide: number[] | null = null
+                let fitted: number[] | null = null
                 const o = r * cols
                 for (let c = 0; c < cols; c++) {
                     if (levels[o + c] !== L) { s += ' '; continue }
                     any = true
                     if (hasWide && chars[o + c] === '') s += ' '
                     else if (hasWide && c + 1 < cols && chars[o + c + 1] === '') { (wide ??= []).push(c); s += ' ' }
+                    else if (this.misfit(chars[o + c]) != null) { (fitted ??= []).push(c); s += ' ' }
                     else s += chars[o + c]
                 }
                 if (any) this.ctx.fillText(s, 0, r * this.ch + this.textShiftY)
                 if (wide) for (const c of wide) this.ctx.fillText(chars[o + c], c * this.cw, r * this.ch + this.textShiftY)
+                if (fitted) for (const c of fitted) this.fillFitted(chars[o + c], c * this.cw, r * this.ch + this.textShiftY)
             }
         }
+    }
+
+    private fillFitted(ch: string, x: number, y: number): void {
+        const advance = this.advances.get(ch) ?? this.cw
+        if (Math.abs(advance - this.cw) <= SQUEEZE_FROM) {
+            this.ctx.fillText(ch, x, y)
+            return
+        }
+        this.ctx.save()
+        this.ctx.translate(x, y)
+        this.ctx.scale(this.cw / advance, 1)
+        this.ctx.fillText(ch, 0, 0)
+        this.ctx.restore()
+    }
+
+    /** The fill style of a level: the accent at a rising opacity for 1 to 4, the text color for 5 */
+    private levelStyle(l: number): string {
+        return rgba(l === 5 ? this.colors.fg : this.colors.accent, Math.min(0.9, ALPHA[l - 1] * this.strength * this.ink * (l === 5 ? 0.8 : 1)))
     }
 
     // ---- clipping ----
