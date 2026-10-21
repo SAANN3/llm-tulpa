@@ -1,7 +1,6 @@
-import {useEffect, useState} from 'react'
-
 import '../styles/run-status.scss'
 import type {TurnView} from '../hooks/use-turn.ts'
+import {useSecondsSince} from '../hooks/use-seconds-since.ts'
 import {formatDurationShort, formatTokenCount} from '../utils/format.ts'
 import {Button, Div} from './primitives'
 import {RunActivity} from './run-activity/run-activity.tsx'
@@ -11,21 +10,6 @@ export interface RunStatusProps {
     /** The reply being written has got to its text: the thinking is over */
     writing: boolean
     onStop: () => void
-}
-
-/** Seconds since `since`, read from the clock on every tick rather than counted up, and again when the tab is shown: a background tab's timers are throttled, so a counter falls behind real time and a run that is still going looks stalled the moment you tab back in */
-const useSecondsSince = (since: number | null): number => {
-    const [now, setNow] = useState(() => Date.now())
-    useEffect(() => {
-        const tick = () => setNow(Date.now())
-        const id = setInterval(tick, 1000)
-        document.addEventListener('visibilitychange', tick)
-        return () => {
-            clearInterval(id)
-            document.removeEventListener('visibilitychange', tick)
-        }
-    }, [])
-    return since == null ? 0 : Math.max(0, Math.floor((now - since) / 1000))
 }
 
 /** Where the next reply will land while a run is going: what it is doing now (reading the chat, the model thinking or writing, a compaction, a tool running, or waiting for the user), how long the run has been going and what it has spent, with the stop button */
