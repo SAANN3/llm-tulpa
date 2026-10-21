@@ -1,0 +1,42 @@
+# Written to /etc/nginx/conf.d/default.conf when the container starts (the nginx image fills in the ${...} names from
+# the environment and leaves nginx's own $variables alone): BACKEND_ADDR is where the backend answers, as the container
+# reaches it.
+
+# Plain http: the page, as it always was. The page talks to the backend directly (frontend/src/config.ts), so it does not
+# use the /api below; it is there for a reverse proxy in front (your own nginx or Caddy with a real certificate, on a
+# domain), which can then send everything to this one port.
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    include /etc/nginx/conf.d/api-proxy.inc;
+
+    # react-router uses client-side routes (/chat, /settings, /setup, ...) — without
+    # this, refreshing or deep-linking to any of them 404s, since nginx would
+    # otherwise look for a matching file/directory on disk instead of index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+# https, for the things a browser only allows on a secure page (the microphone). A page served over https may not call
+# the backend over http, so the backend sits behind the same address here: the page calls /api on its own origin.
+# The certificate is the one 40-tls.sh picked (see there); it is swapped in place and nginx reloaded when it changes.
+server {
+    listen 443 ssl;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    ssl_certificate /etc/nginx/tls-active/cert.pem;
+    ssl_certificate_key /etc/nginx/tls-active/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    include /etc/nginx/conf.d/api-proxy.inc;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

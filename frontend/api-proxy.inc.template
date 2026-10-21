@@ -1,0 +1,15 @@
+# The backend's API, forwarded under /api/ of whichever server includes this (see nginx.conf.template). Written to
+# /etc/nginx/conf.d/api-proxy.inc when the container starts, with the backend's address filled in from the environment.
+location /api/ {
+    proxy_pass http://${BACKEND_ADDR};
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # The event stream (/api/live) and the replies that are written as they come must not be held back or cut
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+    # Uploads (files attached to a message, a recording) are limited by the backend, not here
+    client_max_body_size 512m;
+}

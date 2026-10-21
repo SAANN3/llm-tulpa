@@ -49,6 +49,17 @@ VIDEO_GID=$(getent group video | cut -d: -f3)
 RENDER_GID=$(getent group render | cut -d: -f3)
 export VIDEO_GID="${VIDEO_GID:-44}" RENDER_GID="${RENDER_GID:-109}"
 
+# The https certificate of the frontend container (voice input needs a secure page): its folder, which the backend
+# also reads and writes (its `tls_dir` defaults to the same place), made here so Docker doesn't create it as root, and
+# the names the self-signed certificate is made for: this machine's, so the address you open it by is on it.
+TLS_DIR="${TLS_DIR:-$HOME/.llm-tulpa/tls}"
+mkdir -p "$TLS_DIR"
+export TLS_DIR
+ADDRESSES="$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | tr '\n' ',')"
+[ -n "$ADDRESSES" ] || ADDRESSES="$(hostname -I 2>/dev/null | tr ' ' ',')"
+TLS_NAMES="localhost,127.0.0.1,$(hostname 2>/dev/null),$ADDRESSES"
+export TLS_NAMES="$(echo "$TLS_NAMES" | tr -s ',' | sed 's/^,//;s/,$//')"
+
 # --build is cheap when nothing changed — Docker's layer cache skips every step
 # whose inputs haven't changed, so this only actually rebuilds what you edited.
 # shellcheck disable=SC2086

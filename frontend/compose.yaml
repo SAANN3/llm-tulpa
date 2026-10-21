@@ -10,6 +10,19 @@ services:
         VITE_BACKEND_URL: ${FRONTEND_BACKEND_URL:-}
     ports:
       - "5173:80"
+      # https, for what a browser only allows on a secure page (voice input): see nginx.conf.template
+      - "${FRONTEND_HTTPS_PORT:-5443}:443"
+    # How the container reaches the backend, which runs on the host (natively, or in a container on the host network)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # The names and addresses the self-signed certificate is made for (the start scripts fill in this machine's)
+      TLS_NAMES: ${TLS_NAMES:-localhost}
+      HTTPS_PORT: ${FRONTEND_HTTPS_PORT:-5443}
+    volumes:
+      # The certificate: the generated one, and the one uploaded in Settings (the backend writes it; its `tls_dir`
+      # defaults to the same folder)
+      - ${TLS_DIR:-${HOME}/.llm-tulpa/tls}:/tls
     networks:
       - app-net
     depends_on:
