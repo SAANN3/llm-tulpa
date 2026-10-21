@@ -61,3 +61,57 @@
     white-space: nowrap;
   }
 }
+
+// Settings → Voice → the speed: a slider with its value beside it, and the table of a measurement
+.voice-speed__slider {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+
+  input[type='range'] {
+    width: 180px;
+  }
+}
+
+.voice-speed__value {
+  min-width: 52px;
+  font-size: 12.5px;
+  opacity: 0.85;
+}
+
+.voice-speed__sample {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  flex-wrap: wrap;
+}
+
+.voice-speed__table {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+}
+
+.voice-speed__model {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $space-2;
+}
+
+.voice-speed__runs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2 $space-4;
+}
+
+.voice-speed__run {
+  font-size: 12.5px;
+  opacity: 0.8;
+}
+
+// The fewest threads that come close to the fastest
+.voice-speed__run--best {
+  color: var(--color-tertiary);
+  opacity: 1;
+}

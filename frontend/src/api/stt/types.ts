@@ -27,6 +27,42 @@ export interface SttTask {
     error: string | null
 }
 
+/** What the owner may tune about how the models run */
+export interface SttTuning {
+    /** CPU threads a model reads with */
+    threads: number
+    /** Minutes of no use after which the loaded model is let go of; 0 keeps it for good */
+    idle_unload_minutes: number
+}
+
+export interface SttBenchRun {
+    threads: number
+    /** How long the recording took to read */
+    seconds: number
+    /** How many times faster than real time */
+    speed: number
+}
+
+export interface SttBenchModel {
+    model: string
+    label: string
+    runs: SttBenchRun[]
+    /** The fewest threads that come within a tenth of the fastest run */
+    best_threads: number | null
+}
+
+/** A measurement of how fast the installed models read at each thread count */
+export interface SttBenchmark {
+    state: 'running' | 'done' | 'failed'
+    audio_seconds: number
+    done: number
+    total: number
+    /** What is being read now, while it is */
+    note: string | null
+    models: SttBenchModel[]
+    error: string | null
+}
+
 export interface SttStatus {
     models: SttModel[]
     /** The install going on, or the last one that ended */
@@ -37,6 +73,11 @@ export interface SttStatus {
     model: string | null
     /** The language the caller chose for it; null means the model finds it out */
     language: string | null
+    tuning: SttTuning
+    /** How many cores this machine has */
+    cores: number
+    /** The measurement going on, or the last one that ended */
+    benchmark: SttBenchmark | null
 }
 
 export interface SttSession {

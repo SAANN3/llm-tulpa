@@ -3,12 +3,12 @@ import {getSttStatus} from '../api/stt/status.ts'
 import type {SttStatus} from '../api/stt/types.ts'
 import {debugLog} from '../utils/debug.ts'
 
-/** How often the status is read while a model is being installed */
+/** How often the status is read while a model is being installed or measured */
 const POLL_MS = 1500
 
 /**
- * What the backend has to say about voice input: the models, the install going on, whether the caller can use it at
- * all. Read when the page that asks opens, and again every moment while an install runs, so its progress and its end
+ * What the backend has to say about voice input: the models, the install and the measurement going on, whether the caller can use it at
+ * all. Read when the page that asks opens, and again every moment while an install or a measurement runs, so its progress and its end
  * show without a reload. `refresh` reads it now (after starting or removing an install).
  */
 export const useSttStatus = (): { status: SttStatus | null; refresh: () => Promise<void> } => {
@@ -27,12 +27,12 @@ export const useSttStatus = (): { status: SttStatus | null; refresh: () => Promi
         void refresh()
     }, [refresh])
 
-    const installing = status?.task?.state === 'running'
+    const busy = status?.task?.state === 'running' || status?.benchmark?.state === 'running'
     useEffect(() => {
-        if (!installing) return
+        if (!busy) return
         const id = setInterval(() => void refresh(), POLL_MS)
         return () => clearInterval(id)
-    }, [installing, refresh])
+    }, [busy, refresh])
 
     return {status, refresh}
 };

@@ -17,6 +17,8 @@ export interface VoiceStatusProps {
     startedAt: number | null
     /** Ends the input and keeps what was said, as the microphone button does */
     onStop: () => void
+    /** The title says that Escape drops the input: for the one whose page handles that key */
+    escCancels?: boolean
     className?: string
 }
 
@@ -29,9 +31,9 @@ const TITLES: Record<SpeechInputState, string> = {
 
 /** Where a voice input is while it goes on, in the place the run status takes during a reply: a graph of how loud the
  * microphone is (so a dead or muted one is seen at once) and the stop button */
-export function VoiceStatus({state, levels, startedAt, onStop, className}: VoiceStatusProps) {
+export function VoiceStatus({state, levels, startedAt, onStop, escCancels = true, className}: VoiceStatusProps) {
     const elapsed = useSecondsSince(startedAt)
-    const parts = [TITLES[state], ...(startedAt != null ? [formatDurationShort(elapsed)] : []), ...(state === 'listening' ? ['Esc cancels'] : [])]
+    const parts = [TITLES[state], ...(startedAt != null ? [formatDurationShort(elapsed)] : []), ...(state === 'listening' && escCancels ? ['Esc cancels'] : [])]
     // Speech peaks sit far below full scale; the root evens the quiet and the loud out so the graph moves at a normal voice
     const values = levels.map(Math.sqrt)
 

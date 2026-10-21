@@ -7,6 +7,7 @@ import {SecurePageRow} from '../../components/secure-page-row.tsx'
 import {Label, Select} from '../../components/primitives'
 import {SettingsRow, SettingsSection} from '../../components/settings-fields.tsx'
 import {VoiceModels} from '../../components/voice-models.tsx'
+import {VoiceSpeed} from '../../components/voice-speed.tsx'
 import {useAuth} from '../../context/use-auth.ts'
 import {useSettings} from '../../context/use-settings.ts'
 import {useSttStatus} from '../../hooks/use-stt-status.ts'
@@ -76,6 +77,11 @@ export const VoiceTab = () => {
                             onChosen={(label) => void setSettings({stt_language: LANGUAGES.find((language) => language.label === label)?.code ?? ''})}/>
                 </SettingsRow>
             </SettingsSection>
+            {owner && status ? (
+                <SettingsSection title="Speed">
+                    <VoiceSpeed status={status} onChanged={() => void refresh()}/>
+                </SettingsSection>
+            ) : null}
             <SettingsSection title="Secure connection">
                 <SecurePageRow secure={secure} port={httpsPort} addresses={tls?.addresses ?? []}/>
                 {owner ? <CertificateField status={tls} onChanged={readTls}/> : null}
