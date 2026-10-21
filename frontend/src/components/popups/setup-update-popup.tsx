@@ -16,7 +16,7 @@ export const SetupUpdatePopup = ({open, onSetup, onLater}: SetupUpdatePopupProps
             <Reload width={48} height={48}/>
         </Div>
         <Label text="We updated our codebase, and some changes may need a little setup. Your existing chats are safe."/>
-        <Label variant="secondary" text="The wizard keeps your current answers and only asks about what is new. It can also move your existing chats to the new model."/>
+        <Label variant="secondary" text="The wizard only asks about what is new and leaves everything you set up before as it is."/>
         <Div className="popup__actions">
             <Button variant="secondary" text="Later" onClicked={onLater}/>
             <Button text="Set up now" onClicked={onSetup}/>

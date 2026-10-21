@@ -5,6 +5,9 @@ import type {useSettings} from '../../context/use-settings.ts'
  * it. */
 export interface StepDef {
     key: string
+    /** The setup revision that introduced the step. A first run goes through every step; an update (`/setup/update`) only
+     * the ones newer than the revision the owner already completed, so it never asks again about what they set up. */
+    since?: number
     /** The line in the step list it belongs to (Basics, Model…); a step with `part` is one of several under it */
     group: string
     part?: string

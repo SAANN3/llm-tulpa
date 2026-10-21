@@ -12,6 +12,7 @@ export const useRebindStep = (profileId: number | null): StepDef => {
 
     return {
         key: 'rebind',
+        since: 1,
         group: 'Existing chats',
         title: 'Existing chats',
         canNext: true,

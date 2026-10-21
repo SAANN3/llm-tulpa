@@ -19,6 +19,9 @@ const PROVIDERS = [
     {value: OLLAMA, label: OLLAMA, help: 'For those who already run Ollama.'},
 ]
 
+/** The setup revision that introduced the model steps (see `StepDef.since`) */
+const SINCE = 1
+
 /** Where the model runs, then (for the built-in llama.cpp) its engine and the model file, or (for
  * Ollama) the model to pull or choose */
 export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; llamaProfileId: number | null; summary: string | null } => {
@@ -37,6 +40,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
 
     const providerStep: StepDef = {
         key: 'provider',
+        since: SINCE,
         group: 'Model',
         part: 'Provider',
         title: 'Model · Provider',
@@ -52,6 +56,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
     if (provider === OLLAMA) {
         return {llamaProfileId: null, summary: ollamaModel != null ? `${ollamaModel} on Ollama` : null, steps: [providerStep, {
             key: 'model',
+            since: SINCE,
             group: 'Model',
             part: 'Model',
             title: 'Model · Model',
@@ -87,6 +92,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
         providerStep,
         {
             key: 'engine',
+            since: SINCE,
             group: 'Model',
             part: 'llama.cpp',
             title: 'Model · llama.cpp',
@@ -95,6 +101,7 @@ export const useModelSteps = ({persist}: WizardContext): { steps: StepDef[]; lla
         },
         {
             key: 'llama-model',
+            since: SINCE,
             group: 'Model',
             part: 'Model file',
             title: downloadView ? 'Model · Download' : 'Model · Model file',

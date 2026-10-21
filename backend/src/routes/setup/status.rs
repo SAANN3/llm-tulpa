@@ -14,6 +14,8 @@ pub struct SetupStatus {
     has_owner: bool,
     /// Whether a newer release changed what the wizard sets up since the owner last completed it.
     update_available: bool,
+    /// The setup revision the owner last completed (0 when none): an update asks only about what a later revision added.
+    setup_revision: i32,
 }
 
 /// Public: reports whether the backend has a *working* database connection and an owner —
@@ -36,13 +38,13 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<SetupStatus> {
     }
 
     let services = state.services.read().await.clone();
-    let (configured, has_owner, update_available) = match services {
+    let (configured, has_owner, update_available, setup_revision) = match services {
         Some(services) if services.ping().await => {
             let has_owner = services.user_store.user_count().await.unwrap_or(0) > 0;
-            (true, has_owner, has_owner && services.setup_update_available().await)
+            (true, has_owner, has_owner && services.setup_update_available().await, services.setup_revision().await)
         }
-        _ => (false, false, false),
+        _ => (false, false, false, 0),
     };
 
-    Json(SetupStatus { configured, has_owner, update_available })
+    Json(SetupStatus { configured, has_owner, update_available, setup_revision })
 }

@@ -89,12 +89,14 @@ const Setup = () => {
 
     // Frozen at the first status we see: finishing the database step flips `configured`, and the
     // steps that were part of this run must not vanish from under the user mid-wizard.
-    const needsRef = useRef<{ db: boolean; owner: boolean } | null>(null)
+    const needsRef = useRef<{ db: boolean; owner: boolean; revision: number } | null>(null)
     if (status && !needsRef.current) {
-        needsRef.current = {db: !status.configured, owner: !status.has_owner}
+        needsRef.current = {db: !status.configured, owner: !status.has_owner, revision: status.setup_revision}
     }
     const needsDb = needsRef.current?.db ?? true
     const needsOwner = needsRef.current?.owner ?? true
+    // What the owner went through already: an update asks only about what came after
+    const completedRevision = needsRef.current?.revision ?? 0
 
     const [step, setStep] = useState(0)
     const [busy, setBusy] = useState(false)
@@ -123,7 +125,7 @@ const Setup = () => {
     const finish = useFinishStep(ctx, {summary, withNotifications: !upgrade})
 
     const steps: StepDef[] = upgrade
-        ? [...model.steps, ...(model.llamaProfileId != null ? [rebind] : []), finish]
+        ? [...[...model.steps, ...(model.llamaProfileId != null ? [rebind] : [])].filter((step) => (step.since ?? 0) > completedRevision), finish]
         : [
             basics.step,
             ...(needsDb ? [database.step] : []),

@@ -3,6 +3,8 @@ export interface SetupStatus {
     has_owner: boolean
     /** A newer release changed what the wizard sets up since the owner last completed it */
     update_available: boolean
+    /** The setup revision the owner last completed (0 when none): an update asks only about what a later revision added */
+    setup_revision: number
 }
 
 export interface DatabaseForm {

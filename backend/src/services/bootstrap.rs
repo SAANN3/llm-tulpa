@@ -82,6 +82,11 @@ impl AppServices {
         self.db.execute_unprepared("SELECT 1").await.is_ok()
     }
 
+    /// The setup revision the owner last went through (0 when never, or when it can't be read).
+    pub async fn setup_revision(&self) -> i32 {
+        crate::services::migrate::setup_revision(&self.db).await.unwrap_or(0)
+    }
+
     /// Whether a release has changed the setup since the owner last went through it.
     pub async fn setup_update_available(&self) -> bool {
         crate::services::migrate::setup_revision(&self.db).await.is_ok_and(|rev| rev < crate::services::migrate::SETUP_REVISION)
