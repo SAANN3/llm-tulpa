@@ -1,6 +1,6 @@
 import {Fragment, useRef, useState, type ReactNode} from 'react'
 import {Navigate, useMatch} from 'react-router-dom'
-import {Brush, Cpu, Database, Flag, Message, SlidersHorizontal, User} from 'pixelarticons/react'
+import {Brush, Cpu, Database, Flag, Message, Mic, SlidersHorizontal, User} from 'pixelarticons/react'
 import '../../styles/setup.scss'
 import {findBackground} from '../../backgrounds'
 import {Frame} from '../../components/frame.tsx'
@@ -19,6 +19,7 @@ import {useFinishStep} from './steps/finish-step.tsx'
 import {useLookStep} from './steps/look-step.tsx'
 import {useModelSteps} from './steps/model-step.tsx'
 import {useRebindStep} from './steps/rebind-step.tsx'
+import {useVoiceStep} from './steps/voice-step.tsx'
 import type {StepDef, WizardContext} from './types.ts'
 
 const ICON_SIZE = 16
@@ -27,6 +28,7 @@ const ICONS: Record<string, ReactNode> = {
     Database: <Database width={ICON_SIZE} height={ICON_SIZE}/>,
     Account: <User width={ICON_SIZE} height={ICON_SIZE}/>,
     Model: <Cpu width={ICON_SIZE} height={ICON_SIZE}/>,
+    Voice: <Mic width={ICON_SIZE} height={ICON_SIZE}/>,
     Look: <Brush width={ICON_SIZE} height={ICON_SIZE}/>,
     'Existing chats': <Message width={ICON_SIZE} height={ICON_SIZE}/>,
     'All set': <Flag width={ICON_SIZE} height={ICON_SIZE}/>,
@@ -116,6 +118,7 @@ const Setup = () => {
     // `/setup/update`: an install that is already set up going through what a newer release added
     const upgrade = useMatch('/setup/update') != null
     const look = useLookStep(ctx)
+    const voice = useVoiceStep()
     const summary: [string, string][] = [
         ...(!upgrade && needsOwner && account.username ? [['Account', `${account.username} (owner)`] as [string, string]] : []),
         ...(!upgrade && needsDb ? [['Database', database.summary] as [string, string]] : []),
@@ -125,12 +128,13 @@ const Setup = () => {
     const finish = useFinishStep(ctx, {summary, withNotifications: !upgrade})
 
     const steps: StepDef[] = upgrade
-        ? [...[...model.steps, ...(model.llamaProfileId != null ? [rebind] : [])].filter((step) => (step.since ?? 0) > completedRevision), finish]
+        ? [...[...model.steps, ...(model.llamaProfileId != null ? [rebind] : []), voice].filter((step) => (step.since ?? 0) > completedRevision), finish]
         : [
             basics.step,
             ...(needsDb ? [database.step] : []),
             ...(needsOwner ? [account.step] : []),
             ...model.steps,
+            voice,
             look,
             finish,
         ]

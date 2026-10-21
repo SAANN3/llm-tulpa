@@ -14,16 +14,18 @@ import {BehaviourTab} from './settings/behaviour-tab.tsx'
 import {draftOf, type SettingsDraft} from './settings/draft.ts'
 import {ModelsTab} from './settings/models-tab.tsx'
 import {ProfileTab} from './settings/profile-tab.tsx'
+import {VoiceTab} from './settings/voice-tab.tsx'
 
 const TABS = [
     {id: 'behaviour', label: 'Behaviour'},
     {id: 'appearance', label: 'Appearance'},
     {id: 'profile', label: 'Profile'},
     {id: 'models', label: 'Models & keys'},
+    {id: 'voice', label: 'Voice'},
 ]
 
-/** The user's settings in four tabs, the tab in the address (`/settings/appearance`). Behaviour and Profile are
- * saved together with Save; Appearance (kept in this browser) and Models & keys apply as they are changed. */
+/** The user's settings in five tabs, the tab in the address (`/settings/appearance`). Behaviour and Profile are
+ * saved together with Save; Appearance (kept in this browser), Models & keys and Voice apply as they are changed. */
 const Settings = () => {
     useDocumentTitle('Settings')
     const navigate = useNavigate()
@@ -73,6 +75,7 @@ const Settings = () => {
                     {tab === 'appearance' ? <AppearanceTab/> : null}
                     {tab === 'profile' ? <ProfileTab draft={draft} onDraft={onDraft}/> : null}
                     {tab === 'models' ? <ModelsTab/> : null}
+                    {tab === 'voice' ? <VoiceTab/> : null}
                 </Div>
                 <Div className="settings__actions">
                     <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>

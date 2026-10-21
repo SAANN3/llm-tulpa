@@ -10,7 +10,7 @@ const SCHEMA_VERSION: i32 = 18;
 
 /// Bumped when a release changes what the setup wizard configures. An install whose
 /// `schema_meta.setup_revision` is behind is offered the wizard again, with its current answers kept.
-pub const SETUP_REVISION: i32 = 1;
+pub const SETUP_REVISION: i32 = 2;
 
 /// The setup revision this database's owner last completed.
 pub async fn setup_revision(db: &DatabaseConnection) -> Result<i32, DbErr> {

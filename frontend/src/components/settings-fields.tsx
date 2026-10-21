@@ -18,18 +18,28 @@ export interface SettingsRowProps {
     accent?: boolean
     /** The control under the text, as wide as the row, for one that needs the room (a name field) */
     full?: boolean
+    /** The control at the top of the row, level with the name, instead of centered on the whole row: for a row whose help
+     * text is long, so the control stays beside the name */
+    top?: boolean
+    /** On a phone the control goes under the text, at the left: for a control too wide to sit beside a long text (a button
+     * with a long name). A short one stays at the right, like in every other row. */
+    stack?: boolean
+    /** Under the text and the control, across the row: what goes with the setting but is wider than a control (the progress
+     * of an install, why it failed) */
+    below?: ReactNode
     children: ReactNode
 }
 
 /** One setting: its name and help on the left, its control at the right edge; or, `full`, the control under them
  * across the row. Every row in Settings is one of the two, so the controls line up down the page. */
-export const SettingsRow = ({label, help, accent, full, children}: SettingsRowProps) => (
-    <Div className={`settings-row${full ? ' settings-row--full' : ''}`}>
+export const SettingsRow = ({label, help, accent, full, top, stack, below, children}: SettingsRowProps) => (
+    <Div className={`settings-row${full ? ' settings-row--full' : ''}${top ? ' settings-row--top' : ''}${stack ? ' settings-row--stack' : ''}`}>
         <Div className="settings-row__text">
             <Label className="settings-row__label" text={label}/>
             {help ? <Label variant="secondary" className={`settings-row__help${accent ? ' settings-row__help--accent' : ''}`} text={help}/> : null}
         </Div>
         <Div className="settings-row__control">{children}</Div>
+        {below ? <Div className="settings-row__below">{below}</Div> : null}
     </Div>
 );
 

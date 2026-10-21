@@ -15,6 +15,10 @@ export interface Settings {
     max_turn_steps: number | null
     /** Whether a Hugging Face token is set (the token itself is never sent back) */
     has_hf_token: boolean
+    /** The speech model voice input uses; null means the first installed one */
+    stt_model: string | null
+    /** The language voice input is spoken in (`ru`, `en`, ...); null means the model finds it out */
+    stt_language: string | null
     llm_provider: string
     active_model: string | null
     /** The launch profile of that model new chats start on; null means its first one */
@@ -34,6 +38,10 @@ export interface SettingsUpdate {
     max_turn_steps?: number
     /** A Hugging Face access token; empty clears it */
     hf_token?: string
+    /** The speech model for voice input; empty goes back to the first installed one */
+    stt_model?: string
+    /** The language voice input is spoken in; empty lets the model find it out */
+    stt_language?: string
     llm_provider?: string
     active_model?: string
     /** The launch profile of `active_model`; leaving it out with a new model clears the choice */

@@ -98,6 +98,32 @@
   }
 }
 
+// The control level with the name, not centered on a tall row
+.settings-row--top {
+  align-items: start;
+}
+
+// On a phone there is too little room beside a long text for a wide control: it goes under the text, across the row
+@media (max-width: $mobile-max) {
+  .settings-row--stack {
+    grid-template-columns: minmax(0, 1fr);
+
+    // Under the text, as wide as the row: what is in it shares that width
+    .settings-row__control {
+      justify-self: stretch;
+    }
+  }
+}
+
+// Across the whole row, under the text and the control
+.settings-row__below {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  min-width: 0;
+}
+
 .settings-row__text {
   display: flex;
   flex-direction: column;

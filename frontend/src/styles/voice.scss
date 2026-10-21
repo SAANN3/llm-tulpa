@@ -1,0 +1,63 @@
+@use 'tokens' as *;
+
+// Settings → Voice: a model's install state beside its name, and the certificate controls
+
+.voice-model__state {
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
+.voice-model__note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-tertiary);
+}
+
+.voice-model__error {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-danger);
+}
+
+.voice-cert {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  align-items: flex-start;
+}
+
+// The buttons of the certificate row, one under another at its right edge
+.voice-cert__buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: $space-2;
+}
+
+// On a phone the row's control goes under its text, across the row: the buttons sit side by side, each taking half of it,
+// and one left over (a third) takes the whole line. A long name wraps inside its button.
+@media (max-width: $mobile-max) {
+  .voice-cert__buttons {
+    flex: 1;
+    flex-direction: row;
+    flex-wrap: wrap;
+
+    > button {
+      flex: 1 1 40%;
+      white-space: normal;
+    }
+  }
+}
+
+.voice-cert__pick {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  min-width: 0;
+
+  label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

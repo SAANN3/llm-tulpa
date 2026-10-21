@@ -1,11 +1,18 @@
 import type {ChangeEvent, CSSProperties, DragEvent} from 'react'
 import {useEffect, useRef, useState} from 'react'
+import {getHttpsAddress} from '../api/tls/https-address.ts'
 import type {ThinkChoice} from '../api/agent/types'
 import {uploadFile} from '../api/files/upload'
 import {getThinkingCapability, type ThinkingModel} from '../api/llm/thinking-capability.ts'
 import {Attachment as AttachmentIcon} from 'pixelarticons/react'
 import '../styles/user-input.scss'
+import {useAuth} from '../context/use-auth.ts'
+import {useSpeechInput} from '../hooks/use-speech-input.ts'
+import {useSttStatus} from '../hooks/use-stt-status.ts'
 import {Attachment} from './attachment.tsx'
+import {MicrophoneButton} from './microphone-button.tsx'
+import {VoiceStatus} from './voice-status.tsx'
+import {VoiceHintPopup, type VoiceHint} from './popups/voice-hint-popup.tsx'
 import {ModelMenu, type ThinkingLevels} from './model-menu.tsx'
 import {Button, Div, Label, TextField} from './primitives'
 import type {ModelChoice} from '../utils/model-choice.ts'
@@ -50,6 +57,10 @@ const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, 
 
 const isImageFile = (file: File): boolean => file.type.startsWith('image/');
 
+/** What was in the box before speaking began, then the words understood so far */
+const withSpoken = (before: string, spoken: string): string =>
+    before.trim() && spoken ? `${before.trimEnd()} ${spoken}` : before + spoken;
+
 /** The chat composer: holds draft text and attachments, and sends on Enter or click */
 export const UserInput = ({
     text,
@@ -83,6 +94,50 @@ export const UserInput = ({
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const dragDepthRef = useRef(0)
+
+    // Voice input: what is understood goes into the box as it comes, after whatever was already there
+    const {user} = useAuth()
+    const {status: speech} = useSttStatus()
+    const spokenFrom = useRef('')
+    const [voiceHint, setVoiceHint] = useState<VoiceHint | null>(null)
+    const [httpsAddress, setHttpsAddress] = useState<string | null>(null)
+    const voice = useSpeechInput((spoken) => setValue(withSpoken(spokenFrom.current, spoken)))
+    const secure = window.isSecureContext && navigator.mediaDevices?.getUserMedia != null
+    const voiceHintNow: VoiceHint | null = !secure ? {kind: 'insecure'} : speech != null && !speech.ready ? {kind: 'no-model'} : null
+    useEffect(() => {
+        // Only a page that can't record has any use for the address of one that can
+        if (!secure) void getHttpsAddress().then(setHttpsAddress)
+    }, [secure])
+    // What went wrong is said in a popup: it can be long, and the footer has no room for it
+    const voiceError = voice.error
+    useEffect(() => {
+        if (voiceError) setVoiceHint({kind: 'error', message: voiceError})
+    }, [voiceError])
+    const onMicrophone = () => {
+        if (voiceHintNow) return setVoiceHint(voiceHintNow)
+        if (voice.state === 'idle') spokenFrom.current = value
+        voice.toggle()
+    }
+    // Escape drops what was spoken: the box goes back to what it held; Enter ends the input and keeps the text
+    const voiceState = voice.state
+    const cancelVoice = voice.cancel
+    useEffect(() => {
+        if (voiceState !== 'listening') return
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return
+            e.preventDefault()
+            cancelVoice()
+            setValue(spokenFrom.current)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [voiceState, cancelVoice])
+    // Back to the box when the words are in, ready for a correction or Enter
+    const wasListening = useRef(false)
+    useEffect(() => {
+        if (voiceState === 'idle' && wasListening.current) textareaRef.current?.focus()
+        wasListening.current = voiceState !== 'idle'
+    }, [voiceState])
 
     // Starting an edit loads the message into the composer; ending one (sent or cancelled) empties
     // it, so the edited text isn't left behind as a draft
@@ -185,7 +240,7 @@ export const UserInput = ({
         void addFiles(files)
     }
 
-    const inputIsDisabled = inputDisabled ?? blocked
+    const inputIsDisabled = (inputDisabled ?? blocked) || voice.state !== 'idle'
     const dropDisabled = inputIsDisabled || uploading
     const isFileDrag = (e: DragEvent<HTMLDivElement>) => e.dataTransfer.types.includes('Files')
 
@@ -221,6 +276,8 @@ export const UserInput = ({
     const removeFileId = (id: number) => setFileIds((prev) => prev.filter((fileId) => fileId !== id))
 
     return (
+        <>
+        {voice.state !== 'idle' ? <VoiceStatus className={className} state={voice.state} levels={voice.levels} startedAt={voice.startedAt} onStop={voice.toggle}/> : null}
         <Div
             onDragEnter={onDragEnter}
             onDragOver={onDragOver}
@@ -272,17 +329,24 @@ export const UserInput = ({
                     <AttachmentIcon width={20} height={20}/>
                 </Button>
                 <Div className="composer__hint">
-                    <Label variant="secondary" text="[Enter] Send"/>
-                    <Label variant="secondary" text="[Shift+Enter] Newline"/>
+                    {voice.state === 'listening'
+                        ? <Label variant="secondary" text="Listening… [Esc] Cancel"/>
+                        : <>
+                            <Label variant="secondary" text="[Enter] Send"/>
+                            <Label variant="secondary" text="[Shift+Enter] Newline"/>
+                        </>}
                 </Div>
                 <Div className="composer__controls">
                     {onModelPicked ? (
                         <ModelMenu current={modelChoice ?? null} onPick={onModelPicked} onUseDefault={onUseDefault} defaultChoice={defaultChoice}
                                    thinking={thinking} onThinking={chooseThinking} disabled={blocked}/>
                     ) : null}
+                    <MicrophoneButton state={voice.state} level={voice.level} unavailable={voiceHintNow != null} onClicked={onMicrophone}/>
                     <Button className="composer__send" text="Send" onClicked={send} disabled={blocked || !canSend}/>
                 </Div>
             </Div>
+            <VoiceHintPopup hint={voiceHint} isOwner={user?.role === 'owner'} httpsAddress={httpsAddress} onClose={() => setVoiceHint(null)}/>
         </Div>
+        </>
     )
 };

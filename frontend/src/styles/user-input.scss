@@ -108,3 +108,14 @@
     flex-shrink: 0;
   }
 }
+
+// The microphone: dimmed when voice input can't be used (it still answers a press, with why), lit in step with the
+// voice while it listens
+.composer__mic--unavailable {
+  opacity: 0.45;
+}
+
+.composer__mic--listening {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) calc(20% + var(--mic-level, 0) * 60%), transparent);
+}
