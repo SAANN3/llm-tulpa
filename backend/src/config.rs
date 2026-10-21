@@ -193,6 +193,11 @@ pub struct AppConfig {
     /// the default one); `0` keeps it loaded.
     #[serde(default = "default_stt_idle_unload_minutes")]
     pub stt_idle_unload_minutes: u64,
+    /// Where the HTTPS certificate of the frontend container lives: the one it generated, and the one the owner
+    /// uploaded in Settings (see `routes/tls`). Must be the folder the frontend container mounts as `/tls`.
+    /// Defaults to `~/.llm-tulpa/tls`.
+    #[serde(default)]
+    pub tls_dir: Option<PathBuf>,
     /// How many days a finished job's log is kept; the sweep runs once at startup. `0` keeps
     /// every log.
     #[serde(default = "default_job_log_retention_days")]
@@ -244,6 +249,7 @@ impl AppConfig {
             stt_dir: None,
             stt_threads: default_stt_threads(),
             stt_idle_unload_minutes: default_stt_idle_unload_minutes(),
+            tls_dir: None,
             job_log_retention_days: default_job_log_retention_days(),
             searxng_url: default_searxng_url(),
             host_root: None,
@@ -267,6 +273,16 @@ impl AppConfig {
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `stt_dir` in settings.json"))
                 .join(".llm-tulpa/stt")
+        })
+    }
+
+    /// `tls_dir` if set, else `~/.llm-tulpa/tls`: where the frontend container's compose file mounts it from by
+    /// default too, so the two agree without any setting. Panics without a home directory, like `resolved_files_dir`.
+    pub fn resolved_tls_dir(&self) -> PathBuf {
+        self.tls_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `tls_dir` in settings.json"))
+                .join(".llm-tulpa/tls")
         })
     }
 

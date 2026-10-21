@@ -18,6 +18,7 @@
   "stt_dir": null,
   "stt_threads": 4,
   "stt_idle_unload_minutes": 10,
+  "tls_dir": null,
   "job_log_retention_days": 7,
   "host_root": "/hostfs",
   "model_dir": "/models"

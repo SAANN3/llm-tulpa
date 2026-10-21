@@ -17,6 +17,7 @@ use crate::services::{
     model_library::ModelLibrary,
     stt::SttService,
     system_load::SystemLoad,
+    tls::TlsStore,
     tools::ToolService,
 };
 
@@ -49,6 +50,8 @@ pub struct AppState {
     pub hf: Arc<HfLibrary>,
     /// Speech to text for voice input: its models, and the live inputs being read
     pub stt: Arc<SttService>,
+    /// The frontend container's HTTPS certificate: what it serves, and an uploaded one to replace it
+    pub tls: Arc<TlsStore>,
     /// What the machine is using right now, for the Hardware view; needs no database
     pub system_load: Arc<SystemLoad>,
     pub services: Arc<RwLock<Option<AppServices>>>,
@@ -94,6 +97,7 @@ impl AppState {
         model_folder: Arc<ModelFolder>,
     ) -> Self {
         let installer = LlamaInstaller::new(runtime.clone(), config.llama_cpp.resolved_dir());
+        let tls = TlsStore::new(config.resolved_tls_dir());
         let stt = SttService::new(config.resolved_stt_dir(), config.stt_threads, config.stt_idle_unload_minutes);
         Self {
             auth: AuthService::new(&config.jwt_secret),
@@ -101,6 +105,7 @@ impl AppState {
             ollama,
             hf: Arc::new(HfLibrary::new(model_folder.clone())),
             stt,
+            tls,
             system_load: Arc::new(SystemLoad::new()),
             config: Arc::new(RwLock::new(config)),
             providers,

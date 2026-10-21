@@ -36,6 +36,7 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 | `stt_dir` | `~/.llm-tulpa/stt` | Where the speech-to-text models for voice input are stored (Settings, Voice). |
 | `stt_threads` | `4` | CPU threads a speech-to-text model uses. It runs on the CPU only, so the GPU stays with the language model. Also set in Settings → Voice → Speed, which writes it here and applies it at once. |
 | `stt_idle_unload_minutes` | `10` | Minutes of silence after which a loaded speech-to-text model is unloaded to free its memory; `0` keeps it loaded. Also set in Settings → Voice → Speed. |
+| `tls_dir` | `~/.llm-tulpa/tls` | The folder of the frontend container's HTTPS certificate, where a certificate uploaded in Settings is written. It has to be the folder the frontend container mounts as `/tls`, which `compose.yaml` does by default. |
 | `job_log_retention_days` | `7` | How many days a *finished* job's log is kept. The sweep runs once at startup and deletes older logs (the job's row stays, marked as cleaned up); `0` keeps every log. |
 | `searxng_url` | `http://localhost:8090` | The SearXNG instance `web.search_query` calls (the rate-limiting sidecar in front of it, not SearXNG's own port) — see the repo root's `searxng/`. |
 | `host_root` | unset | Where the host's root filesystem is mounted inside a container, so `os.get_disk_space` reports the host's disk. Docker: `/hostfs`. |
@@ -83,7 +84,8 @@ src/
 │                #   JWTs, model_library.rs is the model catalog + local files + pull/import tasks,
 │                #   llm/ the model providers (llama_cpp.rs, ollama.rs behind one trait), llama_runtime.rs
 │                #   runs llama-server, llama_install.rs installs it, hf_library.rs downloads from Hugging Face,
-│                #   stt/ is voice input's speech recognition (models, live sessions; CPU only)
+│                #   stt/ is voice input's speech recognition (models, live sessions; CPU only) and tls.rs checks
+│                #   an uploaded HTTPS certificate for the frontend container
 ├── tools/       # every tool the model can call — see TOOLS.md
 ├── plugins/     # optional integrations (chat platforms, ...) — see PLUGINS.md
 └── cache/       # per-user, on-demand caches for expensive-to-generate values (greeting, input examples)

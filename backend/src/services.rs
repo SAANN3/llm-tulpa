@@ -23,6 +23,7 @@ pub mod preset_store;
 pub mod process;
 pub mod settings_store;
 pub mod stt;
+pub mod tls;
 pub mod system_load;
 pub mod tools;
 pub mod user_store;
