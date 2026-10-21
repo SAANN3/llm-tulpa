@@ -183,6 +183,16 @@ pub struct AppConfig {
     /// Where background jobs (`os.start_job`) write their log files. Defaults to `~/.llm-tulpa/jobs`.
     #[serde(default)]
     pub jobs_dir: Option<PathBuf>,
+    /// Where the speech-to-text models for voice input are stored. Defaults to `~/.llm-tulpa/stt`.
+    #[serde(default)]
+    pub stt_dir: Option<PathBuf>,
+    /// How many CPU threads a speech-to-text model uses; it never runs on the GPU, which the language model has.
+    #[serde(default = "default_stt_threads")]
+    pub stt_threads: u32,
+    /// Minutes of silence after which a loaded speech-to-text model is unloaded to free its memory (about 1 GB for
+    /// the default one); `0` keeps it loaded.
+    #[serde(default = "default_stt_idle_unload_minutes")]
+    pub stt_idle_unload_minutes: u64,
     /// How many days a finished job's log is kept; the sweep runs once at startup. `0` keeps
     /// every log.
     #[serde(default = "default_job_log_retention_days")]
@@ -209,6 +219,14 @@ fn default_job_log_retention_days() -> u64 {
     7
 }
 
+fn default_stt_threads() -> u32 {
+    4
+}
+
+fn default_stt_idle_unload_minutes() -> u64 {
+    10
+}
+
 fn default_searxng_url() -> String {
     "http://localhost:8090".to_string()
 }
@@ -223,6 +241,9 @@ impl AppConfig {
             llama_cpp: LlamaCppConfig::default(),
             files_dir: None,
             jobs_dir: None,
+            stt_dir: None,
+            stt_threads: default_stt_threads(),
+            stt_idle_unload_minutes: default_stt_idle_unload_minutes(),
             job_log_retention_days: default_job_log_retention_days(),
             searxng_url: default_searxng_url(),
             host_root: None,
@@ -237,6 +258,15 @@ impl AppConfig {
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `files_dir` in settings.json"))
                 .join(".llm-tulpa/files")
+        })
+    }
+
+    /// `stt_dir` if set, else `~/.llm-tulpa/stt`. Panics without a home directory, like `resolved_files_dir`.
+    pub fn resolved_stt_dir(&self) -> PathBuf {
+        self.stt_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `stt_dir` in settings.json"))
+                .join(".llm-tulpa/stt")
         })
     }
 

@@ -78,6 +78,8 @@ impl SettingsStore {
             use_tools: row.use_tools,
             max_turn_steps: row.max_turn_steps,
             has_hf_token: row.hf_token.is_some(),
+            stt_model: row.stt_model,
+            stt_language: row.stt_language,
             llm_provider: active
                 .as_ref()
                 .map(|m| m.provider.clone())
@@ -168,6 +170,14 @@ impl SettingsStore {
             // An empty token clears it
             model.hf_token = Set(Some(token.trim().to_string()).filter(|t| !t.is_empty()));
         }
+        if let Some(stt_model) = update.stt_model {
+            // An empty choice goes back to the default (the first installed model)
+            model.stt_model = Set(Some(stt_model.trim().to_string()).filter(|m| !m.is_empty()));
+        }
+        if let Some(stt_language) = update.stt_language {
+            // An empty language is "find it out"
+            model.stt_language = Set(Some(stt_language.trim().to_lowercase()).filter(|l| !l.is_empty()));
+        }
         if let Some(id) = active_model_id {
             model.active_model_id = Set(Some(id));
             // The profile belongs to the model it was chosen for; a new model starts on its first
@@ -181,6 +191,12 @@ impl SettingsStore {
     }
 
     /// The user's Hugging Face token, when they have set one.
+    /// The user's voice input choices: the speech-to-text model and the language (`None` for each default).
+    pub async fn stt_choices(&self, user_id: i64) -> Result<(Option<String>, Option<String>), SettingsStoreErrors> {
+        let row = self.row(user_id).await?;
+        Ok((row.stt_model, row.stt_language))
+    }
+
     pub async fn hf_token(&self, user_id: i64) -> Result<Option<String>, SettingsStoreErrors> {
         Ok(self.row(user_id).await?.hf_token)
     }
@@ -253,6 +269,10 @@ pub struct Settings {
     pub max_turn_steps: Option<i32>,
     /// Whether a Hugging Face token is set (the token itself is never sent back).
     pub has_hf_token: bool,
+    /// The speech-to-text model voice input uses; `None` means the first installed one.
+    pub stt_model: Option<String>,
+    /// The language voice input is spoken in (`ru`, `en`, ...); `None` means the model finds it out.
+    pub stt_language: Option<String>,
     /// The provider of the active model (`ollama` until one is picked).
     pub llm_provider: String,
     pub active_model: Option<String>,
@@ -275,6 +295,10 @@ pub struct SettingsUpdate {
     pub max_turn_steps: Option<i32>,
     /// A Hugging Face access token; empty clears it
     pub hf_token: Option<String>,
+    /// The speech-to-text model for voice input; empty goes back to the first installed one
+    pub stt_model: Option<String>,
+    /// The language voice input is spoken in; empty lets the model find it out
+    pub stt_language: Option<String>,
     pub llm_provider: Option<String>,
     pub active_model: Option<String>,
     /// The launch profile of `active_model` new chats start on. A new `active_model` without one clears

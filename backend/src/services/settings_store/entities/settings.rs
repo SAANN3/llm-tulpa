@@ -32,6 +32,10 @@ pub struct Model {
     pub max_turn_steps: Option<i32>,
     /// The user's Hugging Face access token, for downloading gated models.
     pub hf_token: Option<String>,
+    /// The speech-to-text model (`stt::catalog` id) their voice input uses; `NULL` means the first installed one.
+    pub stt_model: Option<String>,
+    /// The language their voice input is spoken in (a code such as `ru`); `NULL` means the model finds it out.
+    pub stt_language: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

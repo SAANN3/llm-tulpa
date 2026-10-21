@@ -26,6 +26,8 @@ FROM debian:trixie-slim
 # libdrm2/libdrm-amdgpu1 are the runtime counterparts of the builder stage's
 # libdrm-dev — linking needs the dev package, running needs the actual .so.
 #
+# libstdc++6: the speech-to-text engine of voice input (sherpa-onnx, linked into the binary) is C++.
+#
 # Everything else on this line is a general-purpose toolkit for os.execute_command —
 # baked into the image (permanent, survives every rebuild/restart) rather than left
 # for the model to apt-get on demand (which only lives as long as the current
@@ -61,7 +63,7 @@ FROM debian:trixie-slim
 # keep the two in sync when this list changes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates libssl3 libdrm2 libdrm-amdgpu1 sudo \
+        ca-certificates libssl3 libdrm2 libdrm-amdgpu1 libstdc++6 sudo \
         libgomp1 libvulkan1 mesa-vulkan-drivers \
         python3 python3-pip python3-venv \
         nodejs npm \

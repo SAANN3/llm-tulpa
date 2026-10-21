@@ -15,6 +15,7 @@ use crate::services::{
     model_folder::ModelFolder,
     llm::{LlmProviders, OllamaService},
     model_library::ModelLibrary,
+    stt::SttService,
     system_load::SystemLoad,
     tools::ToolService,
 };
@@ -46,6 +47,8 @@ pub struct AppState {
     pub library: Arc<ModelLibrary>,
     /// Hugging Face search and downloads into the model folder
     pub hf: Arc<HfLibrary>,
+    /// Speech to text for voice input: its models, and the live inputs being read
+    pub stt: Arc<SttService>,
     /// What the machine is using right now, for the Hardware view; needs no database
     pub system_load: Arc<SystemLoad>,
     pub services: Arc<RwLock<Option<AppServices>>>,
@@ -91,11 +94,13 @@ impl AppState {
         model_folder: Arc<ModelFolder>,
     ) -> Self {
         let installer = LlamaInstaller::new(runtime.clone(), config.llama_cpp.resolved_dir());
+        let stt = SttService::new(config.resolved_stt_dir(), config.stt_threads, config.stt_idle_unload_minutes);
         Self {
             auth: AuthService::new(&config.jwt_secret),
             library: Arc::new(ModelLibrary::new(ollama.clone(), model_folder.clone())),
             ollama,
             hf: Arc::new(HfLibrary::new(model_folder.clone())),
+            stt,
             system_load: Arc::new(SystemLoad::new()),
             config: Arc::new(RwLock::new(config)),
             providers,

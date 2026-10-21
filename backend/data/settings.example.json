@@ -15,6 +15,9 @@
   "searxng_url": "http://localhost:8090",
   "files_dir": null,
   "jobs_dir": null,
+  "stt_dir": null,
+  "stt_threads": 4,
+  "stt_idle_unload_minutes": 10,
   "job_log_retention_days": 7,
   "model_dir": null
 }
