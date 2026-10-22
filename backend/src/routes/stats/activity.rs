@@ -26,7 +26,7 @@ pub(crate) struct ChatsDayOut {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct JobKindOut {
-    /// `process` (a shell command) or `agent` (a sub-agent)
+    /// `process` (a shell command), `agent` (a sub-agent) or `task` (a task of the backend)
     kind: String,
     total: u64,
     /// Ended on its own with exit code 0 (a sub-agent: ended on its own)

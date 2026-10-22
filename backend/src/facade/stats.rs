@@ -152,12 +152,13 @@ impl StatsFacade {
         let chat_ids = self.chat_store.chat_ids_of(user_id).await?;
         let jobs = self.job_store.started_since(&chat_ids, range.since()).await?;
         let commands: Vec<&JobRecord> = jobs.iter().filter(|job| job.kind == JobKind::Process).collect();
-        let sub_agents: Vec<&JobRecord> = jobs.iter().filter(|job| job.kind != JobKind::Process).collect();
+        let sub_agents: Vec<&JobRecord> = jobs.iter().filter(|job| matches!(job.kind, JobKind::Agent { .. })).collect();
+        let tasks: Vec<&JobRecord> = jobs.iter().filter(|job| job.kind == JobKind::Task).collect();
 
         Ok(ActivitySummary {
             hourly: activity.hourly,
             chats_per_day: activity.chats_per_day,
-            jobs: vec![Self::summarize_jobs("process", &commands), Self::summarize_jobs("agent", &sub_agents)],
+            jobs: vec![Self::summarize_jobs("process", &commands), Self::summarize_jobs("agent", &sub_agents), Self::summarize_jobs("task", &tasks)],
         })
     }
 

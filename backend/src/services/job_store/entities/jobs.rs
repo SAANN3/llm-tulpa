@@ -24,10 +24,10 @@ pub struct Model {
     /// is told (a `notice` message) or has seen the outcome itself (a tool result
     /// showing it), so it's never reported twice.
     pub notified: bool,
-    /// `process` (a shell command) or `agent` (a sub-agent) — see `JobKind`, the only thing that
+    /// `process` (a shell command), `agent` (a sub-agent) or `task` (a task of the backend) — see `JobKind`, the only thing that
     /// reads or writes this as anything but a bare string.
     pub kind: String,
-    /// For an `agent` job, the chat the sub-agent runs in; `NULL` for a `process`.
+    /// For an `agent` job, the chat the sub-agent runs in; `NULL` otherwise.
     pub agent_chat_id: Option<i64>,
 }
 

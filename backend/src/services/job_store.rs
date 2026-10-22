@@ -70,14 +70,15 @@ impl JobStatus {
     }
 }
 
-/// What a job runs: a shell command, or a sub-agent working in a chat of its own. Both are
-/// started from a chat, finish on their own or are killed, and report back the same way — the
-/// difference is what "running" means (a process id vs. a task) and what the log holds (the
-/// command's output vs. the result the sub-agent handed back).
+/// What a job runs: a shell command, a sub-agent working in a chat of its own, or a task of the
+/// backend itself. All are started from a chat, finish on their own or are killed, and report back
+/// the same way — the difference is what "running" means (a process id vs. a task) and what the log
+/// holds (the command's output, the result the sub-agent handed back, or what the task has written so far).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Process,
     Agent { chat_id: i64 },
+    Task,
 }
 
 impl JobKind {
@@ -85,6 +86,7 @@ impl JobKind {
         match self {
             JobKind::Process => "process",
             JobKind::Agent { .. } => "agent",
+            JobKind::Task => "task",
         }
     }
 }
@@ -127,6 +129,7 @@ impl From<jobs::Model> for JobRecord {
     fn from(model: jobs::Model) -> Self {
         let kind = match (model.kind.as_str(), model.agent_chat_id) {
             ("agent", Some(chat_id)) => JobKind::Agent { chat_id },
+            ("task", _) => JobKind::Task,
             _ => JobKind::Process,
         };
         Self {
@@ -304,12 +307,47 @@ impl JobStore {
     where
         F: Future<Output = AgentJobEnd> + Send + 'static,
     {
+        self.start_in_process(chat_id, prompt, JobKind::Agent { chat_id: agent_chat_id }, move |log_path| async move {
+            let end = run.await;
+            // The result goes into the log before the job is recorded as ended: the moment the
+            // row says so, a notice may read it.
+            if let Err(e) = tokio::fs::write(&log_path, &end.text).await {
+                tracing::error!("couldn't write the sub-agent job's result to {}: {e}", log_path.display());
+            }
+            end.succeeded
+        })
+        .await
+    }
+
+    /// Starts a task of the backend itself — the transcription of a long recording, say — as a
+    /// background job of `chat_id`. `what` is recorded and shown back as the job's command. `run`
+    /// gets the path of the job's log (created empty) and writes its progress and result there as it
+    /// goes, so `os.job_output` shows a task that is still running; it answers whether it succeeded.
+    /// Killing the job aborts the task, and what it had written stays in the log.
+    pub async fn start_task<F, Fut>(&self, chat_id: i64, what: &str, run: F) -> Result<JobRecord, JobStoreErrors>
+    where
+        F: FnOnce(PathBuf) -> Fut + Send + 'static,
+        Fut: Future<Output = bool> + Send + 'static,
+    {
+        self.start_in_process(chat_id, what, JobKind::Task, run).await
+    }
+
+    /// What `start_agent` and `start_task` share: the row, the empty log, and a task that records the
+    /// job as ended when `run` is done.
+    async fn start_in_process<F, Fut>(&self, chat_id: i64, command: &str, kind: JobKind, run: F) -> Result<JobRecord, JobStoreErrors>
+    where
+        F: FnOnce(PathBuf) -> Fut + Send + 'static,
+        Fut: Future<Output = bool> + Send + 'static,
+    {
         let inserted = jobs::ActiveModel {
             chat_id: Set(chat_id),
-            command: Set(prompt.to_string()),
+            command: Set(command.to_string()),
             status: Set(JobStatus::Running.as_str().to_string()),
-            kind: Set(JobKind::Agent { chat_id: agent_chat_id }.as_str().to_string()),
-            agent_chat_id: Set(Some(agent_chat_id)),
+            kind: Set(kind.as_str().to_string()),
+            agent_chat_id: Set(match kind {
+                JobKind::Agent { chat_id } => Some(chat_id),
+                _ => None,
+            }),
             ..Default::default()
         }
         .insert(&self.db)
@@ -325,7 +363,7 @@ impl JobStore {
                 [id.into()],
             )
             .await?;
-            return Err(JobStoreErrors::Io(format!("couldn't create the sub-agent's log: {e}")));
+            return Err(JobStoreErrors::Io(format!("couldn't create the job's log: {e}")));
         }
         self.execute(
             "UPDATE jobs SET log_path = $2 WHERE id = $1",
@@ -341,13 +379,8 @@ impl JobStore {
         let (registered, ready) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
             let _ = ready.await;
-            let end = run.await;
-            // The result goes into the log before the job is recorded as ended: the moment the
-            // row says so, a notice may read it.
-            if let Err(e) = tokio::fs::write(&log_path, &end.text).await {
-                tracing::error!("couldn't write sub-agent job {id}'s result to its log: {e}");
-            }
-            record_exit(&db, &events, id, if end.succeeded { 0 } else { 1 }).await;
+            let succeeded = run(log_path).await;
+            record_exit(&db, &events, id, if succeeded { 0 } else { 1 }).await;
             tasks.lock().unwrap().remove(&id);
         });
         self.agent_tasks.lock().unwrap().insert(id, handle.abort_handle());

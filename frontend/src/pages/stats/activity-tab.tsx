@@ -8,7 +8,7 @@ import {useStats} from '../../hooks/use-stats.ts'
 import type {RangeOption} from './ranges.ts'
 import {formatMs} from '../../utils/stats.ts'
 
-const KIND_NAMES: Record<string, string> = {process: 'Commands', agent: 'Sub-agents'}
+const KIND_NAMES: Record<string, string> = {process: 'Commands', agent: 'Sub-agents', task: 'Tasks'}
 
 /** When the user is active, chats started, and how background jobs went */
 export const ActivityTab = ({range}: { range: RangeOption }) => {

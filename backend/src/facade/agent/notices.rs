@@ -49,7 +49,7 @@ impl Notices {
         let mut notices = Vec::with_capacity(jobs.len());
         for job in jobs {
             let content = match job.kind {
-                JobKind::Process => job_notice_text(&job),
+                JobKind::Process | JobKind::Task => job_notice_text(&job),
                 JobKind::Agent { .. } => self.agent_job_notice_text(&job).await,
             };
             let stored = self

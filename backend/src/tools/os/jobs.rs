@@ -18,7 +18,7 @@ const LOG_READ_BYTES: u64 = 256 * 1024;
 #[derive(Serialize)]
 pub(super) struct JobView {
     job_id: i64,
-    /// `process` (a command) or `agent` (a sub-agent).
+    /// `process` (a command), `agent` (a sub-agent) or `task` (a task of the backend, such as a transcription).
     kind: &'static str,
     /// The command line, or for a sub-agent the prompt it was given.
     command: String,
