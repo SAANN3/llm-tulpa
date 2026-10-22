@@ -110,6 +110,7 @@ export interface RecentModelsResponse {
 /** One part of what fills a chat's context, in the order the prompt sends them */
 export type ContextPartKind =
     | 'system_prompt'
+    | 'plugin_sections'
     | 'tools'
     | 'key_facts'
     | 'pinned'
