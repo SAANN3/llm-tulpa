@@ -115,6 +115,8 @@ pub enum ServerEvent {
 #[serde(rename_all = "snake_case")]
 pub enum CallKind {
     Reply,
+    /// The question that asks what to remember about the user, before a fold
+    Memory,
     /// The question that makes the model write its working notes before a fold
     Notes,
     Summary,

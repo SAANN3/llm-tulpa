@@ -17,7 +17,7 @@ use crate::plugins::registry::PluginRegistry;
 use crate::services::{
     chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore,
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
-    llama_runtime::LlamaRuntime, llm::LlmProviders, migrate::run_migrations, preset_store::PresetStore,
+    llama_runtime::LlamaRuntime, llm::LlmProviders, memory_store::MemoryStore, migrate::run_migrations, preset_store::PresetStore,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
     plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, stt::SttService, tools::ToolService,
     user_store::UserStore,
@@ -40,6 +40,7 @@ pub struct AppServices {
     pub job_store: Arc<JobStore>,
     pub launch_store: Arc<LaunchStore>,
     pub preset_store: Arc<PresetStore>,
+    pub memory_store: Arc<MemoryStore>,
     pub launches: Arc<LaunchFacade>,
     pub agent: Arc<Agent>,
     pub prompt: PromptFacade,
@@ -233,6 +234,7 @@ pub async fn bootstrap(
         launch_store.clone(),
     ));
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
+    let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
@@ -257,6 +259,7 @@ pub async fn bootstrap(
         preset_store.clone(),
         launches.clone(),
         Some(plugin_registry.clone()),
+        Some(memory_store.clone()),
         ollama_context_length,
     ));
     agent.bind_subagent_runner();
@@ -289,6 +292,7 @@ pub async fn bootstrap(
         preset_store.clone(),
         launches.clone(),
         None,
+        None,
         ollama_context_length,
     ));
 
@@ -315,6 +319,7 @@ pub async fn bootstrap(
         job_store,
         launch_store,
         preset_store,
+        memory_store,
         launches,
         agent,
         prompt,

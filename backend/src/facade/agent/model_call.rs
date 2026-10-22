@@ -67,7 +67,7 @@ impl ModelCall {
         let launch = self.launch.request_for(chat.user_id, chat.model_id, chat.launch_profile_id).await?;
         let context_length = launch.as_ref().and_then(|l| l.profile.context_length).map(|c| c as u64);
         let sampling = self.presets.effective_sampling(chat.user_id, chat.model_id).await?;
-        Ok(CallParams { launch, context_length, sampling })
+        Ok(CallParams { launch, context_length, sampling, max_reply_tokens: None })
     }
 
     /// The context window `chat`'s model runs under.

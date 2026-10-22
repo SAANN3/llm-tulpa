@@ -241,6 +241,9 @@ pub struct CallParams {
     /// what the reply-length cap is worked out from.
     pub context_length: Option<u64>,
     pub sampling: Sampling,
+    /// A cap on the reply, in tokens, under what the window leaves: for a request whose answer is short and whose
+    /// reasoning should not run on. `None` leaves the length to the window.
+    pub max_reply_tokens: Option<i32>,
 }
 
 /// One reply from a model, whichever provider produced it. Built by the provider from its own

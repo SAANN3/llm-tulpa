@@ -470,6 +470,36 @@ pub(super) fn notes_ask() -> String {
     )
 }
 
+/// The memory request, as the one extra user message at the end of the live prompt: what to remember about the user for
+/// other conversations, from their own words only. `known` is what is already remembered, numbered, or empty.
+pub(super) fn memory_ask(known: &str) -> String {
+    let known = if known.is_empty() { "(nothing yet)" } else { known };
+    format!(
+        "The conversation above is about to be folded away. Decide what, if anything, is worth remembering about the USER for \
+future, different conversations.\n\n\
+Use only what the user themselves said in this conversation, not what you assumed, not what the assistant or a tool said. \
+Every entry must carry \"quote\": the user's own words, copied exactly from one of their messages above, that the entry rests \
+on. An entry without such a quote is not allowed, and the entry must not add anything that is not in its quote. Keep an entry \
+only if it would still be true and useful in a different conversation weeks from now, even after we have moved on from this \
+project or task. Leave out: this conversation's task and its details, bugs, decisions about this task, current status, dates \
+and deadlines, other people's private details, passwords, keys and tokens, and anything you merely guessed. Write each entry \
+as one short sentence of at most 200 characters.\n\n\
+A request to do something now (read a file, fix a bug, explain something, do it again) is not a preference. A preference is a \
+standing wish the user states about how things should always be done (\"always\", \"never\", \"I prefer\", \"I hate\"). A project \
+may be mentioned only by its name and what it is in a few words, never its features, requirements, status or the people \
+involved; leave it out when the user only asked for work on it.\n\n\
+Categories:\n\
+- about_you: who the user is: role, setup, hardware, languages, and in one line what they generally work on\n\
+- preferences: how the user likes things done or answered: style, language, workflow habits\n\
+- misc: anything else lasting that fits neither\n\n\
+Already remembered (do not repeat these; if the user changed or contradicted one, return the corrected entry with \
+\"replaces\" set to its number):\n{known}\n\n\
+Reply with JSON only: {{\"memories\":[{{\"category\":\"about_you|preferences|misc\",\"text\":\"...\",\"quote\":\"...\",\"replaces\":null}}]}}\n\
+Use {{\"memories\":[]}} when nothing qualifies.\n\n\
+The JSON is the whole task: do not deliberate at length, decide quickly and answer."
+    )
+}
+
 /// Said in front of the user's pinned messages, in the system message.
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";

@@ -18,6 +18,7 @@ use crate::services::chat_store::{Chat, ChatStore, Message};
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ModelToolCall, ModelToolCallFunction};
 use crate::plugins::registry::PluginRegistry;
+use crate::services::memory_store::MemoryStore;
 use crate::services::settings_store::{CustomPrompt, SettingsStore};
 use crate::tools::base::Tool;
 use crate::tools::ui::attach_file::AttachFileTool;
@@ -45,6 +46,9 @@ pub(super) struct History {
     settings_store: Arc<SettingsStore>,
     /// Where the enabled plugins' prompt sections come from; `None` for an agent whose chats have no plugin tools
     plugins: Option<Arc<PluginRegistry>>,
+    /// What the user's memory adds to a chat's prompt comes from here (see `refresh_memory`); `None` for the agent of the
+    /// messaging plugins, whose chats have no memory
+    memory_store: Option<Arc<MemoryStore>>,
 }
 
 /// Everything `History::build` needs, as loaded from the stores.
@@ -110,8 +114,13 @@ impl Built {
 }
 
 impl History {
-    pub(super) fn new(chat_store: Arc<ChatStore>, settings_store: Arc<SettingsStore>, plugins: Option<Arc<PluginRegistry>>) -> Self {
-        Self { chat_store, settings_store, plugins }
+    pub(super) fn new(
+        chat_store: Arc<ChatStore>,
+        settings_store: Arc<SettingsStore>,
+        plugins: Option<Arc<PluginRegistry>>,
+        memory_store: Option<Arc<MemoryStore>>,
+    ) -> Self {
+        Self { chat_store, settings_store, plugins, memory_store }
     }
 
     /// A chat's message history mapped into Ollama's wire format, oldest first. Once a
@@ -207,16 +216,60 @@ impl History {
     /// Shared by every request built for a chat so they all share the same prefix.
     pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        let memory = self.memory_text(chat).await?;
         let sections = self.plugin_sections(chat).await;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
-        Ok(Self::compose_system_prompt(custom, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
+        Ok(Self::compose_system_prompt(custom, memory, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
     }
 
     /// The system prompt a turn of `chat` starts with, without what the history leads with.
     pub(super) async fn base_system_prompt(&self, chat: &Chat) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        let memory = self.memory_text(chat).await?;
         let sections = self.plugin_sections(chat).await;
-        Ok(Self::compose_system_prompt(custom, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
+        Ok(Self::compose_system_prompt(custom, memory, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
+    }
+
+    /// What the user's memory adds to `chat`'s system prompt: the snapshot the chat took, unless the user has since
+    /// switched memory off. None for a sub-agent's chat, which works for the chat that handed it a task.
+    pub(super) async fn memory_text(&self, chat: &Chat) -> Result<Option<String>, ErrorService> {
+        if chat.parent_chat_id.is_some() || self.memory_store.is_none() {
+            return Ok(None);
+        }
+        let Some(snapshot) = chat.memory_snapshot.as_deref().filter(|text| !text.is_empty()) else {
+            return Ok(None);
+        };
+        Ok(self.settings_store.memory_prefs(chat.user_id).await?.enabled.then(|| snapshot.to_string()))
+    }
+
+    /// Takes the user's memory into a chat that has just started, when its first prompt is the only message in the history.
+    /// A chat that began before memory existed, or with it off, takes it at its next fold instead: changing the front of a
+    /// prompt in the middle of a chat makes the model server read the whole chat again.
+    pub(super) async fn start_memory(&self, chat: &mut Chat, messages_in_history: usize) -> Result<(), ErrorService> {
+        if chat.memory_snapshot.is_some() || messages_in_history > 1 {
+            return Ok(());
+        }
+        self.refresh_memory(chat).await
+    }
+
+    /// Takes a fresh snapshot of the user's memory for the chat, within the size the user chose: when the chat starts and
+    /// at each fold, the two moments its prompt is rewritten anyway. Nothing for a sub-agent's chat, for the messaging
+    /// plugins' agent or with memory off.
+    pub(super) async fn refresh_memory(&self, chat: &mut Chat) -> Result<(), ErrorService> {
+        let Some(memory_store) = &self.memory_store else {
+            return Ok(());
+        };
+        if chat.parent_chat_id.is_some() {
+            return Ok(());
+        }
+        let prefs = self.settings_store.memory_prefs(chat.user_id).await?;
+        if !prefs.enabled {
+            return Ok(());
+        }
+        let text = memory_store.snapshot(chat.user_id, prefs.slice_chars).await?;
+        self.chat_store.set_memory_snapshot(chat.id, &text).await?;
+        chat.memory_snapshot = Some(text);
+        Ok(())
     }
 
     /// What the enabled plugins add to `chat`'s system prompt
@@ -230,13 +283,24 @@ impl History {
     /// The user's own prompt is sent as written, tools or not, when it replaces the built-in one: only the built-in
     /// one, which is ours, has a version for a chat without tools. When it is added, it follows the built-in one
     /// that fits the chat.
-    fn compose_system_prompt(custom: Option<CustomPrompt>, sections: Option<String>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
+    fn compose_system_prompt(
+        custom: Option<CustomPrompt>,
+        memory: Option<String>,
+        sections: Option<String>,
+        tools: bool,
+        is_subagent: bool,
+        leading: Option<String>,
+    ) -> String {
         let built_in = || if tools { prompts::default_system_prompt() } else { prompts::default_system_prompt_without_tools() };
         let mut system_prompt = match custom {
             Some(CustomPrompt { text, append: false }) => text,
             Some(CustomPrompt { text, append: true }) => format!("{}\n\n{text}", built_in()),
             None => built_in(),
         };
+        if let Some(memory) = memory {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&memory);
+        }
         if let Some(sections) = sections {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&sections);
@@ -670,17 +734,20 @@ mod tests {
 
     #[test]
     fn the_system_prompt_is_the_users_or_the_built_in_one_then_the_sub_agent_addendum_then_the_summary() {
-        let plain = History::compose_system_prompt(None, None, true, false, None);
+        let plain = History::compose_system_prompt(None, None, None, true, false, None);
         assert_eq!(plain, prompts::default_system_prompt());
         let replaced = |append| Some(CustomPrompt { text: "mine".into(), append });
-        let custom = History::compose_system_prompt(replaced(false), None, true, true, Some("SUMMARY".into()));
+        let custom = History::compose_system_prompt(replaced(false), None, None, true, true, Some("SUMMARY".into()));
         assert_eq!(custom, format!("mine\n\n{}\n\nSUMMARY", prompts::subagent_system_prompt()));
-        let added = History::compose_system_prompt(replaced(true), None, true, true, Some("SUMMARY".into()));
+        let added = History::compose_system_prompt(replaced(true), None, None, true, true, Some("SUMMARY".into()));
         assert_eq!(added, format!("{}\n\nmine\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt()));
-        let added_without_tools = History::compose_system_prompt(replaced(true), None, false, false, None);
+        let added_without_tools = History::compose_system_prompt(replaced(true), None, None, false, false, None);
         assert_eq!(added_without_tools, format!("{}\n\nmine", prompts::default_system_prompt_without_tools()));
-        let with_sections = History::compose_system_prompt(replaced(true), Some("PLUGINS".into()), true, true, Some("SUMMARY".into()));
-        assert_eq!(with_sections, format!("{}\n\nmine\n\nPLUGINS\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt()));
+        let with_sections = History::compose_system_prompt(replaced(true), Some("MEMORY".into()), Some("PLUGINS".into()), true, true, Some("SUMMARY".into()));
+        assert_eq!(
+            with_sections,
+            format!("{}\n\nmine\n\nMEMORY\n\nPLUGINS\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt())
+        );
     }
 
     #[test]

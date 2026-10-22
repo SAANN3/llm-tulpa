@@ -16,14 +16,17 @@ use crate::services::chat_store::{ChatFacts, ChatStore, Message};
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallKind, StepState};
 use crate::services::llm::{ChatMessage, ReplyPiece, ThinkChoice};
+use crate::services::memory_store::MemoryStore;
 use crate::services::settings_store::SettingsStore;
 use crate::services::tools::ToolService;
 use clearing::CLEARED_ENOUGH_FRACTION;
 
 pub(super) mod clearing;
+mod memory;
 mod notes;
 
 /// The steps of a compaction as a page lists them: the notes the model writes before a fold, the summary, the facts
+const MEMORY: StepDef = StepDef::fixed("memory", "Saving memory");
 const NOTES: StepDef = StepDef::fixed("notes", "Saving notes");
 const SUMMARY: StepDef = StepDef::fixed("summary", "Summarizing");
 const FACTS: StepDef = StepDef::fixed("facts", "Extracting facts");
@@ -81,6 +84,8 @@ const COMPACTION_RETRY_GROWTH: f64 = 0.05;
 pub(super) struct Compaction {
     chat_store: Arc<ChatStore>,
     settings_store: Arc<SettingsStore>,
+    /// `None` for the agent of the messaging plugins, whose chats are not asked about the user
+    memory_store: Option<Arc<MemoryStore>>,
     tools: Arc<ToolService>,
     model: ModelCall,
     history: History,
@@ -101,12 +106,13 @@ impl Compaction {
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
         settings_store: Arc<SettingsStore>,
+        memory_store: Option<Arc<MemoryStore>>,
         tools: Arc<ToolService>,
         model: ModelCall,
         history: History,
         one_shot: OneShot,
     ) -> Self {
-        Self { chat_store, settings_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
+        Self { chat_store, settings_store, memory_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over
@@ -159,7 +165,7 @@ impl Compaction {
         );
 
         // What a page shows while this goes on; it ends when the value is dropped, whichever way this returns
-        let report = live.map(|live| live.steps("Compacting the chat", &[NOTES, SUMMARY, FACTS]));
+        let report = live.map(|live| live.steps("Compacting the chat", &[MEMORY, NOTES, SUMMARY, FACTS]));
         let report = report.as_ref();
 
         // Dropping old tool results is cheaper than a model-written summary and loses nothing the
@@ -169,7 +175,7 @@ impl Compaction {
             Ok(Some(plan)) => {
                 // The notes are asked for while the prompt is still the one the model server holds:
                 // applying the plan rewrites it, and the request would be a cold read of the whole history
-                self.save_notes_before_fold(chat_id, think.clone(), prompt_eval_count, report).await;
+                self.ask_before_fold(chat_id, think.clone(), prompt_eval_count, report).await;
                 notes_saved = true;
                 let freed_chars = plan.freed_chars();
                 match self.chat_store.set_context_boundaries(chat_id, plan.cleared_up_to, plan.thinking_trimmed_up_to).await {
@@ -276,7 +282,7 @@ impl Compaction {
         // server holds is still the one about to be folded, so asking for the notes costs almost
         // nothing. (After a clearing pass they were already asked for, ahead of it.)
         if !notes_saved {
-            self.save_notes_before_fold(chat_id, think.clone(), known_prompt_tokens, report).await;
+            self.ask_before_fold(chat_id, think.clone(), known_prompt_tokens, report).await;
         }
 
         let summary = self.summarize(chat.summary.clone(), to_fold, &chat.provider, &chat.model, report).await;
@@ -310,6 +316,8 @@ impl Compaction {
         self.chat_store
             .set_summary(chat_id, summary, merged, new_boundary_id)
             .await?;
+        // The prompt is rewritten by this fold anyway: the moment to take what the user's memory holds now
+        self.refresh_memory_after_fold(chat_id).await;
 
         tracing::info!(chat_id, new_boundary_id, facts_added, "compaction finished for chat_id {chat_id}");
 

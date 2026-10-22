@@ -240,6 +240,7 @@ impl LlmProvider for LlamaCppProvider {
         }
 
         let num_predict = self.budget.for_chat(&messages, tool_overhead_tokens, known_prompt_tokens, params.context_length);
+        let num_predict = params.max_reply_tokens.map_or(num_predict, |cap| num_predict.min(cap));
         self.prefix_watch.check(model, &definitions, &messages);
 
         let payload = build_payload(model, openai_messages(&messages), think, num_predict, definitions.as_deref(), &params.sampling);

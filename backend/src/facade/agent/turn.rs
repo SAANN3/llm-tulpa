@@ -253,6 +253,9 @@ impl Turn {
         // last_prompt_tokens is available for accurate budget calculation.
         let mut chat: Chat = self.chat_store.chat(chat_id).await?;
         self.model.bind(&mut chat);
+        // A chat that has just started takes what the user's memory holds into its prompt, for good: it stays the same
+        // between turns, and changes only at a fold
+        self.history.start_memory(&mut chat, messages.len()).await?;
 
         let tools = Self::tools_for(&chat, tools_snapshot);
         let provider = self.model.provider(&chat)?;
