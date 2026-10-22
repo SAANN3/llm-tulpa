@@ -254,6 +254,7 @@ impl ChatStore {
             thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
             tools_enabled: row.tools_enabled,
             unseen_end: row.unseen_end,
+            memory_snapshot: row.memory_snapshot,
         }
     }
 
@@ -703,6 +704,17 @@ impl ChatStore {
     pub async fn set_unseen_end(&self, chat_id: i64, unseen_end: &str) -> Result<(), ChatStoreErrors> {
         chats::Entity::update_many()
             .col_expr(chats::Column::UnseenEnd, Expr::value(unseen_end))
+            .filter(chats::Column::Id.eq(chat_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Stores what the user's memory adds to the chat's system prompt (see `chats.memory_snapshot`); an empty text
+    /// marks that it was taken and there was nothing. Like `set_unseen_end` it leaves `updated_at` alone.
+    pub async fn set_memory_snapshot(&self, chat_id: i64, snapshot: &str) -> Result<(), ChatStoreErrors> {
+        chats::Entity::update_many()
+            .col_expr(chats::Column::MemorySnapshot, Expr::value(snapshot))
             .filter(chats::Column::Id.eq(chat_id))
             .exec(&self.db)
             .await?;
@@ -1313,6 +1325,9 @@ pub struct Chat {
     pub tools_enabled: bool,
     /// How the last run ended, until the user has looked at the chat (see `chats.unseen_end`).
     pub unseen_end: Option<String>,
+    /// The part of the system prompt the user's memory made when the chat started or last folded (see
+    /// `chats.memory_snapshot`); `None` until taken.
+    pub memory_snapshot: Option<String>,
 }
 
 /// How much a chat holds (see `ChatStore::chat_counts`).

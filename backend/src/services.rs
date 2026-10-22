@@ -13,6 +13,7 @@ pub mod launch_store;
 pub mod llama_install;
 pub mod llama_runtime;
 pub mod llm;
+pub mod memory_store;
 pub mod migrate;
 pub mod model_folder;
 pub mod model_library;

@@ -566,6 +566,7 @@ mod tests {
             thinking_trimmed_up_to_message_id: None,
             tools_enabled: true,
             unseen_end: None,
+            memory_snapshot: None,
         }
     }
 

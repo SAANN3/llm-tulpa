@@ -18,6 +18,19 @@ const MAX_SYSTEM_PROMPT_CHARS: usize = 100_000;
 /// The most a user can set the turn step limit to: past this it is a limit in name only.
 const MAX_TURN_STEPS_LIMIT: i32 = 10_000;
 
+/// How many entries the model may keep in a user's memory, as the settings page's slider allows.
+pub const MEMORY_MAX_ENTRIES: std::ops::RangeInclusive<i32> = 10..=2000;
+/// How many characters of the memory a chat's system prompt may take, as the settings page's slider allows.
+pub const MEMORY_SLICE_CHARS: std::ops::RangeInclusive<i32> = 500..=12_000;
+
+/// The user's memory switch and limits (see `SettingsStore::memory_prefs`).
+#[derive(Clone, Copy, Debug)]
+pub struct MemoryPrefs {
+    pub enabled: bool,
+    pub max_entries: usize,
+    pub slice_chars: usize,
+}
+
 /// Owns per-user settings (the `user_settings` table, 1:1 with `users`). A user's row is
 /// created empty the first time it's needed (see `row`) and filled in over the setup wizard. The active model lives in the `llm_models` table and
 /// is referenced by id — its name and provider are resolved through `ModelStore`.
@@ -77,6 +90,9 @@ impl SettingsStore {
             trim_old_thinking: row.trim_old_thinking,
             use_tools: row.use_tools,
             max_turn_steps: row.max_turn_steps,
+            memory_enabled: row.memory_enabled,
+            memory_max_entries: row.memory_max_entries,
+            memory_slice_chars: row.memory_slice_chars,
             has_hf_token: row.hf_token.is_some(),
             stt_model: row.stt_model,
             stt_language: row.stt_language,
@@ -166,6 +182,21 @@ impl SettingsStore {
             // 0 removes the limit
             model.max_turn_steps = Set(Some(steps).filter(|s| *s > 0));
         }
+        if let Some(enabled) = update.memory_enabled {
+            model.memory_enabled = Set(enabled);
+        }
+        if let Some(entries) = update.memory_max_entries {
+            if !MEMORY_MAX_ENTRIES.contains(&entries) {
+                return Err(SettingsStoreErrors::InvalidMemoryLimit("entries", entries, MEMORY_MAX_ENTRIES));
+            }
+            model.memory_max_entries = Set(entries);
+        }
+        if let Some(chars) = update.memory_slice_chars {
+            if !MEMORY_SLICE_CHARS.contains(&chars) {
+                return Err(SettingsStoreErrors::InvalidMemoryLimit("characters per chat", chars, MEMORY_SLICE_CHARS));
+            }
+            model.memory_slice_chars = Set(chars);
+        }
         if let Some(token) = update.hf_token {
             // An empty token clears it
             model.hf_token = Set(Some(token.trim().to_string()).filter(|t| !t.is_empty()));
@@ -214,6 +245,16 @@ impl SettingsStore {
     /// Whether a new chat of this user sends the model its tools.
     pub async fn use_tools(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
         Ok(self.row(user_id).await?.use_tools)
+    }
+
+    /// The user's memory switch and limits.
+    pub async fn memory_prefs(&self, user_id: i64) -> Result<MemoryPrefs, SettingsStoreErrors> {
+        let row = self.row(user_id).await?;
+        Ok(MemoryPrefs {
+            enabled: row.memory_enabled,
+            max_entries: row.memory_max_entries.max(0) as usize,
+            slice_chars: row.memory_slice_chars.max(0) as usize,
+        })
     }
 
     /// How many model calls one of the user's turns may make, `None` for no limit.
@@ -275,6 +316,12 @@ pub struct Settings {
     /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
     /// `None` for no limit.
     pub max_turn_steps: Option<i32>,
+    /// Whether the model learns things about the user from their chats and has them in new chats' prompts.
+    pub memory_enabled: bool,
+    /// At most this many of the entries the model wrote are kept; the user's own are never counted.
+    pub memory_max_entries: i32,
+    /// How many characters of the memory a chat's system prompt takes.
+    pub memory_slice_chars: i32,
     /// Whether a Hugging Face token is set (the token itself is never sent back).
     pub has_hf_token: bool,
     /// The speech-to-text model voice input uses; `None` means the first installed one.
@@ -301,6 +348,9 @@ pub struct SettingsUpdate {
     pub use_tools: Option<bool>,
     /// The turn step limit, 0 for none
     pub max_turn_steps: Option<i32>,
+    pub memory_enabled: Option<bool>,
+    pub memory_max_entries: Option<i32>,
+    pub memory_slice_chars: Option<i32>,
     /// A Hugging Face access token; empty clears it
     pub hf_token: Option<String>,
     /// The speech-to-text model for voice input; empty goes back to the first installed one
@@ -352,6 +402,8 @@ pub enum SettingsStoreErrors {
     SystemPromptTooLarge(usize),
     /// A turn step limit outside `0..=MAX_TURN_STEPS_LIMIT`.
     InvalidTurnSteps(i32),
+    /// A memory limit outside its range: what it counts, the value, the range.
+    InvalidMemoryLimit(&'static str, i32, std::ops::RangeInclusive<i32>),
 }
 
 impl From<DbErr> for SettingsStoreErrors {
@@ -381,6 +433,10 @@ impl From<SettingsStoreErrors> for ErrorService {
                 format!("timezone offset {tz} is out of range (-12..=14)"),
             ),
             SettingsStoreErrors::Model(e) => e.into(),
+            SettingsStoreErrors::InvalidMemoryLimit(what, value, range) => ErrorService::new(
+                StatusCode::BAD_REQUEST,
+                format!("{value} {what} is out of range ({} to {})", range.start(), range.end()),
+            ),
             SettingsStoreErrors::InvalidTurnSteps(steps) => ErrorService::new(
                 StatusCode::BAD_REQUEST,
                 format!("the turn step limit {steps} is out of range (0 for none, at most {MAX_TURN_STEPS_LIMIT})"),

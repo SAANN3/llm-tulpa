@@ -24,6 +24,12 @@ pub struct Model {
     pub system_prompt: Option<String>,
     /// Whether that prompt is added after the built-in one instead of replacing it.
     pub system_prompt_append: bool,
+    /// Whether the model learns things about the user from their chats and has them in new chats' prompts.
+    pub memory_enabled: bool,
+    /// At most this many entries the model has written are kept in the user's memory.
+    pub memory_max_entries: i32,
+    /// How many characters of the memory a chat's system prompt takes.
+    pub memory_slice_chars: i32,
     /// Whether tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
     /// Whether old thinking traces in a long chat are shortened to their tail at the compaction trigger.

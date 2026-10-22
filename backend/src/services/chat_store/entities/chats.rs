@@ -46,6 +46,9 @@ pub struct Model {
     /// How the last run ended when the user hasn't looked at the chat since (`answered`, `waiting_for_permission`,
     /// `failed` or `step_limit`); NULL when there is nothing new.
     pub unseen_end: Option<String>,
+    /// What the user's memory added to this chat's system prompt, taken when the chat started and at each fold so the
+    /// prompt stays the same between turns; NULL while none was taken, empty when there was nothing to add.
+    pub memory_snapshot: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
