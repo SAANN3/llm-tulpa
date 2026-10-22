@@ -21,10 +21,12 @@ at once). What it cannot say: anything about a real chat template or model quali
 
 It signs its own token with the settings file's JWT secret. `TRACE=1` prints a failure's traceback. Each scenario makes its own chat.
 
+A memory request (the question a fold asks about the user) is answered with `{"memories":[]}` unless `POST /__memory` queued a text for it.
+
 A streamed request that asks for `return_progress` gets the prompt's progress before its first token (four reports, the reply item's `cached` tokens counted as read from the start), and one that asks for `timings_per_token` gets the speed so far with every chunk, as `llama-server` sends them. `prompt_delay` and `piece_delay` space them out; `POST /__slow` sets them for the compaction's own requests, so a page can be looked at while a fold goes on.
 
 ## Adding a scenario
 Write a function in `run_scenarios.py` with `@scenario`: `script(...)` the replies, `turn(chat, prompt)` (or start one and poll),
-then check `messages(chat)`, `state(chat)` and `calls()` (what the fake was sent: kind `main`, `summary`, `facts` or `notes`, whether it carried
+then check `messages(chat)`, `state(chat)` and `calls()` (what the fake was sent: kind `main`, `memory`, `summary`, `facts` or `notes`, whether it carried
 tools, the messages). A reply item is documented in the header of `fake_llama.py`; `match` ties a reply to a request by its system message, so a
 parent chat and its sub-agent can share one script.

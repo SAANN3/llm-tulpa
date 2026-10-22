@@ -107,7 +107,8 @@ def roles(chat):
 
 
 def settings(**kw):
-    status, _ = api("/api/settings", {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False, **kw})
+    status, _ = api("/api/settings", {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False,
+                                      "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000, **kw})
     assert status < 300
 
 
@@ -373,10 +374,10 @@ def a_fold_asks_for_notes_summary_and_facts_and_the_next_request_carries_them():
     for i in range(3):
         turn(chat, f"part {i}: " + BIG)
     kinds = [c["kind"] for c in calls()]
-    for kind in ("notes", "summary", "facts"):
+    for kind in ("memory", "notes", "summary", "facts"):
         assert kind in kinds, f"a {kind} request was made ({kinds})"
-    # notes are asked while the prompt is still the cached one: before the summary
-    assert kinds.index("notes") < kinds.index("summary"), "notes before the summary"
+    # what to remember and the notes are asked while the prompt is still the cached one: before the summary
+    assert kinds.index("memory") < kinds.index("notes") < kinds.index("summary"), "memory, then notes, then the summary"
     turn(chat, "what now?")
     system = calls("main")[-1]["messages"][0]["content"]
     has(system, "Earlier parts of this conversation were summarized", "the fold header")
@@ -637,7 +638,7 @@ def the_prompt_being_read_and_the_speed_are_reported_for_the_call_in_flight():
 
 @scenario
 def a_fold_reports_its_steps_and_each_calls_progress():
-    """The fold's three model calls are steps of a checklist a page can show: every one is waiting, then running, then
+    """The fold's four model calls are steps of a checklist a page can show: every one is waiting, then running, then
     done, in order, and each call reports its own prompt and speed. When the fold is over the checklist is gone."""
     settings()
     chat = new_chat("fold-steps")
@@ -659,12 +660,12 @@ def a_fold_reports_its_steps_and_each_calls_progress():
             current.append(snapshot[0])
     eq(current, [], "the last fold was ended")
     assert folds, "a fold ended"
-    ids = ["notes", "summary", "facts"]
+    ids = ["memory", "notes", "summary", "facts"]
     for fold in folds:
         eq(fold[0]["title"], "Compacting the chat", "the work is named")
         eq(len({snap["id"] for snap in fold}), 1, "one list throughout")
         eq([(step["id"], step["state"]) for step in fold[0]["steps"]], [(i, "pending") for i in ids], "all waiting at the start")
-        eq([step["label"] for step in fold[0]["steps"]], ["Saving notes", "Summarizing", "Extracting facts"], "the labels come from the backend")
+        eq([step["label"] for step in fold[0]["steps"]], ["Saving memory", "Saving notes", "Summarizing", "Extracting facts"], "the labels come from the backend")
         for step_id in ids:
             states = [next(step["state"] for step in snap["steps"] if step["id"] == step_id) for snap in fold]
             # Each step is only ever waiting, then running, then done
@@ -933,6 +934,163 @@ def a_crash_in_the_model_server_connection_fails_the_run_cleanly():
     eq(s["status"], "idle", "the chat is free")
     script({"text": "OK again."})
     eq(turn(chat, "again")["last_end"]["reason"], "answered", "the next run")
+
+
+def memory_clear():
+    ok("/api/memory/clear", {})
+
+
+def system_of_last_main_call():
+    content = calls("main")[-1]["messages"][0]["content"]
+    return content if isinstance(content, str) else " ".join(part.get("text", "") for part in content)
+
+
+FOLD_REPLIES = ({"text": "Noted.", "prompt_tokens": 25000}, {"text": "Noted again.", "prompt_tokens": 25000},
+                {"text": "And again.", "prompt_tokens": 25000}, {"text": "Final."})
+
+
+@scenario
+def a_fold_asks_what_to_remember_first_on_the_live_prompt_and_keeps_only_quoted_entries():
+    settings()
+    memory_clear()
+    chat = new_chat("memory-fold")
+    fake("/__memory", [json.dumps({"memories": [
+        {"category": "preferences", "text": "Answers in Russian.", "quote": "I always want answers in Russian", "replaces": None},
+        {"category": "about_you", "text": "Runs Arch with Hyprland.", "quote": "i run arch with hyprland", "replaces": None},
+        {"category": "about_you", "text": "Is a senior engineer.", "quote": "I am a senior engineer", "replaces": None},
+    ]})])
+    script(*FOLD_REPLIES)
+    turn(chat, "part 0: I always want answers in Russian. I run Arch with Hyprland. " + BIG)
+    for i in (1, 2):
+        turn(chat, f"part {i}: " + BIG)
+    kinds = [c["kind"] for c in calls()]
+    assert kinds.index("memory") < kinds.index("notes") < kinds.index("summary"), f"memory before the notes and the summary ({kinds})"
+    memory = next(c for c in calls() if c["kind"] == "memory")
+    notes = next(c for c in calls() if c["kind"] == "notes")
+    # The same live prompt as the notes request, so the model server's cache serves it: only the question differs
+    eq(memory["messages"][:-1], notes["messages"][:-1], "the live prompt in front of the question")
+    eq((memory["tool_names"], memory["chat_template_kwargs"]), (notes["tool_names"], notes["chat_template_kwargs"]), "the same tools and thinking setting")
+    assert memory["max_tokens"] and memory["max_tokens"] <= 6000, f"the reply is capped ({memory['max_tokens']})"
+    has(memory["messages"][-1]["content"], "(nothing yet)", "the question says nothing is remembered yet")
+
+    entries = ok("/api/memory")["entries"]
+    eq({e["text"] for e in entries}, {"Answers in Russian.", "Runs Arch with Hyprland."}, "only the entries whose quote the user wrote")
+    russian = next(e for e in entries if e["text"] == "Answers in Russian.")
+    eq((russian["learned"], russian["category"]), (True, "preferences"), "a learned entry")
+    has(russian["quote"], "answers in Russian", "its quote")
+
+    # The fold took the memory into the chat's prompt, how they like things done first
+    turn(chat, "what now?")
+    system = system_of_last_main_call()
+    has(system, "What is remembered about the user", "the memory in the prompt")
+    assert system.index("Answers in Russian.") < system.index("Runs Arch with Hyprland."), "preferences before about_you"
+    parts = {p["kind"]: p for p in ok(f"/api/chats/context?chat_id={chat}")["parts"]}
+    assert parts["memory"]["chars"] > 0, "the context shows the memory as a part of its own"
+    memory_clear()
+
+
+@scenario
+def a_new_chat_takes_the_memory_once_and_a_later_entry_waits_for_the_next_chat():
+    settings()
+    memory_clear()
+    ok("/api/memory", {"category": "preferences", "text": "Answers in Russian."})
+    chat = new_chat("memory-start")
+    script({"text": "one"}, {"text": "two"}, {"text": "three"}, {"text": "four"})
+    turn(chat, "hi")
+    first = system_of_last_main_call()
+    has(first, "Answers in Russian.", "the memory at the chat's start")
+    ok("/api/memory", {"category": "about_you", "text": "Runs Arch."})
+    turn(chat, "again")
+    eq(system_of_last_main_call(), first, "the same bytes on the next turn: the prompt cache stays valid")
+    later = new_chat("memory-start-2")
+    turn(later, "hi")
+    has(system_of_last_main_call(), "Runs Arch.", "a chat started after the entry has it")
+    # Switching memory off takes it out of the prompt at once, and on brings the same snapshot back
+    settings(memory_enabled=False)
+    turn(chat, "with memory off")
+    assert "What is remembered" not in system_of_last_main_call(), "memory off: not in the prompt"
+    settings()
+    turn(chat, "and on")
+    eq(system_of_last_main_call(), first, "memory on again: the chat's snapshot")
+    memory_clear()
+
+
+@scenario
+def with_memory_off_nothing_is_taken_in_and_a_fold_does_not_ask():
+    settings(memory_enabled=False)
+    memory_clear()
+    ok("/api/memory", {"category": "preferences", "text": "Answers in Russian."})
+    chat = new_chat("memory-off")
+    events = collect_events()
+    script(*FOLD_REPLIES)
+    turn(chat, "part 0: " + BIG)
+    assert "What is remembered" not in system_of_last_main_call(), "memory off: not in a new chat's prompt"
+    for i in (1, 2):
+        turn(chat, f"part {i}: " + BIG)
+    kinds = [c["kind"] for c in calls()]
+    assert "memory" not in kinds, f"no memory request with memory off ({kinds})"
+    assert "summary" in kinds, "the fold itself still happens"
+    time.sleep(0.5)
+    last = [e["lists"][0]["steps"] for e in events if e.get("chat_id") == chat and e["type"] == "run_steps" and e["lists"]][-1]
+    step = next(s for s in last if s["id"] == "memory")
+    eq(step["state"], "skipped", "the memory step")
+    has(step["detail"], "memory is off", "why")
+    settings()
+    memory_clear()
+
+
+@scenario
+def the_memory_api_adds_changes_and_forgets_and_the_limits_are_checked():
+    settings()
+    memory_clear()
+    entry = ok("/api/memory", {"category": "misc", "text": "  Likes   tea. "})
+    eq((entry["text"], entry["learned"], entry["quote"]), ("Likes tea.", False, None), "an entry the user wrote, tidied")
+    eq(api("/api/memory", {"category": "nope", "text": "x"})[0], 400, "an unknown category")
+    eq(api("/api/memory", {"category": "misc", "text": "   "})[0], 400, "an empty text")
+    eq(api("/api/memory", {"category": "misc", "text": "x" * 1001})[0], 400, "a text that is too long")
+    changed = ok("/api/memory/update", {"id": entry["id"], "category": "preferences", "text": "Likes green tea."})
+    eq((changed["category"], changed["text"], changed["learned"]), ("preferences", "Likes green tea.", False), "a changed entry")
+    eq(api("/api/memory/update", {"id": 999999, "category": "misc", "text": "x"})[0], 404, "changing an entry that is not there")
+    eq(api(f"/api/memory?id={entry['id']}", None, "DELETE")[0], 204, "deleting")
+    eq(api(f"/api/memory?id={entry['id']}", None, "DELETE")[0], 404, "deleting it twice")
+    ok("/api/memory", {"category": "misc", "text": "One."})
+    ok("/api/memory", {"category": "misc", "text": "Two."})
+    eq(len(ok("/api/memory")["entries"]), 2, "two entries")
+    eq(ok("/api/memory/clear", {})["removed"], 2, "cleared")
+    eq(ok("/api/memory")["entries"], [], "nothing left")
+    for bad in ({"memory_max_entries": 9}, {"memory_max_entries": 2001}, {"memory_slice_chars": 499}, {"memory_slice_chars": 12001}):
+        eq(api("/api/settings", bad)[0], 400, f"{bad} is out of range")
+    ok("/api/settings", {"memory_max_entries": 2000, "memory_slice_chars": 12000})
+    got = ok("/api/settings")
+    eq((got["memory_enabled"], got["memory_max_entries"], got["memory_slice_chars"]), (True, 2000, 12000), "the limits as set")
+    settings()
+
+
+@scenario
+def the_learned_limit_drops_the_oldest_learned_entries_and_the_slice_limit_caps_a_prompt():
+    settings(memory_max_entries=10, memory_slice_chars=500)
+    memory_clear()
+    ok("/api/memory", {"category": "misc", "text": "My own entry that is never dropped."})
+    chat = new_chat("memory-limits")
+    sentences = [f"I like fruit number {i:02d} very much." for i in range(1, 13)]
+    fake("/__memory", [json.dumps({"memories": [
+        {"category": "about_you", "text": f"Likes fruit {i:02d}.", "quote": sentence, "replaces": None} for i, sentence in enumerate(sentences, 1)
+    ]})])
+    script(*FOLD_REPLIES)
+    turn(chat, "part 0: " + " ".join(sentences) + " " + BIG)
+    for i in (1, 2):
+        turn(chat, f"part {i}: " + BIG)
+    entries = ok("/api/memory")["entries"]
+    learned = sorted(e["text"] for e in entries if e["learned"])
+    eq(learned, [f"Likes fruit {i:02d}." for i in range(3, 13)], "the ten newest of the twelve the model wrote are kept")
+    assert any("never dropped" in e["text"] for e in entries), "the user's own entry is not counted and not dropped"
+    turn(chat, "what now?")
+    system = system_of_last_main_call()
+    block = system[system.index("What is remembered"):].split("\n\n")[0]
+    assert len(block) <= 500, f"the memory in the prompt stays within the slice ({len(block)})"
+    has(block, "never dropped", "the user's own entry goes first")
+    settings()
+    memory_clear()
 
 
 def main():

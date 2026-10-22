@@ -7,6 +7,8 @@ The backend is pointed at it with `llama_cpp.external_url` (it then neither star
   POST /__script   a JSON list of replies, used one per main-chat request, in order (empty: the reply "OK.")
   POST /__slow     a JSON object like a reply item's "prompt_delay" / "piece_delay" / "cached", applied to the compaction's own
                    requests (they have no item of their own), so a page can be looked at while a fold goes on
+  POST /__memory   a JSON list of texts, used one per memory request (the question a fold asks about the user), in order
+                   (empty: `{"memories":[]}`)
   POST /__reset    forget the script and the recorded calls
   GET  /__calls    every request seen so far: its kind, whether it carried tools, the messages, the reply cap
 
@@ -30,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
 SCRIPT = []
+MEMORY = []
 CALLS = []
 SLOW = {}
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18300
@@ -54,6 +57,9 @@ def kind_of(body):
     messages = body.get("messages") or []
     system = text_of(messages[0]) if messages and messages[0].get("role") == "system" else ""
     last = text_of(messages[-1]) if messages else ""
+    # The memory request is the live prompt plus one question too, asked before the notes
+    if last.startswith("The conversation above is about to be folded away"):
+        return "memory"
     # The notes request is the live prompt (tools included, so the server's cache serves it) plus one question
     if last.startswith("The older part of this conversation is about to be compacted"):
         return "notes"
@@ -112,6 +118,10 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 SCRIPT.extend(body)
             return self.send_json(200, {"queued": len(SCRIPT)})
+        if self.path == "/__memory":
+            with LOCK:
+                MEMORY.extend(body)
+            return self.send_json(200, {"queued": len(MEMORY)})
         if self.path == "/__slow":
             with LOCK:
                 SLOW.clear()
@@ -120,6 +130,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/__reset":
             with LOCK:
                 SCRIPT.clear()
+                MEMORY.clear()
                 CALLS.clear()
                 SLOW.clear()
             return self.send_json(200, {})
@@ -158,6 +169,9 @@ class Handler(BaseHTTPRequestHandler):
             text = FACTS
         elif kind == "notes":
             text = NOTES
+        elif kind == "memory":
+            with LOCK:
+                text = MEMORY.pop(0) if MEMORY else '{"memories":[]}'
         else:
             text = item.get("text", "OK." if not item.get("tool_calls") else "")
         calls = item.get("tool_calls") or []
