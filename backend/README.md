@@ -84,7 +84,7 @@ src/
 │                #   JWTs, model_library.rs is the model catalog + local files + pull/import tasks,
 │                #   llm/ the model providers (llama_cpp.rs, ollama.rs behind one trait), llama_runtime.rs
 │                #   runs llama-server, llama_install.rs installs it, hf_library.rs downloads from Hugging Face,
-│                #   stt/ is voice input's speech recognition (models, live sessions; CPU only) and tls.rs checks
+│                #   stt/ is speech recognition — voice input's live sessions and the `stt.*` tools (models; CPU only) — and tls.rs checks
 │                #   an uploaded HTTPS certificate for the frontend container
 ├── tools/       # every tool the model can call — see TOOLS.md
 ├── plugins/     # optional integrations (chat platforms, ...) — see PLUGINS.md
