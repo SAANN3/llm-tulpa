@@ -5,6 +5,7 @@ pub mod events;
 pub mod files;
 pub mod folders;
 pub mod llm;
+pub mod memory;
 pub mod plugins;
 pub mod presets;
 pub mod hf;
