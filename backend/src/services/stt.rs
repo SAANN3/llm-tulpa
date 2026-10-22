@@ -9,12 +9,13 @@ mod install;
 mod session;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use utoipa::ToSchema;
 
 pub use benchmark::{cores, SttBenchModel, SttBenchRun, SttBenchmark};
@@ -28,6 +29,12 @@ use super::error::ErrorService;
 
 /// How many live inputs may be open at once, over all users: each holds up to five minutes of audio and takes its turn
 /// at the one recognizer
+/// A recording is read while the caller waits only up to this long: a minute and a half of audio takes Whisper about
+/// as long again to read, and the next step is a job
+pub const WAIT_SAMPLES: usize = SAMPLE_RATE * 90;
+/// A recording read as a job may be this long: two hours, about 460 MB as samples
+pub const MAX_TASK_SAMPLES: usize = SAMPLE_RATE * 60 * 120;
+
 const MAX_SESSIONS: usize = 8;
 /// A session nobody has sent audio to for this long is dropped (a page that closed without saying so)
 const SESSION_IDLE: Duration = Duration::from_secs(120);
@@ -243,7 +250,7 @@ impl SttService {
             })
     }
 
-    /// The text of a whole recording
+    /// The text of a whole recording, read in pieces (see `session::pieces`) and joined
     pub async fn transcribe(self: &Arc<Self>, model: &'static ModelSpec, language: &str, audio: Vec<f32>) -> Result<String, ErrorService> {
         if audio.len() > MAX_SAMPLES {
             return Err(ErrorService::new(StatusCode::PAYLOAD_TOO_LARGE, "a recording may be five minutes long at most"));
@@ -251,7 +258,45 @@ impl SttService {
         if audio.len() < SAMPLE_RATE / 10 {
             return Ok(String::new());
         }
-        self.read(model, language.to_string(), audio).await
+        let mut texts = Vec::new();
+        for piece in session::pieces(&audio) {
+            let text = self.read(model, language.to_string(), piece.to_vec()).await?;
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+        Ok(texts.join(" "))
+    }
+
+    /// Reads a recording too long to wait for, piece by piece, and appends one line per piece to `log` as it goes: the
+    /// stretch of the recording it covers, then its text. A last line says how it ended, so a reader of the log's end
+    /// can tell a finished transcript from one still being written. Answers whether it ran to the end.
+    pub async fn transcribe_to_log(self: &Arc<Self>, model: &'static ModelSpec, language: &str, audio: Vec<f32>, log: &Path) -> bool {
+        let append = |line: String| async move {
+            let mut file = tokio::fs::OpenOptions::new().append(true).create(true).open(log).await?;
+            file.write_all(format!("{line}\n").as_bytes()).await
+        };
+        let mut at = 0;
+        let mut words = 0;
+        let pieces = session::pieces(&audio);
+        let count = pieces.len();
+        for piece in pieces {
+            let text = match self.read(model, language.to_string(), piece.to_vec()).await {
+                Ok(text) => text,
+                Err(e) => {
+                    let _ = append(format!("[stopped at {}: {}]", clock(at), e.message.unwrap_or_default())).await;
+                    return false;
+                }
+            };
+            words += text.split_whitespace().count();
+            let line = format!("[{}-{}] {}", clock(at), clock(at + piece.len()), if text.is_empty() { "(nothing recognized)" } else { &text });
+            at += piece.len();
+            if let Err(e) = append(line).await {
+                tracing::warn!("could not write to the transcription log {}: {e}", log.display());
+                return false;
+            }
+        }
+        append(format!("[done: {count} parts, {words} words]")).await.is_ok()
     }
 
     pub fn start_session(&self, user_id: i64, model: &'static ModelSpec, language: &str) -> Result<String, ErrorService> {
@@ -329,6 +374,15 @@ impl SttService {
         if sessions.get(id).is_some_and(|s| s.user_id == user_id) {
             sessions.remove(id);
         }
+    }
+}
+
+/// A position in a recording as `h:mm:ss`, or `m:ss` under an hour
+fn clock(samples: usize) -> String {
+    let secs = samples / SAMPLE_RATE;
+    match secs / 3600 {
+        0 => format!("{}:{:02}", secs / 60, secs % 60),
+        hours => format!("{hours}:{:02}:{:02}", secs % 3600 / 60, secs % 60),
     }
 }
 

@@ -25,6 +25,8 @@ const MAX_WINDOW: usize = SAMPLE_RATE * 20;
 const CUT_SEARCH: usize = SAMPLE_RATE * 6;
 /// The quietest moment is judged over windows of this length
 const CUT_FRAME: usize = SAMPLE_RATE / 10;
+/// A recording is read in pieces up to this long: Whisper reads 30 seconds at most and drops the rest
+const PIECE: usize = SAMPLE_RATE * 25;
 /// A session is refused more audio than this: five minutes
 pub(super) const MAX_SAMPLES: usize = SAMPLE_RATE * 60 * 5;
 /// Audio that ends a session shorter than this isn't read
@@ -84,6 +86,19 @@ fn joined(committed: &str, partial: &str) -> String {
         (_, true) => committed.to_string(),
         _ => format!("{committed} {partial}"),
     }
+}
+
+/// `audio` in pieces of up to `PIECE`, each cut at the quietest moment near its end so no word is split
+pub(super) fn pieces(audio: &[f32]) -> Vec<&[f32]> {
+    let mut rest = audio;
+    let mut out = Vec::new();
+    while rest.len() > PIECE {
+        let (piece, tail) = rest.split_at(quietest(&rest[..PIECE]));
+        out.push(piece);
+        rest = tail;
+    }
+    out.push(rest);
+    out
 }
 
 /// Where the quietest stretch of `window` is, within its last `CUT_SEARCH` samples (leaving a second at the end)
@@ -254,6 +269,22 @@ mod tests {
         assert!(next.cut.is_none());
         assert_eq!(next.from, cut);
         assert_eq!(s.apply(&next, "and the end"), "the first part and the end");
+    }
+
+    #[test]
+    fn a_recording_is_cut_in_pieces_at_its_pauses_and_nothing_is_lost() {
+        let mut audio = secs(70.0, 0.2);
+        for at in [21, 44] {
+            for sample in audio.iter_mut().skip(at * SAMPLE_RATE).take(SAMPLE_RATE / 2) {
+                *sample = 0.0;
+            }
+        }
+        let parts = pieces(&audio);
+        assert_eq!(parts.iter().map(|p| p.len()).sum::<usize>(), audio.len());
+        assert!(parts.iter().all(|p| p.len() <= PIECE));
+        let first_end = parts[0].len();
+        assert!((21 * SAMPLE_RATE..21 * SAMPLE_RATE + SAMPLE_RATE / 2).contains(&first_end), "cut at {first_end}");
+        assert_eq!(pieces(&secs(3.0, 0.2)).len(), 1);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use crate::services::event_bus::EventBus;
 use crate::services::file_store::FileStore;
 use crate::services::job_store::JobStore;
 use crate::services::llm::LlmProviders;
+use crate::services::stt::SttService;
 use super::subagent::SubagentHandle;
 
 
@@ -146,6 +147,8 @@ pub struct ToolContext {
     /// does yet; it's wired now so the first one that needs to is only a variant away.
     #[allow(dead_code)]
     pub events: Arc<EventBus>,
+    /// The speech-to-text service — the `stt.*` tools transcribe audio through it.
+    pub stt: Arc<SttService>,
     /// The chat this call is happening within — every `FileStore` row needs one, so
     /// anything that calls `file_store.*` reaches for this rather than taking a
     /// `chat_id` as one of its own model-facing arguments (the model has no reason to

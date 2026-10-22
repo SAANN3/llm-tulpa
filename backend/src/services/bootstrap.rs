@@ -19,7 +19,7 @@ use crate::services::{
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
     llama_runtime::LlamaRuntime, llm::LlmProviders, migrate::run_migrations, preset_store::PresetStore,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
-    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, tools::ToolService,
+    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, stt::SttService, tools::ToolService,
     user_store::UserStore,
 };
 
@@ -170,6 +170,7 @@ pub async fn bootstrap(
     providers: LlmProviders,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
+    stt: Arc<SttService>,
     ollama_context_length: u64,
     model_dir: Arc<ModelFolder>,
     runtime: Arc<LlamaRuntime>,
@@ -246,6 +247,7 @@ pub async fn bootstrap(
         file_store.clone(),
         job_store.clone(),
         events.clone(),
+        stt.clone(),
         permission_store.clone(),
         settings_store.clone(),
         preset_store.clone(),
@@ -276,6 +278,7 @@ pub async fn bootstrap(
         file_store.clone(),
         job_store.clone(),
         events,
+        stt,
         permission_store.clone(),
         settings_store.clone(),
         preset_store.clone(),

@@ -16,6 +16,7 @@ use crate::services::{
     permission_store::PermissionStore,
     preset_store::PresetStore,
     settings_store::SettingsStore,
+    stt::SttService,
     tools::ToolService,
 };
 use crate::facade::launch::LaunchFacade;
@@ -96,6 +97,7 @@ impl Agent {
         file_store: Arc<FileStore>,
         job_store: Arc<JobStore>,
         events: Arc<EventBus>,
+        stt: Arc<SttService>,
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
         presets: Arc<PresetStore>,
@@ -113,6 +115,7 @@ impl Agent {
                 job_store: job_store.clone(),
                 chat_store: chat_store.clone(),
                 events,
+                stt,
                 chat_id: 0,
                 user_id: 0,
                 model: String::new(),

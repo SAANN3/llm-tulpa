@@ -5,6 +5,7 @@ pub mod lenient;
 pub mod llm;
 pub mod os;
 pub mod storage;
+pub mod stt;
 pub mod subagent;
 pub mod temperature;
 pub mod ui;
