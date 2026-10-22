@@ -14,6 +14,7 @@ use crate::plugins::messaging::telegram::TelegramProvider;
 use crate::services::model_folder::ModelFolder;
 use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
+use crate::plugins::schema::PluginSchema;
 use crate::services::{
     chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore,
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
@@ -242,7 +243,8 @@ pub async fn bootstrap(
 
     // Built before the agents: the main agent reads the enabled plugins' prompt sections from it. Plugins are
     // registered below, once the plugin agent they talk through exists.
-    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone()));
+    let plugin_schema = Arc::new(PluginSchema::new(db.clone()));
+    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone(), plugin_schema));
 
     let launches = Arc::new(LaunchFacade::new(providers.clone(), runtime.clone(), launch_store.clone(), model_store.clone(), user_store.clone(), model_dir));
 

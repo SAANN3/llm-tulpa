@@ -12,6 +12,7 @@ use tower::ServiceExt;
 use utoipa::ToSchema;
 
 use super::base::{Plugin, PluginBuilder, PluginError};
+use super::schema::{self, PluginSchema};
 use crate::services::error::ErrorService;
 use crate::services::plugin_settings_store::{PluginSettingsStore, PluginSettingsStoreErrors};
 use crate::services::tools::ToolService;
@@ -72,6 +73,8 @@ pub struct PluginRegistry {
     store: Arc<PluginSettingsStore>,
     /// The shared tool service — updated whenever a plugin is enabled or disabled.
     tools: Arc<ToolService>,
+    /// Brings the tables a plugin declares up to date before it is registered.
+    schema: Arc<PluginSchema>,
 }
 
 /// The sections as one text: each trimmed and an empty one left out, in the order of the plugins' keys. A section is never
@@ -95,8 +98,8 @@ fn tool_names(plugin: &Arc<dyn Plugin>) -> Vec<String> {
 }
 
 impl PluginRegistry {
-    pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>) -> Self {
-        Self { entries: RwLock::new(HashMap::new()), store, tools }
+    pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>, schema: Arc<PluginSchema>) -> Self {
+        Self { entries: RwLock::new(HashMap::new()), store, tools, schema }
     }
 
     /// Registers a plugin under the builder's own `(plugin_name, plugin_subname)`.
@@ -121,6 +124,16 @@ impl PluginRegistry {
     ) -> Result<(), PluginError> {
         let plugin_name = builder.plugin_name().to_string();
         let plugin_subname = builder.plugin_subname().to_string();
+
+        // The plugin's own tables come first: what it stored has to be there whether or not it is enabled
+        let prefix = schema::prefix(&plugin_name, &plugin_subname).map_err(|e| PluginError::Schema(e.to_string()))?;
+        let steps = builder.migrations(&prefix);
+        if !steps.is_empty() {
+            let applied = self.schema.apply(&plugin_name, &plugin_subname, &steps).await.map_err(|e| PluginError::Schema(e.to_string()))?;
+            if applied > 0 {
+                tracing::info!("plugin {plugin_name}/{plugin_subname}: {applied} database step(s) applied");
+            }
+        }
 
         let (initial_settings, enabled) = match self.store.get(&plugin_name, &plugin_subname).await? {
             Some(persisted) => (Some(persisted.settings), persisted.enabled),
@@ -209,7 +222,8 @@ impl PluginRegistry {
     /// configured and enabled before a restart comes back that way regardless — this
     /// just needs to name every builder that exists, not know any of their defaults.
     /// Stops at the first failure (an `Err` here means a real bug — e.g. two builders
-    /// reporting the same key — not a per-plugin runtime condition to shrug off).
+    /// reporting the same key — not a per-plugin runtime condition to shrug off), except
+    /// a plugin whose own database steps fail: that one is logged and left out.
     pub async fn register_many(&self, builders: Vec<Arc<dyn PluginBuilder>>) -> Result<(), PluginError> {
         // Two builders under one key would replace each other and leave the first one's tasks running with nothing
         // watching them; like a tool name that two tools share, it is a mistake in the code, found at startup.
@@ -224,7 +238,13 @@ impl PluginRegistry {
             }
         }
         for builder in builders {
-            self.register(builder, None, false).await?;
+            let label = format!("{}/{}", builder.plugin_name(), builder.plugin_subname());
+            match self.register(builder, None, false).await {
+                Ok(()) => {}
+                // A plugin whose tables cannot be brought up to date is left out, not the whole backend: the rest still run
+                Err(PluginError::Schema(why)) => tracing::error!("plugin {label} is not available: {why}"),
+                Err(other) => return Err(other),
+            }
         }
         Ok(())
     }

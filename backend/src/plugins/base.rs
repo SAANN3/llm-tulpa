@@ -88,6 +88,18 @@ pub trait PluginBuilder: Send + Sync {
     fn help_message(&self) -> String;
 
     async fn build(&self, settings: Value) -> Result<Arc<dyn Plugin>, PluginError>;
+
+    /// The SQL this plugin needs in the database, as ordered steps; `prefix` is the start every table and index it
+    /// creates must have (`plugin_<name>_<subname>`, so `format!("CREATE TABLE {prefix}_items (...)")`). The registry
+    /// applies the steps a database has not seen yet before the plugin is registered, in order, each in a transaction of
+    /// its own, whether or not the plugin is enabled (what it stored has to be there). Steps only add: CREATE TABLE,
+    /// CREATE INDEX, ALTER TABLE ... ADD, INSERT and UPDATE of the plugin's own tables, no drops and no deletes. Add a step
+    /// to change something; never edit or reorder one that has been released, the database only counts how many it has
+    /// applied. A foreign key to a core table (`REFERENCES users (id) ON DELETE CASCADE`) is fine. See
+    /// `plugins::schema`. None by default.
+    fn migrations(&self, _prefix: &str) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Why building or running a plugin failed. Mirrors `ToolError`'s shape for the same
@@ -108,6 +120,8 @@ pub enum PluginError {
     FailedUnknown(String),
     /// A tool exported by this plugin collides with an already-registered tool name.
     ToolConflict(String),
+    /// The plugin's own tables (`PluginBuilder::migrations`) could not be brought up to date.
+    Schema(String),
 }
 
 impl fmt::Display for PluginError {
@@ -120,6 +134,7 @@ impl fmt::Display for PluginError {
             PluginError::ToolConflict(name) => {
                 write!(f, "plugin tool '{name}' conflicts with an already-registered tool")
             }
+            PluginError::Schema(reason) => write!(f, "plugin database error: {reason}"),
         }
     }
 }
@@ -136,6 +151,10 @@ impl From<PluginError> for ErrorService {
             ),
             PluginError::FailedUnknown(reason) => {
                 tracing::error!("plugin error: {reason}");
+                ErrorService::internal(reason)
+            }
+            PluginError::Schema(reason) => {
+                tracing::error!("plugin database error: {reason}");
                 ErrorService::internal(reason)
             }
         }
