@@ -17,6 +17,7 @@ use super::prompts;
 use crate::services::chat_store::{Chat, ChatStore, Message};
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ModelToolCall, ModelToolCallFunction};
+use crate::plugins::registry::PluginRegistry;
 use crate::services::settings_store::{CustomPrompt, SettingsStore};
 use crate::tools::base::Tool;
 use crate::tools::ui::attach_file::AttachFileTool;
@@ -42,6 +43,8 @@ const READ_ONLY_STREAK_THRESHOLD: usize = 5;
 pub(super) struct History {
     chat_store: Arc<ChatStore>,
     settings_store: Arc<SettingsStore>,
+    /// Where the enabled plugins' prompt sections come from; `None` for an agent whose chats have no plugin tools
+    plugins: Option<Arc<PluginRegistry>>,
 }
 
 /// Everything `History::build` needs, as loaded from the stores.
@@ -107,8 +110,8 @@ impl Built {
 }
 
 impl History {
-    pub(super) fn new(chat_store: Arc<ChatStore>, settings_store: Arc<SettingsStore>) -> Self {
-        Self { chat_store, settings_store }
+    pub(super) fn new(chat_store: Arc<ChatStore>, settings_store: Arc<SettingsStore>, plugins: Option<Arc<PluginRegistry>>) -> Self {
+        Self { chat_store, settings_store, plugins }
     }
 
     /// A chat's message history mapped into Ollama's wire format, oldest first. Once a
@@ -204,26 +207,40 @@ impl History {
     /// Shared by every request built for a chat so they all share the same prefix.
     pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        let sections = self.plugin_sections(chat).await;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
-        Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
+        Ok(Self::compose_system_prompt(custom, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
     }
 
     /// The system prompt a turn of `chat` starts with, without what the history leads with.
     pub(super) async fn base_system_prompt(&self, chat: &Chat) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
-        Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
+        let sections = self.plugin_sections(chat).await;
+        Ok(Self::compose_system_prompt(custom, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
+    }
+
+    /// What the enabled plugins add to `chat`'s system prompt
+    pub(super) async fn plugin_sections(&self, chat: &Chat) -> Option<String> {
+        match &self.plugins {
+            Some(plugins) => plugins.prompt_sections(chat.tools_enabled).await,
+            None => None,
+        }
     }
 
     /// The user's own prompt is sent as written, tools or not, when it replaces the built-in one: only the built-in
     /// one, which is ours, has a version for a chat without tools. When it is added, it follows the built-in one
     /// that fits the chat.
-    fn compose_system_prompt(custom: Option<CustomPrompt>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
+    fn compose_system_prompt(custom: Option<CustomPrompt>, sections: Option<String>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
         let built_in = || if tools { prompts::default_system_prompt() } else { prompts::default_system_prompt_without_tools() };
         let mut system_prompt = match custom {
             Some(CustomPrompt { text, append: false }) => text,
             Some(CustomPrompt { text, append: true }) => format!("{}\n\n{text}", built_in()),
             None => built_in(),
         };
+        if let Some(sections) = sections {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&sections);
+        }
         if is_subagent {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&prompts::subagent_system_prompt());
@@ -652,15 +669,17 @@ mod tests {
 
     #[test]
     fn the_system_prompt_is_the_users_or_the_built_in_one_then_the_sub_agent_addendum_then_the_summary() {
-        let plain = History::compose_system_prompt(None, true, false, None);
+        let plain = History::compose_system_prompt(None, None, true, false, None);
         assert_eq!(plain, prompts::default_system_prompt());
         let replaced = |append| Some(CustomPrompt { text: "mine".into(), append });
-        let custom = History::compose_system_prompt(replaced(false), true, true, Some("SUMMARY".into()));
+        let custom = History::compose_system_prompt(replaced(false), None, true, true, Some("SUMMARY".into()));
         assert_eq!(custom, format!("mine\n\n{}\n\nSUMMARY", prompts::subagent_system_prompt()));
-        let added = History::compose_system_prompt(replaced(true), true, true, Some("SUMMARY".into()));
+        let added = History::compose_system_prompt(replaced(true), None, true, true, Some("SUMMARY".into()));
         assert_eq!(added, format!("{}\n\nmine\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt()));
-        let added_without_tools = History::compose_system_prompt(replaced(true), false, false, None);
+        let added_without_tools = History::compose_system_prompt(replaced(true), None, false, false, None);
         assert_eq!(added_without_tools, format!("{}\n\nmine", prompts::default_system_prompt_without_tools()));
+        let with_sections = History::compose_system_prompt(replaced(true), Some("PLUGINS".into()), true, true, Some("SUMMARY".into()));
+        assert_eq!(with_sections, format!("{}\n\nmine\n\nPLUGINS\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt()));
     }
 
     #[test]

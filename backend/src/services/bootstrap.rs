@@ -238,6 +238,10 @@ pub async fn bootstrap(
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
+    // Built before the agents: the main agent reads the enabled plugins' prompt sections from it. Plugins are
+    // registered below, once the plugin agent they talk through exists.
+    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone()));
+
     let launches = Arc::new(LaunchFacade::new(providers.clone(), runtime.clone(), launch_store.clone(), model_store.clone(), user_store.clone(), model_dir));
 
     let agent = Arc::new(Agent::new(
@@ -252,6 +256,7 @@ pub async fn bootstrap(
         settings_store.clone(),
         preset_store.clone(),
         launches.clone(),
+        Some(plugin_registry.clone()),
         ollama_context_length,
     ));
     agent.bind_subagent_runner();
@@ -283,10 +288,10 @@ pub async fn bootstrap(
         settings_store.clone(),
         preset_store.clone(),
         launches.clone(),
+        None,
         ollama_context_length,
     ));
 
-    let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone()));
     let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
         Arc::new(MessagingProviderBuilder::<TelegramProvider>::new(plugin_agent.clone(), chat_store.clone())),
         Arc::new(MessagingProviderBuilder::<DiscordProvider>::new(plugin_agent.clone(), chat_store.clone())),

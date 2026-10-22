@@ -20,6 +20,7 @@ use crate::services::{
     tools::ToolService,
 };
 use crate::facade::launch::LaunchFacade;
+use crate::plugins::registry::PluginRegistry;
 use crate::facade::one_shot::OneShot;
 use crate::tools::base::ToolContext;
 use crate::tools::subagent::SubagentHandle;
@@ -102,6 +103,7 @@ impl Agent {
         settings_store: Arc<SettingsStore>,
         presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
+        plugins: Option<Arc<PluginRegistry>>,
         context_length: u64,
     ) -> Self {
         // `chat_id: 0` here is a placeholder — never read as-is, always replaced via
@@ -122,7 +124,7 @@ impl Agent {
                 provider: String::new(),
                 subagents: Arc::new(SubagentHandle::new()),
             };
-        let history = History::new(chat_store.clone(), settings_store.clone());
+        let history = History::new(chat_store.clone(), settings_store.clone(), plugins);
         let model = ModelCall::new(providers.clone(), presets, launch, context_length);
         let context = ContextReader::new(chat_store.clone(), tools.clone(), history.clone(), model.clone());
         let compaction = Compaction::new(

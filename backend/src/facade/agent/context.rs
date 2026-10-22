@@ -19,6 +19,8 @@ use crate::tools::base::Tool;
 pub enum ContextPartKind {
     /// The user's system prompt or the built-in one, the sub-agent addendum and the fold's header
     SystemPrompt,
+    /// What the enabled plugins add to the system prompt
+    PluginSections,
     Tools,
     KeyFacts,
     /// The user's own messages from before the fold, kept word for word
@@ -77,7 +79,9 @@ impl ContextReader {
         let tool_refs: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let tools_chars = if tool_refs.is_empty() { 0 } else { serde_json::to_string(&tool_definitions(&tool_refs)).unwrap_or_default().len() };
 
-        let mut system_prompt = self.history.base_system_prompt(&chat).await?.len();
+        // The plugins' sections are part of the prompt text; they are counted on their own, after the rest of it
+        let sections = self.history.plugin_sections(&chat).await.map_or(0, |text| text.len());
+        let mut system_prompt = self.history.base_system_prompt(&chat).await?.len().saturating_sub(if sections > 0 { sections + 2 } else { 0 });
         let mut parts = Vec::new();
         if let Some(fold) = &built.fold {
             system_prompt += fold.header.len();
@@ -87,6 +91,9 @@ impl ContextReader {
             parts.push(Self::part(ContextPartKind::Summary, fold.summary.len(), None));
         }
         parts.insert(0, Self::part(ContextPartKind::Tools, tools_chars, Some(tools.len())));
+        if sections > 0 {
+            parts.insert(0, Self::part(ContextPartKind::PluginSections, sections, None));
+        }
         parts.insert(0, Self::part(ContextPartKind::SystemPrompt, system_prompt, None));
         parts.push(Self::part(ContextPartKind::Notes, built.notes.as_ref().map_or(0, String::len), None));
         parts.extend(Self::message_parts(&built.messages));

@@ -74,6 +74,19 @@ pub struct PluginRegistry {
     tools: Arc<ToolService>,
 }
 
+/// The sections as one text: each trimmed and an empty one left out, in the order of the plugins' keys. A section is never
+/// cut: whoever enabled the plugin chose what it adds to the prompt. The registry's map has no order of its own and two runs of the backend list it differently,
+/// so the order has to come from here: a different one would make the model server read the whole chat again.
+fn join_sections(mut sections: Vec<(PluginKey, String)>) -> Option<String> {
+    sections.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let texts: Vec<String> = sections
+        .into_iter()
+        .map(|(_, text)| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect();
+    (!texts.is_empty()).then(|| texts.join("\n\n"))
+}
+
 /// The names of a plugin's own tools, freshly read from it — used to tell `ToolService`
 /// exactly what to remove on disable, without this module needing to remember anything
 /// about it in between.
@@ -198,6 +211,18 @@ impl PluginRegistry {
     /// Stops at the first failure (an `Err` here means a real bug — e.g. two builders
     /// reporting the same key — not a per-plugin runtime condition to shrug off).
     pub async fn register_many(&self, builders: Vec<Arc<dyn PluginBuilder>>) -> Result<(), PluginError> {
+        // Two builders under one key would replace each other and leave the first one's tasks running with nothing
+        // watching them; like a tool name that two tools share, it is a mistake in the code, found at startup.
+        let mut keys = std::collections::HashSet::new();
+        for builder in &builders {
+            if !keys.insert(Self::key(builder.plugin_name(), builder.plugin_subname())) {
+                return Err(PluginError::FailedUnknown(format!(
+                    "two plugins are registered as {}/{}",
+                    builder.plugin_name(),
+                    builder.plugin_subname()
+                )));
+            }
+        }
         for builder in builders {
             self.register(builder, None, false).await?;
         }
@@ -285,6 +310,19 @@ impl PluginRegistry {
 
         self.store.set(plugin_name, plugin_subname, settings, entry.enabled).await?;
         Ok(())
+    }
+
+    /// What the enabled plugins add to the system prompt, one section after the other in the order of their keys, `None` when
+    /// there is nothing. The order and each text are fixed for as long as the set of enabled plugins is, so the prompt the
+    /// model server has cached stays valid between turns.
+    pub async fn prompt_sections(&self, tools: bool) -> Option<String> {
+        let entries = self.entries.read().await;
+        let sections = entries
+            .iter()
+            .filter(|(_, entry)| entry.enabled)
+            .filter_map(|(key, entry)| Some((key.clone(), entry.plugin.as_ref()?.prompt_section(tools)?)))
+            .collect();
+        join_sections(sections)
     }
 
     pub async fn get(&self, plugin_name: &str, plugin_subname: &str) -> Option<Arc<dyn Plugin>> {
@@ -421,5 +459,56 @@ impl PluginRegistry {
 
     fn key(plugin_name: &str, plugin_subname: &str) -> PluginKey {
         (plugin_name.to_string(), plugin_subname.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section(name: &str, sub: &str, text: &str) -> (PluginKey, String) {
+        ((name.to_string(), sub.to_string()), text.to_string())
+    }
+
+    fn permutations(items: Vec<(PluginKey, String)>) -> Vec<Vec<(PluginKey, String)>> {
+        if items.len() <= 1 {
+            return vec![items];
+        }
+        let mut all = Vec::new();
+        for i in 0..items.len() {
+            let mut rest = items.clone();
+            let first = rest.remove(i);
+            for mut tail in permutations(rest) {
+                tail.insert(0, first.clone());
+                all.push(tail);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn sections_come_out_in_the_order_of_the_keys_whatever_order_they_come_in() {
+        let items = vec![
+            section("messaging", "vk", "M-vk"),
+            section("coding", "signatures", "C-sig"),
+            section("coding", "alpha", "C-alpha"),
+            section("zeta", "a", "Z"),
+        ];
+        let expected = "C-alpha\n\nC-sig\n\nM-vk\n\nZ";
+        for order in permutations(items) {
+            assert_eq!(join_sections(order).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn a_section_is_trimmed_left_out_when_empty_and_never_cut() {
+        let long = "ж".repeat(5000);
+        let joined = join_sections(vec![section("a", "1", "  kept \n"), section("b", "1", "  \n"), section("c", "1", &long)]).unwrap();
+        let parts: Vec<&str> = joined.split("\n\n").collect();
+        assert_eq!(parts[0], "kept");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1], long);
+        assert_eq!(join_sections(vec![section("a", "1", " ")]), None);
+        assert_eq!(join_sections(vec![]), None);
     }
 }

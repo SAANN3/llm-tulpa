@@ -53,6 +53,14 @@ pub trait Plugin: Send + Sync {
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         vec![]
     }
+
+    /// A short text this plugin adds to the system prompt while it is enabled, `None` for nothing. `tools` says whether
+    /// the chat sends the model its tools, so a section about the plugin's tools can leave itself out of a chat that has
+    /// none. It must be the same text every time it is asked: it sits in the prompt every turn, and any change makes the
+    /// model server read the whole chat again. It is used as it is, with no limit on its length: enabling the plugin is the user's choice.
+    fn prompt_section(&self, _tools: bool) -> Option<String> {
+        None
+    }
 }
 
 /// Builds a `Plugin` instance from settings JSON. Kept separate from `Plugin` itself

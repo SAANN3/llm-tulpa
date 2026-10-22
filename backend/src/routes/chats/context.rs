@@ -24,6 +24,8 @@ pub(crate) struct ChatContextQuery {
 pub(crate) enum ContextPartKindOut {
     /// The user's system prompt or the built-in one, the sub-agent addendum and the fold's header
     SystemPrompt,
+    /// What the enabled plugins add to the system prompt
+    PluginSections,
     /// The definitions of the tools the model is sent
     Tools,
     KeyFacts,
@@ -138,6 +140,7 @@ pub async fn chat_context(
 fn part_out(part: ContextPart) -> ContextPartOut {
     let kind = match part.kind {
         ContextPartKind::SystemPrompt => ContextPartKindOut::SystemPrompt,
+        ContextPartKind::PluginSections => ContextPartKindOut::PluginSections,
         ContextPartKind::Tools => ContextPartKindOut::Tools,
         ContextPartKind::KeyFacts => ContextPartKindOut::KeyFacts,
         ContextPartKind::Pinned => ContextPartKindOut::Pinned,
