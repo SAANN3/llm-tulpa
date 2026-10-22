@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 
 use super::base::{Plugin, PluginBuilder, PluginError};
 use super::schema::{self, PluginSchema};
+use super::tab::{valid_tab_id, PluginTab, TabFile, TabLayout, RESERVED_TAB_IDS};
 use crate::services::error::ErrorService;
 use crate::services::plugin_settings_store::{PluginSettingsStore, PluginSettingsStoreErrors};
 use crate::services::tools::ToolService;
@@ -453,6 +454,50 @@ impl PluginRegistry {
             .collect();
         list.sort_by(|a, b| (&a.plugin_name, &a.plugin_subname).cmp(&(&b.plugin_name, &b.plugin_subname)));
         list
+    }
+
+    /// The tabs of the enabled plugins, in the order of the plugins' keys. A tab whose id is not a plain slug, is one of the
+    /// Settings page's own or is already taken by an earlier plugin is left out (and said in the log), so two plugins can
+    /// never share an address.
+    pub async fn tabs(&self) -> Vec<PluginTab> {
+        let entries = self.entries.read().await;
+        let mut keys: Vec<&PluginKey> = entries.iter().filter(|(_, entry)| entry.enabled).map(|(key, _)| key).collect();
+        keys.sort();
+        let mut tabs: Vec<PluginTab> = Vec::new();
+        for key in keys {
+            let Some(info) = entries[key].plugin.as_ref().and_then(|plugin| plugin.settings_tab()) else {
+                continue;
+            };
+            if !valid_tab_id(&info.id) || RESERVED_TAB_IDS.contains(&info.id.as_str()) || tabs.iter().any(|tab| tab.id == info.id) {
+                tracing::warn!("plugin {}/{}: its tab '{}' cannot be used (not a plain id, or taken)", key.0, key.1, info.id);
+                continue;
+            }
+            tabs.push(PluginTab { plugin_name: key.0.clone(), plugin_subname: key.1.clone(), id: info.id, title: info.title });
+        }
+        tabs
+    }
+
+    /// The enabled instance of a plugin that has a tab; what the tab routes call.
+    async fn with_tab(&self, plugin_name: &str, plugin_subname: &str) -> Result<Arc<dyn Plugin>, PluginError> {
+        let entries = self.entries.read().await;
+        let plugin = entries
+            .get(&Self::key(plugin_name, plugin_subname))
+            .filter(|entry| entry.enabled)
+            .and_then(|entry| entry.plugin.clone())
+            .filter(|plugin| plugin.settings_tab().is_some());
+        plugin.ok_or_else(|| PluginError::NotFound(format!("no such tab: {plugin_name}/{plugin_subname}")))
+    }
+
+    pub async fn tab_layout(&self, plugin_name: &str, plugin_subname: &str, user_id: i64) -> Result<TabLayout, PluginError> {
+        self.with_tab(plugin_name, plugin_subname).await?.tab_layout(user_id).await
+    }
+
+    pub async fn tab_action(&self, plugin_name: &str, plugin_subname: &str, user_id: i64, action: &str, args: Value) -> Result<TabLayout, PluginError> {
+        self.with_tab(plugin_name, plugin_subname).await?.tab_action(user_id, action, args).await
+    }
+
+    pub async fn tab_upload(&self, plugin_name: &str, plugin_subname: &str, user_id: i64, action: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+        self.with_tab(plugin_name, plugin_subname).await?.tab_upload(user_id, action, files).await
     }
 
     /// Runs `req` through a plugin's own `api_router()`, with `req`'s path already relative to

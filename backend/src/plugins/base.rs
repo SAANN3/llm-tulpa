@@ -10,6 +10,8 @@ use crate::services::error::ErrorService;
 use crate::services::tools::ToolServiceError;
 use crate::tools::base::{PropertyInfo, Tool};
 
+use super::tab::{TabFile, TabInfo, TabLayout};
+
 /// One running instance of a plugin — e.g. the VK provider under the "messaging"
 /// plugin type. `plugin_name` identifies the type/contract this instance shares with
 /// its siblings (same API shape, same settings shape); `plugin_subname` identifies
@@ -60,6 +62,28 @@ pub trait Plugin: Send + Sync {
     /// model server read the whole chat again. It is used as it is, with no limit on its length: enabling the plugin is the user's choice.
     fn prompt_section(&self, _tools: bool) -> Option<String> {
         None
+    }
+
+    /// A tab of this plugin's own in Settings, shown to every user while the plugin is enabled; `None` for none. What it
+    /// holds comes from `tab_layout`, see `plugins::tab`.
+    fn settings_tab(&self) -> Option<TabInfo> {
+        None
+    }
+
+    /// What the plugin's tab shows `user_id` now.
+    async fn tab_layout(&self, _user_id: i64) -> Result<TabLayout, PluginError> {
+        Err(PluginError::NotFound("this plugin has no tab".to_string()))
+    }
+
+    /// What `user_id` did in the tab (a switch, a button): `action` is the word the control carries and `args` what it
+    /// sent. Answers with the layout as it is after.
+    async fn tab_action(&self, _user_id: i64, _action: &str, _args: Value) -> Result<TabLayout, PluginError> {
+        Err(PluginError::NotFound("this plugin has no tab".to_string()))
+    }
+
+    /// Files `user_id` dropped on a drop zone of the tab, with the zone's `action`. Answers with the layout as it is after.
+    async fn tab_upload(&self, _user_id: i64, _action: &str, _files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+        Err(PluginError::NotFound("this plugin has no tab".to_string()))
     }
 }
 

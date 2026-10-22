@@ -5,4 +5,8 @@ mod proxy;
 mod reset_chat;
 mod set_settings;
 mod settings_schema;
+mod tab;
+mod tab_action;
+mod tab_upload;
+mod tabs;
 pub mod router;
