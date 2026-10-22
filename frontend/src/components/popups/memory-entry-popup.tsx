@@ -31,8 +31,8 @@ const EntryForm = ({initial, onSubmit, onClose}: Omit<MemoryEntryPopupProps, 'op
             <ChoiceGroup label="What the entry is about" chosen={category} onChosen={(value) => setCategory(value as MemoryCategory)}
                          options={MEMORY_CATEGORIES}/>
             <Div className="memory-entry__field">
-                <Label variant="secondary" text="One short sentence"/>
-                <Input text={text} onChanged={setText} placeholder="For example: Answers in Russian" autoFocus
+                <Label variant="secondary" text="What to remember"/>
+                <Input text={text} onChanged={setText} placeholder="A short note, in your own words" autoFocus
                        onKeyDown={(e) => e.key === 'Enter' && submit()}/>
             </Div>
             <PopupActions confirmLabel="Save" confirmDisabled={!trimmed} onConfirm={submit} onCancel={onClose}/>
