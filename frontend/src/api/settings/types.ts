@@ -13,6 +13,12 @@ export interface Settings {
     use_tools: boolean
     /** How many model calls one turn may make before it is stopped and the model is asked to wrap up; null for no limit. */
     max_turn_steps: number | null
+    /** The model learns things about you from your chats and has them in new chats' prompts. */
+    memory_enabled: boolean
+    /** How many of the entries the model wrote are kept; the ones you wrote are never counted. */
+    memory_max_entries: number
+    /** How many characters of the memory a chat's system prompt takes. */
+    memory_slice_chars: number
     /** Whether a Hugging Face token is set (the token itself is never sent back) */
     has_hf_token: boolean
     /** The speech model voice input uses; null means the first installed one */
@@ -36,6 +42,9 @@ export interface SettingsUpdate {
     use_tools?: boolean
     /** The turn step limit, 0 for none */
     max_turn_steps?: number
+    memory_enabled?: boolean
+    memory_max_entries?: number
+    memory_slice_chars?: number
     /** A Hugging Face access token; empty clears it */
     hf_token?: string
     /** The speech model for voice input; empty goes back to the first installed one */

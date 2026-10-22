@@ -9,6 +9,9 @@ export interface SettingsDraft {
     trimOldThinking: boolean
     useTools: boolean
     maxTurnStepsText: string
+    memoryEnabled: boolean
+    memoryMaxEntries: number
+    memorySliceChars: number
 }
 
 export interface SettingsDraftProps {
@@ -26,4 +29,7 @@ export const draftOf = (settings: Settings | null): SettingsDraft => ({
     trimOldThinking: settings?.trim_old_thinking ?? false,
     useTools: settings?.use_tools ?? true,
     maxTurnStepsText: settings?.max_turn_steps != null ? String(settings.max_turn_steps) : '',
+    memoryEnabled: settings?.memory_enabled ?? true,
+    memoryMaxEntries: settings?.memory_max_entries ?? 300,
+    memorySliceChars: settings?.memory_slice_chars ?? 3000,
 })

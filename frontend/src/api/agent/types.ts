@@ -88,7 +88,7 @@ export interface TurnState {
 }
 
 /** What a model call is for: the reply, or one of the three a compaction makes */
-export type CallKind = 'reply' | 'notes' | 'summary' | 'facts'
+export type CallKind = 'reply' | 'memory' | 'notes' | 'summary' | 'facts'
 
 /** How far the model server has got reading the prompt; `processed` counts the cached part too, so it starts at `cached` */
 export interface PromptProgress {

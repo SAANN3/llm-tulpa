@@ -5,6 +5,7 @@ import {formatTokenCount} from '../../utils/format.ts'
 
 const NAMES: Record<ContextPartKind, string> = {
     system_prompt: 'System prompt',
+    memory: 'Memory',
     plugin_sections: 'Plugin prompts',
     tools: 'Tool definitions',
     key_facts: 'Goal & key facts',
@@ -27,6 +28,8 @@ const noteFor = (part: ContextPartOut, context: ChatContextResponse): string => 
     switch (part.kind) {
         case 'system_prompt':
             return context.memory.folded ? 'the rules, and the note on what the summary replaced' : 'the rules the model works by'
+        case 'memory':
+            return 'what is remembered about you, taken when the chat started or last folded'
         case 'plugin_sections':
             return 'what the enabled plugins add to the rules'
         case 'tools':

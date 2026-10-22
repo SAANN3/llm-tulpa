@@ -1,7 +1,7 @@
 import {useState} from 'react'
 import type {ReactNode} from 'react'
 import '../styles/settings-fields.scss'
-import {Button, ChoiceGroup, Div, Input, Label, ToggleSwitch} from './primitives'
+import {Button, ChoiceGroup, Div, Input, Label, Slider, ToggleSwitch} from './primitives'
 import {useTheme} from '../context/use-theme.ts'
 import {formatTime, type TimeFormat} from '../utils/time-format.ts'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
@@ -178,6 +178,36 @@ export const UseToolsField = ({enabled, onToggle}: SwitchFieldProps) => (
     <SettingsRow label="Use tools in new chats" accent={!enabled}
                  help="Tools let the model read and write files, run commands and look things up. Their definitions take about 9,000 tokens of every request, so a small model or a small context window does better without them. Only new chats take this; a chat has its own switch in its menu.">
         <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
+);
+
+/** Whether the model learns things about the user from their chats: saved with the rest of the user's settings */
+export const MemoryEnabledField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Remember things about me"
+                 help="When a chat is folded to save room, the model reads it once more and keeps what it learned about you, such as who you are and how you like things done, for new chats. It goes by your own words only, and everything it keeps is listed below for you to change or delete.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
+);
+
+export interface SliderFieldProps {
+    label: string
+    help: string
+    value: number
+    onChanged: (value: number) => void
+    min: number
+    max: number
+    step: number
+    /** What the value reads as beside the slider */
+    shown: string
+}
+
+/** A number chosen on a slider, with its value beside it: saved with the rest of the user's settings */
+export const SliderField = ({label, help, value, onChanged, min, max, step, shown}: SliderFieldProps) => (
+    <SettingsRow label={label} help={help} stack>
+        <Div className="settings-row__slider">
+            <Slider value={value} onChanged={onChanged} min={min} max={max} step={step}/>
+            <Label className="settings-row__slider-value" text={shown}/>
+        </Div>
     </SettingsRow>
 );
 

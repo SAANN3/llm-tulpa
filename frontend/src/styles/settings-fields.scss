@@ -131,6 +131,21 @@
   min-width: 0;
 }
 
+// A slider with its value beside it
+.settings-row__slider {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+
+  input[type='range'] {
+    width: 180px;
+  }
+}
+
+.settings-row__slider-value {
+  min-width: 14ch;
+}
+
 .settings-row__help {
   font-size: 12.5px;
   line-height: 1.45;
@@ -180,6 +195,11 @@
 .settings-section {
   display: flex;
   flex-direction: column;
+}
+
+// Sections one under the other (Profile and Memory), not run together
+.settings-section + .settings-section {
+  margin-top: $space-5;
 }
 
 .settings-section__title {

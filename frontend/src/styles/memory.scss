@@ -1,0 +1,69 @@
+@use 'tokens' as *;
+
+// The user's memory in Settings → Profile: groups of entries, each with where it was learned from
+.memory-list__group {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2 0;
+}
+
+.memory-list__heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+
+.memory-list__entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+  padding: $space-2 0;
+  border-bottom: $line-border dashed var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.memory-list__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memory-list__source {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+// The sentence's field under its caption, across the popup
+.memory-entry__field {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.memory-list__buttons {
+  display: flex;
+  gap: $space-2;
+  flex-shrink: 0;
+}
+
+.memory-list__error {
+  color: var(--color-danger);
+}
+
+.memory-list__empty {
+  font-size: 12.5px;
+}
+
+@media (max-width: $mobile-max) {
+  .memory-list__entry {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

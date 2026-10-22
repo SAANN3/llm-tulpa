@@ -60,6 +60,9 @@ const Settings = () => {
             trim_old_thinking: draft.trimOldThinking,
             use_tools: draft.useTools,
             max_turn_steps: steps.value,
+            memory_enabled: draft.memoryEnabled,
+            memory_max_entries: draft.memoryMaxEntries,
+            memory_slice_chars: draft.memorySliceChars,
         })
         onBack()
     }
