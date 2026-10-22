@@ -25,10 +25,12 @@ pub async fn get_system_prompt(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<SystemPromptOut>, ErrorService> {
-    let custom = state.services().await?.settings_store.system_prompt(auth.id).await?;
+    let store = &state.services().await?.settings_store;
+    let custom = store.system_prompt(auth.id).await?.map(|prompt| prompt.text);
 
     Ok(Json(SystemPromptOut {
         custom,
+        append: store.system_prompt_append(auth.id).await?,
         default: default_system_prompt(),
     }))
 }

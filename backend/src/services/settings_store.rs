@@ -223,15 +223,22 @@ impl SettingsStore {
 
     /// The user's custom system prompt — `None` while the built-in default applies. Like the
     /// rest of the store, creates the user's empty row on first use.
-    pub async fn system_prompt(&self, user_id: i64) -> Result<Option<String>, SettingsStoreErrors> {
-        Ok(self.row(user_id).await?.system_prompt)
+    pub async fn system_prompt(&self, user_id: i64) -> Result<Option<CustomPrompt>, SettingsStoreErrors> {
+        let row = self.row(user_id).await?;
+        Ok(row.system_prompt.map(|text| CustomPrompt { text, append: row.system_prompt_append }))
+    }
+
+    /// Whether the user's custom prompt is added to the built-in one, kept even while there is no text so the
+    /// settings page shows the choice the user made.
+    pub async fn system_prompt_append(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.system_prompt_append)
     }
 
     /// Sets (or clears, for `None`) the user's custom system prompt. A whitespace-only
     /// prompt is treated as no prompt at all, and one past `MAX_SYSTEM_PROMPT_CHARS` is
     /// refused rather than stored — it's prepended to the model's prompt on every turn, so
     /// its size is a per-turn context cost.
-    pub async fn set_system_prompt(&self, user_id: i64, prompt: Option<String>) -> Result<(), SettingsStoreErrors> {
+    pub async fn set_system_prompt(&self, user_id: i64, prompt: Option<String>, append: bool) -> Result<(), SettingsStoreErrors> {
         let prompt = prompt
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
@@ -244,6 +251,7 @@ impl SettingsStore {
         let existing = self.row(user_id).await?;
         let mut model: settings::ActiveModel = existing.into();
         model.system_prompt = Set(prompt);
+        model.system_prompt_append = Set(append);
         model.update(&self.db).await?;
         Ok(())
     }
@@ -306,11 +314,20 @@ pub struct SettingsUpdate {
     pub launch_profile_id: Option<i64>,
 }
 
+/// The user's own system prompt and how it is used: instead of the built-in prompt, or added after it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CustomPrompt {
+    pub text: String,
+    pub append: bool,
+}
+
 /// The user's custom system prompt alongside the built-in default, for the settings page's
-/// edit pane — `custom` is `None` while the default applies.
+/// edit pane — `custom` is `None` while the default applies. `append` says whether the custom text is
+/// added after the built-in prompt instead of replacing it.
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct SystemPromptOut {
     pub custom: Option<String>,
+    pub append: bool,
     pub default: String,
 }
 
@@ -320,6 +337,9 @@ pub struct SystemPromptOut {
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct SystemPromptUpdate {
     pub prompt: Option<String>,
+    /// Add the prompt after the built-in one instead of replacing it.
+    #[serde(default)]
+    pub append: bool,
 }
 
 #[derive(Debug)]

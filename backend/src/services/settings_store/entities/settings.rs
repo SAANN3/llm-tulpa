@@ -22,6 +22,8 @@ pub struct Model {
     /// The user's own system prompt, replacing the built-in default for their chats —
     /// `NULL` means the hardcoded default applies.
     pub system_prompt: Option<String>,
+    /// Whether that prompt is added after the built-in one instead of replacing it.
+    pub system_prompt_append: bool,
     /// Whether tool-permission prompts are approved automatically instead of waiting for the user.
     pub auto_confirm: bool,
     /// Whether old thinking traces in a long chat are shortened to their tail at the compaction trigger.

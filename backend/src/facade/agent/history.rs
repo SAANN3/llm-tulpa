@@ -17,7 +17,7 @@ use super::prompts;
 use crate::services::chat_store::{Chat, ChatStore, Message};
 use crate::services::error::ErrorService;
 use crate::services::llm::{ChatMessage, ModelToolCall, ModelToolCallFunction};
-use crate::services::settings_store::SettingsStore;
+use crate::services::settings_store::{CustomPrompt, SettingsStore};
 use crate::tools::base::Tool;
 use crate::tools::ui::attach_file::AttachFileTool;
 
@@ -214,10 +214,16 @@ impl History {
         Ok(Self::compose_system_prompt(custom, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
     }
 
-    /// The user's own prompt is sent as written, tools or not: only the built-in one, which is ours, has a
-    /// version for a chat without tools.
-    fn compose_system_prompt(custom: Option<String>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
-        let mut system_prompt = custom.unwrap_or_else(|| if tools { prompts::default_system_prompt() } else { prompts::default_system_prompt_without_tools() });
+    /// The user's own prompt is sent as written, tools or not, when it replaces the built-in one: only the built-in
+    /// one, which is ours, has a version for a chat without tools. When it is added, it follows the built-in one
+    /// that fits the chat.
+    fn compose_system_prompt(custom: Option<CustomPrompt>, tools: bool, is_subagent: bool, leading: Option<String>) -> String {
+        let built_in = || if tools { prompts::default_system_prompt() } else { prompts::default_system_prompt_without_tools() };
+        let mut system_prompt = match custom {
+            Some(CustomPrompt { text, append: false }) => text,
+            Some(CustomPrompt { text, append: true }) => format!("{}\n\n{text}", built_in()),
+            None => built_in(),
+        };
         if is_subagent {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&prompts::subagent_system_prompt());
@@ -648,8 +654,13 @@ mod tests {
     fn the_system_prompt_is_the_users_or_the_built_in_one_then_the_sub_agent_addendum_then_the_summary() {
         let plain = History::compose_system_prompt(None, true, false, None);
         assert_eq!(plain, prompts::default_system_prompt());
-        let custom = History::compose_system_prompt(Some("mine".into()), true, true, Some("SUMMARY".into()));
+        let replaced = |append| Some(CustomPrompt { text: "mine".into(), append });
+        let custom = History::compose_system_prompt(replaced(false), true, true, Some("SUMMARY".into()));
         assert_eq!(custom, format!("mine\n\n{}\n\nSUMMARY", prompts::subagent_system_prompt()));
+        let added = History::compose_system_prompt(replaced(true), true, true, Some("SUMMARY".into()));
+        assert_eq!(added, format!("{}\n\nmine\n\n{}\n\nSUMMARY", prompts::default_system_prompt(), prompts::subagent_system_prompt()));
+        let added_without_tools = History::compose_system_prompt(replaced(true), false, false, None);
+        assert_eq!(added_without_tools, format!("{}\n\nmine", prompts::default_system_prompt_without_tools()));
     }
 
     #[test]

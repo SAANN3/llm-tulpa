@@ -8,8 +8,8 @@ use crate::{
     state::AppState,
 };
 
-/// Sets the authenticated user's custom system prompt, or resets it to the built-in default
-/// when the prompt is `null`. Takes effect from the user's next turn.
+/// Sets the authenticated user's custom system prompt, which replaces the built-in default or, with
+/// `append`, is added after it; a `null` prompt resets to the built-in default. Takes effect from the user's next turn.
 #[utoipa::path(
     post,
     path = "/api/settings/system-prompt",
@@ -31,7 +31,7 @@ pub async fn set_system_prompt(
         .services()
         .await?
         .settings_store
-        .set_system_prompt(auth.id, body.prompt)
+        .set_system_prompt(auth.id, body.prompt, body.append)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
