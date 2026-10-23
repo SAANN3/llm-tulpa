@@ -91,7 +91,7 @@ pub async fn action(store: &SkillStore, user_id: i64, action: &str, args: Value)
                 .get("on")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| PluginError::InvalidState("the switch did not say on or off".to_string()))?;
-            store.set_enabled(user_id, name, on).await.map_err(failed)?;
+            store.set_enabled(user_id, name, on, Origin::User).await.map_err(failed)?;
             layout(store, user_id, Some(format!("'{name}' is {} for the model.", if on { "on" } else { "off" })), None).await
         }
         VIEW => {

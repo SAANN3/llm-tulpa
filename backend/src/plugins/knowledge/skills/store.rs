@@ -218,14 +218,16 @@ impl SkillStore {
         tokio::fs::read(&real).await.map_err(|e| io("could not read the file", e))
     }
 
-    /// Turns a skill on or off for the model. The files are not touched.
-    pub async fn set_enabled(&self, user_id: i64, name: &str, enabled: bool) -> Result<(), SkillStoreError> {
+    /// Turns a skill on or off for the model, if `by` may change it (the model, only a skill it made that is still on, which
+    /// is to say it can only turn it off). The files are not touched.
+    pub async fn set_enabled(&self, user_id: i64, name: &str, enabled: bool, by: Origin) -> Result<(), SkillStoreError> {
         self.skill_dir(user_id, name)?;
         let _guard = self.write_lock.lock().await;
         let existing = self
             .row(user_id, name)
             .await?
             .ok_or_else(|| SkillStoreError::NotFound(format!("skill '{name}'")))?;
+        Self::allowed(&existing, by, name)?;
         entity::Entity::update_many()
             .col_expr(entity::Column::Enabled, Expr::value(enabled))
             .filter(entity::Column::Id.eq(existing.id))

@@ -1250,11 +1250,57 @@ def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user():
     eq(row["switch"]["on"], False, "the user's list still shows it, off")
 
     eq(tab("enable", {"row": "sleeper", "on": True})[0], 200, "switch on")
+    # The model can turn off what it made, never what the user added, and cannot turn anything back on
+    mine = new_chat("skill-self-off")
+    script(
+        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "sleeper"}}]},
+        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "sleeper"}}]},
+        {"text": "ok"},
+    )
+    turn(mine, "retire it")
+    results = [m["content"] for m in tool_results(mine)]
+    has(results[0], "turned off", "the model turned off its own skill")
+    has(results[1], "turned off by the user", "and cannot touch it once it is off")
+    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
+    eq(row["switch"]["on"], False, "the user sees it off")
+    eq(tab("enable", {"row": "sleeper", "on": True})[0], 200, "the user turns it back on")
     on = new_chat("skill-on")
     script({"text": "ok"})
     turn(on, "hello")
     has(system_of_last_main_call(), "- sleeper: Only for the sleeper case.", "listed again, unchanged by the model's attempt")
     eq(tab("delete", {"row": "sleeper"})[0], 200, "clean up")
+    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    settings()
+
+
+@scenario
+def the_model_cannot_turn_off_or_change_a_skill_the_user_added():
+    settings(auto_confirm=True)
+    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
+    # A skill the user added goes through the tab's upload, a multipart form
+    boundary = "scenarioboundary"
+    skill_md = "---\nname: theirs\ndescription: Added by the user.\n---\nBody.\n"
+    parts = "".join(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        for name, value in [("plugin_name", "knowledge"), ("plugin_subname", "skills"), ("action", "upload")]
+    ) + f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"theirs/SKILL.md\"\r\n\r\n{skill_md}\r\n--{boundary}--\r\n"
+    req = urllib.request.Request(BACKEND + "/api/plugins/tab/upload", data=parts.encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "multipart/form-data; boundary=" + boundary})
+    eq(urllib.request.urlopen(req, timeout=30).status, 200, "the user adds a skill")
+
+    chat = new_chat("skill-user-owned")
+    script(
+        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "theirs"}}]},
+        {"tool_calls": [{"name": "skills.delete", "arguments": {"name": "theirs"}}]},
+        {"text": "ok"},
+    )
+    turn(chat, "retire it")
+    results = [m["content"] for m in tool_results(chat)]
+    has(results[0], "was added by the user", "turning it off is refused")
+    has(results[1], "was added by the user", "and so is deleting it")
+    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "theirs"][0]
+    eq(row["switch"]["on"], True, "it is still on")
+    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "theirs"}})[0], 200, "clean up")
     api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
     settings()
 

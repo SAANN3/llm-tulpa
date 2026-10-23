@@ -4,6 +4,7 @@
 
 mod add_file;
 mod delete;
+mod disable;
 mod install;
 mod list;
 mod read;
@@ -24,6 +25,7 @@ pub fn collect(store: Arc<SkillStore>) -> Vec<Box<dyn Tool>> {
         Box::new(write::WriteTool { store: store.clone() }),
         Box::new(add_file::AddFileTool { store: store.clone() }),
         Box::new(delete::DeleteTool { store: store.clone() }),
+        Box::new(disable::DisableTool { store: store.clone() }),
         Box::new(install::InstallTool { store }),
     ]
 }
