@@ -34,6 +34,29 @@ impl Pack {
     }
 }
 
+/// A skill ready to be stored: its name, its description and its files.
+#[derive(Debug)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+impl Pack {
+    /// Reads the `SKILL.md` and settles the skill's name: the header's own when it has one that can be used (tidied if it
+    /// is not quite a name), else what the folder or zip was called.
+    pub fn into_skill(self) -> Result<Skill, String> {
+        let parsed = format::parse(&self.skill_text()?)?;
+        let name = parsed
+            .name
+            .as_deref()
+            .and_then(format::name_from)
+            .or(self.name_hint)
+            .ok_or("the skill has no name: give it one in the header of SKILL.md (name: my-skill)")?;
+        Ok(Skill { name, description: parsed.description, files: self.files })
+    }
+}
+
 /// Counts what has been taken in and refuses what goes past the limits.
 #[derive(Default)]
 struct Budget {

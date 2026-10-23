@@ -173,7 +173,7 @@ fn check_scope(scope_root: &Path, bucket: SharedBucket, granted: Option<&Value>)
 /// For tools whose `path` argument names a file (`read_file`, `write_file`,
 /// `delete_file`) — scopes to the file's containing folder, so a grant covers every
 /// file in that folder, not just this one call's.
-pub(super) fn check_file_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
+pub(crate) fn check_file_scope(path: &str, bucket: SharedBucket, scope: Option<&Value>) -> ToolPermission {
     // The file itself is resolved before its folder is taken: a symlinked file in a granted folder (`notes` ->
     // `/etc/passwd`, or one whose target doesn't exist yet) belongs to the folder it leads to
     let target = real_location(&normalize(Path::new(path)));

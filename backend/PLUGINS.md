@@ -95,6 +95,15 @@ sibling submodule the same way, still under `plugin_name: "coding"`.
 |---|---|---|
 | `signatures` | `coding.get_signatures` | Gives the model a trimmed, typed view of a dependency's public API — signatures with real types, not the full source — for rust, javascript/typescript, python, go, c/c++, java, kotlin, and csharp. No settings; enabling it needs nothing beyond the target language's own toolchain being available wherever `os.execute_command` runs. See the tool's own description (`GET /api/plugins/help?plugin_name=coding&plugin_subname=signatures`, or just ask the model) for exactly how each language resolves a dependency and what's best-effort about it — that's kept in one place (the tool description itself) rather than duplicated here and risking drift. |
 
+### `knowledge` — what the model can be taught
+| Subname | Contributes | Notes |
+|---|---|---|
+| `skills` | `skills.list`, `skills.read`, `skills.read_file`, `skills.write`, `skills.add_file`, `skills.delete`, `skills.install` | A skill is a folder with a `SKILL.md` (a header with `name` and `description`, then the instructions) and any files it refers to. Each user has their own set; the list of names and descriptions is the plugin's prompt section, and the model reads a skill with `skills.read` when a task matches. |
+
+A skill's row (name, description, who made it) is in the plugin's own table `plugin_knowledge_skills_items`, its files in `<data_dir>/<user id>/<skill>/`. Everything is checked as it arrives ([`skills/pack.rs`](./src/plugins/knowledge/skills/pack.rs), [`paths.rs`](./src/plugins/knowledge/skills/paths.rs)): paths are cleaned, a zip with a path that leaves its folder or with a link is refused whole, hidden files are left out, and the number of files and their sizes are bounded.
+
+Who made a skill decides who may change it. A skill the user uploaded (`origin = user`) can be replaced or deleted only by the user; one made through the model's tools (`origin = model`, `skills.install` included) can be rewritten or deleted by either. The model's changes ask for the usual folder approval, for the calling user's own skills folder: `skills.write`, `skills.add_file` and `skills.install` need write access to it, `skills.delete` delete access, and `skills.install` also read access to the source it names. A grant for one user's folder never covers another's, since the folder in the question is worked out from the user the chat belongs to (`Tool::is_dangerous_for`). The reading tools need no approval.
+
 ## HTTP API
 Registry-level management routes, under `/api/plugins`:
 

@@ -228,7 +228,7 @@ impl ToolCalls {
         let result_cap = Self::result_cap_chars(self.model.context_of(&chat).await?);
 
         let permission = self
-            .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, is_subagent)
+            .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, chat.user_id, is_subagent)
             .await;
 
         let (success, denied, err, content) = match permission {
@@ -372,6 +372,7 @@ impl ToolCalls {
         tool_name: &str,
         data: Value,
         scope: ResolvedScope,
+        user_id: i64,
         is_subagent: bool,
     ) -> AgentToolPermission {
         if !subagent::available_to(tool_name, is_subagent) {
@@ -388,7 +389,7 @@ impl ToolCalls {
             };
         };
 
-        match tool.is_dangerous(data, scope) {
+        match tool.is_dangerous_for(user_id, data, scope) {
             Ok(ToolPermission::Allowed) => AgentToolPermission::Allowed,
             Ok(ToolPermission::Denied { reason, escalation }) => AgentToolPermission::Denied {
                 reason,
@@ -441,8 +442,8 @@ impl ToolCalls {
         arguments: Value,
     ) -> Result<AgentToolCall, ErrorService> {
         let scope = self.stored_scope(chat_id, &name).await?;
-        let is_subagent = self.chat_store.chat(chat_id).await?.parent_chat_id.is_some();
-        let permission = self.tool_permission(&name, arguments.clone(), scope, is_subagent).await;
+        let chat = self.chat_store.chat(chat_id).await?;
+        let permission = self.tool_permission(&name, arguments.clone(), scope, chat.user_id, chat.parent_chat_id.is_some()).await;
 
         Ok(AgentToolCall {
             permission,

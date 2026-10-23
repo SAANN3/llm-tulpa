@@ -124,7 +124,8 @@ impl SkillStore {
         Self { db, root, write_lock: Mutex::new(()) }
     }
 
-    fn user_dir(&self, user_id: i64) -> PathBuf {
+    /// The folder of one user's skills
+    pub fn user_dir(&self, user_id: i64) -> PathBuf {
         self.root.join(user_id.to_string())
     }
 
@@ -231,7 +232,9 @@ impl SkillStore {
     ) -> Result<Skill, SkillStoreError> {
         let dir = self.skill_dir(user_id, name)?;
         let files = checked_files(files)?;
-        if description.trim().is_empty() {
+        // One line wherever it is shown: the prompt lists skills a line each
+        let description = description.split_whitespace().collect::<Vec<_>>().join(" ");
+        if description.is_empty() {
             return Err(SkillStoreError::Invalid("a skill needs a description that says when to use it".to_string()));
         }
 
@@ -271,7 +274,7 @@ impl SkillStore {
         let row = entity::ActiveModel {
             user_id: Set(user_id),
             name: Set(name.to_string()),
-            description: Set(description.trim().to_string()),
+            description: Set(description),
             origin: Set(by.as_str().to_string()),
             created_at: Set(now),
             updated_at: Set(now),

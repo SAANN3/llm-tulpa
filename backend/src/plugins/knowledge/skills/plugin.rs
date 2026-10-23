@@ -5,7 +5,9 @@ use axum::Router;
 use serde_json::{Value, json};
 
 use super::store::SkillStore;
+use super::tools;
 use crate::plugins::base::{Plugin, PluginError};
+use crate::tools::base::Tool;
 
 /// Skills the model can read when a task matches one: each user's own set, kept by the shared `SkillStore`. What the model
 /// sees of them is their list in the system prompt (`prompt_section`); the rest is read through tools on request.
@@ -29,6 +31,10 @@ impl Plugin for SkillsPlugin {
 
     fn api_router(&self) -> Router {
         Router::new()
+    }
+
+    fn tools(&self) -> Vec<Box<dyn Tool>> {
+        tools::collect(self.store.clone())
     }
 
     async fn on_enabled(&self) -> Result<(), PluginError> {
@@ -62,9 +68,7 @@ impl Plugin for SkillsPlugin {
              if one does, read it with skills.read and follow it.\n",
         );
         for skill in skills {
-            // A description is one line in the list, however it was written
-            let description = skill.description.split_whitespace().collect::<Vec<_>>().join(" ");
-            text.push_str(&format!("- {}: {description}\n", skill.name));
+            text.push_str(&format!("- {}: {}\n", skill.name, skill.description));
         }
         Some(text.trim_end().to_string())
     }

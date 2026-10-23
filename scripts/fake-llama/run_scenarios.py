@@ -1093,6 +1093,65 @@ def the_learned_limit_drops_the_oldest_learned_entries_and_the_slice_limit_caps_
     memory_clear()
 
 
+def tool_results(chat):
+    return [m for m in messages(chat) if m["role"] == "tool"]
+
+
+@scenario
+def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written():
+    settings(auto_confirm=False)
+    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable the skills plugin")
+    chat = new_chat("skills")
+    source = "/tmp/fake_skill_src_%d" % os.getpid()
+    os.makedirs(source + "/notes", exist_ok=True)
+    open(source + "/SKILL.md", "w").write("---\nname: from-folder\ndescription: Installed from a folder.\n---\n\nDo the folder thing.\n")
+    open(source + "/notes/a.md", "w").write("note A")
+    write = {"name": "skills.write", "arguments": {"name": "lab-report", "description": "Use for a lab report.\nSecond line.", "content": "# Steps\n1. Do it"}}
+    script({"tool_calls": [write]})
+    s = turn(chat, "save a skill")
+    eq(s["status"], "waiting_for_permission", "a write asks first")
+    has(s["pending"][0]["permission"]["escalation"]["ui_message"], "/knowledge/skills/1", "it names the user's own skills folder")
+    script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "lab-report"}},
+                           {"name": "skills.add_file", "arguments": {"name": "lab-report", "path": "scripts/run.sh", "content": "echo hi"}},
+                           {"name": "skills.read_file", "arguments": {"name": "lab-report", "path": "scripts/run.sh"}},
+                           {"name": "skills.read_file", "arguments": {"name": "lab-report", "path": "../../2/x"}},
+                           {"name": "skills.list", "arguments": {}}]},
+           {"tool_calls": [{"name": "skills.install", "arguments": {"path": source}}]})
+    eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "permanent"}]})[0], 202, "approve the folder")
+    s = wait_idle(chat)
+    # the read-only tools and the add ran on the grant; the install also reads a folder nobody has approved
+    eq(s["status"], "waiting_for_permission", "an install asks to read its source")
+    has(s["pending"][0]["permission"]["escalation"]["ui_message"], source, "it names the source")
+    results = [str(m["content"]) for m in tool_results(chat)]
+    has(results[1], "Do it", "skills.read gives the instructions")
+    has(results[1], "lab-report", "skills.read names the skill")
+    has(results[3], "echo hi", "a file added to the skill is read back")
+    has(results[4], "climbs out", "a path leaving the skill is refused")
+    has(results[5], "Use for a lab report. Second line.", "the list shows the description on one line")
+    script({"tool_calls": [{"name": "skills.delete", "arguments": {"name": "lab-report"}}]}, {"text": "gone"})
+    eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "approve reading the source")
+    s = wait_idle(chat)
+    eq(s["status"], "waiting_for_permission", "a delete asks on its own")
+    eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "approve the delete")
+    wait_idle(chat)
+    # a new chat's prompt lists the skill that is left, and not the deleted one
+    chat2 = new_chat("skills-2")
+    script({"text": "ok"})
+    turn(chat2, "hello")
+    system = system_of_last_main_call()
+    has(system, "- from-folder: Installed from a folder.", "the prompt lists the installed skill")
+    assert "lab-report" not in system, "a deleted skill is not listed"
+    chat3 = new_chat("skills-3")
+    script({"tool_calls": [{"name": "skills.delete", "arguments": {"name": "from-folder"}}]})
+    eq(turn(chat3, "clean up")["status"], "waiting_for_permission", "cleaning up asks too")
+    script({"text": "ok"})
+    api("/api/agent/answer", {"chat_id": chat3, "decisions": [{"index": 0, "allowance": "only_now"}]})
+    wait_idle(chat3)
+    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    os.system("rm -rf " + source)
+    settings()
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = 0

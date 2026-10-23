@@ -78,6 +78,14 @@ pub trait Tool: Send + Sync {
         Ok(ToolPermission::Allowed)
     }
 
+    /// `is_dangerous` for a tool whose answer depends on whose chat the call is in (a plugin that keeps a folder per user
+    /// asks about that user's folder). `user_id` is the chat's owner. What the agent calls; a tool that does not care about
+    /// the user leaves it alone and its `is_dangerous` is used.
+    fn is_dangerous_for(&self, user_id: i64, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
+        let _ = user_id;
+        self.is_dangerous(data, scope)
+    }
+
     /// Runs the tool. Takes the raw JSON arguments object the model produced (matched
     /// against `required_properties`) rather than a typed struct, since the trait can't
     /// know each impl's argument shape — each impl deserializes `data` into its own
