@@ -8,6 +8,8 @@ use crate::cache::user_cache::UserCacheService;
 use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
+use crate::plugins::env::PluginHost;
+use crate::plugins::knowledge::skills::builder::SkillsBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
 use crate::plugins::messaging::telegram::TelegramProvider;
@@ -167,6 +169,7 @@ pub async fn bootstrap(
     db_base_url: &str,
     db_name: &str,
     files_dir: PathBuf,
+    plugins_dir: PathBuf,
     jobs_dir: PathBuf,
     job_log_retention_days: u64,
     providers: LlmProviders,
@@ -299,13 +302,15 @@ pub async fn bootstrap(
     ));
 
     let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
-        Arc::new(MessagingProviderBuilder::<TelegramProvider>::new(plugin_agent.clone(), chat_store.clone())),
-        Arc::new(MessagingProviderBuilder::<DiscordProvider>::new(plugin_agent.clone(), chat_store.clone())),
-        Arc::new(MessagingProviderBuilder::<VkProvider>::new(plugin_agent, chat_store.clone())),
+        Arc::new(MessagingProviderBuilder::<TelegramProvider>::new()),
+        Arc::new(MessagingProviderBuilder::<DiscordProvider>::new()),
+        Arc::new(MessagingProviderBuilder::<VkProvider>::new()),
         Arc::new(SignaturesBuilder),
+        Arc::new(SkillsBuilder::new()),
     ];
+    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir };
     plugin_registry
-        .register_many(plugin_builders)
+        .register_many(plugin_builders, &plugin_host)
         .await
         .map_err(BootstrapError::Plugins)?;
 

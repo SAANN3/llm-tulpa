@@ -6,24 +6,21 @@ use serde_json::Value;
 
 use super::plugin::{MessagingPlugin, MessagingSettings};
 use super::provider::MessagingProvider;
-use crate::facade::agent::Agent;
 use crate::plugins::base::{Plugin, PluginBuilder, PluginError};
-use crate::services::chat_store::ChatStore;
+use crate::plugins::env::PluginEnv;
 use crate::tools::base::PropertyInfo;
 
 /// The generic half of a messaging plugin's factory — implements `PluginBuilder` once
-/// for every provider `P`, mirroring `MessagingPlugin`'s own reasoning. `agent`/
-/// `chat_store` are handed straight through to every `MessagingPlugin` this builds —
-/// see `MessagingPlugin`'s own fields for what each is for.
+/// for every provider `P`, mirroring `MessagingPlugin`'s own reasoning. The `agent`/
+/// `chat_store` of the `PluginEnv` are handed straight through to every `MessagingPlugin`
+/// this builds — see `MessagingPlugin`'s own fields for what each is for.
 pub struct MessagingProviderBuilder<P: MessagingProvider> {
-    agent: Arc<Agent>,
-    chat_store: Arc<ChatStore>,
     _provider: PhantomData<P>,
 }
 
 impl<P: MessagingProvider> MessagingProviderBuilder<P> {
-    pub fn new(agent: Arc<Agent>, chat_store: Arc<ChatStore>) -> Self {
-        Self { agent, chat_store, _provider: PhantomData }
+    pub fn new() -> Self {
+        Self { _provider: PhantomData }
     }
 }
 
@@ -49,9 +46,9 @@ impl<P: MessagingProvider> PluginBuilder for MessagingProviderBuilder<P> {
         P::help_message()
     }
 
-    async fn build(&self, settings: Value) -> Result<Arc<dyn Plugin>, PluginError> {
+    async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         let settings: MessagingSettings<P::Settings> = serde_json::from_value(settings)?;
         let provider = P::connect(settings.provider.clone()).await?;
-        Ok(Arc::new(MessagingPlugin::new(provider, settings, self.agent.clone(), self.chat_store.clone())))
+        Ok(Arc::new(MessagingPlugin::new(provider, settings, env.agent.clone(), env.chat_store.clone())))
     }
 }

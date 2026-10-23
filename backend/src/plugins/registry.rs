@@ -12,6 +12,7 @@ use tower::ServiceExt;
 use utoipa::ToSchema;
 
 use super::base::{Plugin, PluginBuilder, PluginError};
+use super::env::{PluginEnv, PluginHost};
 use super::schema::{self, PluginSchema};
 use super::tab::{valid_tab_id, PluginTab, TabFile, TabLayout, RESERVED_TAB_IDS};
 use crate::services::error::ErrorService;
@@ -42,6 +43,8 @@ struct PluginEntry {
     /// (see `PluginBuilder::build`) without the registry needing to know anything
     /// plugin-type-specific.
     builder: Arc<dyn PluginBuilder>,
+    /// What the builder is given on every build of this plugin, made once at registration.
+    env: PluginEnv,
     /// `None` until settings exist for this plugin — e.g. right after first startup,
     /// before the user has ever filled in VK's token. A plugin is known to the
     /// registry (listed, has a builder/schema to render a settings form from) well
@@ -120,6 +123,7 @@ impl PluginRegistry {
     pub async fn register(
         &self,
         builder: Arc<dyn PluginBuilder>,
+        env: PluginEnv,
         initial_settings: Option<Value>,
         enabled: bool,
     ) -> Result<(), PluginError> {
@@ -161,7 +165,7 @@ impl PluginRegistry {
         // stored is left as it was, not overwritten with nothing.
         let mut restore_failed = false;
         let (plugin, router) = match initial_settings.clone() {
-            Some(settings) => match builder.build(settings).await {
+            Some(settings) => match builder.build(settings, &env).await {
                 Ok(plugin) => {
                     let router = plugin.api_router();
                     (Some(plugin), Some(router))
@@ -192,7 +196,7 @@ impl PluginRegistry {
                         let _ = self.store.set(&plugin_name, &plugin_subname, settings, enabled).await;
                     }
                     let key = Self::key(&plugin_name, &plugin_subname);
-                    self.entries.write().await.insert(key, PluginEntry { builder, plugin: Some(plugin.clone()), router, enabled });
+                    self.entries.write().await.insert(key, PluginEntry { builder, env, plugin: Some(plugin.clone()), router, enabled });
                     return Err(PluginError::from(e));
                 }
             }
@@ -211,7 +215,7 @@ impl PluginRegistry {
         }
 
         let key = Self::key(&plugin_name, &plugin_subname);
-        self.entries.write().await.insert(key, PluginEntry { builder, plugin, router, enabled });
+        self.entries.write().await.insert(key, PluginEntry { builder, env, plugin, router, enabled });
         Ok(())
     }
 
@@ -225,7 +229,7 @@ impl PluginRegistry {
     /// Stops at the first failure (an `Err` here means a real bug — e.g. two builders
     /// reporting the same key — not a per-plugin runtime condition to shrug off), except
     /// a plugin whose own database steps fail: that one is logged and left out.
-    pub async fn register_many(&self, builders: Vec<Arc<dyn PluginBuilder>>) -> Result<(), PluginError> {
+    pub async fn register_many(&self, builders: Vec<Arc<dyn PluginBuilder>>, host: &PluginHost) -> Result<(), PluginError> {
         // Two builders under one key would replace each other and leave the first one's tasks running with nothing
         // watching them; like a tool name that two tools share, it is a mistake in the code, found at startup.
         let mut keys = std::collections::HashSet::new();
@@ -240,7 +244,15 @@ impl PluginRegistry {
         }
         for builder in builders {
             let label = format!("{}/{}", builder.plugin_name(), builder.plugin_subname());
-            match self.register(builder, None, false).await {
+            let env = match host.env_for(builder.plugin_name(), builder.plugin_subname()) {
+                Ok(env) => env,
+                // A name that cannot be a folder or a table prefix is the plugin's own mistake: it is left out, not the backend
+                Err(e) => {
+                    tracing::error!("plugin {label} is not available: {e:?}");
+                    continue;
+                }
+            };
+            match self.register(builder, env, None, false).await {
                 Ok(()) => {}
                 // A plugin whose tables cannot be brought up to date is left out, not the whole backend: the rest still run
                 Err(PluginError::Schema(why)) => tracing::error!("plugin {label} is not available: {why}"),
@@ -258,18 +270,18 @@ impl PluginRegistry {
     /// to restore (say, imported settings its builder rejects) is logged and doesn't stop the
     /// others.
     pub async fn reload_unconfigured(&self) {
-        let builders: Vec<Arc<dyn PluginBuilder>> = self
+        let builders: Vec<(Arc<dyn PluginBuilder>, PluginEnv)> = self
             .entries
             .read()
             .await
             .values()
             .filter(|entry| entry.plugin.is_none())
-            .map(|entry| entry.builder.clone())
+            .map(|entry| (entry.builder.clone(), entry.env.clone()))
             .collect();
 
-        for builder in builders {
+        for (builder, env) in builders {
             let label = format!("{}/{}", builder.plugin_name(), builder.plugin_subname());
-            if let Err(e) = self.register(builder, None, false).await {
+            if let Err(e) = self.register(builder, env, None, false).await {
                 tracing::warn!("could not restore plugin {label} from stored settings: {e:?}");
             }
         }
@@ -318,7 +330,7 @@ impl PluginRegistry {
             }
         }
 
-        let plugin = entry.builder.build(settings.clone()).await?;
+        let plugin = entry.builder.build(settings.clone(), &entry.env).await?;
         entry.router = Some(plugin.api_router());
         entry.plugin = Some(plugin.clone());
 

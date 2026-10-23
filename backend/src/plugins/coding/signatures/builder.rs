@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::plugins::base::{Plugin, PluginBuilder, PluginError};
+use crate::plugins::env::PluginEnv;
 use crate::plugins::coding::signatures::plugin::SignaturesPlugin;
 use crate::tools::base::PropertyInfo;
 
@@ -38,7 +39,7 @@ impl PluginBuilder for SignaturesBuilder {
             .to_string()
     }
 
-    async fn build(&self, _settings: Value) -> Result<Arc<dyn Plugin>, PluginError> {
+    async fn build(&self, _settings: Value, _env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         Ok(Arc::new(SignaturesPlugin))
     }
 }

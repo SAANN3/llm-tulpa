@@ -10,6 +10,7 @@ use crate::services::error::ErrorService;
 use crate::services::tools::ToolServiceError;
 use crate::tools::base::{PropertyInfo, Tool};
 
+use super::env::PluginEnv;
 use super::tab::{TabFile, TabInfo, TabLayout};
 
 /// One running instance of a plugin — e.g. the VK provider under the "messaging"
@@ -113,7 +114,10 @@ pub trait PluginBuilder: Send + Sync {
     /// instance, doesn't depend on current settings).
     fn help_message(&self) -> String;
 
-    async fn build(&self, settings: Value) -> Result<Arc<dyn Plugin>, PluginError>;
+    /// `env` is what the host gives this plugin (see `plugins::env`): the database, the agent, and a folder of its own
+    /// for files. A builder lives as long as the process and `build` runs again on every settings change, so what must
+    /// survive a rebuild (a lock, say) is kept in the builder, made from `env` on the first call.
+    async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError>;
 
     /// The SQL this plugin needs in the database, as ordered steps; `prefix` is the start every table and index it
     /// creates must have (`plugin_<name>_<subname>`, so `format!("CREATE TABLE {prefix}_items (...)")`). The registry

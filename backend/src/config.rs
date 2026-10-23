@@ -186,10 +186,10 @@ pub struct AppConfig {
     /// Where the speech-to-text models for voice input are stored. Defaults to `~/.llm-tulpa/stt`.
     #[serde(default)]
     pub stt_dir: Option<PathBuf>,
-    /// Where each user's skills (folders of instructions the model reads when a task matches) are stored, one folder per
-    /// user and per skill. Defaults to `~/.llm-tulpa/skills`.
+    /// Where plugins keep their files: each gets a folder of its own inside, `<plugin name>/<plugin subname>`, and lays it
+    /// out as it likes. Defaults to `~/.llm-tulpa/plugins`.
     #[serde(default)]
-    pub skills_dir: Option<PathBuf>,
+    pub plugins_dir: Option<PathBuf>,
     /// How many CPU threads a speech-to-text model uses; it never runs on the GPU, which the language model has.
     #[serde(default = "default_stt_threads")]
     pub stt_threads: u32,
@@ -251,7 +251,7 @@ impl AppConfig {
             files_dir: None,
             jobs_dir: None,
             stt_dir: None,
-            skills_dir: None,
+            plugins_dir: None,
             stt_threads: default_stt_threads(),
             stt_idle_unload_minutes: default_stt_idle_unload_minutes(),
             tls_dir: None,
@@ -281,12 +281,12 @@ impl AppConfig {
         })
     }
 
-    /// `skills_dir` if set, else `~/.llm-tulpa/skills`. Panics without a home directory, like `resolved_files_dir`.
-    pub fn resolved_skills_dir(&self) -> PathBuf {
-        self.skills_dir.clone().unwrap_or_else(|| {
+    /// `plugins_dir` if set, else `~/.llm-tulpa/plugins`. Panics without a home directory, like `resolved_files_dir`.
+    pub fn resolved_plugins_dir(&self) -> PathBuf {
+        self.plugins_dir.clone().unwrap_or_else(|| {
             dirs::home_dir()
-                .unwrap_or_else(|| panic!("could not determine home directory; set `skills_dir` in settings.json"))
-                .join(".llm-tulpa/skills")
+                .unwrap_or_else(|| panic!("could not determine home directory; set `plugins_dir` in settings.json"))
+                .join(".llm-tulpa/plugins")
         })
     }
 
