@@ -125,6 +125,15 @@ pub trait PluginBuilder: Send + Sync {
     /// survive a rebuild (a lock, say) is kept in the builder, made from `env` on the first call.
     async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError>;
 
+    /// Whether the plugin is switched on the first time it is registered, with nothing stored for it yet: a plugin that ships
+    /// in an update and that everyone should have (skills) comes up enabled instead of waiting for the owner to find it in
+    /// Plugins. Only that first time: what the owner has since chosen is stored and wins, so a plugin they switched off stays
+    /// off. A plugin that takes settings cannot be on by default (it has nothing to run with until they are filled in), so
+    /// this is ignored for one. `false` by default.
+    fn default_enabled(&self) -> bool {
+        false
+    }
+
     /// The SQL this plugin needs in the database, as ordered steps; `prefix` is the start every table and index it
     /// creates must have (`plugin_<name>_<subname>`, so `format!("CREATE TABLE {prefix}_items (...)")`). The registry
     /// applies the steps a database has not seen yet before the plugin is registered, in order, each in a transaction of

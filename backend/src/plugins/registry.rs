@@ -225,7 +225,8 @@ impl PluginRegistry {
     /// pass per builder: `register` already prefers whatever `PluginSettingsStore` has
     /// persisted for that key over anything the caller supplies, so a plugin that was
     /// configured and enabled before a restart comes back that way regardless — this
-    /// just needs to name every builder that exists, not know any of their defaults.
+    /// just needs to name every builder that exists, not know any of their defaults. The one default a builder has is
+    /// `default_enabled`, used for a plugin with no settings and nothing stored yet.
     /// Stops at the first failure (an `Err` here means a real bug — e.g. two builders
     /// reporting the same key — not a per-plugin runtime condition to shrug off), except
     /// a plugin whose own database steps fail: that one is logged and left out.
@@ -252,7 +253,8 @@ impl PluginRegistry {
                     continue;
                 }
             };
-            match self.register(builder, env, None, false).await {
+            let on_by_default = builder.default_enabled() && builder.settings_schema().is_empty();
+            match self.register(builder, env, None, on_by_default).await {
                 Ok(()) => {}
                 // A plugin whose tables cannot be brought up to date is left out, not the whole backend: the rest still run
                 Err(PluginError::Schema(why)) => tracing::error!("plugin {label} is not available: {why}"),

@@ -47,6 +47,11 @@ impl PluginBuilder for SkillsBuilder {
             .to_string()
     }
 
+    /// Everyone is meant to have skills, so a new install, or an update that brings the plugin, comes up with it on
+    fn default_enabled(&self) -> bool {
+        true
+    }
+
     fn migrations(&self, prefix: &str) -> Vec<String> {
         store::migrations(prefix)
     }
