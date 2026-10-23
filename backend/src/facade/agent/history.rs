@@ -275,7 +275,7 @@ impl History {
     /// What the enabled plugins add to `chat`'s system prompt
     pub(super) async fn plugin_sections(&self, chat: &Chat) -> Option<String> {
         match &self.plugins {
-            Some(plugins) => plugins.prompt_sections(chat.tools_enabled).await,
+            Some(plugins) => plugins.prompt_sections(chat.user_id, chat.tools_enabled).await,
             None => None,
         }
     }

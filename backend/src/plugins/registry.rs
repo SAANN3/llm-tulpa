@@ -336,13 +336,22 @@ impl PluginRegistry {
     /// What the enabled plugins add to the system prompt, one section after the other in the order of their keys, `None` when
     /// there is nothing. The order and each text are fixed for as long as the set of enabled plugins is, so the prompt the
     /// model server has cached stays valid between turns.
-    pub async fn prompt_sections(&self, tools: bool) -> Option<String> {
-        let entries = self.entries.read().await;
-        let sections = entries
-            .iter()
-            .filter(|(_, entry)| entry.enabled)
-            .filter_map(|(key, entry)| Some((key.clone(), entry.plugin.as_ref()?.prompt_section(tools)?)))
-            .collect();
+    pub async fn prompt_sections(&self, user_id: i64, tools: bool) -> Option<String> {
+        // The plugins are taken out of the map first: asking one may take a database read, and the lock is not held for that
+        let enabled: Vec<(PluginKey, Arc<dyn Plugin>)> = {
+            let entries = self.entries.read().await;
+            entries
+                .iter()
+                .filter(|(_, entry)| entry.enabled)
+                .filter_map(|(key, entry)| Some((key.clone(), entry.plugin.clone()?)))
+                .collect()
+        };
+        let mut sections = Vec::new();
+        for (key, plugin) in enabled {
+            if let Some(text) = plugin.prompt_section(user_id, tools).await {
+                sections.push((key, text));
+            }
+        }
         join_sections(sections)
     }
 

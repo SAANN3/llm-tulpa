@@ -56,11 +56,13 @@ pub trait Plugin: Send + Sync {
         vec![]
     }
 
-    /// A short text this plugin adds to the system prompt while it is enabled, `None` for nothing. `tools` says whether
-    /// the chat sends the model its tools, so a section about the plugin's tools can leave itself out of a chat that has
-    /// none. It must be the same text every time it is asked: it sits in the prompt every turn, and any change makes the
-    /// model server read the whole chat again. It is used as it is, with no limit on its length: enabling the plugin is the user's choice.
-    fn prompt_section(&self, _tools: bool) -> Option<String> {
+    /// A text this plugin adds to the system prompt of `user_id`'s chats while it is enabled, `None` for nothing: what
+    /// differs from one user to the next (a user's own skills, say) can be in it. `tools` says whether the chat sends
+    /// the model its tools, so a section about the plugin's tools can leave itself out of a chat that has none. It must be
+    /// the same text every time it is asked while nothing it describes has changed: it sits in the prompt every turn, and
+    /// any change makes the model server read the whole chat again. It is used as it is, with no limit on its length:
+    /// enabling the plugin is the user's choice.
+    async fn prompt_section(&self, _user_id: i64, _tools: bool) -> Option<String> {
         None
     }
 
