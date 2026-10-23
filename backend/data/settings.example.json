@@ -16,6 +16,7 @@
   "files_dir": null,
   "jobs_dir": null,
   "stt_dir": null,
+  "skills_dir": null,
   "stt_threads": 4,
   "stt_idle_unload_minutes": 10,
   "tls_dir": null,

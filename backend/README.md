@@ -34,6 +34,7 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 | `files_dir` | `~/.llm-tulpa/files` | Where uploaded files are stored. |
 | `jobs_dir` | `~/.llm-tulpa/jobs` | Where `os.start_job`'s background jobs write their log files. |
 | `stt_dir` | `~/.llm-tulpa/stt` | Where the speech-to-text models for voice input are stored (Settings, Voice). |
+| `skills_dir` | `~/.llm-tulpa/skills` | Where each user's skills are stored: one folder per user and per skill, each holding a `SKILL.md` and whatever else the skill brings. Managed in Settings → Skills while the skills plugin is enabled. |
 | `stt_threads` | `4` | CPU threads a speech-to-text model uses. It runs on the CPU only, so the GPU stays with the language model. Also set in Settings → Voice → Speed, which writes it here and applies it at once. |
 | `stt_idle_unload_minutes` | `10` | Minutes of silence after which a loaded speech-to-text model is unloaded to free its memory; `0` keeps it loaded. Also set in Settings → Voice → Speed. |
 | `tls_dir` | `~/.llm-tulpa/tls` | The folder of the frontend container's HTTPS certificate, where a certificate uploaded in Settings is written. It has to be the folder the frontend container mounts as `/tls`, which `compose.yaml` does by default. |
