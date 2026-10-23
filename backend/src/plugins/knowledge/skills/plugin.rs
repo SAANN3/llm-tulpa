@@ -54,6 +54,12 @@ impl Plugin for SkillsPlugin {
         tab::upload(&self.store, user_id, action, files).await
     }
 
+    async fn on_user_deleted(&self, user_id: i64) {
+        if let Err(e) = self.store.remove_user_files(user_id).await {
+            tracing::warn!("skills of deleted user {user_id} could not be removed: {e}");
+        }
+    }
+
     async fn on_enabled(&self) -> Result<(), PluginError> {
         Ok(())
     }

@@ -15,7 +15,8 @@ pub(crate) struct DeleteUserQuery {
 }
 
 /// Owner-only: deletes a user and all their data (chats, settings, files records) via FK
-/// cascade. The owner can't delete themselves.
+/// cascade, and tells the plugins so they can remove what they kept outside the database (the
+/// skills plugin's files). The owner can't delete themselves.
 #[utoipa::path(
     delete,
     path = "/api/users",
@@ -36,6 +37,8 @@ pub async fn delete_user(
     if query.id == owner.id {
         return Err(ErrorService::new(StatusCode::BAD_REQUEST, "you can't delete your own account"));
     }
-    state.services().await?.user_store.delete_user(query.id).await?;
+    let services = state.services().await?;
+    services.user_store.delete_user(query.id).await?;
+    services.plugin_registry.user_deleted(query.id).await;
     Ok(StatusCode::NO_CONTENT)
 }

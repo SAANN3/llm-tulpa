@@ -12,8 +12,13 @@ const UPLOAD: &str = "upload";
 const VIEW: &str = "view";
 const DELETE: &str = "delete";
 
+/// A skill that is not there is a 404 and a refused request a 400; only a failure of the disk or the database is a 500.
 fn failed(e: SkillStoreError) -> PluginError {
-    PluginError::FailedUnknown(e.to_string())
+    match e {
+        SkillStoreError::NotFound(_) => PluginError::NotFound(e.to_string()),
+        SkillStoreError::Refused(_) | SkillStoreError::Invalid(_) => PluginError::InvalidState(e.to_string()),
+        SkillStoreError::Io(_) | SkillStoreError::Db(_) => PluginError::FailedUnknown(e.to_string()),
+    }
 }
 
 /// The tab as it is for `user_id`, with a line about what was just done and perhaps a text to show.

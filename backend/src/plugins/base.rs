@@ -67,6 +67,12 @@ pub trait Plugin: Send + Sync {
         None
     }
 
+    /// Called after `user_id` was deleted, for what the plugin keeps for them outside the database (files, say): their rows
+    /// in the plugin's own tables go with the user through the foreign key, but nothing else does. Called on every built
+    /// instance, enabled or not, since what it stored is there either way. The user is gone whatever happens here, so a
+    /// failure is the plugin's to log, not to return.
+    async fn on_user_deleted(&self, _user_id: i64) {}
+
     /// A tab of this plugin's own in Settings, shown to every user while the plugin is enabled; `None` for none. What it
     /// holds comes from `tab_layout`, see `plugins::tab`.
     fn settings_tab(&self) -> Option<TabInfo> {

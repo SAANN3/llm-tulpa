@@ -342,6 +342,17 @@ impl SkillStore {
         Ok(())
     }
 
+    /// Removes every file of a user's skills, for when the user was deleted (their rows went with them through the
+    /// foreign key). Nothing is left to ask who made what, so the whole folder goes.
+    pub async fn remove_user_files(&self, user_id: i64) -> Result<(), SkillStoreError> {
+        let _guard = self.write_lock.lock().await;
+        match tokio::fs::remove_dir_all(self.user_dir(user_id)).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io("could not remove the user's skills", e)),
+        }
+    }
+
     /// Deletes a skill `by` is allowed to change: the row first (so it drops out of the prompt at once), then the folder.
     pub async fn delete(&self, user_id: i64, name: &str, by: Origin) -> Result<(), SkillStoreError> {
         let dir = self.skill_dir(user_id, name)?;

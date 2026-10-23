@@ -367,6 +367,16 @@ impl PluginRegistry {
         join_sections(sections)
     }
 
+    /// Tells every built plugin that `user_id` was deleted (`Plugin::on_user_deleted`), so each can remove what it kept
+    /// for them outside the database.
+    pub async fn user_deleted(&self, user_id: i64) {
+        // Taken out of the map first, like `prompt_sections`: a plugin may do file work that the lock should not wait for
+        let plugins: Vec<Arc<dyn Plugin>> = self.entries.read().await.values().filter_map(|entry| entry.plugin.clone()).collect();
+        for plugin in plugins {
+            plugin.on_user_deleted(user_id).await;
+        }
+    }
+
     pub async fn get(&self, plugin_name: &str, plugin_subname: &str) -> Option<Arc<dyn Plugin>> {
         self.entries
             .read()

@@ -413,7 +413,8 @@ def the_context_is_measured_by_part_and_memory_edits_reach_the_next_request():
     eq(parts["tools"]["count"], len(calls("main")[-1]["tool_names"]), "the tools counted")
     # The parts of the system message are what the request carried, apart from the joins and the summary's heading
     system = calls("main")[-1]["messages"][0]["content"].encode()
-    lead = sum(parts[k]["chars"] for k in ("system_prompt", "key_facts", "pinned", "summary", "notes"))
+    # (the memory and a plugin's prompt part are in the message when there are any)
+    lead = sum(parts[k]["chars"] for k in ("system_prompt", "key_facts", "pinned", "summary", "notes", "memory", "plugin_sections") if k in parts)
     assert 0 <= len(system) - lead < 100, f"the system message measured: {len(system)} sent, {lead} counted"
     sent = calls("main")[-1]["messages"][1:]
     eq((parts["user_messages"]["count"], parts["replies"]["count"]),
@@ -1149,6 +1150,76 @@ def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written(
     wait_idle(chat3)
     api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
     os.system("rm -rf " + source)
+    settings()
+
+
+@scenario
+def another_users_skills_are_not_listed_and_not_readable():
+    made = ok("/api/users", {"username": "skills-bob-%d" % os.getpid(), "password": "bob-pass-123"})
+    bob_id = made["id"]
+    BOB = token_for(bob_id, made["username"], "user")
+    try:
+        settings(auto_confirm=True)
+        full = {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False,
+                "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000}
+        eq(request(BACKEND, "/api/settings", full, token=BOB)[0] // 100, 2, "bob's settings")
+        eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable the skills plugin")
+        owner = new_chat("skills-owner")
+        script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "owner-secret", "description": "The owner's own skill.", "content": "Private."}}]}, {"text": "saved"})
+        turn(owner, "save it")
+
+        def bob_turn(prompt):
+            status, chat = request(BACKEND, "/api/chats", {"name": "skills-bob", "launch_profile_id": PROFILE, "tools_enabled": True}, token=BOB)
+            eq(status, 200, "bob's chat")
+            eq(request(BACKEND, "/api/agent/turn", {"chat_id": chat["id"], "prompt": prompt}, token=BOB)[0], 202, "bob's turn")
+            wait_for(lambda: request(BACKEND, f"/api/agent/turn?chat_id={chat['id']}", token=BOB)[1]["status"] != "running", what="bob's run")
+            msgs = request(BACKEND, f"/api/chats/messages?chat_id={chat['id']}&limit=200", token=BOB)[1]["messages"]
+            return sorted(msgs, key=lambda m: m["id"])
+
+        script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "owner-secret"}},
+                               {"name": "skills.delete", "arguments": {"name": "owner-secret"}},
+                               {"name": "skills.list", "arguments": {}}]}, {"text": "done"})
+        results = [str(m["content"]) for m in bob_turn("read it") if m["role"] == "tool"]
+        has(results[0], "not found", "bob cannot read the owner's skill")
+        has(results[1], "not found", "bob cannot delete it")
+        eq(results[2], "[]", "bob's list is empty")
+        assert "owner-secret" not in system_of_last_main_call(), "bob's prompt does not list the owner's skill"
+
+        again = new_chat("skills-owner-again")
+        script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "owner-secret"}}]}, {"text": "ok"})
+        turn(again, "check")
+        has(str([m["content"] for m in tool_results(again)]), "Private.", "the owner still reads their own skill")
+        has(system_of_last_main_call(), "- owner-secret: The owner's own skill.", "and their prompt lists it")
+        eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "owner-secret"}})[0], 200, "clean up")
+    finally:
+        api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+        status, _ = api(f"/api/users?id={bob_id}", None, "DELETE")
+        eq(status, 204, "the user is deleted again")
+        settings()
+
+
+@scenario
+def switching_the_skills_plugin_off_hides_it_and_keeps_the_skills():
+    settings(auto_confirm=True)
+    enable = lambda on: api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": on})[0]
+    eq(enable(True), 204, "enable")
+    chat = new_chat("skills-onoff")
+    script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "keeper", "description": "Kept while off.", "content": "Body."}}]}, {"text": "saved"})
+    turn(chat, "save it")
+    eq(enable(False), 204, "disable")
+    eq([t for t in ok("/api/plugins/tabs") if t["id"] == "skills"], [], "the tab is gone while it is off")
+    off = new_chat("skills-off")
+    script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "keeper"}}]}, {"text": "ok"})
+    turn(off, "read it")
+    has(str([m["content"] for m in tool_results(off)]), "no tool named", "its tools are gone while it is off")
+    assert "# Skills" not in system_of_last_main_call(), "and its part of the prompt"
+    eq(enable(True), 204, "enable again")
+    on = new_chat("skills-on")
+    script({"text": "ok"})
+    turn(on, "hello")
+    has(system_of_last_main_call(), "- keeper: Kept while off.", "the skill is listed again, nothing was lost")
+    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "keeper"}})[0], 200, "clean up")
+    enable(False)
     settings()
 
 
