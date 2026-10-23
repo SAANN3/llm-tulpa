@@ -104,6 +104,8 @@ A skill's row (name, description, who made it) is in the plugin's own table `plu
 
 Who made a skill decides who may change it. A skill the user uploaded (`origin = user`) can be replaced or deleted only by the user; one made through the model's tools (`origin = model`, `skills.install` included) can be rewritten or deleted by either. The model's changes ask for the usual folder approval, for the calling user's own skills folder: `skills.write`, `skills.add_file` and `skills.install` need write access to it, `skills.delete` delete access, and `skills.install` also read access to the source it names. A grant for one user's folder never covers another's, since the folder in the question is worked out from the user the chat belongs to (`Tool::is_dangerous_for`). The reading tools need no approval.
 
+The plugin's Settings tab (see `plugins/tab.rs`) is the user's side: a drop zone that takes a skill folder or a `.zip` (a skill with a name already there is replaced, and what is wrong with a file is told in the tab's message line), and a list of the user's skills, each with a button to read its `SKILL.md` and one to delete it. The user may delete any skill, including one the model made.
+
 ## HTTP API
 Registry-level management routes, under `/api/plugins`:
 

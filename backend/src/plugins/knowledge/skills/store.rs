@@ -64,8 +64,6 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub origin: Origin,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
 }
 
 impl From<entity::Model> for Skill {
@@ -74,8 +72,6 @@ impl From<entity::Model> for Skill {
             name: row.name,
             description: row.description,
             origin: Origin::parse(&row.origin),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
         }
     }
 }

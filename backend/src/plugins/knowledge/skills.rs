@@ -5,4 +5,5 @@ mod pack;
 mod paths;
 pub mod plugin;
 pub mod store;
+mod tab;
 mod tools;

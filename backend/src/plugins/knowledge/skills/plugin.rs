@@ -5,8 +5,9 @@ use axum::Router;
 use serde_json::{Value, json};
 
 use super::store::SkillStore;
-use super::tools;
+use super::{tab, tools};
 use crate::plugins::base::{Plugin, PluginError};
+use crate::plugins::tab::{TabFile, TabInfo, TabLayout};
 use crate::tools::base::Tool;
 
 /// Skills the model can read when a task matches one: each user's own set, kept by the shared `SkillStore`. What the model
@@ -35,6 +36,22 @@ impl Plugin for SkillsPlugin {
 
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         tools::collect(self.store.clone())
+    }
+
+    fn settings_tab(&self) -> Option<TabInfo> {
+        Some(TabInfo { id: "skills".to_string(), title: "Skills".to_string() })
+    }
+
+    async fn tab_layout(&self, user_id: i64) -> Result<TabLayout, PluginError> {
+        tab::layout(&self.store, user_id, None, None).await
+    }
+
+    async fn tab_action(&self, user_id: i64, action: &str, args: Value) -> Result<TabLayout, PluginError> {
+        tab::action(&self.store, user_id, action, args).await
+    }
+
+    async fn tab_upload(&self, user_id: i64, action: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+        tab::upload(&self.store, user_id, action, files).await
     }
 
     async fn on_enabled(&self) -> Result<(), PluginError> {
