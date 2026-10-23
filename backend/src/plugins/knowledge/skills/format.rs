@@ -76,21 +76,20 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
         let key = key.trim();
         let value = value.trim();
         let block = matches!(value.chars().next(), Some('>') | Some('|')).then(|| value.starts_with('>'));
-        let mut text = String::new();
-        if let Some(fold) = block {
+        let text = if let Some(fold) = block {
             let mut lines_of_block = Vec::new();
             while at < header.len() && (header[at].trim().is_empty() || header[at].starts_with(' ') || header[at].starts_with('\t')) {
                 lines_of_block.push(header[at].trim());
                 at += 1;
             }
-            text = lines_of_block.join(if fold { " " } else { "\n" });
+            lines_of_block.join(if fold { " " } else { "\n" })
         } else if value.starts_with('"') || value.starts_with('\'') {
             let quote = value.chars().next().unwrap();
             let inner = value[1..].strip_suffix(quote).unwrap_or(&value[1..]);
-            text = if quote == '"' { inner.replace("\\\"", "\"").replace("\\\\", "\\") } else { inner.replace("''", "'") };
+            if quote == '"' { inner.replace("\\\"", "\"").replace("\\\\", "\\") } else { inner.replace("''", "'") }
         } else {
-            text = value.to_string();
-        }
+            value.to_string()
+        };
         match key {
             "name" => name = Some(one_line(&text)),
             "description" => description = Some(one_line(&text)),
