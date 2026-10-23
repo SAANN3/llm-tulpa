@@ -10,6 +10,8 @@ pub struct Model {
     pub description: String,
     /// `user` or `model` (see `Origin`)
     pub origin: String,
+    /// Whether the model may see the skill (see `Skill::enabled`)
+    pub enabled: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

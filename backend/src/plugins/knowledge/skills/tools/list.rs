@@ -39,6 +39,7 @@ impl Tool for ListTool {
         let skills = self.store.list(ctx.user_id).await.map_err(failed)?;
         let out: Vec<SkillOut> = skills
             .into_iter()
+            .filter(|s| s.enabled)
             .map(|s| SkillOut { name: s.name, description: s.description, origin: s.origin.as_str() })
             .collect();
         Ok(serde_json::to_value(out)?)

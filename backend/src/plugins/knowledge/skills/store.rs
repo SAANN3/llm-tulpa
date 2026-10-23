@@ -6,6 +6,9 @@
 //!
 //! Who made a skill decides who may change it: a skill the user uploaded (`Origin::User`) is replaced or deleted only by
 //! the user; one the model made (`Origin::Model`) may be rewritten or deleted by either.
+//!
+//! A skill the user turned off (`enabled`) stays in the list and on disk, but is not the model's: the prompt and the tools
+//! leave it out, and the model may not change it.
 
 use std::path::{Path, PathBuf};
 
@@ -35,7 +38,8 @@ pub fn migrations(prefix: &str) -> Vec<String> {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (user_id, name)
         )"
-    )]
+    ),
+    format!("ALTER TABLE {prefix}_items ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE")]
 }
 
 /// Who made a skill, or who is acting on one.
@@ -64,6 +68,8 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub origin: Origin,
+    /// Whether the model may see it; the user's own list shows every skill either way
+    pub enabled: bool,
 }
 
 impl From<entity::Model> for Skill {
@@ -72,6 +78,7 @@ impl From<entity::Model> for Skill {
             name: row.name,
             description: row.description,
             origin: Origin::parse(&row.origin),
+            enabled: row.enabled,
         }
     }
 }
@@ -153,6 +160,12 @@ impl SkillStore {
         Ok(rows.into_iter().map(Skill::from).collect())
     }
 
+    /// A skill the model may use: one that is turned off is not found, as if it were not there.
+    pub async fn get_enabled(&self, user_id: i64, name: &str) -> Result<Skill, SkillStoreError> {
+        let skill = self.get(user_id, name).await?;
+        if skill.enabled { Ok(skill) } else { Err(SkillStoreError::NotFound(format!("skill '{name}'"))) }
+    }
+
     pub async fn get(&self, user_id: i64, name: &str) -> Result<Skill, SkillStoreError> {
         self.skill_dir(user_id, name)?;
         self.row(user_id, name)
@@ -205,8 +218,29 @@ impl SkillStore {
         tokio::fs::read(&real).await.map_err(|e| io("could not read the file", e))
     }
 
+    /// Turns a skill on or off for the model. The files are not touched.
+    pub async fn set_enabled(&self, user_id: i64, name: &str, enabled: bool) -> Result<(), SkillStoreError> {
+        self.skill_dir(user_id, name)?;
+        let _guard = self.write_lock.lock().await;
+        let existing = self
+            .row(user_id, name)
+            .await?
+            .ok_or_else(|| SkillStoreError::NotFound(format!("skill '{name}'")))?;
+        entity::Entity::update_many()
+            .col_expr(entity::Column::Enabled, Expr::value(enabled))
+            .filter(entity::Column::Id.eq(existing.id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
     /// Whether `by` may change `existing`.
     fn allowed(existing: &entity::Model, by: Origin, name: &str) -> Result<(), SkillStoreError> {
+        if by == Origin::Model && !existing.enabled {
+            return Err(SkillStoreError::Refused(format!(
+                "skill '{name}' is turned off by the user, so only the user can change it; use another name"
+            )));
+        }
         if by == Origin::Model && Origin::parse(&existing.origin) == Origin::User {
             return Err(SkillStoreError::Refused(format!(
                 "skill '{name}' was added by the user, so only the user can change it; use another name"
@@ -272,6 +306,7 @@ impl SkillStore {
             name: Set(name.to_string()),
             description: Set(description),
             origin: Set(by.as_str().to_string()),
+            enabled: Set(true),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()

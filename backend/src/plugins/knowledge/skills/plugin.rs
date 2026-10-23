@@ -83,6 +83,7 @@ impl Plugin for SkillsPlugin {
                 return None;
             }
         };
+        let skills: Vec<_> = skills.into_iter().filter(|skill| skill.enabled).collect();
         if skills.is_empty() {
             return None;
         }

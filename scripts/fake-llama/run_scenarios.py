@@ -1223,6 +1223,42 @@ def switching_the_skills_plugin_off_hides_it_and_keeps_the_skills():
     settings()
 
 
+@scenario
+def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user():
+    settings(auto_confirm=True)
+    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
+    tab = lambda action, args: api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": action, "args": args})
+    chat = new_chat("skill-switch")
+    script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "sleeper", "description": "Only for the sleeper case.", "content": "Body."}}]}, {"text": "saved"})
+    turn(chat, "save it")
+    eq(tab("enable", {"row": "sleeper", "on": False})[0], 200, "switch off")
+
+    off = new_chat("skill-off")
+    script(
+        {"tool_calls": [{"name": "skills.read", "arguments": {"name": "sleeper"}}]},
+        {"tool_calls": [{"name": "skills.list", "arguments": {}}]},
+        {"tool_calls": [{"name": "skills.write", "arguments": {"name": "sleeper", "description": "Mine now.", "content": "Overwritten."}}]},
+        {"text": "ok"},
+    )
+    turn(off, "use it")
+    assert "sleeper" not in system_of_last_main_call(), "a skill that is off is not in the prompt"
+    results = [m["content"] for m in tool_results(off)]
+    has(results[0], "not found", "skills.read does not open it")
+    assert "sleeper" not in results[1], "skills.list does not show it"
+    has(results[2], "turned off", "the model cannot write over it")
+    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
+    eq(row["switch"]["on"], False, "the user's list still shows it, off")
+
+    eq(tab("enable", {"row": "sleeper", "on": True})[0], 200, "switch on")
+    on = new_chat("skill-on")
+    script({"text": "ok"})
+    turn(on, "hello")
+    has(system_of_last_main_call(), "- sleeper: Only for the sleeper case.", "listed again, unchanged by the model's attempt")
+    eq(tab("delete", {"row": "sleeper"})[0], 200, "clean up")
+    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    settings()
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = 0

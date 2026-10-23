@@ -43,6 +43,7 @@ impl Tool for ReadFileTool {
 
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: ReadFileArgs = serde_json::from_value(data)?;
+        self.store.get_enabled(ctx.user_id, &args.name).await.map_err(failed)?;
         let bytes = self.store.read_file(ctx.user_id, &args.name, &args.path).await.map_err(failed)?;
         let content = as_text(&args.path, bytes)?;
         Ok(serde_json::to_value(ReadFileOut { path: args.path, content })?)

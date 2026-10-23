@@ -1,5 +1,5 @@
-//! The Skills tab in Settings: what the user has, a drop zone to add more, and a button on each skill to read it, add files
-//! to it or delete it.
+//! The Skills tab in Settings: what the user has, a drop zone to add more, and on each skill a switch that shows it to the
+//! model or hides it, and buttons to read it, add files to it or delete it.
 //! The user may delete any skill, including one the model made; the model's tools can only delete its own.
 
 use serde_json::Value;
@@ -7,10 +7,11 @@ use serde_json::Value;
 use super::pack::{self, SKILL_FILE};
 use super::store::{Origin, SkillStore, SkillStoreError};
 use crate::plugins::base::PluginError;
-use crate::plugins::tab::{Block, Row, RowButton, Section, TabFile, TabLayout, TabPopup};
+use crate::plugins::tab::{Block, Row, RowButton, RowSwitch, Section, TabFile, TabLayout, TabPopup};
 
 const UPLOAD: &str = "upload";
 const ADD_FILES: &str = "add_files";
+const ENABLE: &str = "enable";
 const VIEW: &str = "view";
 const DELETE: &str = "delete";
 
@@ -38,7 +39,7 @@ pub async fn layout(store: &SkillStore, user_id: i64, message: Option<String>, p
                 Origin::User => "added by you".to_string(),
                 Origin::Model => "made by the model".to_string(),
             }),
-            switch: None,
+            switch: Some(RowSwitch { action: ENABLE.to_string(), on: skill.enabled }),
             buttons: vec![
                 RowButton { action: VIEW.to_string(), label: "Read".to_string(), confirm: None, upload: false },
                 RowButton { action: ADD_FILES.to_string(), label: "Add files".to_string(), confirm: None, upload: true },
@@ -58,7 +59,8 @@ pub async fn layout(store: &SkillStore, user_id: i64, message: Option<String>, p
                 blocks: vec![
                     Block::Text {
                         text: "A skill is a folder with a SKILL.md that says when to use it and how, and any files it refers to. \
-                               The model sees each skill's name and description and reads the rest when a task matches."
+                               The model sees each skill's name and description and reads the rest when a task matches. \
+                               A skill that is switched off is hidden from the model and stays here."
                             .to_string(),
                         dim: true,
                     },
@@ -84,6 +86,14 @@ pub async fn action(store: &SkillStore, user_id: i64, action: &str, args: Value)
         .and_then(Value::as_str)
         .ok_or_else(|| PluginError::InvalidState("the button did not say which skill".to_string()))?;
     match action {
+        ENABLE => {
+            let on = args
+                .get("on")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| PluginError::InvalidState("the switch did not say on or off".to_string()))?;
+            store.set_enabled(user_id, name, on).await.map_err(failed)?;
+            layout(store, user_id, Some(format!("'{name}' is {} for the model.", if on { "on" } else { "off" })), None).await
+        }
         VIEW => {
             let bytes = store.read_file(user_id, name, SKILL_FILE).await.map_err(failed)?;
             let text = String::from_utf8_lossy(&bytes).to_string();
