@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useRef, useState} from 'react'
 import '../styles/plugin-tab.scss'
 import type {TabBlock, TabRow} from '../api/plugins/types.ts'
 import {usePluginTabLayout} from '../hooks/use-plugin-tab-layout.ts'
@@ -20,6 +20,9 @@ export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
     const {layout, error, busy, popup, closePopup, act, upload} = usePluginTabLayout(pluginName, pluginSubname)
     // What waits for a yes: the button and its row, with the question
     const [asking, setAsking] = useState<{ action: string; row: string; question: string } | null>(null)
+    // The button whose picker is open: one hidden input serves every row's upload button
+    const picker = useRef<HTMLInputElement>(null)
+    const picking = useRef<{ action: string; row: string } | null>(null)
 
     // The key has the place too: a plugin that gives two rows one id must not make the list unstable
     const drawRow = (row: TabRow, at: number) => (
@@ -38,9 +41,13 @@ export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
                 ) : null}
                 {row.buttons.map((button) => (
                     <Button key={button.action} variant="secondary" text={button.label} disabled={busy}
-                            onClicked={() => button.confirm
-                                ? setAsking({action: button.action, row: row.id, question: button.confirm})
-                                : void act(button.action, {row: row.id})}/>
+                            onClicked={() => {
+                                if (button.upload) {
+                                    picking.current = {action: button.action, row: row.id}
+                                    picker.current?.click()
+                                } else if (button.confirm) setAsking({action: button.action, row: row.id, question: button.confirm})
+                                else void act(button.action, {row: row.id})
+                            }}/>
                 ))}
             </Div>
         </Div>
@@ -83,6 +90,12 @@ export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
                     : <Div key={at} className="settings-section">{blocks}</Div>
             })}
             {error ? <Label className="plugin-tab__error" text={error}/> : layout.message ? <Label variant="secondary" className="plugin-tab__message" text={layout.message}/> : null}
+            <input ref={picker} type="file" multiple hidden
+                   onChange={(e) => {
+                       const files = Array.from(e.target.files ?? []).map((file) => ({path: file.name, file}))
+                       e.target.value = ''
+                       if (files.length > 0 && picking.current) void upload(picking.current.action, files, picking.current.row)
+                   }}/>
             <ConfirmPopup open={asking !== null} title="Are you sure?" confirmLabel="Yes" message={asking?.question ?? ''}
                           onConfirm={() => asking && void act(asking.action, {row: asking.row})} onClose={() => setAsking(null)}/>
             <Popup open={popup !== null} title={popup?.title ?? ''} width={760} actions={[]} onClose={closePopup}>

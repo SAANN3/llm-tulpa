@@ -35,6 +35,8 @@ export interface TabRowButton {
     label: string
     /** Asked in a popup before the button's action is sent */
     confirm: string | null
+    /** Opens a file picker; the chosen files are uploaded with the row's id instead of the action being sent */
+    upload: boolean
 }
 
 export interface TabRow {

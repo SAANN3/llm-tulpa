@@ -529,8 +529,8 @@ impl PluginRegistry {
         self.with_tab(plugin_name, plugin_subname).await?.tab_action(user_id, action, args).await
     }
 
-    pub async fn tab_upload(&self, plugin_name: &str, plugin_subname: &str, user_id: i64, action: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
-        self.with_tab(plugin_name, plugin_subname).await?.tab_upload(user_id, action, files).await
+    pub async fn tab_upload(&self, plugin_name: &str, plugin_subname: &str, user_id: i64, action: &str, row: Option<String>, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+        self.with_tab(plugin_name, plugin_subname).await?.tab_upload(user_id, action, row, files).await
     }
 
     /// Runs `req` through a plugin's own `api_router()`, with `req`'s path already relative to

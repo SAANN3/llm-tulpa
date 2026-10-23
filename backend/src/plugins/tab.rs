@@ -86,12 +86,14 @@ pub struct RowSwitch {
     pub on: bool,
 }
 
-/// A row's button. Sends `action` with `{"row": id}`; `confirm`, when set, is asked in a popup first.
+/// A row's button. Sends `action` with `{"row": id}`; `confirm`, when set, is asked in a popup first. An `upload` button
+/// opens a file picker instead and sends the chosen files to the plugin's upload (`tab_upload`) with the row's id.
 #[derive(Serialize, ToSchema)]
 pub struct RowButton {
     pub action: String,
     pub label: String,
     pub confirm: Option<String>,
+    pub upload: bool,
 }
 
 /// What a control sends back (`POST /api/plugins/tab/action`).

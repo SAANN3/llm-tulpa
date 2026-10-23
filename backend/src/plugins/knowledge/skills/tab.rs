@@ -1,4 +1,5 @@
-//! The Skills tab in Settings: what the user has, a drop zone to add more, and a button on each skill to read or delete it.
+//! The Skills tab in Settings: what the user has, a drop zone to add more, and a button on each skill to read it, add files
+//! to it or delete it.
 //! The user may delete any skill, including one the model made; the model's tools can only delete its own.
 
 use serde_json::Value;
@@ -9,6 +10,7 @@ use crate::plugins::base::PluginError;
 use crate::plugins::tab::{Block, Row, RowButton, Section, TabFile, TabLayout, TabPopup};
 
 const UPLOAD: &str = "upload";
+const ADD_FILES: &str = "add_files";
 const VIEW: &str = "view";
 const DELETE: &str = "delete";
 
@@ -38,11 +40,13 @@ pub async fn layout(store: &SkillStore, user_id: i64, message: Option<String>, p
             }),
             switch: None,
             buttons: vec![
-                RowButton { action: VIEW.to_string(), label: "Read".to_string(), confirm: None },
+                RowButton { action: VIEW.to_string(), label: "Read".to_string(), confirm: None, upload: false },
+                RowButton { action: ADD_FILES.to_string(), label: "Add files".to_string(), confirm: None, upload: true },
                 RowButton {
                     action: DELETE.to_string(),
                     label: "Delete".to_string(),
                     confirm: Some(format!("Delete the skill '{}' and all its files?", skill.name)),
+                    upload: false,
                 },
             ],
         })
@@ -93,12 +97,34 @@ pub async fn action(store: &SkillStore, user_id: i64, action: &str, args: Value)
     }
 }
 
-/// A folder or a zip dropped on the drop zone. What is wrong with it is told in the tab's message line, not as an error,
-/// since it is the person's file that needs fixing.
-pub async fn upload(store: &SkillStore, user_id: i64, action: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
-    if action != UPLOAD {
-        return Err(PluginError::NotFound(format!("the skills tab has no drop zone '{action}'")));
+/// Files that arrive in the tab: a folder or a zip dropped on the drop zone, or files chosen with a skill's own button.
+/// What is wrong with them is told in the tab's message line, not as an error, since it is the person's files that need
+/// fixing.
+pub async fn upload(store: &SkillStore, user_id: i64, action: &str, row: Option<String>, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+    match (action, row) {
+        (UPLOAD, _) => add_skill(store, user_id, files).await,
+        (ADD_FILES, Some(name)) => add_files(store, user_id, &name, files).await,
+        (ADD_FILES, None) => Err(PluginError::InvalidState("the files did not say which skill they are for".to_string())),
+        (other, _) => Err(PluginError::NotFound(format!("the skills tab has no drop zone '{other}'"))),
     }
+}
+
+/// Files for a skill that is already there. They are written one by one, so when one is refused the ones before it stay.
+async fn add_files(store: &SkillStore, user_id: i64, name: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+    let count = files.len();
+    for file in files {
+        match store.add_file(user_id, name, &file.path, file.bytes, Origin::User).await {
+            Ok(()) => {}
+            Err(SkillStoreError::Invalid(why)) => return layout(store, user_id, Some(format!("Not added: {why}")), None).await,
+            Err(other) => return Err(failed(other)),
+        }
+    }
+    let what = if count == 1 { "1 file".to_string() } else { format!("{count} files") };
+    layout(store, user_id, Some(format!("Added {what} to '{name}'.")), None).await
+}
+
+/// A folder or a zip dropped on the drop zone: a whole skill.
+async fn add_skill(store: &SkillStore, user_id: i64, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
     // Unpacking a zip is CPU work, kept off the async runtime
     let parsed = tokio::task::spawn_blocking(move || {
         let files = files.into_iter().map(|file| (file.path, file.bytes)).collect();

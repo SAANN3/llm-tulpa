@@ -50,8 +50,8 @@ impl Plugin for SkillsPlugin {
         tab::action(&self.store, user_id, action, args).await
     }
 
-    async fn tab_upload(&self, user_id: i64, action: &str, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
-        tab::upload(&self.store, user_id, action, files).await
+    async fn tab_upload(&self, user_id: i64, action: &str, row: Option<String>, files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+        tab::upload(&self.store, user_id, action, row, files).await
     }
 
     async fn on_user_deleted(&self, user_id: i64) {

@@ -48,7 +48,7 @@ export const usePluginTabLayout = (pluginName: string, pluginSubname: string) =>
         closePopup: () => setPopup(null),
         /** What a control sends: its action and its arguments */
         act: (action: string, args: Record<string, unknown>) => run(() => sendPluginTabAction(pluginName, pluginSubname, action, args)),
-        /** The files dropped on a drop zone */
-        upload: (action: string, files: PathedFile[]) => run(() => uploadPluginTabFiles(pluginName, pluginSubname, action, files)),
+        /** The files dropped on a drop zone, or chosen with a row's button (then `row` is that row) */
+        upload: (action: string, files: PathedFile[], row?: string) => run(() => uploadPluginTabFiles(pluginName, pluginSubname, action, files, row)),
     }
 }

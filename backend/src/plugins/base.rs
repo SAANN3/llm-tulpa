@@ -90,8 +90,9 @@ pub trait Plugin: Send + Sync {
         Err(PluginError::NotFound("this plugin has no tab".to_string()))
     }
 
-    /// Files `user_id` dropped on a drop zone of the tab, with the zone's `action`. Answers with the layout as it is after.
-    async fn tab_upload(&self, _user_id: i64, _action: &str, _files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
+    /// Files `user_id` dropped on a drop zone of the tab, with the zone's `action`, or chose with a row's upload button (then
+    /// `row` is that row's id). Answers with the layout as it is after.
+    async fn tab_upload(&self, _user_id: i64, _action: &str, _row: Option<String>, _files: Vec<TabFile>) -> Result<TabLayout, PluginError> {
         Err(PluginError::NotFound("this plugin has no tab".to_string()))
     }
 }

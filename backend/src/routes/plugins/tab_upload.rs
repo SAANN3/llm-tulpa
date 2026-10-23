@@ -16,15 +16,17 @@ use crate::{
 pub(crate) struct TabUploadRequest {
     plugin_name: String,
     plugin_subname: String,
-    /// The drop zone's action
+    /// The drop zone's or the row button's action
     action: String,
+    /// The row whose upload button was used, when one was
+    row: Option<String>,
     /// Each file under the field name `file`; its multipart filename is its path, a folder's files keeping their folder
     #[schema(value_type = String)]
     file: Vec<u8>,
 }
 
-/// Files the caller dropped on a drop zone of a plugin's tab, as a multipart form: the plugin, the zone's action and one
-/// `file` part per file. Answers with the layout as it is after.
+/// Files the caller dropped on a drop zone of a plugin's tab, or chose with a row's button, as a multipart form: the plugin,
+/// the action, the row (for a row's button) and one `file` part per file. Answers with the layout as it is after.
 #[utoipa::path(
     post,
     path = "/api/plugins/tab/upload",
@@ -42,13 +44,14 @@ pub async fn plugin_tab_upload(
     mut multipart: Multipart,
 ) -> Result<Json<TabLayout>, ErrorService> {
     let bad = |what: String| ErrorService::new(StatusCode::BAD_REQUEST, what);
-    let (mut plugin_name, mut plugin_subname, mut action) = (None, None, None);
+    let (mut plugin_name, mut plugin_subname, mut action, mut row) = (None, None, None, None);
     let mut files = Vec::new();
     while let Some(field) = multipart.next_field().await.map_err(|e| bad(format!("invalid multipart body: {e}")))? {
         match field.name().unwrap_or("") {
             "plugin_name" => plugin_name = Some(field.text().await.map_err(|e| bad(e.to_string()))?),
             "plugin_subname" => plugin_subname = Some(field.text().await.map_err(|e| bad(e.to_string()))?),
             "action" => action = Some(field.text().await.map_err(|e| bad(e.to_string()))?),
+            "row" => row = Some(field.text().await.map_err(|e| bad(e.to_string()))?),
             "file" => {
                 let path = field.file_name().unwrap_or("").to_string();
                 let bytes = field.bytes().await.map_err(|e| bad(format!("could not read a file: {e}")))?.to_vec();
@@ -63,6 +66,6 @@ pub async fn plugin_tab_upload(
     if files.is_empty() {
         return Err(bad("no file was sent".to_string()));
     }
-    let layout = state.services().await?.plugin_registry.tab_upload(&plugin_name, &plugin_subname, auth.id, &action, files).await?;
+    let layout = state.services().await?.plugin_registry.tab_upload(&plugin_name, &plugin_subname, auth.id, &action, row, files).await?;
     Ok(Json(layout))
 }

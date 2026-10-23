@@ -8,12 +8,13 @@ export interface PathedFile {
     file: File
 }
 
-/** Files dropped on a drop zone of a plugin's tab; the layout as it is after */
-export const uploadPluginTabFiles = async (pluginName: string, pluginSubname: string, action: string, files: PathedFile[]): Promise<TabLayout> => {
+/** Files dropped on a drop zone of a plugin's tab, or chosen with a row's button (then `row` is that row); the layout as it is after */
+export const uploadPluginTabFiles = async (pluginName: string, pluginSubname: string, action: string, files: PathedFile[], row?: string): Promise<TabLayout> => {
     const form = new FormData()
     form.append('plugin_name', pluginName)
     form.append('plugin_subname', pluginSubname)
     form.append('action', action)
+    if (row !== undefined) form.append('row', row)
     // The file's path goes in the part's filename, which is how a folder's files keep their folder
     for (const {path, file} of files) form.append('file', file, path)
     const {data} = await axios.post<TabLayout>(`${BACKEND_URL}/api/plugins/tab/upload`, form)
