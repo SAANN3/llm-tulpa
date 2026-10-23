@@ -39,16 +39,18 @@ export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
                     <ToggleSwitch toggled={row.switch.on} disabled={busy}
                                   onToggled={(on) => void act(row.switch!.action, {row: row.id, on})}/>
                 ) : null}
-                {row.buttons.map((button) => (
-                    <Button key={button.action} variant="secondary" text={button.label} disabled={busy}
-                            onClicked={() => {
-                                if (button.upload) {
-                                    picking.current = {action: button.action, row: row.id}
-                                    picker.current?.click()
-                                } else if (button.confirm) setAsking({action: button.action, row: row.id, question: button.confirm})
-                                else void act(button.action, {row: row.id})
-                            }}/>
-                ))}
+                <Div className="plugin-tab__row-buttons">
+                    {row.buttons.map((button) => (
+                        <Button key={button.action} variant="secondary" text={button.label} disabled={busy}
+                                onClicked={() => {
+                                    if (button.upload) {
+                                        picking.current = {action: button.action, row: row.id}
+                                        picker.current?.click()
+                                    } else if (button.confirm) setAsking({action: button.action, row: row.id, question: button.confirm})
+                                    else void act(button.action, {row: row.id})
+                                }}/>
+                    ))}
+                </Div>
             </Div>
         </Div>
     )

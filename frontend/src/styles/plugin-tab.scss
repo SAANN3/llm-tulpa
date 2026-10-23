@@ -51,6 +51,11 @@
   flex-shrink: 0;
 }
 
+.plugin-tab__row-buttons {
+  display: flex;
+  gap: $space-2;
+}
+
 .plugin-tab__text {
   font-size: 12.5px;
   line-height: 1.45;
@@ -101,8 +106,31 @@
 }
 
 @media (max-width: $mobile-max) {
+  // The switch beside the title, and the buttons across the row below, each the same share of it. The controls' own box
+  // is dropped (`display: contents`) so the switch and the buttons are placed against the text, not against each other.
   .plugin-tab__row {
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: $space-2 $space-3;
+  }
+
+  .plugin-tab__row-controls {
+    display: contents;
+  }
+
+  .plugin-tab__row-controls > input {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 2px;
+  }
+
+  .plugin-tab__row-buttons {
+    grid-column: 1 / -1;
+
+    > button {
+      flex: 1 1 0;
+      min-width: 0;
+    }
   }
 }
