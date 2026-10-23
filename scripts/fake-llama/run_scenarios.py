@@ -1305,6 +1305,39 @@ def the_model_cannot_turn_off_or_change_a_skill_the_user_added():
     settings()
 
 
+@scenario
+def auto_confirm_grants_every_folder_a_call_needs_before_it_runs():
+    settings(auto_confirm=True)
+    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
+    # skills.install needs read access to the zip's folder and write access to the skills folder, which are offered one at a time
+    import tempfile, zipfile
+    folder = tempfile.mkdtemp(prefix="scenario-zip-")
+    path = os.path.join(folder, "zipped.zip")
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("zipped/SKILL.md", "---\nname: zipped\ndescription: From a zip.\n---\nBody.\n")
+    chat = new_chat("auto-confirm-two-folders")
+    script({"tool_calls": [{"name": "skills.install", "arguments": {"path": path}}]}, {"text": "done"})
+    turn(chat, "install it")
+    results = tool_results(chat)
+    eq(len(results), 1, "one call, no retry")
+    has(str(results[0]["content"]), "zipped", "the install ran on the first call")
+    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "zipped"}})[0], 200, "clean up")
+    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    settings()
+
+
+@scenario
+def auto_confirm_grants_every_command_of_a_shell_line_before_it_runs():
+    settings(auto_confirm=True)
+    chat = new_chat("auto-confirm-shell-line")
+    script({"tool_calls": [{"name": "os.execute_command", "arguments": {"command": "cd /tmp && echo first-ok && ls -d /tmp | wc -l"}}]}, {"text": "done"})
+    turn(chat, "run it")
+    results = tool_results(chat)
+    eq(len(results), 1, "one call, no retry")
+    has(str(results[0]["content"]), "first-ok", "the whole line ran on the first call")
+    settings()
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = 0

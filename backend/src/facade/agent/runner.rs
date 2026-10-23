@@ -815,8 +815,8 @@ impl TurnRunner {
     /// Runs every tool call the model's last reply asked for, in order, recording each result. What a call
     /// that needs permission does depends on who is asking: with `decisions` (the user's answers) they are
     /// applied first; with auto-confirm everything the calls' escalations offer is granted up front (all
-    /// of them, then the calls run — the reason `allow_scope` merges deltas instead of overwriting); otherwise
-    /// an attended run stops here and a sub-agent's call is refused. A successful `llm.return_agent`
+    /// of them, each call until it offers nothing more, then the calls run — the reason `allow_scope` merges deltas
+    /// instead of overwriting); otherwise an attended run stops here and a sub-agent's call is refused. A successful `llm.return_agent`
     /// ends the sub-agent's calls: whatever is queued behind it never executes.
     async fn run_tools(
         &self,
@@ -858,9 +858,7 @@ impl TurnRunner {
             None if Self::needs_permission(&views) => {
                 if auto_confirm {
                     for view in &views {
-                        if let AgentToolPermission::Denied { escalation: Some(grant), .. } = &view.permission {
-                            self.tool_calls.allow_scope(chat_id, view.name.clone(), grant.scope.clone()).await?;
-                        }
+                        self.tool_calls.grant_what_is_offered(chat_id, view).await?;
                     }
                 } else if matches!(policy, Policy::Attended) {
                     // The calls before the first one that needs permission run now, in the order they were asked,

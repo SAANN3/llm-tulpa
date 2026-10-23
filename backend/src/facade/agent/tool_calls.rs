@@ -32,6 +32,11 @@ const MIN_RESULT_CAP_CHARS: usize = 4_000;
 /// tool results of the last reply, a handful at most.
 const PENDING_TOOL_CALLS_LOOKBACK: u64 = 500;
 
+/// The most grants auto-confirm gives one call before it stops asking for more: a call is offered one missing fact at a
+/// time (each command of a shell line, each folder of an install), so this is the most such facts a call may need. It
+/// only keeps a call whose grant changes nothing from looping.
+const MAX_AUTO_GRANTS_PER_CALL: usize = 64;
+
 /// Marks a chat as having a tool call executing, for as long as it lives. Dropping it — on
 /// completion, on an error, or because the request was cancelled (a client that disconnects drops
 /// the handler's future) — clears the mark. Without it a chat with an *allowed* call in flight is
@@ -319,6 +324,25 @@ impl ToolCalls {
                 .await?;
         }
 
+        Ok(())
+    }
+
+    /// Grants, for auto-confirm, everything `call` needs. What a call lacks is offered one fact at a time (`storage::check_scope`
+    /// returns the first thing missing), so a call that needs two folders, or a shell line of several commands, would run
+    /// into a refusal after the first grant: the grant is given, the call is asked about again, and so on until nothing more
+    /// is offered. An attended run does not do this: each thing it is offered is the user's to see and approve.
+    pub(super) async fn grant_what_is_offered(&self, chat_id: i64, call: &AgentToolCall) -> Result<(), ErrorService> {
+        let offered = |permission: &AgentToolPermission| match permission {
+            AgentToolPermission::Denied { escalation: Some(grant), .. } => Some(grant.scope.clone()),
+            _ => None,
+        };
+        let mut next = offered(&call.permission);
+        for _ in 0..MAX_AUTO_GRANTS_PER_CALL {
+            let Some(scope) = next else { break };
+            self.allow_scope(chat_id, call.name.clone(), scope).await?;
+            let again = self.to_agent_tool_call(chat_id, call.name.clone(), call.arguments.clone()).await?;
+            next = offered(&again.permission);
+        }
         Ok(())
     }
 
