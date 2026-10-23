@@ -15,8 +15,10 @@ import {draftOf, type SettingsDraft} from './settings/draft.ts'
 import {ModelsTab} from './settings/models-tab.tsx'
 import {ProfileTab} from './settings/profile-tab.tsx'
 import {VoiceTab} from './settings/voice-tab.tsx'
+import {PluginTab} from '../components/plugin-tab.tsx'
+import {usePluginTabs} from '../hooks/use-plugin-tabs.ts'
 
-const TABS = [
+const BASE_TABS = [
     {id: 'behaviour', label: 'Behaviour'},
     {id: 'appearance', label: 'Appearance'},
     {id: 'profile', label: 'Profile'},
@@ -24,13 +26,18 @@ const TABS = [
     {id: 'voice', label: 'Voice'},
 ]
 
-/** The user's settings in five tabs, the tab in the address (`/settings/appearance`). Behaviour and Profile are
+/** The user's settings in five tabs, and the tab of each enabled plugin that has one, the tab in the address (`/settings/appearance`). Behaviour and Profile are
  * saved together with Save; Appearance (kept in this browser), Models & keys and Voice apply as they are changed. */
 const Settings = () => {
     useDocumentTitle('Settings')
     const navigate = useNavigate()
     const {tab: tabSlug} = useParams()
-    const tab = TABS.find((t) => t.id === tabSlug)?.id ?? TABS[0].id
+    // The enabled plugins' own tabs come after the fixed ones, and appear and go as plugins are switched on and off
+    const pluginTabs = usePluginTabs()
+    const TABS = [...BASE_TABS, ...pluginTabs.tabs.map((t) => ({id: t.id, label: t.title}))]
+    // An address that names no tab opens the first; while the plugins' tabs are still being read it may name one of those
+    const tab = TABS.find((t) => t.id === tabSlug)?.id ?? (!pluginTabs.loaded && tabSlug ? tabSlug : TABS[0].id)
+    const pluginTab = pluginTabs.tabs.find((t) => t.id === tab)
     const {settings, setSettings} = useSettings()
     const [draft, setDraft] = useState<SettingsDraft>(() => draftOf(settings))
     const onDraft = (change: Partial<SettingsDraft>) => setDraft((now) => ({...now, ...change}))
@@ -79,6 +86,7 @@ const Settings = () => {
                     {tab === 'profile' ? <ProfileTab draft={draft} onDraft={onDraft}/> : null}
                     {tab === 'models' ? <ModelsTab/> : null}
                     {tab === 'voice' ? <VoiceTab/> : null}
+                    {pluginTab ? <PluginTab pluginName={pluginTab.plugin_name} pluginSubname={pluginTab.plugin_subname}/> : null}
                 </Div>
                 <Div className="settings__actions">
                     <Button className="settings__action" variant="secondary" text="Back" onClicked={onBack}/>

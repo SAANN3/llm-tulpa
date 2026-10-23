@@ -1,0 +1,108 @@
+@use 'tokens' as *;
+
+// A plugin's own tab in Settings, drawn from the layout the plugin sends: rows of a list, a drop zone, a popup text
+.plugin-tab__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.plugin-tab__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+  padding: $space-2 0;
+  border-bottom: $line-border dashed var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.plugin-tab__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plugin-tab__row-title {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  flex-wrap: wrap;
+}
+
+.plugin-tab__badge {
+  font-size: 11px;
+  padding: 0 $space-2;
+  border: $line-border solid currentColor;
+}
+
+.plugin-tab__subtitle {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-tab__row-controls {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  flex-shrink: 0;
+}
+
+.plugin-tab__text {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.plugin-tab__drop {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2 0;
+}
+
+.plugin-tab__error {
+  color: var(--color-danger);
+}
+
+.plugin-tab__message {
+  font-size: 12.5px;
+}
+
+.plugin-tab__popup-text {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $space-3;
+  padding: $space-5 $space-4;
+  border: $line-border dashed currentColor;
+  opacity: 0.85;
+}
+
+.drop-zone--over {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-tertiary) 12%, transparent);
+}
+
+.drop-zone__buttons {
+  display: flex;
+  gap: $space-2;
+}
+
+@media (max-width: $mobile-max) {
+  .plugin-tab__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
