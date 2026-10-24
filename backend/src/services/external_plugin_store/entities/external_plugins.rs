@@ -12,6 +12,8 @@ pub struct Model {
     pub kind: Option<String>,
     pub source_type: String,
     pub source_url: Option<String>,
+    pub source_ref: Option<String>,
+    pub source_sha256: Option<String>,
     pub installed_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     pub state: String,

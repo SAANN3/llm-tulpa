@@ -49,6 +49,16 @@ impl PluginSettingsStore {
         Ok(row.map(|row| PersistedPlugin { settings: row.settings, enabled: row.enabled }))
     }
 
+    /// Forgets what is stored for a plugin (its settings and whether it was on), for every user: it is being removed with its data.
+    pub async fn delete(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), PluginSettingsStoreErrors> {
+        plugin_settings::Entity::delete_many()
+            .filter(plugin_settings::Column::PluginName.eq(plugin_name))
+            .filter(plugin_settings::Column::PluginSubname.eq(plugin_subname))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
     /// Inserts or replaces the persisted settings/enabled state for this plugin under the
     /// owner user. Errs if there's no owner yet.
     pub async fn set(

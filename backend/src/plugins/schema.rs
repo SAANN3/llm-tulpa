@@ -191,6 +191,28 @@ impl PluginSchema {
         Ok(role)
     }
 
+    /// Removes everything a plugin with a schema of its own has in the database: its schema with all its tables, its role, and the
+    /// record of the steps applied. This is the one deletion a plugin's data ever gets, and it is only for an owner who asked
+    /// for the data to go with the plugin.
+    pub async fn drop_own_schema(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), PluginSchemaError> {
+        let role = role_name(plugin_name, plugin_subname)?;
+        let txn = self.db.begin().await?;
+        txn.execute_unprepared(&format!("DROP SCHEMA IF EXISTS {role} CASCADE")).await?;
+        // The role's one grant on a core table goes with it; a role that was never made is nothing to drop
+        txn.execute_unprepared(&format!(
+            "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN DROP OWNED BY {role}; DROP ROLE {role}; END IF; END $$"
+        ))
+        .await?;
+        txn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM plugin_migrations WHERE plugin_name = $1 AND plugin_subname = $2",
+            [plugin_name.into(), plugin_subname.into()],
+        ))
+        .await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
     /// `apply` for a plugin with a schema of its own (`prepare_own_schema` has run): each step runs as the plugin's role with
     /// its schema first on the search path, so a plain `CREATE TABLE items` lands in the plugin's schema and a statement
     /// that reaches for a core table is refused by Postgres for want of a privilege. The same rules apply as for any plugin's

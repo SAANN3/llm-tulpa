@@ -55,10 +55,24 @@ pub struct ExternalPluginRecord {
     pub kind: Option<String>,
     pub source_type: String,
     pub source_url: Option<String>,
+    /// The git branch or tag it was installed from, or the commit when that is all that is known
+    pub source_ref: Option<String>,
+    /// The checksum of the `.tulpa` file it was installed from
+    pub source_sha256: Option<String>,
     pub installed_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     pub state: PluginState,
     pub last_error: Option<String>,
+}
+
+/// Where an installed plugin came from
+#[derive(Clone, Debug, Default)]
+pub struct PluginSource {
+    /// `folder`, `file` or `git`
+    pub source_type: String,
+    pub url: Option<String>,
+    pub git_ref: Option<String>,
+    pub sha256: Option<String>,
 }
 
 impl From<entity::Model> for ExternalPluginRecord {
@@ -70,6 +84,8 @@ impl From<entity::Model> for ExternalPluginRecord {
             kind: row.kind,
             source_type: row.source_type,
             source_url: row.source_url,
+            source_ref: row.source_ref,
+            source_sha256: row.source_sha256,
             installed_at: row.installed_at,
             updated_at: row.updated_at,
             state: PluginState::parse(&row.state),
@@ -107,6 +123,8 @@ impl ExternalPluginStore {
             kind: Set(kind.map(str::to_string)),
             source_type: Set("folder".to_string()),
             source_url: Set(None),
+            source_ref: Set(None),
+            source_sha256: Set(None),
             installed_at: Set(now),
             updated_at: Set(now),
             state: Set(state.as_str().to_string()),
@@ -120,6 +138,49 @@ impl ExternalPluginStore {
             )
             .exec(&self.db)
             .await?;
+        Ok(())
+    }
+
+    /// Notes a plugin that was installed through the installer (from a file or a git address), with where it came from. A plugin
+    /// installed before keeps when it was first installed.
+    pub async fn record_install(&self, name: &str, subname: &str, version: &str, kind: &str, source: &PluginSource) -> Result<(), ExternalPluginStoreError> {
+        let now = Utc::now();
+        let row = entity::ActiveModel {
+            name: Set(name.to_string()),
+            subname: Set(subname.to_string()),
+            version: Set(Some(version.to_string())),
+            kind: Set(Some(kind.to_string())),
+            source_type: Set(source.source_type.clone()),
+            source_url: Set(source.url.clone()),
+            source_ref: Set(source.git_ref.clone()),
+            source_sha256: Set(source.sha256.clone()),
+            installed_at: Set(now),
+            updated_at: Set(now),
+            state: Set(PluginState::Unloaded.as_str().to_string()),
+            last_error: Set(None),
+        };
+        entity::Entity::insert(row)
+            .on_conflict(
+                OnConflict::columns([entity::Column::Name, entity::Column::Subname])
+                    .update_columns([
+                        entity::Column::Version,
+                        entity::Column::Kind,
+                        entity::Column::SourceType,
+                        entity::Column::SourceUrl,
+                        entity::Column::SourceRef,
+                        entity::Column::SourceSha256,
+                        entity::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Forgets a plugin: it was uninstalled.
+    pub async fn delete(&self, name: &str, subname: &str) -> Result<(), ExternalPluginStoreError> {
+        entity::Entity::delete_many().filter(entity::Column::Name.eq(name)).filter(entity::Column::Subname.eq(subname)).exec(&self.db).await?;
         Ok(())
     }
 

@@ -347,12 +347,15 @@ const V23_ADDITIONS: &str = "
         kind TEXT,
         source_type TEXT NOT NULL DEFAULT 'folder',
         source_url TEXT,
+        source_ref TEXT,
+        source_sha256 TEXT,
         installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         state TEXT NOT NULL,
         last_error TEXT,
         PRIMARY KEY (name, subname),
-        CONSTRAINT external_plugins_state_valid CHECK (state IN ('ok', 'unavailable', 'failing', 'unloaded'))
+        CONSTRAINT external_plugins_state_valid CHECK (state IN ('ok', 'unavailable', 'failing', 'unloaded')),
+        CONSTRAINT external_plugins_source_valid CHECK (source_type IN ('folder', 'file', 'git'))
     );
 ";
 
