@@ -31,8 +31,9 @@ pub struct PluginTab {
     pub title: String,
 }
 
-/// Everything a tab shows, for one user.
-#[derive(Default, Serialize, ToSchema)]
+/// Everything a tab shows, for one user. It is also what an external plugin sends, so a plugin may leave out what is empty.
+#[derive(Default, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
 pub struct TabLayout {
     pub sections: Vec<Section>,
     /// A line after an action: what was done, or why it was not
@@ -41,34 +42,48 @@ pub struct TabLayout {
     pub popup: Option<TabPopup>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct Section {
     pub title: Option<String>,
     pub blocks: Vec<Block>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct TabPopup {
     pub title: String,
     pub text: String,
 }
 
 /// One thing in a section. Every control carries an `action`, the word it sends back to the plugin.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
     /// A line of text; `dim` draws it as a hint
-    Text { text: String, dim: bool },
+    Text {
+        text: String,
+        #[serde(default)]
+        dim: bool,
+    },
     /// A labeled switch. Sends `action` with `{"on": bool}`.
     Switch { action: String, label: String, help: Option<String>, on: bool },
     /// A list of rows, each with a title, buttons and perhaps a switch; `empty` is said when there are none
-    Items { empty: String, rows: Vec<Row> },
+    Items {
+        #[serde(default)]
+        empty: String,
+        rows: Vec<Row>,
+    },
     /// A drop zone for files and folders. Sends `action` with the files; `accept` lists the file endings it takes
     /// (`.zip`, `.md`), or all when empty.
-    Drop { action: String, label: String, help: Option<String>, accept: Vec<String> },
+    Drop {
+        action: String,
+        label: String,
+        help: Option<String>,
+        #[serde(default)]
+        accept: Vec<String>,
+    },
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct Row {
     pub id: String,
     pub title: String,
@@ -76,11 +91,12 @@ pub struct Row {
     /// A short label beside the title, such as where the item came from
     pub badge: Option<String>,
     pub switch: Option<RowSwitch>,
+    #[serde(default)]
     pub buttons: Vec<RowButton>,
 }
 
 /// A row's switch. Sends `action` with `{"row": id, "on": bool}`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RowSwitch {
     pub action: String,
     pub on: bool,
@@ -88,11 +104,12 @@ pub struct RowSwitch {
 
 /// A row's button. Sends `action` with `{"row": id}`; `confirm`, when set, is asked in a popup first. An `upload` button
 /// opens a file picker instead and sends the chosen files to the plugin's upload (`tab_upload`) with the row's id.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct RowButton {
     pub action: String,
     pub label: String,
     pub confirm: Option<String>,
+    #[serde(default)]
     pub upload: bool,
 }
 

@@ -6,7 +6,7 @@ use axum::{
     response::Response,
 };
 
-use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
+use crate::{plugins::base::PluginCaller, routes::auth::OwnerUser, services::error::ErrorService, state::AppState};
 
 /// Forwards `/api/plugins/<plugin_name>/<plugin_subname>/...` into that plugin's own router
 /// (with the two leading segments stripped, as if it were mounted there). The router is looked
@@ -16,7 +16,7 @@ use crate::{routes::auth::OwnerUser, services::error::ErrorService, state::AppSt
 /// is matched before this, so it only ever sees paths nothing else claimed.
 pub async fn plugin_proxy(
     State(state): State<Arc<AppState>>,
-    _owner: OwnerUser,
+    owner: OwnerUser,
     mut req: Request,
 ) -> Result<Response, ErrorService> {
     let not_found = || ErrorService::new(StatusCode::NOT_FOUND, "no such plugin route");
@@ -33,6 +33,7 @@ pub async fn plugin_proxy(
         Some(query) => format!("/{rest}?{query}"),
         None => format!("/{rest}"),
     };
+    req.extensions_mut().insert(PluginCaller(owner.0.id));
     *req.uri_mut() = path_and_query.parse::<Uri>().map_err(|_| not_found())?;
 
     services.plugin_registry.dispatch(plugin_name, plugin_subname, req).await

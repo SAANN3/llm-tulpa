@@ -1,7 +1,8 @@
-//! What a plugin says about itself and its tools, as it arrives in `tools` (see `plugin-sdk/PROTOCOL.md`),
+//! What a plugin says about itself and its tools (its settings in the manifest, its tools in `tools`) (see `plugin-sdk/PROTOCOL.md`),
 //! checked before anything of it reaches the registry.
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::tools::base::{PropertyInfo, PropertyType};
 
@@ -17,6 +18,17 @@ pub enum ParamType {
 }
 
 impl ParamType {
+    fn word(self) -> &'static str {
+        match self {
+            ParamType::String => "string",
+            ParamType::Number => "number",
+            ParamType::Integer => "integer",
+            ParamType::Boolean => "boolean",
+            ParamType::Array => "array",
+            ParamType::Object => "object",
+        }
+    }
+
     fn property_type(self) -> PropertyType {
         match self {
             ParamType::String => PropertyType::String,
@@ -94,13 +106,55 @@ pub fn check_tools(tools: &[ToolSpec]) -> Result<(), String> {
         if tool.description.trim().is_empty() {
             return Err(format!("tool '{}' has no description; the model decides when to call a tool from it", tool.name));
         }
-        let mut args = std::collections::HashSet::new();
-        for param in &tool.parameters {
-            if param.name.is_empty() || !args.insert(param.name.as_str()) {
-                return Err(format!("tool '{}': argument '{}' is empty or listed twice", tool.name, param.name));
-            }
-            if param.kind == ParamType::Array && param.items.is_none() {
-                return Err(format!("tool '{}': array argument '{}' needs its element type in \"items\"", tool.name, param.name));
+        check_params(&format!("tool '{}'", tool.name), &tool.parameters)?;
+    }
+    Ok(())
+}
+
+/// Checks a list of parameters (a tool's arguments, a plugin's settings): each named once and every array with its element
+/// type. `owner` says whose they are, for the message.
+pub fn check_params(owner: &str, params: &[ParamSpec]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for param in params {
+        if param.name.is_empty() || !seen.insert(param.name.as_str()) {
+            return Err(format!("{owner}: '{}' is empty or listed twice", param.name));
+        }
+        if param.kind == ParamType::Array && param.items.is_none() {
+            return Err(format!("{owner}: array '{}' needs its element type in \"items\"", param.name));
+        }
+    }
+    Ok(())
+}
+
+fn fits(kind: ParamType, value: &Value) -> bool {
+    match kind {
+        ParamType::String => value.is_string(),
+        ParamType::Number => value.is_number(),
+        ParamType::Integer => value.is_i64() || value.is_u64(),
+        ParamType::Boolean => value.is_boolean(),
+        ParamType::Array => value.is_array(),
+        ParamType::Object => value.is_object(),
+    }
+}
+
+/// Whether `settings` is what the plugin's declared settings describe: an object that has every required one and gives each
+/// declared one the type it names. A setting the schema does not list is left alone. The plugin only ever sees settings that
+/// passed this, so it need not check types itself.
+pub fn check_settings(schema: &[ParamSpec], settings: &Value) -> Result<(), String> {
+    let object = settings.as_object().ok_or("the settings must be an object")?;
+    for param in schema {
+        match object.get(&param.name).filter(|value| !value.is_null()) {
+            None if param.required => return Err(format!("setting '{}' is required", param.name)),
+            None => {}
+            Some(value) => {
+                if !fits(param.kind, value) {
+                    return Err(format!("setting '{}' must be of type {}", param.name, param.kind.word()));
+                }
+                if let (ParamType::Array, Some(items), Some(list)) = (param.kind, param.items, value.as_array()) {
+                    if let Some(bad) = list.iter().position(|element| !fits(items, element)) {
+                        return Err(format!("setting '{}': element {bad} must be of type {}", param.name, items.word()));
+                    }
+                }
             }
         }
     }
@@ -147,6 +201,29 @@ mod tests {
         for (list, expected) in cases {
             let specs: Vec<ToolSpec> = list.into_iter().map(tool).collect();
             let err = check_tools(&specs).unwrap_err();
+            assert!(err.contains(expected), "{err:?} should mention {expected:?}");
+        }
+    }
+
+    #[test]
+    fn settings_are_checked_against_what_the_manifest_declares() {
+        let schema: Vec<ParamSpec> = serde_json::from_value(json!([
+            {"name": "token", "type": "string", "description": "t", "required": true},
+            {"name": "limit", "type": "integer", "description": "l"},
+            {"name": "ids", "type": "array", "items": "integer", "description": "i"},
+        ]))
+        .unwrap();
+        assert!(check_settings(&schema, &json!({"token": "x", "limit": 3, "ids": [1, 2], "other": true})).is_ok());
+        assert!(check_settings(&schema, &json!({"token": "x", "limit": null})).is_ok());
+        let cases = [
+            (json!({}), "'token' is required"),
+            (json!({"token": 5}), "'token' must be of type string"),
+            (json!({"token": "x", "limit": 1.5}), "'limit' must be of type integer"),
+            (json!({"token": "x", "ids": [1, "b"]}), "element 1"),
+            (json!([1]), "must be an object"),
+        ];
+        for (settings, expected) in cases {
+            let err = check_settings(&schema, &settings).unwrap_err();
             assert!(err.contains(expected), "{err:?} should mention {expected:?}");
         }
     }

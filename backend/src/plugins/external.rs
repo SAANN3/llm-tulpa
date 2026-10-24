@@ -3,6 +3,7 @@
 //! other: `ExternalPluginBuilder` and `ExternalPlugin` implement the same two traits and answer them by asking the process.
 
 pub mod builder;
+pub mod http;
 pub mod loader;
 pub mod manifest;
 pub mod process;

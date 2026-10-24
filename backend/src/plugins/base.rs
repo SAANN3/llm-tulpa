@@ -33,7 +33,8 @@ pub trait Plugin: Send + Sync {
     /// instead (see there for why).
     fn settings_value(&self) -> Value;
 
-    /// Routes this plugin serves under `/api/plugins/{plugin_name}/{plugin_subname}`.
+    /// Routes this plugin serves under `/api/plugins/{plugin_name}/{plugin_subname}`. A request reaching them carries a
+    /// `PluginCaller` extension that says who is calling.
     /// Deliberately a plain `Router` (state `()`), not `Router<Arc<AppState>>` like the
     /// rest of `routes/` — a plugin's handlers need this instance's own captured state
     /// (its provider), not the global `AppState`, so it should build its handlers with
@@ -96,6 +97,11 @@ pub trait Plugin: Send + Sync {
         Err(PluginError::NotFound("this plugin has no tab".to_string()))
     }
 }
+
+/// Set on every request that reaches a plugin's `api_router`: the user it came from. Only the owner reaches those routes
+/// today, but a handler that needs to know does not have to assume it.
+#[derive(Clone, Copy, Debug)]
+pub struct PluginCaller(pub i64);
 
 /// Builds a `Plugin` instance from settings JSON. Kept separate from `Plugin` itself
 /// since a trait object can't have an associated constructor. Used both to build a

@@ -6,7 +6,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::plugins::schema;
+use super::spec::{ParamSpec, check_params};
+use crate::plugins::{schema, tab};
 
 /// The protocol version this build of the backend speaks.
 pub const SUPPORTED_PROTOCOL: u32 = 1;
@@ -22,9 +23,17 @@ pub struct Manifest {
     /// A longer text for the plugin's page
     #[serde(default)]
     pub help_message: String,
-    /// Whether the plugin is switched on the first time the backend sees it
+    /// Whether the plugin is switched on the first time the backend sees it. Not for a plugin with settings: it has nothing to
+    /// run with until the owner fills them in.
     #[serde(default)]
     pub default_enabled: bool,
+    /// What the owner fills in before the plugin runs, in the shape of a tool's parameters: the backend draws the form,
+    /// checks what is entered against it and gives the plugin only settings that fit
+    #[serde(default)]
+    pub settings: Vec<ParamSpec>,
+    /// A tab of the plugin's own in Settings, shown to every user while the plugin is enabled
+    #[serde(default)]
+    pub tab: Option<Tab>,
     /// Informational: which SDK the plugin was written with
     #[serde(default)]
     pub sdk: Option<String>,
@@ -45,6 +54,13 @@ pub struct Manifest {
     /// The oldest backend version the plugin works with
     #[serde(default)]
     pub min_tulpa: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Tab {
+    /// The tab's place in the address (`/settings/<id>`)
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -118,6 +134,18 @@ impl Manifest {
         }
         if self.summary.trim().is_empty() {
             return Err(ManifestError("summary is empty".to_string()));
+        }
+        check_params("settings", &self.settings).map_err(ManifestError)?;
+        if self.default_enabled && !self.settings.is_empty() {
+            return Err(ManifestError("default_enabled cannot be set for a plugin with settings".to_string()));
+        }
+        if let Some(tab) = &self.tab {
+            if !tab::valid_tab_id(&tab.id) || tab::RESERVED_TAB_IDS.contains(&tab.id.as_str()) {
+                return Err(ManifestError(format!("tab id '{}' is not usable: lowercase letters, digits and hyphens, and not one of the Settings page's own", tab.id)));
+            }
+            if tab.title.trim().is_empty() {
+                return Err(ManifestError("the tab has no title".to_string()));
+            }
         }
         if let Some(min) = &self.min_tulpa {
             let wanted = version_numbers(min).ok_or_else(|| ManifestError(format!("min_tulpa '{min}' is not of the form 1.2.3")))?;
@@ -246,6 +274,14 @@ run = "{plugin_dir}/target/release/tulpa-example-hello"
     }
 
     #[test]
+    fn settings_and_a_tab_are_read() {
+        let text = format!("{GOOD}\n[[settings]]\nname = \"greeting\"\ntype = \"string\"\ndescription = \"x\"\n\n[tab]\nid = \"hello\"\ntitle = \"Hello\"\n");
+        let m = Manifest::parse(&text).unwrap();
+        assert_eq!((m.settings.len(), m.settings[0].required), (1, false));
+        assert_eq!(m.tab.map(|t| t.id), Some("hello".to_string()));
+    }
+
+    #[test]
     fn what_cannot_work_is_refused_with_the_reason() {
         let cases = [
             (GOOD.replace("protocol = 1", "protocol = 2"), "protocol"),
@@ -255,6 +291,10 @@ run = "{plugin_dir}/target/release/tulpa-example-hello"
             (GOOD.replace("run = ", "# run = "), "run command"),
             (format!("{GOOD}min_tulpa = \"999.0.0\"\n"), "999.0.0"),
             (GOOD.replace("kind = \"source\"", "kind = \"prebuilt\""), "prebuilt binary"),
+            (format!("{GOOD}\n[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n"), "listed twice"),
+            (GOOD.replace("kind =", "default_enabled = true\nkind =") + "[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n", "default_enabled"),
+            (format!("{GOOD}\n[tab]\nid = \"models\"\ntitle = \"T\"\n"), "tab id"),
+            (format!("{GOOD}\n[tab]\nid = \"ok\"\ntitle = \" \"\n"), "no title"),
         ];
         for (text, expected) in cases {
             let err = Manifest::parse(&text).unwrap_err().to_string();

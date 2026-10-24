@@ -6,14 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Value, json};
 use tokio::process::Command;
 
 use super::builder::ExternalPluginBuilder;
 use super::manifest::{Manifest, expand_command};
 use super::process::PluginProcess;
-use super::rpc::DEFAULT_CALL_TIMEOUT;
-use super::spec::{ToolSpec, check_tools};
 use crate::plugins::base::PluginBuilder;
 
 /// How long a plugin's `check` command may run
@@ -65,35 +62,11 @@ async fn load_one(dir: &Path, plugins_dir: &Path, seen: &mut HashSet<(String, St
         run_check(check, dir, &data_dir).await?;
     }
 
+    // Its tools are asked for when it is configured (they may depend on the settings), not here
     let process = PluginProcess::start(&manifest, dir, &data_dir).await?;
-    match tools(&process).await {
-        Ok(tools) => {
-            tracing::info!(
-                "external plugin {}/{} {} started (sdk: {}, {} tool(s))",
-                manifest.name,
-                manifest.subname,
-                manifest.version,
-                manifest.sdk.as_deref().unwrap_or("not stated"),
-                tools.len()
-            );
-            seen.insert(key);
-            Ok(ExternalPluginBuilder::new(manifest, tools, process))
-        }
-        Err(why) => {
-            process.shutdown().await;
-            Err(why)
-        }
-    }
-}
-
-async fn tools(process: &PluginProcess) -> Result<Vec<ToolSpec>, String> {
-    let tools: Vec<ToolSpec> = serde_json::from_value(call(process, "tools").await?).map_err(|e| format!("tools answered something unusable: {e}"))?;
-    check_tools(&tools)?;
-    Ok(tools)
-}
-
-async fn call(process: &PluginProcess, method: &str) -> Result<Value, String> {
-    process.call(method, json!({}), DEFAULT_CALL_TIMEOUT).await.map_err(|e| format!("{method} failed: {e:?}"))
+    tracing::info!("external plugin {}/{} {} started (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
+    seen.insert(key);
+    Ok(ExternalPluginBuilder::new(manifest, process))
 }
 
 /// Runs the manifest's `check` and turns a non-zero exit into an error carrying what it printed ("missing ffmpeg")

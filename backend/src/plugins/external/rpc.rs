@@ -22,6 +22,7 @@ pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INTERNAL: i64 = -32603;
+pub const NOT_FOUND: i64 = -32001;
 pub const BAD_ARGS: i64 = -32002;
 
 /// An error as it travels in a response
