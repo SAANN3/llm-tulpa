@@ -1536,12 +1536,12 @@ def an_external_plugin_can_be_unloaded_and_loaded_again_without_restarting_the_b
     hello_on("Hello")
 
 
-def plugin_file(version, answer):
+def plugin_file(version, answer, subname="pkg"):
     """A `.tulpa` file for a tiny plugin written straight against the protocol, with one tool that answers `answer`: a zip with a
     plugin.toml and a Python program, which needs no build."""
     import io, zipfile
-    toml = ('name = "scenario"\nsubname = "pkg"\nversion = "%s"\nprotocol = 1\nsummary = "A plugin made by a scenario"\n'
-            'kind = "source"\nrun = "python3 {plugin_dir}/p.py"\n' % version)
+    toml = ('name = "scenario"\nsubname = "%s"\nversion = "%s"\nprotocol = 1\nsummary = "A plugin made by a scenario"\n'
+            'kind = "source"\nrun = "python3 {plugin_dir}/p.py"\n' % (subname, version))
     program = f"""import json, sys
 def send(o): sys.stdout.write(json.dumps(o) + "\\n"); sys.stdout.flush()
 send({{"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {{"protocol": 1, "sdk": "scenario"}}}})
@@ -1550,7 +1550,7 @@ for line in sys.stdin:
     if "method" not in m: continue
     i, method = m["id"], m["method"]
     if method == "tools":
-        send({{"jsonrpc": "2.0", "id": i, "result": [{{"name": "scenario_pkg.say", "description": "Says something. Use it when asked.", "parameters": []}}]}})
+        send({{"jsonrpc": "2.0", "id": i, "result": [{{"name": "scenario_{subname}.say", "description": "Says something. Use it when asked.", "parameters": []}}]}})
     elif method == "call_tool":
         send({{"jsonrpc": "2.0", "id": i, "result": {{"said": "{answer}"}}}})
     else:
@@ -1854,6 +1854,141 @@ def the_telegram_example_answers_a_chat_through_the_agent_and_ignores_the_others
         fake_telegram.stop()
         api("/api/plugins/enable", {**key, "enabled": False})
         api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+
+
+def staged_id(chat):
+    """The id the last plugins.stage in a chat gave"""
+    for message in reversed(tool_results(chat)):
+        try:
+            found = json.loads(message["content"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(found, dict) and "id" in found:
+            return found["id"]
+    raise AssertionError("no plugins.stage result in the chat")
+
+
+def write_plugin_folder(subname, version="0.1.0", answer="from a folder"):
+    """A plugin written to a folder on this machine, the way the model would write one with the file tools"""
+    import io, tempfile, zipfile
+    folder = tempfile.mkdtemp(prefix="scenario-plugin-folder-")
+    with zipfile.ZipFile(io.BytesIO(plugin_file(version, answer, subname))) as z:
+        for name in z.namelist():
+            target = os.path.join(folder, name.split("/", 1)[1])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as f:
+                f.write(z.read(name))
+    return folder
+
+
+@scenario
+def the_model_stages_installs_and_uninstalls_a_plugin_only_with_the_owners_approval():
+    """With approvals on, the model fetches a plugin from a folder (a read approval, like any read), reads its files, and the install
+    waits for the owner with the plugin's name and what it will run; the approval covers that plugin only, and so does the removal's."""
+    import shutil
+    key = {"plugin_name": "scenario", "plugin_subname": "tooled"}
+    if any(p["name"] == "scenario" and p["subname"] == "tooled" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+    folder = write_plugin_folder("tooled")
+    try:
+        settings(auto_confirm=False)
+        chat = new_chat("plugin-tools")
+        script({"tool_calls": [{"name": "plugins.stage", "arguments": {"source": folder}}]}, {"text": "Staged."})
+        s = turn(chat, "stage the plugin in " + folder)
+        eq(s["status"], "waiting_for_permission", "reading a folder asks first, like every read")
+        eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "permanent"}]})[0], 202, "approve the read")
+        wait_idle(chat)
+        review = json.loads(tool_results(chat)[0]["content"])
+        eq((review["plugin"], review["action"], review["problems"]), ("scenario/tooled", "install", []), "the review says what it is")
+        eq(review["from"]["type"], "folder", "and where it is from")
+        has(json.dumps(review["commands"]), "python3", "and what it would run")
+        eq(ok("/api/plugins/external"), [p for p in ok("/api/plugins/external") if p["name"] != "scenario" or p["subname"] != "tooled"], "nothing is installed by staging")
+
+        script({"tool_calls": [{"name": "plugins.read_file", "arguments": {"id": review["id"], "path": "plugin.toml"}},
+                               {"name": "plugins.install", "arguments": {"id": review["id"]}}]}, {"text": "Installed."})
+        s = turn(chat, "install it")
+        eq(s["status"], "waiting_for_permission", "installing waits for the owner")
+        asked = s["pending"][0]["permission"]["escalation"]["ui_message"]
+        has(asked, "scenario/tooled", "it names the plugin")
+        has(asked, "python3", "and what will run")
+        eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "approve the install")
+        wait_idle(chat)
+        results = [str(m["content"]) for m in tool_results(chat)]
+        has(results[1], "kind = ", "the model read the manifest")
+        has(results[2], "scenario/tooled", "and the install says what it installed")
+        row = [p for p in ok("/api/plugins/external") if p["name"] == "scenario" and p["subname"] == "tooled"][0]
+        eq((row["state"], row["source_type"]), ("ok", "folder"), "recorded as installed from a folder")
+
+        script({"tool_calls": [{"name": "plugins.list", "arguments": {}}, {"name": "plugins.uninstall", "arguments": {"plugin": "scenario/tooled"}}]}, {"text": "Gone."})
+        s = turn(chat, "remove it")
+        eq(s["status"], "waiting_for_permission", "removing waits for the owner too")
+        has(s["pending"][0]["permission"]["escalation"]["ui_message"], "scenario/tooled", "it names the plugin")
+        eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "approve the removal")
+        wait_idle(chat)
+        has(str(tool_results(chat)[-2]["content"]), "scenario/tooled", "the list showed it before")
+        eq([p for p in ok("/api/plugins/external") if p["name"] == "scenario" and p["subname"] == "tooled"], [], "it is gone")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+        settings()
+
+
+@scenario
+def with_auto_confirm_the_plugin_tools_run_without_a_prompt_and_a_tulpa_file_is_taken_by_its_path():
+    """Auto-confirm is the owner's standing yes, as for every other tool: a plugin file on this machine is staged, installed, listed and
+    removed (with its data) with no wait."""
+    key = {"plugin_name": "scenario", "plugin_subname": "filed"}
+    if any(p["name"] == "scenario" and p["subname"] == "filed" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+    path = "/tmp/scenario-filed-%d.tulpa" % os.getpid()
+    with open(path, "wb") as f:
+        f.write(plugin_file("0.3.0", "from a file", "filed"))
+    try:
+        settings(auto_confirm=True)
+        chat = new_chat("plugin-tools-auto")
+        script({"tool_calls": [{"name": "plugins.stage", "arguments": {"source": path}}]}, {"text": "Staged."})
+        eq(turn(chat, "stage " + path)["last_end"]["reason"], "answered", "no wait")
+        review = json.loads(tool_results(chat)[0]["content"])
+        eq((review["plugin"], review["version"], review["from"]["type"]), ("scenario/filed", "0.3.0", "file"), "a file is taken by its path")
+        script({"tool_calls": [{"name": "plugins.install", "arguments": {"id": review["id"]}}, {"name": "plugins.list", "arguments": {}}]},
+               {"tool_calls": [{"name": "plugins.uninstall", "arguments": {"plugin": "scenario/filed", "remove_data": True}}]}, {"text": "Done."})
+        eq(turn(chat, "install it, look, and remove it with its data")["last_end"]["reason"], "answered", "no wait")
+        results = [str(m["content"]) for m in tool_results(chat)]
+        has(results[1], "scenario/filed", "installed")
+        has(results[2], "0.3.0", "and listed")
+        has(results[3], '"data_removed":true', "then removed with its data")
+        eq([p for p in ok("/api/plugins/external") if p["subname"] == "filed"], [], "it is gone")
+    finally:
+        os.path.exists(path) and os.remove(path)
+        settings()
+
+
+@scenario
+def another_user_cannot_use_the_plugin_tools():
+    """A plugin runs as the owner, so only the owner's chats may use the plugin tools: for anyone else every one of them is refused."""
+    before = ok("/api/plugins/external")
+    made = ok("/api/users", {"username": "plugin-bob-%d" % os.getpid(), "password": "bob-pass-123"})
+    BOB = token_for(made["id"], made["username"], "user")
+    try:
+        settings(auto_confirm=True)
+        full = {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False,
+                "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000}
+        eq(request(BACKEND, "/api/settings", full, token=BOB)[0] // 100, 2, "bob's settings")
+        status, chat = request(BACKEND, "/api/chats", {"name": "plugins-bob", "launch_profile_id": PROFILE, "tools_enabled": True}, token=BOB)
+        eq(status, 200, "bob's chat")
+        script({"tool_calls": [{"name": "plugins.list", "arguments": {}},
+                               {"name": "plugins.stage", "arguments": {"source": "https://github.com/octocat/Hello-World"}},
+                               {"name": "plugins.install", "arguments": {"id": "0123456789abcdef"}},
+                               {"name": "plugins.uninstall", "arguments": {"plugin": "example/hello"}}]}, {"text": "No."})
+        eq(request(BACKEND, "/api/agent/turn", {"chat_id": chat["id"], "prompt": "list the plugins"}, token=BOB)[0], 202, "bob's turn")
+        wait_for(lambda: request(BACKEND, f"/api/agent/turn?chat_id={chat['id']}", token=BOB)[1]["status"] != "running", what="bob's run")
+        msgs = request(BACKEND, f"/api/chats/messages?chat_id={chat['id']}&limit=200", token=BOB)[1]["messages"]
+        results = [str(m["content"]) for m in sorted(msgs, key=lambda m: m["id"]) if m["role"] == "tool"]
+        eq(len(results), 4, "every call was answered")
+        assert all("only the owner" in r for r in results), f"every plugin tool refuses a user who is not the owner: {results}"
+        eq(ok("/api/plugins/external"), before, "and nothing was touched")
+    finally:
+        api(f"/api/users?id={made['id']}", None, "DELETE")
+        settings()
 
 
 def main():
