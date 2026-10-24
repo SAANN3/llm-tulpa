@@ -1,6 +1,6 @@
 # Plugin SDK
 
-Plugins that run as separate programs next to the backend, written against the contract in [`PROTOCOL.md`](./PROTOCOL.md).
+Plugins that run as separate programs next to the backend, written against the contract in [`PROTOCOL.md`](./PROTOCOL.md). New here: [`GUIDE.md`](./GUIDE.md) makes a first plugin in a few minutes.
 
 ```
 plugin-sdk/
@@ -10,6 +10,7 @@ plugin-sdk/
   examples/
     hello-world-rust/  a manifest, a setting, a tool, a tab, a prompt section and a route
     hello-world-python/ the same in Python, with no build step
+    telegram/          the built-in Telegram plugin as an external one (Python): a loop, settings with a secret, the plugin's agent
     skills/            the built-in skills plugin as an external one: database, uploads, folder approvals
 ```
 

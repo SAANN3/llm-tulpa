@@ -209,6 +209,18 @@ Everything that is empty may be left out. A button with `"upload": true` opens a
 | `db.query` | `{sql, params?}` | a list of rows, each an object keyed by column name |
 | `db.execute` | `{sql, params?}` | the number of rows changed |
 | `db.batch` | `{statements: [{sql, params?}, ...]}` | a list with the number of rows each statement changed |
+| `agent.reply` | `{conversation, text, title?, images?, think?}` | `{content}`: the model's answer |
+
+## The agent
+
+`agent.reply` is what a plugin that brings messages in from somewhere (a chat app, a webhook) needs of the backend besides its own platform's API. The backend has an agent for plugins: a model with no tools. The plugin hands it a message and gets the answer, which it sends back where the message came from.
+
+- `conversation` names the conversation the message is in, as the plugin sees it (a chat id of the platform): up to 200 characters, and the same conversation always gets the same chat, which is how the model remembers what was said before. The chats are the owner's and are listed with their other chats, filed under the plugin's own `(name, subname)`, so two plugins never share a conversation. `title` names a conversation's chat the first time (its id when left out).
+- `text` is the message (up to 200,000 characters). `images` is a list of base64 images without a data-URL prefix (at most 10): each is decoded and written again, and one the model server could not read is dropped with a warning. A message needs text or an image.
+- `think` says whether the model thinks before it answers; it is slower and can be more careful.
+- The call waits as long as the model takes, which can be minutes, and is not subject to a time limit; other calls go on meanwhile. A plugin that is switched off while it waits ends with its process, and the answer is stored in the chat all the same.
+
+Everything a plugin may do with the agent it does as the owner, under the trust model above.
 
 ## Database
 
