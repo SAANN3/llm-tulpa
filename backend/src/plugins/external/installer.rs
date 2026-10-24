@@ -150,7 +150,7 @@ impl ExternalPlugins {
     /// What staging a plugin came to: described, or taken away again with the reason
     async fn finish_staging(&self, id: &str, dir: &Path, unpacked: Result<(), String>, source: StagedSource) -> Result<StagedPlugin, ManagerError> {
         let described = match unpacked {
-            Ok(()) => match stage::save_source(dir, &source) {
+            Ok(()) => match stage::add_bundled_sdk(&tree_dir(dir)).and_then(|()| stage::save_source(dir, &source)) {
                 Ok(()) => self.describe(id).await,
                 Err(e) => Err(ManagerError::Failed(e)),
             },

@@ -10,6 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
+use include_dir::{include_dir, Dir};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use utoipa::ToSchema;
@@ -26,6 +27,9 @@ const MAX_LISTED_FILES: usize = 500;
 const MAX_README_BYTES: usize = 20 * 1024;
 const MAX_VIEWED_FILE_BYTES: u64 = 256 * 1024;
 const GIT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// The Python SDK, carried by the backend so that a plugin written with it need not bring a copy. The path is the same inside the
+/// Docker build, where `backend/compose.yaml` hands it over as an additional build context.
+static PYTHON_SDK: Dir = include_dir!("$CARGO_MANIFEST_DIR/../plugin-sdk/python/tulpa_plugin");
 const SOURCE_FILE: &str = "source.json";
 const TREE: &str = "src";
 
@@ -341,6 +345,26 @@ pub fn listed(files: Vec<StagedFile>) -> (Vec<StagedFile>, bool) {
     (files.into_iter().take(MAX_LISTED_FILES).collect(), truncated)
 }
 
+/// Puts the bundled Python SDK next to a staged plugin's `main.py` when its manifest says `sdk = "python"` and it carries no
+/// `tulpa_plugin` of its own, so a plugin that vendored one (to pin or patch it) keeps exactly that one. A manifest that does not
+/// parse is left for `describe` to refuse with the reason.
+pub fn add_bundled_sdk(tree: &Path) -> Result<(), String> {
+    let Ok((manifest, _)) = manifest_of(tree) else { return Ok(()) };
+    let target = tree.join("tulpa_plugin");
+    if manifest.sdk.as_deref() != Some("python") || target.exists() {
+        return Ok(());
+    }
+    for file in PYTHON_SDK.files() {
+        let name = file.path().file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if name.ends_with(".pyc") {
+            continue;
+        }
+        std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        std::fs::write(target.join(name), file.contents()).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// The manifest of a staged tree
 pub fn manifest_of(tree: &Path) -> Result<(Manifest, String), String> {
     let text = std::fs::read_to_string(tree.join("plugin.toml")).map_err(|_| "there is no plugin.toml at the top of it".to_string())?;
@@ -367,6 +391,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_bundled_python_sdk_is_added_only_where_a_plugin_has_none() {
+        let manifest = |sdk: &str| format!("name='a'\nsubname='b'\nversion='0.1.0'\nprotocol=1\nsummary='s'\nsdk='{sdk}'\nkind='source'\nrun='x'\n");
+        let bare = scratch("sdk-bare");
+        std::fs::write(bare.join("plugin.toml"), manifest("python")).unwrap();
+        add_bundled_sdk(&bare).unwrap();
+        assert!(bare.join("tulpa_plugin/__init__.py").is_file() && bare.join("tulpa_plugin/host.py").is_file());
+        assert!(!bare.join("tulpa_plugin/__pycache__").exists());
+
+        let own = scratch("sdk-own");
+        std::fs::write(own.join("plugin.toml"), manifest("python")).unwrap();
+        std::fs::create_dir_all(own.join("tulpa_plugin")).unwrap();
+        std::fs::write(own.join("tulpa_plugin/__init__.py"), "# mine").unwrap();
+        add_bundled_sdk(&own).unwrap();
+        assert_eq!(std::fs::read_to_string(own.join("tulpa_plugin/__init__.py")).unwrap(), "# mine");
+        assert!(!own.join("tulpa_plugin/host.py").exists());
+
+        let rust = scratch("sdk-rust");
+        std::fs::write(rust.join("plugin.toml"), manifest("rust")).unwrap();
+        add_bundled_sdk(&rust).unwrap();
+        assert!(!rust.join("tulpa_plugin").exists());
     }
 
     #[test]

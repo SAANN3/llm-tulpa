@@ -8,6 +8,10 @@ services:
       # against the host's network directly sidesteps that instead of requiring a
       # system-wide Docker daemon DNS override.
       network: host
+      # The Python SDK that plugins are given (`src/plugins/external/stage.rs` embeds it). It lives beside the
+      # backend, outside this build context, so it comes in as a named one.
+      additional_contexts:
+        plugin_sdk: ../plugin-sdk/python/tulpa_plugin
       # Baked into the image's sudoers rule and its matching passwd entry (see
       # Dockerfile) so both match whatever numeric uid:gid `user:` below actually runs
       # as — same HOST_UID/HOST_GID, just also needed at build time here since

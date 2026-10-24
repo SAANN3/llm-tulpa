@@ -10,6 +10,8 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY tool_derive ./tool_derive
 COPY src ./src
+# Where `include_dir!` looks for it: `../plugin-sdk/python/tulpa_plugin` from /app
+COPY --from=plugin_sdk . /plugin-sdk/python/tulpa_plugin
 
 RUN cargo build --release --locked
 

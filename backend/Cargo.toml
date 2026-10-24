@@ -62,3 +62,4 @@ bzip2 = "0.6"
 x509-parser = "0.18"
 rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs"] }
 rustls-pki-types = "1"
+include_dir = "0.7"
