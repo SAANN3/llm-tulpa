@@ -16,7 +16,7 @@ const sourceText = (plugin: ExternalPlugin): string => {
         case 'file':
             return `a file${plugin.source_sha256 ? ` (sha256 ${plugin.source_sha256.slice(0, 12)}…)` : ''}`
         default:
-            return 'put in the plugins folder by hand'
+            return plugin.source_url ? `a folder on this machine (${plugin.source_url})` : 'put in the plugins folder by hand'
     }
 }
 

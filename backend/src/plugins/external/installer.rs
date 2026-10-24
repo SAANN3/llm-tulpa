@@ -3,7 +3,7 @@
 //! as a background task that builds it, tries it, puts it in place and loads it. An update swaps in the new version only
 //! after it has built and started, and puts the old one back if the new one will not load.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -97,6 +97,30 @@ impl ExternalPlugins {
         let sha256 = stage::sha256_of_bytes(&bytes);
         let unpacked = tokio::task::spawn_blocking(move || stage::unpack_zip(&bytes, &tree)).await.map_err(|e| ManagerError::Failed(e.to_string()))?;
         self.finish_staging(&id, &dir, unpacked, StagedSource { source_type: "file".to_string(), sha256: Some(sha256), ..Default::default() }).await
+    }
+
+    /// Takes a plugin from this machine: a `.tulpa` file, or a folder with a `plugin.toml` (one a person or the model wrote), and
+    /// describes it. Nothing of it runs.
+    pub async fn stage_path(&self, path: &Path) -> Result<StagedPlugin, ManagerError> {
+        let meta = tokio::fs::metadata(path).await.map_err(|e| ManagerError::NotFound(format!("{}: {e}", path.display())))?;
+        if meta.is_file() {
+            if meta.len() > 256 * 1024 * 1024 {
+                return Err(ManagerError::Refused(format!("{} is larger than 256 MB", path.display())));
+            }
+            let bytes = tokio::fs::read(path).await.map_err(|e| ManagerError::Failed(format!("{}: {e}", path.display())))?;
+            return self.stage_file(bytes).await;
+        }
+        stage::prune(&self.root);
+        let (id, dir) = stage::new_staging(&self.root).map_err(ManagerError::Failed)?;
+        let (source, tree) = (path.to_path_buf(), tree_dir(&dir));
+        let copied = tokio::task::spawn_blocking(move || stage::copy_folder(&source, &tree)).await.map_err(|e| ManagerError::Failed(e.to_string()))?;
+        let source = StagedSource { source_type: "folder".to_string(), url: Some(path.display().to_string()), ..Default::default() };
+        self.finish_staging(&id, &dir, copied, source).await
+    }
+
+    /// Where a staged plugin's files are, for a caller that reads them itself
+    pub fn staged_tree(&self, id: &str) -> Option<PathBuf> {
+        staging_dir(&self.root, id).map(|dir| tree_dir(&dir)).filter(|tree| tree.is_dir())
     }
 
     /// Fetches a git repository and describes it.

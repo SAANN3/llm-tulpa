@@ -25,6 +25,7 @@ type Tab = (typeof TABS)[number]
 const sourceText = (staged: StagedPlugin): string => {
     const {source} = staged
     if (source.source_type === 'git') return `git ${source.url ?? ''}${source.git_ref ? ` (${source.git_ref})` : ''}${source.commit ? `, commit ${source.commit.slice(0, 10)}` : ''}`
+    if (source.source_type === 'folder') return `a folder on this machine${source.url ? `, ${source.url}` : ''}`
     return `a file${source.sha256 ? `, sha256 ${source.sha256.slice(0, 16)}…` : ''}`
 }
 

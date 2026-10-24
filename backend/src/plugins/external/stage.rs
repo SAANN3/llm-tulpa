@@ -137,6 +137,38 @@ pub fn unpack_zip(bytes: &[u8], dest: &Path) -> Result<(), String> {
     hoist(dest)
 }
 
+/// Copies the plugin folder `source` into `dest` (the staging tree) as an install would take it: what a build or a run leaves
+/// behind (`target/`, virtual environments, caches, `.git`) is left out, a link is refused, and the limits above hold. Blocking.
+pub fn copy_folder(source: &Path, dest: &Path) -> Result<(), String> {
+    let mut count = 0usize;
+    let mut total = 0u64;
+    let mut pending = vec![(source.to_path_buf(), dest.to_path_buf())];
+    while let Some((from, to)) = pending.pop() {
+        std::fs::create_dir_all(&to).map_err(|e| format!("cannot copy into {}: {e}", to.display()))?;
+        for entry in std::fs::read_dir(&from).map_err(|e| format!("cannot read {}: {e}", from.display()))?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+            if super::export::LEFT_OUT.contains(&name.as_str()) || name.ends_with(".pyc") || name == ".DS_Store" {
+                continue;
+            }
+            if meta.file_type().is_symlink() {
+                return Err(format!("{} is a link; links are not taken", entry.path().display()));
+            }
+            if meta.is_dir() {
+                pending.push((entry.path(), to.join(&name)));
+            } else if meta.is_file() {
+                count += 1;
+                total += meta.len();
+                if count > MAX_FILES || meta.len() > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES {
+                    return Err("the folder is too large to be a plugin".to_string());
+                }
+                std::fs::copy(entry.path(), to.join(&name)).map_err(|e| format!("cannot copy {}: {e}", entry.path().display()))?;
+            }
+        }
+    }
+    hoist(dest)
+}
+
 /// A zip of a folder has everything inside that one folder: its contents are moved up so that `plugin.toml` is at the top
 fn hoist(dest: &Path) -> Result<(), String> {
     if dest.join("plugin.toml").is_file() {

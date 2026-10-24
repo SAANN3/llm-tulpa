@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 /// Folders that are made by building or running a plugin, never shipped
-const LEFT_OUT: [&str; 7] = ["target", ".venv", "venv", "__pycache__", "node_modules", ".git", ".staging"];
+pub(super) const LEFT_OUT: [&str; 7] = ["target", ".venv", "venv", "__pycache__", "node_modules", ".git", ".staging"];
 const MAX_EXPORT_BYTES: u64 = 512 * 1024 * 1024;
 
 /// The files of `dir` as a zip, with `plugin.toml` at its top. Blocking. Links are left out.
