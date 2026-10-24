@@ -1,44 +1,38 @@
-//! Finds the external plugins on disk and starts them. A plugin that cannot be started is logged and left out: one broken
-//! folder never keeps the backend, or the other plugins, from coming up.
+//! Finds the external plugins on disk and starts one: reads its manifest, runs its `check`, reads its migrations and starts
+//! its process under a supervisor. What happens to the result (registering it, recording it) is `manager.rs`'s.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use super::builder::ExternalPluginBuilder;
 use super::db::PluginDb;
 use super::manifest::{Manifest, expand_command};
-use super::process::PluginProcess;
-use crate::plugins::base::PluginBuilder;
+use super::supervisor::{Event, Supervisor};
 use crate::plugins::schema::role_name;
 
 /// How long a plugin's `check` command may run
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Starts every plugin in `<root>/<name>/<subname>/` and returns a builder for each that came up. `taken` holds the
-/// `(name, subname)` of the plugins that are already registered (the ones compiled in): an external plugin with the same
-/// name is refused, since two plugins under one key would stop the whole backend at registration. `plugins_dir` is where
-/// every plugin's data folder is, and `db` is what the plugins that keep data in the database are given.
-pub async fn load_all(root: &Path, plugins_dir: &Path, taken: &HashSet<(String, String)>, db: &DatabaseConnection) -> Vec<Arc<dyn PluginBuilder>> {
-    let mut seen = taken.clone();
-    let mut builders: Vec<Arc<dyn PluginBuilder>> = Vec::new();
-    for dir in plugin_folders(root) {
-        let label = dir.strip_prefix(root).unwrap_or(&dir).display().to_string();
-        match load_one(&dir, plugins_dir, &mut seen, db).await {
-            Ok(builder) => builders.push(Arc::new(builder)),
-            Err(why) => tracing::error!("external plugin {label} is not available: {why}"),
-        }
+/// Why a plugin could not be started, with what was learned of it on the way: its manifest, when that could be read
+pub struct StartError {
+    pub manifest: Option<Manifest>,
+    pub why: String,
+}
+
+impl From<String> for StartError {
+    fn from(why: String) -> Self {
+        Self { manifest: None, why }
     }
-    builders
 }
 
 /// Every `<root>/<name>/<subname>` that holds a `plugin.toml`, in name order so the start-up is the same each time. A
 /// folder starting with a dot (the installer's staging area) is not a plugin.
-fn plugin_folders(root: &Path) -> Vec<PathBuf> {
+pub fn plugin_folders(root: &Path) -> Vec<PathBuf> {
     let subfolders = |dir: &Path| -> Vec<PathBuf> {
         let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
@@ -53,33 +47,31 @@ fn plugin_folders(root: &Path) -> Vec<PathBuf> {
     subfolders(root).iter().flat_map(|name| subfolders(name)).filter(|dir| dir.join("plugin.toml").is_file()).collect()
 }
 
-async fn load_one(dir: &Path, plugins_dir: &Path, seen: &mut HashSet<(String, String)>, db: &DatabaseConnection) -> Result<ExternalPluginBuilder, String> {
+/// The plugin in `dir`, started and ready to be registered. `plugins_dir` is where every plugin's data folder is, `db` what a
+/// plugin that keeps data in the database is given, and `events` where its supervisor reports.
+pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnection, events: mpsc::UnboundedSender<Event>) -> Result<ExternalPluginBuilder, StartError> {
     let manifest = Manifest::load(dir).map_err(|e| e.to_string())?;
-    let key = (manifest.name.clone(), manifest.subname.clone());
-    if seen.contains(&key) {
-        return Err(format!("{}/{} is already taken by another plugin", key.0, key.1));
-    }
+    let failed = |manifest: &Manifest, why: String| StartError { manifest: Some(manifest.clone()), why };
     let data_dir = plugins_dir.join(&manifest.name).join(&manifest.subname);
 
     if let Some(check) = &manifest.check {
-        run_check(check, dir, &data_dir).await?;
+        run_check(check, dir, &data_dir).await.map_err(|why| failed(&manifest, why))?;
     }
 
     // Read before the process starts: a migration that cannot be read is found without a program left running
     let migrations = match &manifest.database {
-        Some(database) => read_migrations(&dir.join(&database.migrations))?,
+        Some(database) => read_migrations(&dir.join(&database.migrations)).map_err(|why| failed(&manifest, why))?,
         None => vec![],
     };
     let plugin_db = match &manifest.database {
-        Some(_) => Some(Arc::new(PluginDb::new(db.clone(), role_name(&manifest.name, &manifest.subname).map_err(|e| e.to_string())?))),
+        Some(_) => Some(Arc::new(PluginDb::new(db.clone(), role_name(&manifest.name, &manifest.subname).map_err(|e| failed(&manifest, e.to_string()))?))),
         None => None,
     };
 
     // Its tools are asked for when it is configured (they may depend on the settings), not here
-    let process = PluginProcess::start(&manifest, dir, &data_dir, plugin_db).await?;
+    let supervisor = Supervisor::start(manifest.clone(), dir.to_path_buf(), data_dir.clone(), plugin_db, events).await.map_err(|why| failed(&manifest, why))?;
     tracing::info!("external plugin {}/{} {} started (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
-    seen.insert(key);
-    Ok(ExternalPluginBuilder::new(manifest, migrations, process))
+    Ok(ExternalPluginBuilder::new(manifest, migrations, supervisor, dir.to_path_buf(), data_dir))
 }
 
 /// The `.sql` files of a plugin's migrations folder in the order of their names, one step each. A plugin with no such folder
@@ -97,7 +89,7 @@ fn read_migrations(folder: &Path) -> Result<Vec<String>, String> {
 }
 
 /// Runs the manifest's `check` and turns a non-zero exit into an error carrying what it printed ("missing ffmpeg")
-async fn run_check(check: &str, plugin_dir: &Path, data_dir: &Path) -> Result<(), String> {
+pub async fn run_check(check: &str, plugin_dir: &Path, data_dir: &Path) -> Result<(), String> {
     let words = expand_command(check, plugin_dir, data_dir).map_err(|e| format!("check: {e}"))?;
     let (program, args) = words.split_first().ok_or("check is empty")?;
     let output = tokio::time::timeout(CHECK_TIMEOUT, Command::new(program).args(args).current_dir(plugin_dir).kill_on_drop(true).output())

@@ -85,6 +85,15 @@ pub enum Kind {
     Prebuilt,
 }
 
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Source => "source",
+            Kind::Prebuilt => "prebuilt",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Prebuilt {
     /// Relative to the plugin's folder
@@ -140,6 +149,10 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        if self.name == "external" {
+            // `/api/plugins/external/...` is the backend's own management of the external plugins
+            return Err(ManifestError("the name 'external' is the backend's own".to_string()));
+        }
         schema::prefix(&self.name, &self.subname).map_err(|e| ManifestError(e.to_string()))?;
         if self.protocol != SUPPORTED_PROTOCOL {
             return Err(ManifestError(format!("it speaks protocol {}, this backend speaks {SUPPORTED_PROTOCOL}", self.protocol)));

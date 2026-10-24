@@ -12,8 +12,9 @@ use axum::Router;
 use serde_json::{Value, json};
 
 use super::http;
+use super::loader::run_check;
 use super::manifest::Manifest;
-use super::process::PluginProcess;
+use super::supervisor::{State, Supervisor};
 use super::rpc::{BAD_ARGS, CallError, DEFAULT_CALL_TIMEOUT, METHOD_NOT_FOUND, NOT_FOUND};
 use super::spec::{Access, Bucket, ToolSpec, check_settings, check_tools};
 use crate::plugins::base::{Plugin, PluginBuilder, PluginError};
@@ -39,12 +40,22 @@ pub struct ExternalPluginBuilder {
     manifest: Arc<Manifest>,
     /// The plugin's database steps, read from its migrations folder when it was loaded
     migrations: Vec<String>,
-    process: Arc<PluginProcess>,
+    supervisor: Arc<Supervisor>,
+    plugin_dir: PathBuf,
+    data_dir: PathBuf,
 }
 
 impl ExternalPluginBuilder {
-    pub fn new(manifest: Manifest, migrations: Vec<String>, process: Arc<PluginProcess>) -> Self {
-        Self { manifest: Arc::new(manifest), migrations, process }
+    pub fn new(manifest: Manifest, migrations: Vec<String>, supervisor: Arc<Supervisor>, plugin_dir: PathBuf, data_dir: PathBuf) -> Self {
+        Self { manifest: Arc::new(manifest), migrations, supervisor, plugin_dir, data_dir }
+    }
+
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    pub fn supervisor(&self) -> &Arc<Supervisor> {
+        &self.supervisor
     }
 }
 
@@ -83,14 +94,23 @@ impl PluginBuilder for ExternalPluginBuilder {
     }
 
     async fn shutdown(&self) {
-        self.process.shutdown().await;
+        self.supervisor.shutdown().await;
+    }
+
+    /// What the plugin needs is checked again when the owner switches it on (it may have been there at start-up and gone
+    /// since), and a plugin the supervisor gave up on is started afresh, which is how the owner retries it.
+    async fn before_enable(&self) -> Result<(), PluginError> {
+        if let Some(check) = &self.manifest.check {
+            run_check(check, &self.plugin_dir, &self.data_dir).await.map_err(PluginError::InvalidState)?;
+        }
+        self.supervisor.revive().await.map_err(|why| PluginError::FailedUnknown(format!("the plugin {}/{} cannot be started: {why}", self.manifest.name, self.manifest.subname)))
     }
 
     /// Settings that do not fit the manifest never reach the plugin. The plugin then gets them in `configure`, where it can
     /// refuse them for a reason only it knows (a token the service rejects), and lists its tools, which may depend on them.
     async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         check_settings(&self.manifest.settings, &settings).map_err(PluginError::InvalidState)?;
-        let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), process: self.process.clone() };
+        let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), supervisor: self.supervisor.clone() };
         link.call_optional("configure", json!({"settings": settings}), CONFIGURE_TIMEOUT).await?;
         let tools = match link.call_optional("tools", json!({}), DEFAULT_CALL_TIMEOUT).await? {
             Some(listed) => serde_json::from_value::<Vec<ToolSpec>>(listed).map_err(|e| PluginError::FailedUnknown(format!("the plugin {} sent a tool list that is unusable: {e}", link.label)))?,
@@ -105,13 +125,13 @@ impl PluginBuilder for ExternalPluginBuilder {
 #[derive(Clone)]
 struct Link {
     label: String,
-    process: Arc<PluginProcess>,
+    supervisor: Arc<Supervisor>,
 }
 
 impl Link {
     /// A plugin may leave a method out; the SDKs answer all of them. `None` is "the plugin does not have it".
     async fn call_optional(&self, method: &str, params: Value, timeout: Duration) -> Result<Option<Value>, PluginError> {
-        match self.process.call(method, params, timeout).await {
+        match self.supervisor.call(method, params, timeout).await {
             Ok(result) => Ok(Some(result)),
             Err(CallError::Rpc(e)) if e.code == METHOD_NOT_FOUND => Ok(None),
             Err(e) => Err(self.error(e, timeout)),
@@ -126,7 +146,7 @@ impl Link {
             CallError::Rpc(e) if e.code == NOT_FOUND => PluginError::NotFound(e.message),
             CallError::Rpc(e) => PluginError::FailedUnknown(format!("the plugin {}: {}", self.label, e.message)),
             CallError::Timeout => PluginError::FailedUnknown(format!("the plugin {} did not answer within {} s", self.label, timeout.as_secs())),
-            CallError::Closed => PluginError::FailedUnknown(format!("the plugin {} is not running", self.label)),
+            CallError::Closed => PluginError::FailedUnknown(format!("the plugin {} {}", self.label, not_running(self.supervisor.state()))),
         }
     }
 
@@ -162,7 +182,7 @@ impl Plugin for ExternalPlugin {
     }
 
     fn api_router(&self) -> Router {
-        http::router(self.link.label.clone(), self.link.process.clone())
+        http::router(self.link.label.clone(), self.link.supervisor.clone())
     }
 
     async fn on_enabled(&self) -> Result<(), PluginError> {
@@ -183,7 +203,7 @@ impl Plugin for ExternalPlugin {
         self.tools
             .iter()
             .map(|spec| {
-                Box::new(ExternalTool { spec: spec.clone(), plugin: self.link.label.clone(), data_dir: self.data_dir.clone(), process: self.link.process.clone() }) as Box<dyn Tool>
+                Box::new(ExternalTool { spec: spec.clone(), plugin: self.link.label.clone(), data_dir: self.data_dir.clone(), supervisor: self.link.supervisor.clone() }) as Box<dyn Tool>
             })
             .collect()
     }
@@ -275,7 +295,16 @@ struct ExternalTool {
     spec: ToolSpec,
     plugin: String,
     data_dir: PathBuf,
-    process: Arc<PluginProcess>,
+    supervisor: Arc<Supervisor>,
+}
+
+/// What a caller is told when the plugin cannot be reached
+pub fn not_running(state: State) -> &'static str {
+    match state {
+        State::Restarting => "is being restarted after a crash; try again in a moment",
+        State::Failed => "crashed too often and was switched off",
+        State::Running => "is not running",
+    }
 }
 
 fn shared_bucket(bucket: Bucket) -> SharedBucket {
@@ -378,11 +407,11 @@ impl Tool for ExternalTool {
             "ctx": {"user_id": ctx.user_id, "chat_id": ctx.chat_id, "model": ctx.model, "provider": ctx.provider},
         });
         let timeout = self.spec.timeout_s.map(Duration::from_secs).unwrap_or(DEFAULT_CALL_TIMEOUT);
-        self.process.call("call_tool", params, timeout).await.map_err(|e| {
+        self.supervisor.call("call_tool", params, timeout).await.map_err(|e| {
             ToolError::FailedUnknown(match e {
                 CallError::Rpc(e) => e.message,
                 CallError::Timeout => format!("the plugin {} did not answer within {} s", self.plugin, timeout.as_secs()),
-                CallError::Closed => format!("the plugin {} is not running", self.plugin),
+                CallError::Closed => format!("the plugin {} {}", self.plugin, not_running(self.supervisor.state())),
             })
         })
     }

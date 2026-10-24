@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::Router;
 use axum::extract::Request;
@@ -79,6 +79,8 @@ pub struct PluginRegistry {
     tools: Arc<ToolService>,
     /// Brings the tables a plugin declares up to date before it is registered.
     schema: Arc<PluginSchema>,
+    /// What a plugin registered after start-up is given, kept from `register_many`
+    host: OnceLock<PluginHost>,
 }
 
 /// The sections as one text: each trimmed and an empty one left out, in the order of the plugins' keys. A section is never
@@ -103,7 +105,7 @@ fn tool_names(plugin: &Arc<dyn Plugin>) -> Vec<String> {
 
 impl PluginRegistry {
     pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>, schema: Arc<PluginSchema>) -> Self {
-        Self { entries: RwLock::new(HashMap::new()), store, tools, schema }
+        Self { entries: RwLock::new(HashMap::new()), store, tools, schema, host: OnceLock::new() }
     }
 
     /// Registers a plugin under the builder's own `(plugin_name, plugin_subname)`.
@@ -251,24 +253,59 @@ impl PluginRegistry {
                 )));
             }
         }
+        let _ = self.host.set(host.clone());
         for builder in builders {
             let label = format!("{}/{}", builder.plugin_name(), builder.plugin_subname());
-            let env = match host.env_for(builder.plugin_name(), builder.plugin_subname()) {
-                Ok(env) => env,
-                // A name that cannot be a folder or a table prefix is the plugin's own mistake: it is left out, not the backend
-                Err(e) => {
-                    tracing::error!("plugin {label} is not available: {e:?}");
-                    continue;
-                }
-            };
-            let on_by_default = builder.default_enabled() && builder.settings_schema().is_empty();
-            match self.register(builder, env, None, on_by_default).await {
+            match self.register_with(builder, host).await {
                 Ok(()) => {}
                 // A plugin whose tables cannot be brought up to date is left out, not the whole backend: the rest still run
                 Err(PluginError::Schema(why)) => tracing::error!("plugin {label} is not available: {why}"),
                 Err(other) => return Err(other),
             }
         }
+        Ok(())
+    }
+
+    /// Registers one builder the way `register_many` does each of its own.
+    async fn register_with(&self, builder: Arc<dyn PluginBuilder>, host: &PluginHost) -> Result<(), PluginError> {
+        // A name that cannot be a folder or a table prefix is the plugin's own mistake: it is left out, not the backend
+        let env = host.env_for(builder.plugin_name(), builder.plugin_subname())?;
+        let on_by_default = builder.default_enabled() && builder.settings_schema().is_empty();
+        self.register(builder, env, None, on_by_default).await
+    }
+
+    /// Registers a plugin while the backend runs (one added after start-up), with the same host `register_many` was given. A
+    /// key that is taken is refused, not replaced: it would leave the first plugin's tasks running with nothing watching them.
+    pub async fn register_late(&self, builder: Arc<dyn PluginBuilder>) -> Result<(), PluginError> {
+        let host = self.host.get().ok_or_else(|| PluginError::InvalidState("the plugins have not been registered yet".to_string()))?;
+        if self.contains(builder.plugin_name(), builder.plugin_subname()).await {
+            return Err(PluginError::InvalidState(format!("{}/{} is already registered", builder.plugin_name(), builder.plugin_subname())));
+        }
+        self.register_with(builder, host).await
+    }
+
+    /// Whether a plugin is registered under this key
+    pub async fn contains(&self, plugin_name: &str, plugin_subname: &str) -> bool {
+        self.entries.read().await.contains_key(&Self::key(plugin_name, plugin_subname))
+    }
+
+    /// Takes a plugin out: switched off first if it is on (its tools and routes go), then forgotten and its builder told to end
+    /// what it owns. What the plugin stored (its settings, its tables, its files) is left as it is.
+    pub async fn unregister(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), PluginError> {
+        let entry = self
+            .entries
+            .write()
+            .await
+            .remove(&Self::key(plugin_name, plugin_subname))
+            .ok_or_else(|| PluginError::NotFound(format!("no such plugin {plugin_name}/{plugin_subname}")))?;
+        if let (true, Some(plugin)) = (entry.enabled, &entry.plugin) {
+            // The plugin is going whether or not it takes the news well
+            if let Err(e) = plugin.on_disabled().await {
+                tracing::warn!("plugin {plugin_name}/{plugin_subname}: {e}");
+            }
+            self.tools.remove_tools(&tool_names(plugin)).await;
+        }
+        entry.builder.shutdown().await;
         Ok(())
     }
 
@@ -443,6 +480,13 @@ impl PluginRegistry {
     /// instance *before* flipping the flag or persisting — a hook failure means the
     /// requested state never actually took effect, so nothing here should claim it did.
     pub async fn set_enabled(&self, plugin_name: &str, plugin_subname: &str, enabled: bool) -> Result<(), PluginError> {
+        if enabled {
+            // Before the lock is taken: starting a program can take seconds, and the lock is what every chat's prompt waits on
+            let builder = self.entries.read().await.get(&Self::key(plugin_name, plugin_subname)).map(|entry| entry.builder.clone());
+            if let Some(builder) = builder {
+                builder.before_enable().await?;
+            }
+        }
         let mut entries = self.entries.write().await;
         let entry = entries.get_mut(&Self::key(plugin_name, plugin_subname)).ok_or_else(|| {
             PluginError::NotFound(format!("no such plugin {plugin_name}/{plugin_subname}"))

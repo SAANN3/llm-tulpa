@@ -16,8 +16,9 @@ use base64::engine::general_purpose::STANDARD;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::process::PluginProcess;
+use super::builder::not_running;
 use super::rpc::CallError;
+use super::supervisor::Supervisor;
 use crate::plugins::base::PluginCaller;
 
 /// A larger request body is refused: it travels inside one protocol line as base64, which has to stay under the line limit
@@ -33,10 +34,10 @@ struct Answer {
     body_b64: String,
 }
 
-pub fn router(label: String, process: Arc<PluginProcess>) -> Router {
+pub fn router(label: String, supervisor: Arc<Supervisor>) -> Router {
     Router::new().fallback(move |request: Request| {
-        let (label, process) = (label.clone(), process.clone());
-        async move { forward(&label, &process, request).await }
+        let (label, supervisor) = (label.clone(), supervisor.clone());
+        async move { forward(&label, &supervisor, request).await }
     })
 }
 
@@ -44,7 +45,7 @@ fn failure(status: StatusCode, label: &str, why: impl std::fmt::Display) -> Resp
     (status, format!("the plugin {label} {why}")).into_response()
 }
 
-async fn forward(label: &str, process: &PluginProcess, request: Request) -> Response {
+async fn forward(label: &str, supervisor: &Supervisor, request: Request) -> Response {
     let (parts, body) = request.into_parts();
     let Ok(body) = to_bytes(body, MAX_BODY_BYTES).await else {
         return failure(StatusCode::PAYLOAD_TOO_LARGE, label, format!("takes a body of at most {} MiB", MAX_BODY_BYTES / (1024 * 1024)));
@@ -64,12 +65,12 @@ async fn forward(label: &str, process: &PluginProcess, request: Request) -> Resp
         "headers": headers,
         "body_b64": STANDARD.encode(&body),
     });
-    match process.call("http_request", params, HTTP_TIMEOUT).await {
+    match supervisor.call("http_request", params, HTTP_TIMEOUT).await {
         Ok(answer) => respond(label, answer),
         Err(CallError::Rpc(e)) if e.code == super::rpc::METHOD_NOT_FOUND => failure(StatusCode::NOT_FOUND, label, "has no routes"),
         Err(CallError::Rpc(e)) => failure(StatusCode::BAD_GATEWAY, label, format!("failed: {}", e.message)),
         Err(CallError::Timeout) => failure(StatusCode::GATEWAY_TIMEOUT, label, format!("did not answer within {} s", HTTP_TIMEOUT.as_secs())),
-        Err(CallError::Closed) => failure(StatusCode::BAD_GATEWAY, label, "is not running"),
+        Err(CallError::Closed) => failure(StatusCode::BAD_GATEWAY, label, not_running(supervisor.state())),
     }
 }
 

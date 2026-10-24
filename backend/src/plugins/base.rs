@@ -159,6 +159,12 @@ pub trait PluginBuilder: Send + Sync {
         false
     }
 
+    /// Asked before the plugin is switched on by its owner (not when it comes back up with the backend): a plugin that cannot
+    /// run now says why, and stays off. Nothing to check by default.
+    async fn before_enable(&self) -> Result<(), PluginError> {
+        Ok(())
+    }
+
     /// Called on every registered builder when the backend is stopping: the place to end what the builder owns beyond the
     /// instances it builds (an external plugin's process). Nothing by default.
     async fn shutdown(&self) {}

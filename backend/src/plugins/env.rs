@@ -14,6 +14,7 @@ use crate::facade::agent::Agent;
 use crate::services::chat_store::ChatStore;
 
 /// Everything the host can give a plugin, before it is narrowed to one plugin.
+#[derive(Clone)]
 pub struct PluginHost {
     pub db: DatabaseConnection,
     /// The agent the plugins run their own turns with (it takes no plugin prompt sections)

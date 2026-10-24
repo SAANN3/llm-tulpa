@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,7 +9,7 @@ use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, pr
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
-use crate::plugins::external;
+use crate::plugins::external::manager::ExternalPlugins;
 use crate::plugins::knowledge::skills::builder::SkillsBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
@@ -20,7 +19,7 @@ use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::schema::PluginSchema;
 use crate::services::{
-    chat_store::ChatStore, error::ErrorService, event_bus::EventBus, file_store::FileStore,
+    chat_store::ChatStore, error::ErrorService, event_bus::EventBus, external_plugin_store::ExternalPluginStore, file_store::FileStore,
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
     llama_runtime::LlamaRuntime, llm::LlmProviders, memory_store::MemoryStore, migrate::run_migrations, preset_store::PresetStore,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
@@ -53,6 +52,8 @@ pub struct AppServices {
     pub export: ExportFacade,
     pub user_cache: Arc<UserCacheService>,
     pub plugin_registry: Arc<PluginRegistry>,
+    /// The external plugins: loaded and unloaded while the backend runs, and how each is doing
+    pub external_plugins: Arc<ExternalPlugins>,
     /// The context window the agent runs under — Ollama's configured ceiling
     /// (`ollama.context_length`), the number `last_prompt_tokens` is budgeted against.
     /// Exposed so a client can show a chat's context usage as `used / max`.
@@ -304,24 +305,22 @@ pub async fn bootstrap(
         ollama_context_length,
     ));
 
-    let mut plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
+    let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
         Arc::new(MessagingProviderBuilder::<TelegramProvider>::new()),
         Arc::new(MessagingProviderBuilder::<DiscordProvider>::new()),
         Arc::new(MessagingProviderBuilder::<VkProvider>::new()),
         Arc::new(SignaturesBuilder),
         Arc::new(SkillsBuilder::new()),
     ];
-    // The external plugins come up after the compiled-in ones, which keep their names: one that clashes is left out
-    let compiled_in: HashSet<(String, String)> = plugin_builders
-        .iter()
-        .map(|b| (b.plugin_name().to_string(), b.plugin_subname().to_string()))
-        .collect();
-    plugin_builders.extend(external::loader::load_all(&external_plugins_dir, &plugins_dir, &compiled_in, &db).await);
-    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir };
+    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone() };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)
         .await
         .map_err(BootstrapError::Plugins)?;
+    // The external plugins come up after the compiled-in ones, which keep their names: one that clashes is left out, with the
+    // reason recorded, and so is any other that cannot start, without stopping the backend
+    let external_plugins = ExternalPlugins::new(external_plugins_dir, plugins_dir, db.clone(), plugin_registry.clone(), Arc::new(ExternalPluginStore::new(db.clone())));
+    external_plugins.start_all().await;
 
     let services = AppServices {
         db,
@@ -343,6 +342,7 @@ pub async fn bootstrap(
         export,
         user_cache,
         plugin_registry,
+        external_plugins,
         context_length: ollama_context_length,
     };
 

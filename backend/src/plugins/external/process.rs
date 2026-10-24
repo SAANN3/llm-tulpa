@@ -1,6 +1,7 @@
 //! One running external plugin: the child process, the connection to it and what it has logged. `start` spawns it and
 //! brings it through the opening of the protocol (the plugin's `hello`, which names the protocol it speaks); after that the
-//! backend calls it with `call` and ends it with `shutdown`.
+//! backend calls it with `call` and ends it with `shutdown`. `wait_exit` says when it is gone, which is how the supervisor
+//! (`supervisor.rs`) finds out that it crashed.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::BufReader;
-use tokio::process::{Child, Command};
-use tokio::sync::oneshot;
+use tokio::process::Command;
+use tokio::sync::{mpsc, oneshot, watch};
 
 use super::db::{PluginDb, Sql};
 use super::manifest::{Manifest, SUPPORTED_PROTOCOL, expand_command};
@@ -33,7 +34,7 @@ const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
 pub struct LogRing(Mutex<VecDeque<String>>);
 
 impl LogRing {
-    fn push(&self, line: String) {
+    pub fn push(&self, line: String) {
         let mut lines = self.0.lock().unwrap();
         if lines.len() == LOG_LINES {
             lines.pop_front();
@@ -129,14 +130,20 @@ impl HostSide {
 
 pub struct PluginProcess {
     rpc: RpcClient,
-    child: tokio::sync::Mutex<Child>,
     logs: Arc<LogRing>,
+    pid: Option<u32>,
+    /// `None` while the process runs, then how it ended
+    exit: watch::Receiver<Option<String>>,
+    /// A message, or this being dropped, makes the task that owns the process kill it
+    kill: mpsc::UnboundedSender<()>,
 }
 
 impl PluginProcess {
     /// Spawns the plugin's `run` command in its folder and waits for it to say `hello`. A plugin that does not, or whose
     /// `hello` names a protocol this backend does not speak, is killed and the reason returned along with the end of its stderr.
-    pub async fn start(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path, db: Option<Arc<PluginDb>>) -> Result<Arc<PluginProcess>, String> {
+    /// What it logs goes to `logs`, which the caller may hand to the next process of the same plugin so the lines before a
+    /// crash are still there after it.
+    pub async fn start(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path, db: Option<Arc<PluginDb>>, logs: Arc<LogRing>) -> Result<Arc<PluginProcess>, String> {
         let label = format!("{}/{}", manifest.name, manifest.subname);
         let words = expand_command(&manifest.run_command(), plugin_dir, data_dir).map_err(|e| e.to_string())?;
         let (program, args) = words.split_first().ok_or("the run command is empty")?;
@@ -158,7 +165,6 @@ impl PluginProcess {
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
 
-        let logs = Arc::new(LogRing::default());
         let stderr = child.stderr.take().ok_or("no stderr")?;
         tokio::spawn(copy_stderr(stderr, logs.clone(), label.clone()));
 
@@ -183,10 +189,29 @@ impl PluginProcess {
             Ok(Err(_)) => Err("it ended before it said hello".to_string()),
             Err(_) => Err(format!("it did not say hello within {} s", HELLO_TIMEOUT.as_secs())),
         };
-        let process = Arc::new(PluginProcess { rpc, child: tokio::sync::Mutex::new(child), logs });
+        let pid = child.id();
+        let (exit_tx, exit) = watch::channel(None);
+        let (kill, mut kill_rx) = mpsc::unbounded_channel::<()>();
+        // The process belongs to this task: it reports how it ended, and kills it when asked or when the `PluginProcess` is
+        // dropped (a plugin that was refused, or a backend that stops without a clean shutdown, leaves nothing running)
+        tokio::spawn(async move {
+            let status = tokio::select! {
+                status = child.wait() => status,
+                _ = kill_rx.recv() => {
+                    let _ = child.kill().await;
+                    child.wait().await
+                }
+            };
+            let _ = exit_tx.send(Some(match status {
+                Ok(status) => status.to_string(),
+                Err(e) => format!("could not be waited for: {e}"),
+            }));
+        });
+        let process = Arc::new(PluginProcess { rpc, logs, pid, exit, kill });
         if let Err(why) = opened {
             // It never got as far as listening for a shutdown, so there is nothing to wait for
-            process.kill().await;
+            process.kill();
+            let _ = tokio::time::timeout(Duration::from_secs(2), process.wait_exit()).await;
             // Stderr is read on another task: a moment lets the last lines of a crash arrive
             tokio::time::sleep(Duration::from_millis(100)).await;
             let tail = process.logs.tail(10).join("\n");
@@ -199,19 +224,38 @@ impl PluginProcess {
         self.rpc.call(method, params, timeout).await
     }
 
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// Whether the process is still there
+    pub fn is_alive(&self) -> bool {
+        self.exit.borrow().is_none()
+    }
+
+    /// Waits until the process is gone and says how it ended (`exit status: 1`, `signal: 9 (SIGKILL)`)
+    pub async fn wait_exit(&self) -> String {
+        let mut exit = self.exit.clone();
+        match exit.wait_for(Option::is_some).await {
+            Ok(ended) => ended.clone().unwrap_or_default(),
+            Err(_) => "the process is gone".to_string(),
+        }
+    }
+
     /// Asks the plugin to stop, closes its stdin, and kills it if it is still there after the grace period
     pub async fn shutdown(&self) {
         let _ = self.rpc.call("shutdown", json!({}), SHUTDOWN_GRACE).await;
         self.rpc.close();
-        let mut child = self.child.lock().await;
-        if tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await.is_err() {
-            let _ = child.kill().await;
+        if tokio::time::timeout(SHUTDOWN_GRACE, self.wait_exit()).await.is_err() {
+            self.kill();
+            self.wait_exit().await;
         }
     }
 
-    async fn kill(&self) {
+    /// Ends the process at once; `wait_exit` says when it is gone
+    pub fn kill(&self) {
         self.rpc.close();
-        let _ = self.child.lock().await.kill().await;
+        let _ = self.kill.send(());
     }
 }
 
