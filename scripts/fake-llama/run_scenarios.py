@@ -1342,15 +1342,29 @@ def auto_confirm_grants_every_command_of_a_shell_line_before_it_runs():
     settings()
 
 
+HELLO = {"plugin_name": "example", "plugin_subname": "hello"}
+
+
+def hello_plugin():
+    """The example/hello plugin as the plugin list shows it, or a skip when this backend has not got it installed."""
+    listed = {(p["plugin_name"], p["plugin_subname"]): p for p in ok("/api/plugins")}
+    if ("example", "hello") not in listed:
+        raise Skip("the example/hello plugin is not installed in this backend's external_plugins_dir")
+    return listed[("example", "hello")]
+
+
+def hello_on(greeting):
+    ok("/api/plugins/settings", {**HELLO, "settings": {"greeting": greeting}})
+    ok("/api/plugins/enable", {**HELLO, "enabled": True})
+
+
 @scenario
 def external_plugin_tool_runs_through_the_model_loop():
     """A tool of an external plugin (the hello-world-rust example, installed in the backend's external_plugins_dir) is called by
     the model like any built-in one: the backend sends the call to the plugin's process, which answers, and the answer goes back
     to the model."""
-    listed = {(p["plugin_name"], p["plugin_subname"]): p for p in ok("/api/plugins")}
-    if ("example", "hello") not in listed:
-        raise Skip("the example/hello plugin is not installed in this backend's external_plugins_dir")
-    eq(listed[("example", "hello")]["enabled"], True, "it takes no settings, so it comes up switched on")
+    hello_plugin()
+    hello_on("Howdy")
     settings()
     chat = new_chat("external-tool")
     script({"tool_calls": [{"name": "hello.greet", "arguments": {"name": "Ada"}}]}, {"text": "Greeted."})
@@ -1358,10 +1372,52 @@ def external_plugin_tool_runs_through_the_model_loop():
     eq(s["last_end"]["reason"], "answered", "run end")
     results = tool_results(chat)
     eq(len(results), 1, "one tool result")
-    has(str(results[0]["content"]), "Hello, Ada!", "the plugin's greeting reached the model")
+    has(str(results[0]["content"]), "Howdy, Ada!", "the plugin's greeting, with the greeting from its settings, reached the model")
     has(str(results[0]["content"]), "for user 1", "the call carried the chat's user")
     second = calls("main")[1]["messages"]
-    has(str(second[-1]["content"]), "Hello, Ada!", "the second request carries the result")
+    has(str(second[-1]["content"]), "Howdy, Ada!", "the second request carries the result")
+
+
+@scenario
+def an_external_plugins_settings_tab_prompt_section_and_routes_behave_like_a_built_ins():
+    """The hello plugin declares settings and a tab in its manifest and implements the other hooks: the backend checks the
+    settings before the plugin sees them, draws its tab, adds its prompt section to a chat that has tools, forwards its routes
+    and stops serving all of it when it is switched off."""
+    hello_plugin()
+    status, body = api("/api/plugins/settings", {**HELLO, "settings": {"greeting": 5}})
+    eq(status, 400, "a setting of the wrong type is refused")
+    has(str(body), "greeting", "the refusal names the setting")
+    hello_on("Hey")
+    tabs = [t for t in ok("/api/plugins/tabs") if t["plugin_name"] == "example"]
+    eq([t["id"] for t in tabs], ["hello"], "the plugin's tab is listed")
+
+    tab = ok("/api/plugins/tab?plugin_name=example&plugin_subname=hello")
+    blocks = tab["sections"][0]["blocks"]
+    has(blocks[0]["text"], "\"Hey\"", "the tab shows the greeting from the settings")
+    eq(blocks[1]["on"], False, "the switch starts off")
+    tab = ok("/api/plugins/tab/action", {**HELLO, "action": "loud", "args": {"on": True}})
+    eq(tab["sections"][0]["blocks"][1]["on"], True, "the action's answer is the tab as it is after")
+    has(tab["message"], "capitals", "the action's message")
+
+    reply = ok("/api/plugins/example/hello/greeting")
+    eq(reply, {"greeting": "Hey", "asked_by": 1}, "the plugin's own route, with the caller")
+
+    settings()
+    chat = new_chat("external-hooks")
+    script({"tool_calls": [{"name": "hello.greet", "arguments": {"name": "Ada"}}]}, {"text": "Greeted."})
+    turn(chat, "Greet Ada")
+    has(system_of_last_main_call(), "The hello plugin is on", "the plugin's prompt section is in the prompt of a chat with tools")
+    has(str(tool_results(chat)[0]["content"]), "HEY, ADA!", "the switch in the tab changed the greeting")
+    bare = new_chat("external-hooks-bare", tools=False)
+    script({"text": "Hi."})
+    turn(bare, "Say hi")
+    assert "hello plugin" not in system_of_last_main_call(), "a chat without tools gets no section about tools"
+
+    ok("/api/plugins/tab/action", {**HELLO, "action": "loud", "args": {"on": False}})
+    ok("/api/plugins/enable", {**HELLO, "enabled": False})
+    eq([t for t in ok("/api/plugins/tabs") if t["plugin_name"] == "example"], [], "a switched-off plugin has no tab")
+    eq(api("/api/plugins/example/hello/greeting")[0], 404, "nor routes")
+    hello_on("Hello")
 
 
 def main():
