@@ -69,3 +69,92 @@ export interface TabLayout {
     /** A text to show in a popup, such as a skill's instructions */
     popup: { title: string; text: string } | null
 }
+
+/** How an external plugin's process is doing */
+export type ExternalProcessState = 'stopped' | 'running' | 'restarting' | 'failed'
+
+export interface ExternalProcess {
+    state: ExternalProcessState
+    pid: number | null
+    /** How many times a new process was started after a crash */
+    restarts: number
+    last_error: string | null
+    /** The end of what the plugin wrote to its log, oldest first */
+    logs: string[]
+}
+
+/** How an external plugin is doing as a whole: `unavailable` could not be started (the reason is `last_error`), `failing`
+ * crashed too often and was switched off, `unloaded` was stopped by the owner */
+export type ExternalState = 'ok' | 'unavailable' | 'failing' | 'unloaded'
+
+/** An external plugin: a separate program the backend runs, installed from a file or a git address or put in its folder by hand */
+export interface ExternalPlugin {
+    name: string
+    subname: string
+    version: string | null
+    kind: string | null
+    /** `folder` (put there by hand), `file` or `git` */
+    source_type: string
+    source_url: string | null
+    source_ref: string | null
+    source_sha256: string | null
+    state: ExternalState
+    last_error: string | null
+    installed_at: string
+    updated_at: string
+    /** `null` for a plugin that was never loaded */
+    process: ExternalProcess | null
+}
+
+export interface StagedSource {
+    source_type: string
+    url: string | null
+    git_ref: string | null
+    commit: string | null
+    sha256: string | null
+}
+
+export interface StagedFile {
+    path: string
+    size: number
+}
+
+/** A plugin that has been unpacked and looked at: nothing of it has run, and nothing is installed until the owner says so */
+export interface StagedPlugin {
+    id: string
+    source: StagedSource
+    name: string
+    subname: string
+    version: string
+    kind: string
+    summary: string
+    help_message: string
+    /** The text of its plugin.toml */
+    plugin_toml: string
+    readme: string | null
+    build: string | null
+    run: string
+    check: string | null
+    /** The names of the settings it asks for */
+    settings: string[]
+    has_tab: boolean
+    has_database: boolean
+    files: StagedFile[]
+    files_truncated: boolean
+    total_bytes: number
+    action: 'install' | 'update'
+    installed_version: string | null
+    /** Why it cannot be installed; empty when it can */
+    problems: string[]
+}
+
+export interface InstallTask {
+    id: string
+    name: string
+    subname: string
+    state: 'running' | 'done' | 'failed'
+    /** What it is doing now */
+    step: string
+    log: string[]
+    error: string | null
+}

@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useCallback, useEffect, useState} from 'react'
 import {setPluginEnabled as setPluginEnabledApi} from '../api/plugins/enable'
 import {getPluginHelp} from '../api/plugins/get-help.ts'
 import {getPlugins} from '../api/plugins/list'
@@ -13,11 +13,12 @@ export const usePlugins = () => {
     const [plugins, setPlugins] = useState<PluginInfo[]>([])
     const [loading, setLoading] = useState(true)
 
+    // Read again after something outside this hook changed the list (a plugin was installed, loaded or removed)
+    const reload = useCallback(() => getPlugins().then(setPlugins), [])
+
     useEffect(() => {
-        getPlugins()
-            .then(setPlugins)
-            .finally(() => setLoading(false))
-    }, [])
+        reload().finally(() => setLoading(false))
+    }, [reload])
 
     const setEnabled = async (pluginName: string, pluginSubname: string, enabled: boolean) => {
         await setPluginEnabledApi({pluginName, pluginSubname, enabled})
@@ -35,5 +36,5 @@ export const usePlugins = () => {
     const getHelp = (pluginName: string, pluginSubname: string): Promise<string> =>
         getPluginHelp({pluginName, pluginSubname})
 
-    return {plugins, loading, setEnabled, setSettings, getSchema, getHelp}
+    return {plugins, loading, reload, setEnabled, setSettings, getSchema, getHelp}
 };
