@@ -85,6 +85,7 @@ Several real, non-obvious bugs in this project were only ever caught this way, n
 - [`frontend/THEMING.md`](./frontend/THEMING.md) — how theme variants/colors work.
 - [`llm/README.md`](./llm/README.md) — swapping models, context window, KV-cache quantization tradeoff.
 - [`backend/README.md`](./backend/README.md) and `backend/data/settings*.example.json` — every backend setting and what it does. Update both when adding a setting.
+- [`docs/`](./docs) — what the README leaves out for brevity: getting started in detail, voice and https, every feature, the benchmarks. A feature added to the README's short list gets its full text in `docs/features.md`.
 - [`CHANGELOG.md`](./CHANGELOG.md) — every user-visible change, at release time. See the style note below before writing an entry.
 
 ## Writing docs and comments: no diff language against something that never shipped
