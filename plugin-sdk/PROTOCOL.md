@@ -71,10 +71,14 @@ JSON-RPC 2.0, one JSON object per line, UTF-8, over the child's stdin (backend t
 
 ## Starting up
 
+A plugin has a process only while it is switched on. A plugin that is off is loaded (its manifest read, its `check` run, its tables brought up to date) but nothing of it runs, and switching it on starts it:
+
 1. The backend starts the process with the environment it has itself plus `TULPA_PLUGIN_PROTOCOL` (the protocol version), `TULPA_DATA_DIR` and `TULPA_PLUGIN_DIR`.
 2. The plugin sends the request `hello` with `{protocol, sdk}`. The backend answers `{protocol, tulpa_version, data_dir, plugin_dir}`. If `hello` does not arrive within 5 s, or names a protocol the backend does not speak, the backend kills the process and records why.
-3. The backend calls `configure` with the settings (when the owner has saved them, or `{}` for a plugin without any), then `tools`, then `enable` if the plugin is switched on. A change of the settings runs `disable` (if it was on), `configure`, `tools` and `enable` again; the process is not restarted. Switching the plugin off runs `disable`, and on runs `enable`.
-4. The plugin runs until the backend ends it: `shutdown` is a request the plugin answers (with `null`) before exiting, and the backend then closes stdin and kills the process if it is still there after 5 s. The backend does this when it stops.
+3. The backend calls `configure` with the settings (the owner's, or `{}` for a plugin without any), then `tools`, then `enable`. If any of these fails the process is ended again and the plugin stays off, with the reason shown to the owner. A plugin that was on when the backend stopped goes through this at the next start.
+
+Switching the plugin off runs `disable` and then ends the process. A change of the settings of a plugin that is on does the same and then starts it again, so `configure` always reaches a fresh process. `user_deleted` is sent to a plugin that is off too: it is started for that one call (with `configure` first), then ended.
+4. The plugin runs until the backend ends it: `shutdown` is a request the plugin answers (with `null`) before exiting, and the backend then closes stdin and kills the process if it is still there after 5 s. The backend does this when the plugin is switched off or unloaded, and when it stops.
 
 ## Crashes and restarts
 
@@ -90,9 +94,9 @@ All owner-only, under `/api/plugins/external`:
 
 | Request | What it does |
 |---|---|
-| `GET /api/plugins/external` | every external plugin the backend has seen: `state` (`ok`, `unavailable`, `failing`, `unloaded`), `last_error`, version, where it came from, and, for one that has a process, `process` with its state (`running`, `restarting`, `failed`), pid, number of restarts and the end of its log |
-| `POST /api/plugins/external/load` `{plugin_name, plugin_subname}` | loads the plugin in `<external_plugins_dir>/<name>/<subname>` as if it had been there at start-up: check, process, migrations, registration. A plugin that cannot start answers 400 with the reason and is recorded as `unavailable`. |
-| `POST /api/plugins/external/unload` `{plugin_name, plugin_subname}` | switches the plugin off if it is on, takes it out of the registry and ends its process. Its files, settings, tables and data folder stay. |
+| `GET /api/plugins/external` | every external plugin the backend has seen: `state` (`ok`, `unavailable`, `failing`, `unloaded`), `last_error`, version, where it came from, and, for one that has a process, `process` with its state (`stopped` for a plugin that is off, `running`, `restarting`, `failed`), pid, number of restarts and the end of its log |
+| `POST /api/plugins/external/load` `{plugin_name, plugin_subname}` | loads the plugin in `<external_plugins_dir>/<name>/<subname>` as if it had been there at start-up: manifest, check, migrations, registration; it is started when it is switched on. A plugin that cannot be loaded (an invalid manifest, a failed `check`, a program that does not exist, a tool name that is taken) answers 400 with the reason and is recorded as `unavailable`. |
+| `POST /api/plugins/external/unload` `{plugin_name, plugin_subname}` | switches the plugin off if it is on, takes it out of the registry and ends its process if it has one. Its files, settings, tables and data folder stay. |
 
 A plugin whose folder is gone from the plugins folder is shown as `unavailable` at the next start. Switching a plugin on or off is the same call as for any plugin (`POST /api/plugins/enable`).
 
