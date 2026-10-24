@@ -128,6 +128,10 @@ def scenario(fn):
     return fn
 
 
+class Skip(Exception):
+    """Raised by a scenario that needs something this backend was not set up with; reported, not counted as a failure."""
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 
 @scenario
@@ -1338,9 +1342,31 @@ def auto_confirm_grants_every_command_of_a_shell_line_before_it_runs():
     settings()
 
 
+@scenario
+def external_plugin_tool_runs_through_the_model_loop():
+    """A tool of an external plugin (the hello-world-rust example, installed in the backend's external_plugins_dir) is called by
+    the model like any built-in one: the backend sends the call to the plugin's process, which answers, and the answer goes back
+    to the model."""
+    listed = {(p["plugin_name"], p["plugin_subname"]): p for p in ok("/api/plugins")}
+    if ("example", "hello") not in listed:
+        raise Skip("the example/hello plugin is not installed in this backend's external_plugins_dir")
+    eq(listed[("example", "hello")]["enabled"], True, "it takes no settings, so it comes up switched on")
+    settings()
+    chat = new_chat("external-tool")
+    script({"tool_calls": [{"name": "hello.greet", "arguments": {"name": "Ada"}}]}, {"text": "Greeted."})
+    s = turn(chat, "Greet Ada with the hello plugin")
+    eq(s["last_end"]["reason"], "answered", "run end")
+    results = tool_results(chat)
+    eq(len(results), 1, "one tool result")
+    has(str(results[0]["content"]), "Hello, Ada!", "the plugin's greeting reached the model")
+    has(str(results[0]["content"]), "for user 1", "the call carried the chat's user")
+    second = calls("main")[1]["messages"]
+    has(str(second[-1]["content"]), "Hello, Ada!", "the second request carries the result")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
-    failed = 0
+    failed = skipped = 0
     for name in names:
         # A run the last scenario left going (a wake-up after a sub-agent's result) would take the next one's scripted replies
         wait_for(lambda: ok("/api/agent/runs") == [], what="no run going on")
@@ -1349,12 +1375,15 @@ def main():
         try:
             SCENARIOS[name]()
             print(f"PASS  {name}  ({time.time() - t0:.1f}s)", flush=True)
+        except Skip as e:
+            skipped += 1
+            print(f"SKIP  {name}: {e}", flush=True)
         except Exception as e:
             failed += 1
             print(f"FAIL  {name}: {e}", flush=True)
             if os.environ.get("TRACE"):
                 traceback.print_exc()
-    print(f"{len(names) - failed} of {len(names)} passed", flush=True)
+    print(f"{len(names) - failed - skipped} of {len(names)} passed" + (f", {skipped} skipped" if skipped else ""), flush=True)
     sys.exit(1 if failed else 0)
 
 
