@@ -323,6 +323,8 @@ pub async fn bootstrap(
     // reason recorded, and so is any other that cannot start, without stopping the backend
     let external_plugins = ExternalPlugins::new(external_plugins_dir, plugins_dir, db.clone(), agent_access, plugin_registry.clone(), Arc::new(ExternalPluginStore::new(db.clone())));
     external_plugins.start_all().await;
+    // The plugin tools were made with the tool list, before there was a database; they reach the plugins through this
+    crate::tools::plugins::install(external_plugins.clone(), user_store.clone());
 
     let services = AppServices {
         db,

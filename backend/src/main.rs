@@ -46,6 +46,7 @@ async fn main() {
     tool_list.extend(tools::llm::collect());
     tool_list.extend(tools::stt::collect());
     tool_list.extend(tools::chat::collect());
+    tool_list.extend(tools::plugins::collect());
     let tools = Arc::new(ToolService::new(tool_list));
 
     let model_folder = ModelFolder::new(config.model_dir.clone());

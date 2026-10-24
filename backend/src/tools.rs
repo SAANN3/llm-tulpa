@@ -4,6 +4,7 @@ pub mod files;
 pub mod lenient;
 pub mod llm;
 pub mod os;
+pub mod plugins;
 pub mod storage;
 pub mod stt;
 pub mod subagent;
