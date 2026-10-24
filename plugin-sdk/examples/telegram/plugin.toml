@@ -1,0 +1,58 @@
+name     = "example"
+subname  = "telegram"
+version  = "0.1.0"
+protocol = 1
+summary  = "Talk with the model from Telegram, through a bot (an example port of the built-in Telegram plugin, in Python)"
+help_message = """How to use the Telegram plugin:
+
+1. Message @BotFather on Telegram and create a bot (or reuse an existing one) to get a bot token.
+2. Paste that token into this plugin's "token" setting and save.
+3. Open a chat with your bot (search its @username) and send it any message. The bot only answers chats listed in "allowed_chat_ids": until then it writes the chat's id in its log (this plugin's page), or you can get it from @userinfobot.
+4. Add that chat id to "allowed_chat_ids" and save.
+5. Enable the plugin with the toggle.
+6. In the chat, send a message, or /chat followed by your message, or /chat alone and reply to its prompt.
+7. The bot reacts with a pair of eyes to show it received your message, then replies threaded to it once the answer is ready.
+
+In a group chat, Telegram's privacy mode lets the bot see only messages sent as a command, or that reply directly to one of the bot's own messages.
+
+This is the built-in Telegram plugin written as an external one, so both can be on at once with different bots. It sends plain text, not Telegram's formatting, and each photo is answered on its own, not as an album."""
+sdk      = "python"
+kind     = "source"
+
+# Nothing to build: Python runs the file as it is
+run = "python3 {plugin_dir}/main.py"
+
+# exit 0 = ready; what it prints is shown when it is not
+check = "python3 -c \"import sys; sys.exit(0 if sys.version_info >= (3, 10) else 'needs Python 3.10 or newer')\""
+
+[[settings]]
+name        = "token"
+type        = "string"
+description = "The bot token from @BotFather."
+required    = true
+
+[[settings]]
+name        = "allowed_chat_ids"
+type        = "array"
+items       = "string"
+description = "Chat ids the bot answers; any other chat is ignored (its id is written to the log, which is how to find it)."
+
+[[settings]]
+name        = "think"
+type        = "boolean"
+description = "Whether replies think before answering: slower, but can give a more careful answer."
+
+[[settings]]
+name        = "name_hint"
+type        = "boolean"
+description = "Tags each message with who sent it (name, user id and when) before the model sees it, so a group chat is not one person to it."
+
+[[settings]]
+name        = "timezone"
+type        = "string"
+description = "The timezone of the name hint's time, an IANA name such as Europe/Moscow. UTC when empty."
+
+[[settings]]
+name        = "api_url"
+type        = "string"
+description = "Where Telegram's Bot API is, for a Bot API server of your own. https://api.telegram.org when empty."
