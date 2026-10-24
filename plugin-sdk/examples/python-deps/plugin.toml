@@ -1,0 +1,19 @@
+name     = "example"
+subname  = "python_deps"
+version  = "0.1.0"
+protocol = 1
+summary  = "Turns a number of bytes into a readable size, in Python: a plugin of several files with a package from PyPI"
+help_message = "Shows how a Python plugin that is split into modules and needs a package keeps that package to itself. It adds one tool, python_deps.size, that writes a number of bytes the way people read it (1.5 MB)."
+# The SDK is not in this folder: the backend adds its own copy when the plugin is installed
+sdk      = "python"
+kind     = "source"
+
+# The package goes into a virtual environment inside the plugin's folder, so nothing is installed on the machine itself. The build
+# runs where the plugin is unpacked and the folder is then moved into place; a virtual environment still works after that move
+# as long as it is started as `.venv/bin/python` (its own scripts, such as `pip`, would not). On Windows the program is
+# `.venv\Scripts\python.exe`.
+build = "python3 -m venv {plugin_dir}/.venv && {plugin_dir}/.venv/bin/python -m pip install --disable-pip-version-check -r {plugin_dir}/requirements.txt"
+run   = "{plugin_dir}/.venv/bin/python {plugin_dir}/main.py"
+
+# exit 0 = ready; what it prints is shown when it is not
+check = "python3 -c \"import sys, venv; sys.exit(0 if sys.version_info >= (3, 10) else 'needs Python 3.10 or newer')\""

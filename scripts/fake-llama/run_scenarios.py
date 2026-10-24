@@ -1683,6 +1683,52 @@ def the_python_example_installs_from_a_file_without_a_build_and_works_like_a_bui
     eq(status, 204, "uninstalled")
 
 
+def plain_zip_of(folder, wrapper):
+    """A folder as an author who does nothing but zip it would send it: no SDK copied in, no virtual environment or cache"""
+    import io, pathlib, zipfile
+    folder = pathlib.Path(folder)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and not {"__pycache__", ".venv"} & set(path.parts):
+                z.write(path, wrapper + "/" + str(path.relative_to(folder)))
+    return buf.getvalue()
+
+
+@scenario
+def a_python_plugin_of_several_files_gets_the_bundled_sdk_and_its_package_in_a_virtual_environment():
+    """The python-deps example is zipped as it stands (no SDK in it): staging adds the backend's SDK, the install builds a virtual
+    environment and installs humanize into it (this needs PyPI), and the tool, which imports a sibling module that imports
+    humanize, answers from that environment."""
+    import pathlib, urllib.request
+    folder = pathlib.Path(__file__).resolve().parents[2] / "plugin-sdk" / "examples" / "python-deps"
+    if not folder.is_dir():
+        raise Skip("plugin-sdk/examples/python-deps is not in this checkout")
+    try:
+        urllib.request.urlopen("https://pypi.org/simple/humanize/", timeout=10).close()
+    except OSError:
+        raise Skip("PyPI cannot be reached from here")
+    key = {"plugin_name": "example", "plugin_subname": "python_deps"}
+    if any(p["name"] == "example" and p["subname"] == "python_deps" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+    settings()
+    staged = stage_plugin_file(plain_zip_of(folder, "python-deps"))
+    eq((staged["subname"], staged["action"], staged["problems"]), ("python_deps", "install", []), "staged as new")
+    paths = [f["path"] for f in staged["files"]]
+    assert "tulpa_plugin/__init__.py" in paths and "tulpa_plugin/host.py" in paths, f"the backend added its SDK: {paths}"
+    assert "sizes.py" in paths and "main.py" in paths, f"and the plugin's own modules are there: {paths}"
+    has(staged["build"], "venv", "the build makes a virtual environment")
+    task = install_staged(staged)
+    eq((task["state"], task["error"]), ("done", None), "installed: " + str(task.get("log", ""))[-600:])
+    has(str(task.get("log", "")), "humanize", "the package was installed")
+    eq(api("/api/plugins/enable", {**key, "enabled": True})[0], 204, "switch on")
+    chat = new_chat("python-deps")
+    script({"tool_calls": [{"name": "python_deps.size", "arguments": {"count": 1500000}}]}, {"text": "Done."})
+    turn(chat, "How big is 1500000 bytes?")
+    has(str(tool_results(chat)[0]["content"]), "1.5 MB", "the tool answers through humanize")
+    eq(api("/api/plugins/external/uninstall", {**key, "remove_data": True})[0], 204, "uninstalled")
+
+
 class FakeTelegram:
     """Telegram's Bot API as far as the example plugin uses it, on a port of its own: updates are queued with `push`, and what the
     bot did (`sent`, `reactions`, `calls`) is read back. A token that starts with `bad` is refused, as Telegram refuses a wrong one."""
