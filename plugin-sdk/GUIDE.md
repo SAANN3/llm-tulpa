@@ -62,7 +62,7 @@ Each is a few lines. A setting is a `[[settings]]` table in the manifest (the ow
 
 ## 6. Share it
 
-Zip the folder (with `plugin.toml` at its top) as `shout.tulpa`, or put it in a git repository. On the Plugins page's Install tab the owner drops the file or gives the address, reads what is in it (the manifest, the commands that will run, the files) and installs it. A plugin of kind `source` that needs building names the command in `build`, and a plugin that needs something on the machine (a program, a library) says how to check for it in `check`, so the owner is told what is missing instead of a failed start.
+Pack the folder into a `.tulpa` file with `python3 plugin-sdk/python/pack.py notes/shout` (it names the file from the manifest, leaves out `target/`, `.venv/` and caches, and copies the Python SDK in if the plugin does not carry it), or put it in a git repository. On the Plugins page's Install tab the owner drops the file or gives the address, reads what is in it (the manifest, the commands that will run, the files) and installs it. A plugin of kind `source` that needs building names the command in `build`, and a plugin that needs something on the machine (a program, a library) says how to check for it in `check`, so the owner is told what is missing instead of a failed start.
 
 ## Where to look next
 
