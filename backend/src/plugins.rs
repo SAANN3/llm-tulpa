@@ -1,6 +1,7 @@
 pub mod base;
 pub mod coding;
 pub mod env;
+pub mod external;
 pub mod knowledge;
 pub mod messaging;
 pub mod registry;

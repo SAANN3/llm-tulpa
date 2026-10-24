@@ -379,6 +379,14 @@ impl PluginRegistry {
         }
     }
 
+    /// Lets every builder end what it owns, for when the backend stops
+    pub async fn shutdown(&self) {
+        let builders: Vec<Arc<dyn PluginBuilder>> = self.entries.read().await.values().map(|entry| entry.builder.clone()).collect();
+        for builder in builders {
+            builder.shutdown().await;
+        }
+    }
+
     pub async fn get(&self, plugin_name: &str, plugin_subname: &str) -> Option<Arc<dyn Plugin>> {
         self.entries
             .read()

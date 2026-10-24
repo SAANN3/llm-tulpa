@@ -157,6 +157,7 @@ impl AppState {
             &db.name,
             config.resolved_files_dir(),
             config.resolved_plugins_dir(),
+            config.resolved_external_plugins_dir(),
             config.resolved_jobs_dir(),
             config.job_log_retention_days,
             self.providers.clone(),

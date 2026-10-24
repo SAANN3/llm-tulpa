@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,6 +10,7 @@ use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, pr
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
+use crate::plugins::external;
 use crate::plugins::knowledge::skills::builder::SkillsBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
@@ -170,6 +172,7 @@ pub async fn bootstrap(
     db_name: &str,
     files_dir: PathBuf,
     plugins_dir: PathBuf,
+    external_plugins_dir: PathBuf,
     jobs_dir: PathBuf,
     job_log_retention_days: u64,
     providers: LlmProviders,
@@ -301,13 +304,19 @@ pub async fn bootstrap(
         ollama_context_length,
     ));
 
-    let plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
+    let mut plugin_builders: Vec<Arc<dyn PluginBuilder>> = vec![
         Arc::new(MessagingProviderBuilder::<TelegramProvider>::new()),
         Arc::new(MessagingProviderBuilder::<DiscordProvider>::new()),
         Arc::new(MessagingProviderBuilder::<VkProvider>::new()),
         Arc::new(SignaturesBuilder),
         Arc::new(SkillsBuilder::new()),
     ];
+    // The external plugins come up after the compiled-in ones, which keep their names: one that clashes is left out
+    let compiled_in: HashSet<(String, String)> = plugin_builders
+        .iter()
+        .map(|b| (b.plugin_name().to_string(), b.plugin_subname().to_string()))
+        .collect();
+    plugin_builders.extend(external::loader::load_all(&external_plugins_dir, &plugins_dir, &compiled_in).await);
     let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)

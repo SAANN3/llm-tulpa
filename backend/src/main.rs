@@ -90,13 +90,17 @@ async fn main() {
         .nest("/api", api)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", routes::router::openapi()))
         .layer(cors)
-        .with_state(state);
+        .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(shutdown)).await.unwrap();
 
     // The model server is the backend's child: leaving it behind would keep the model in VRAM.
     runtime.shutdown().await;
+    // Likewise the programs of the external plugins; without services (setup mode) there are none
+    if let Ok(services) = state.services().await {
+        services.plugin_registry.shutdown().await;
+    }
 }
 
 /// Resolves on Ctrl-C or, on Unix, SIGTERM (what `docker stop` and a service manager send).

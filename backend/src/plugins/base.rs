@@ -146,6 +146,10 @@ pub trait PluginBuilder: Send + Sync {
     fn migrations(&self, _prefix: &str) -> Vec<String> {
         vec![]
     }
+
+    /// Called on every registered builder when the backend is stopping: the place to end what the builder owns beyond the
+    /// instances it builds (an external plugin's process). Nothing by default.
+    async fn shutdown(&self) {}
 }
 
 /// Why building or running a plugin failed. Mirrors `ToolError`'s shape for the same

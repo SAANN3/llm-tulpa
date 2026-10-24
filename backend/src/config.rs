@@ -190,6 +190,11 @@ pub struct AppConfig {
     /// out as it likes. Defaults to `~/.llm-tulpa/plugins`.
     #[serde(default)]
     pub plugins_dir: Option<PathBuf>,
+    /// Where external plugins (separate programs, see `plugin-sdk/PROTOCOL.md`) are installed: each has a folder
+    /// `<plugin name>/<plugin subname>` holding its `plugin.toml`. Their data stays in `plugins_dir`, so reinstalling one
+    /// never touches it. Defaults to `~/.llm-tulpa/external-plugins`.
+    #[serde(default)]
+    pub external_plugins_dir: Option<PathBuf>,
     /// How many CPU threads a speech-to-text model uses; it never runs on the GPU, which the language model has.
     #[serde(default = "default_stt_threads")]
     pub stt_threads: u32,
@@ -252,6 +257,7 @@ impl AppConfig {
             jobs_dir: None,
             stt_dir: None,
             plugins_dir: None,
+            external_plugins_dir: None,
             stt_threads: default_stt_threads(),
             stt_idle_unload_minutes: default_stt_idle_unload_minutes(),
             tls_dir: None,
@@ -287,6 +293,15 @@ impl AppConfig {
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `plugins_dir` in settings.json"))
                 .join(".llm-tulpa/plugins")
+        })
+    }
+
+    /// `external_plugins_dir` if set, else `~/.llm-tulpa/external-plugins`. Panics without a home directory, like `resolved_files_dir`.
+    pub fn resolved_external_plugins_dir(&self) -> PathBuf {
+        self.external_plugins_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `external_plugins_dir` in settings.json"))
+                .join(".llm-tulpa/external-plugins")
         })
     }
 

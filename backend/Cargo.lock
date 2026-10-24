@@ -491,6 +491,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "toml",
  "tool_derive",
  "tower",
  "tower-http 0.7.0",
