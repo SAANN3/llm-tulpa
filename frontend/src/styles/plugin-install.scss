@@ -1,0 +1,39 @@
+@use 'tokens' as *;
+
+// The Install tab of the Plugins page
+.plugin-install {
+  display: flex;
+  flex-direction: column;
+  gap: $space-4;
+  overflow-y: auto;
+  max-height: 55vh;
+}
+
+.plugin-install__warning {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.plugin-install__git {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.plugin-install__git-row {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
+
+  > :first-child {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.plugin-install__error {
+  color: var(--color-danger);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

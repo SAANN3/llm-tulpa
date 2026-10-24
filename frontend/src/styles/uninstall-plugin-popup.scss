@@ -1,0 +1,12 @@
+@use 'tokens' as *;
+
+.uninstall-plugin__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: $space-3;
+
+  input {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+}

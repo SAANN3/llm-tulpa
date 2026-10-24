@@ -1,0 +1,128 @@
+@use 'tokens' as *;
+
+// The window that shows a staged plugin and then the install of it
+.install-plugin__body {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  min-width: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.install-plugin__overview {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+}
+
+.install-plugin__head {
+  display: flex;
+  align-items: baseline;
+  gap: $space-3;
+  flex-wrap: wrap;
+}
+
+.install-plugin__name {
+  font-size: 16px;
+}
+
+.install-plugin__tag {
+  font-size: 11px;
+  padding: 0 $space-2;
+  border: $line-border solid currentColor;
+}
+
+.install-plugin__help {
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.install-plugin__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: $space-2 $space-4;
+  font-size: 13px;
+
+  > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.install-plugin__code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.install-plugin__problems {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+}
+
+.install-plugin__problem {
+  color: var(--color-danger);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.install-plugin__trust {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.install-plugin__files,
+.install-plugin__file {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  min-width: 0;
+}
+
+.install-plugin__file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.install-plugin__file-row {
+  display: flex;
+  justify-content: space-between;
+  gap: $space-3;
+  padding: $space-1 $space-2;
+  cursor: pointer;
+  border-bottom: $line-border dashed var(--color-border);
+
+  &:hover {
+    background: var(--color-surface);
+  }
+}
+
+.install-plugin__file-head {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  flex-wrap: wrap;
+}
+
+.install-plugin__pre {
+  margin: 0;
+  max-height: 45vh;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre;
+}
+
+.install-plugin__pre--text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.install-plugin__pre--log {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 140px;
+}

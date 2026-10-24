@@ -1,0 +1,82 @@
+@use 'tokens' as *;
+
+// The line under an external plugin's name on the Plugins page and what it opens
+.external-plugin {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  padding: 0 0 $space-2;
+}
+
+.external-plugin__line {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.external-plugin__badge {
+  font-size: 11px;
+  padding: 0 $space-2;
+  border: $line-border solid currentColor;
+}
+
+.external-plugin__meta {
+  font-size: 12px;
+}
+
+.external-plugin__more {
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.external-plugin__error {
+  font-size: 12px;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+// One line of the reason, with the rest in the details
+.external-plugin__error--short {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.external-plugin__details {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2;
+  border: $line-border dashed var(--color-border);
+}
+
+.external-plugin__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: $space-1 $space-3;
+  font-size: 12.5px;
+
+  > * {
+    overflow-wrap: anywhere;
+  }
+}
+
+.external-plugin__log-title {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.external-plugin__log {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -10,10 +10,14 @@ export interface DropZoneProps {
     accept: string[]
     busy: boolean
     onFiles: (files: PathedFile[]) => void
+    /** Whether a whole folder can be dropped or chosen (the default); a zone for one file turns it off */
+    folders?: boolean
+    /** Whether several files can be given at once (the default) */
+    multiple?: boolean
 }
 
 /** Where files, a whole folder or a zip are dropped: or chosen with the two buttons */
-export const DropZone = ({label, accept, busy, onFiles}: DropZoneProps) => {
+export const DropZone = ({label, accept, busy, onFiles, folders = true, multiple = true}: DropZoneProps) => {
     const [over, setOver] = useState(false)
     const filesInput = useRef<HTMLInputElement>(null)
     const folderInput = useRef<HTMLInputElement>(null)
@@ -22,8 +26,8 @@ export const DropZone = ({label, accept, busy, onFiles}: DropZoneProps) => {
     const dropped = async (data: DataTransfer) => {
         const files = await readDroppedFiles(data)
         // A file dropped on its own has to be of a kind the zone takes; the files of a dropped folder come with it
-        const wanted = files.filter((f) => f.path.includes('/') || takes(f.file.name))
-        if (wanted.length > 0) onFiles(wanted)
+        const wanted = files.filter((f) => (folders && f.path.includes('/')) || takes(f.file.name))
+        if (wanted.length > 0) onFiles(multiple ? wanted : wanted.slice(0, 1))
     }
 
     return (
@@ -40,10 +44,10 @@ export const DropZone = ({label, accept, busy, onFiles}: DropZoneProps) => {
              }}>
             <Label text={busy ? 'Working…' : label}/>
             <Div className="drop-zone__buttons">
-                <Button variant="secondary" text="Choose files" disabled={busy} onClicked={() => filesInput.current?.click()}/>
-                <Button variant="secondary" text="Choose a folder" disabled={busy} onClicked={() => folderInput.current?.click()}/>
+                <Button variant="secondary" text={multiple ? 'Choose files' : 'Choose a file'} disabled={busy} onClicked={() => filesInput.current?.click()}/>
+                {folders ? <Button variant="secondary" text="Choose a folder" disabled={busy} onClicked={() => folderInput.current?.click()}/> : null}
             </Div>
-            <input ref={filesInput} type="file" multiple hidden accept={accept.join(',')}
+            <input ref={filesInput} type="file" multiple={multiple} hidden accept={accept.join(',')}
                    onChange={(e) => {
                        const picked = Array.from(e.target.files ?? []).map((file) => ({path: file.name, file}))
                        e.target.value = ''
