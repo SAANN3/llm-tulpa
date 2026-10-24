@@ -1,0 +1,10 @@
+[package]
+name = "tulpa-example-hello"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# From a checkout of llm-tulpa this is the SDK next to the examples; a plugin of your own points at wherever the SDK is.
+tulpa-plugin = { path = "../../rust" }
+
+[workspace]

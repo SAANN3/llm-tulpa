@@ -1,0 +1,15 @@
+[package]
+name = "tulpa-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "SDK for writing external llm-tulpa plugins in Rust: the protocol of plugin-sdk/PROTOCOL.md behind a trait."
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1.91"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "io-util", "io-std", "fs", "sync", "time", "macros"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
