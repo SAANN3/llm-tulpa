@@ -119,7 +119,7 @@ const App = () => (
                                         <Route path="/models/log" element={<ModelLog/>}/>
                                         <Route path="/models/:tab?" element={<Models/>}/>
                                         <Route element={<RequireOwner/>}>
-                                            <Route path="/plugins" element={<Plugins/>}/>
+                                            <Route path="/plugins/:tab?" element={<Plugins/>}/>
                                             <Route path="/users" element={<Users/>}/>
                                         </Route>
                                     </Route>
