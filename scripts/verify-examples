@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Checks the example plugins of plugin-sdk against the backend as it is now, so that they do not rot as the protocol changes:
+#
+#   scripts/verify-examples [--keep]
+#
+# It runs the Python SDK's own tests, builds the Rust examples, starts a disposable backend (scripts/verify-env) with the examples
+# installed and a scripted model server (scripts/fake-llama), and runs every scenario: the ones for the examples (a plugin installed
+# from a .tulpa file, a tool called through the model, the Telegram plugin against a fake Bot API, ...) and all the others. Nothing
+# of the real stack is touched; everything it started is removed at the end unless --keep is given (then `scripts/verify-env down`
+# and a kill of the fake model server's port, 18300, remove it).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="${VERIFY_ENV_DIR:-/tmp/tulpa-verify-env}"
+FAKE_PORT=18300
+KEEP=0
+[ "${1:-}" = "--keep" ] && KEEP=1
+
+die() { echo "verify-examples: $*" >&2; exit 1; }
+command -v cargo >/dev/null 2>&1 || die "cargo is not installed (it builds the Rust examples and the backend)."
+command -v python3 >/dev/null 2>&1 || die "python3 is not installed."
+command -v docker >/dev/null 2>&1 || die "docker is not installed or not running (the disposable Postgres needs it)."
+
+cleanup() {
+    local pid
+    pid=$(ss -ltnp 2>/dev/null | grep ":$FAKE_PORT " | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    "$ROOT/scripts/verify-env" down >/dev/null 2>&1 || true
+    rm -rf "$ROOT"/plugin-sdk/examples/*/target "$ROOT/plugin-sdk/rust/target"
+    find "$ROOT/plugin-sdk" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+}
+[ "$KEEP" = 1 ] || trap cleanup EXIT
+
+echo "== the Python SDK's tests"
+(cd "$ROOT/plugin-sdk/python" && python3 -m unittest discover -s tests 2>&1 | tail -3)
+
+echo "== a disposable backend"
+"$ROOT/scripts/verify-env" up --build 2>&1 | tail -2
+
+echo "== the Rust examples, built and put where the backend looks for plugins"
+EXT="$WORK/ext/example"
+mkdir -p "$EXT"
+for example in hello-world-rust:hello skills:skills; do
+    (cd "$ROOT/plugin-sdk/examples/${example%%:*}" && cargo build --release 2>&1 | tail -1 && cp -r . "$EXT/${example##*:}")
+done
+
+python3 - "$WORK" "$FAKE_PORT" <<'PY'
+import json, sys
+work, port = sys.argv[1], sys.argv[2]
+path = f"{work}/data/settings.json"
+settings = json.load(open(path))
+settings["external_plugins_dir"] = f"{work}/ext"
+settings["plugins_dir"] = f"{work}/plugins-data"
+settings["llama_cpp"] = {"external_url": f"http://127.0.0.1:{port}"}
+json.dump(settings, open(path, "w"), indent=2)
+PY
+docker exec -i tulpa-verify-pg psql -U postgres llm_tulpa -q -c "INSERT INTO llm_models (provider_id,name) VALUES (2,'fake.gguf'); INSERT INTO launch_profiles (model_id,name,context_length) VALUES (2,'fake',40960);"
+"$ROOT/scripts/verify-env" restart >/dev/null
+
+echo "== the scripted model server and the scenarios"
+python3 "$ROOT/scripts/fake-llama/fake_llama.py" "$FAKE_PORT" 40960 >/dev/null 2>&1 &
+sleep 1
+python3 "$ROOT/scripts/fake-llama/run_scenarios.py" "$WORK/data/settings.json" 1 http://127.0.0.1:3103 "http://127.0.0.1:$FAKE_PORT"

@@ -1683,6 +1683,179 @@ def the_python_example_installs_from_a_file_without_a_build_and_works_like_a_bui
     eq(status, 204, "uninstalled")
 
 
+class FakeTelegram:
+    """Telegram's Bot API as far as the example plugin uses it, on a port of its own: updates are queued with `push`, and what the
+    bot did (`sent`, `reactions`, `calls`) is read back. A token that starts with `bad` is refused, as Telegram refuses a wrong one."""
+
+    PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0f01f0005000101a5f645400000000049454e44ae426082")
+
+    def __init__(self, port):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        outer = self
+        self.lock = threading.Lock()
+        self.updates, self.sent, self.reactions, self.calls, self.downloads = [], [], [], [], []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, status, body, kind="application/json"):
+                data = body if isinstance(body, bytes) else json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                outer.downloads.append(self.path)
+                self.reply(200, FakeTelegram.PNG, "image/png")
+
+            def do_POST(self):
+                _, token_part, method = self.path.split("/", 2)
+                params = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if token_part.startswith("botbad"):
+                    return self.reply(401, {"ok": False, "error_code": 401, "description": "Unauthorized"})
+                with outer.lock:
+                    outer.calls.append((method, params))
+                if method == "getUpdates":
+                    deadline = time.time() + 1
+                    while time.time() < deadline:
+                        with outer.lock:
+                            found = [u for u in outer.updates if u["update_id"] >= params.get("offset", 0)] if params.get("offset", 0) >= 0 else outer.updates[-1:]
+                        if found or params.get("timeout", 1) == 0:
+                            return self.reply(200, {"ok": True, "result": found})
+                        time.sleep(0.1)
+                    return self.reply(200, {"ok": True, "result": []})
+                if method == "sendMessage":
+                    with outer.lock:
+                        outer.sent.append(params)
+                    return self.reply(200, {"ok": True, "result": {"message_id": 1000 + len(outer.sent)}})
+                if method == "setMessageReaction":
+                    with outer.lock:
+                        outer.reactions.append(params)
+                    return self.reply(200, {"ok": True, "result": True})
+                if method == "getFile":
+                    return self.reply(200, {"ok": True, "result": {"file_path": "photos/p.png"}})
+                if method == "getMe":
+                    return self.reply(200, {"ok": True, "result": {"id": 1, "username": "scenario_bot"}})
+                return self.reply(200, {"ok": True, "result": True})
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{port}"
+
+    def push(self, chat_id, text=None, message_id=1, photo=False, name="Ada", user_id=7):
+        message = {"message_id": message_id, "date": int(time.time()), "chat": {"id": chat_id, "type": "private"}, "from": {"id": user_id, "first_name": name}}
+        if photo:
+            message.update({"photo": [{"file_id": "small", "width": 10, "height": 10, "file_size": 10}, {"file_id": "big", "width": 100, "height": 100, "file_size": 1000}]})
+            if text:
+                message["caption"] = text
+        else:
+            message["text"] = text
+        with self.lock:
+            self.updates.append({"update_id": len(self.updates) + 1, "message": message})
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def example_file(folder):
+    """An example of plugin-sdk/examples as a `.tulpa` file, with the Python SDK copied next to its `main.py`."""
+    import io, pathlib, shutil, subprocess, tempfile, zipfile
+    sdk = pathlib.Path(__file__).resolve().parents[2] / "plugin-sdk"
+    if not (sdk / "examples" / folder).is_dir():
+        raise Skip(f"plugin-sdk/examples/{folder} is not in this checkout")
+    work = pathlib.Path(tempfile.mkdtemp(prefix="scenario-example-"))
+    try:
+        shutil.copytree(sdk / "examples" / folder, work / "plugin", ignore=shutil.ignore_patterns("__pycache__"))
+        subprocess.run([sys.executable, str(sdk / "python" / "vendor.py"), str(work / "plugin")], check=True, capture_output=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for path in sorted((work / "plugin").rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts:
+                    z.write(path, folder + "/" + str(path.relative_to(work / "plugin")))
+        return buf.getvalue()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+@scenario
+def the_telegram_example_answers_a_chat_through_the_agent_and_ignores_the_others():
+    """The Telegram plugin of plugin-sdk/examples, installed from a file and pointed at a fake Bot API: a wrong token is refused when
+    it is switched on; a message from an allowed chat is acknowledged, tagged with who sent it, answered by the model and sent back
+    threaded to it, in pieces when it is long; a photo reaches the model; another chat gets no answer."""
+    hello_plugin()
+    key = {"plugin_name": "example", "plugin_subname": "telegram"}
+    if any(p["name"] == "example" and p["subname"] == "telegram" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+    # A plugin's chats start on the owner's default model, which has to be the fake one for the model to answer
+    settings(llm_provider="llama-cpp", active_model="fake.gguf", launch_profile_id=PROFILE)
+    fake_telegram = FakeTelegram(18301)
+    # A conversation keeps its chat, and with it the model it began on: a number of its own keeps one run from meeting the last one's
+    chat_id = 40000 + os.getpid() % 10000
+    other_id = chat_id + 1
+    try:
+        staged = stage_plugin_file(example_file("telegram"))
+        eq((staged["name"], staged["subname"], staged["problems"]), ("example", "telegram", []), "staged")
+        eq(install_staged(staged)["state"], "done", "installed")
+
+        base = {"allowed_chat_ids": [str(chat_id)], "think": False, "name_hint": True, "timezone": "Europe/Moscow", "api_url": fake_telegram.url}
+        eq(api("/api/plugins/settings", {**key, "settings": {**base, "token": "bad:token"}})[0], 204, "settings are kept")
+        status, refused = api("/api/plugins/enable", {**key, "enabled": True})
+        eq(status, 400, "a token Telegram refuses cannot be switched on")
+        has(str(refused), "bot token", "and the owner is told why")
+        eq(api("/api/plugins/settings", {**key, "settings": {**base, "token": "123:good"}})[0], 204, "the right token")
+        eq(api("/api/plugins/enable", {**key, "enabled": True})[0], 204, "switched on")
+        wait_for(lambda: any(m == "getUpdates" for m, _ in fake_telegram.calls), what="the plugin to start polling")
+
+        # An allowed chat: acknowledged, tagged, answered, threaded
+        script({"text": "Four."})
+        fake_telegram.push(chat_id, "/chat What is two plus two?", message_id=11)
+        wait_for(lambda: any(m["chat_id"] == str(chat_id) and m["text"] == "Four." for m in fake_telegram.sent), what="the answer to be sent")
+        answer = [m for m in fake_telegram.sent if m["text"] == "Four."][0]
+        eq(answer["reply_parameters"]["message_id"], 11, "the answer is threaded to the message")
+        eq([r["message_id"] for r in fake_telegram.reactions], [11], "the message was acknowledged")
+        user = [m for m in calls("main")[-1]["messages"] if m["role"] == "user"][-1]["content"]
+        has(str(user), "[Message from user named Ada with userid 7, sent at", "the message is tagged with who sent it")
+        has(str(user), "What is two plus two?", "and carries what was said")
+        assert "/chat" not in str(user), "without the command"
+
+        # A chat that is not allowed gets nothing
+        before = len(calls("main"))
+        fake_telegram.push(other_id, "hello?", message_id=5)
+        time.sleep(2.5)
+        eq([m for m in fake_telegram.sent if m["chat_id"] == str(other_id)], [], "nothing was sent to a chat that is not allowed")
+        eq(len(calls("main")), before, "and the model was not asked")
+
+        # A bare command is a prompt that asks for the message
+        fake_telegram.push(chat_id, "/chat", message_id=12)
+        wait_for(lambda: any(m["text"].startswith("What would you like to ask") for m in fake_telegram.sent), what="the prompt")
+        prompt = [m for m in fake_telegram.sent if m["text"].startswith("What would you like")][0]
+        eq(prompt["reply_markup"]["force_reply"], True, "the prompt opens the reply box")
+
+        # A long answer goes in pieces
+        script({"text": ("A paragraph of the long answer. " * 20 + "\n\n") * 9})
+        fake_telegram.push(chat_id, "Tell me everything", message_id=13)
+        wait_for(lambda: sum(1 for m in fake_telegram.sent if m["text"].startswith("A paragraph")) >= 2, what="the long answer in pieces")
+        pieces = [m for m in fake_telegram.sent if m["text"].startswith("A paragraph")]
+        assert all(len(m["text"]) <= 4000 for m in pieces), "every piece fits what Telegram takes"
+        assert "reply_parameters" in pieces[0] and "reply_parameters" not in pieces[1], "only the first piece is threaded"
+
+        # A photo is downloaded and reaches the model
+        script({"text": "A small picture."})
+        fake_telegram.push(chat_id, "What is this?", message_id=14, photo=True)
+        wait_for(lambda: any(m["text"] == "A small picture." for m in fake_telegram.sent), what="the answer about the photo")
+        assert fake_telegram.downloads, "the photo was downloaded"
+        has(json.dumps(calls("main")[-1]["messages"]), "image", "and the model was sent an image")
+    finally:
+        fake_telegram.stop()
+        api("/api/plugins/enable", {**key, "enabled": False})
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0
