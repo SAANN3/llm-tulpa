@@ -45,7 +45,7 @@ log the backend shows instead of corrupting the conversation.
 
 ## Shipping a plugin
 
-A plugin is installed where this package is not, so it carries a copy: `python3 vendor.py <the plugin's folder>` puts `tulpa_plugin/` next to its `main.py`.
+A plugin whose manifest says `sdk = "python"` is given this package by the backend when it is installed, unless the folder carries a `tulpa_plugin/` of its own (which is kept, to pin a version). To run a folder by hand, `python3 vendor.py <the plugin's folder>` puts `tulpa_plugin/` next to its `main.py`.
 Then `python3 pack.py <the plugin's folder>` makes the `.tulpa` file (a zip with `plugin.toml` at its top, named from the manifest; it copies the SDK in by itself when the folder does not carry it), or push the folder to a git repository; see "Installing a plugin" in `PROTOCOL.md`.
 
 ## Tests

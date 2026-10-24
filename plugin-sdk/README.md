@@ -1,6 +1,6 @@
 # Plugin SDK
 
-Plugins that run as separate programs next to the backend, written against the contract in [`PROTOCOL.md`](./PROTOCOL.md). New here: [`GUIDE.md`](./GUIDE.md) makes a first plugin in a few minutes.
+Plugins that run as separate programs next to the backend, written against the contract in [`PROTOCOL.md`](./PROTOCOL.md). New here: [`GUIDE.md`](./GUIDE.md) makes a first plugin in a few minutes, and [`AGENTS.md`](./AGENTS.md) is the brief to give an agent whose job is to write one.
 
 ```
 plugin-sdk/
@@ -10,6 +10,7 @@ plugin-sdk/
   examples/
     hello-world-rust/  a manifest, a setting, a tool, a tab, a prompt section and a route
     hello-world-python/ the same in Python, with no build step
+    python-deps/       a Python plugin of several files with a package from PyPI in a virtual environment of its own
     telegram/          the built-in Telegram plugin as an external one (Python): a loop, settings with a secret, the plugin's agent
     skills/            the built-in skills plugin as an external one: database, uploads, folder approvals
 ```
@@ -35,7 +36,7 @@ A plugin is shared as a `.tulpa` file (a zip of its folder, `plugin.toml` at the
 
 ## Writing a plugin in Python
 
-A plugin is a class and a `run` call, with no build and no dependencies: see [`python/README.md`](./python/README.md) and `examples/hello-world-python/main.py`. The example is installed like the Rust one: copy it to `~/.llm-tulpa/external-plugins/example/hello_python` and run `python3 python/vendor.py ~/.llm-tulpa/external-plugins/example/hello_python`, since the copy is no longer next to the SDK. A plugin you share carries the SDK the same way.
+A plugin is a class and a `run` call, with no build and no dependencies: see [`python/README.md`](./python/README.md) and `examples/hello-world-python/main.py`. The example is installed like the Rust one: copy it to `~/.llm-tulpa/external-plugins/example/hello_python` and run `python3 python/vendor.py ~/.llm-tulpa/external-plugins/example/hello_python`, since the copy is no longer next to the SDK. A plugin you share needs no copy of the SDK when its manifest says `sdk = "python"`: the backend adds its own at install time, unless the folder has a `tulpa_plugin/` of its own.
 
 ## Writing a plugin in Rust
 

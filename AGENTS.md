@@ -81,7 +81,7 @@ Several real, non-obvious bugs in this project were only ever caught this way, n
 ## Docs map — keep these in sync with what you change
 - [`backend/TOOLS.md`](./backend/TOOLS.md) — every tool, the permission model, background jobs and the server-event stream, how to add a tool. Update it when adding/changing a tool.
 - [`backend/PLUGINS.md`](./backend/PLUGINS.md) — the plugin system (Telegram/Discord/VK today). Update it when touching plugin behavior.
-- [`plugin-sdk/PROTOCOL.md`](./plugin-sdk/PROTOCOL.md) — the contract of external plugins (separate programs the backend runs), with the Rust and Python SDKs, the examples and `GUIDE.md` next to it. Update it with any change to `backend/src/plugins/external/`; `scripts/verify-examples` runs the examples against the backend.
+- [`plugin-sdk/PROTOCOL.md`](./plugin-sdk/PROTOCOL.md) — the contract of external plugins (separate programs the backend runs), with the Rust and Python SDKs, the examples, `GUIDE.md` and `plugin-sdk/AGENTS.md` (the brief for an agent that writes a plugin) next to it. Update it with any change to `backend/src/plugins/external/`; `scripts/verify-examples` runs the examples against the backend.
 - [`frontend/THEMING.md`](./frontend/THEMING.md) — how theme variants/colors work.
 - [`llm/README.md`](./llm/README.md) — swapping models, context window, KV-cache quantization tradeoff.
 - [`backend/README.md`](./backend/README.md) and `backend/data/settings*.example.json` — every backend setting and what it does. Update both when adding a setting.

@@ -37,13 +37,9 @@ if __name__ == "__main__":
 
 The model is told the tool's name and description and each argument's type and description, all read from the method, so write the description for the model: it decides when to call the tool from it.
 
-## 3. Give it its SDK
+## 3. Its SDK
 
-A plugin runs wherever it is installed, where the SDK is not, so it carries a copy:
-
-```bash
-python3 plugin-sdk/python/vendor.py notes/shout
-```
+Add `sdk = "python"` to the manifest. When the plugin is installed the backend puts its own copy of the SDK next to `main.py`, so the folder is just `plugin.toml` and `main.py`. To try the folder by copying it to the plugins folder by hand (step 4) the SDK has to be there already: `python3 plugin-sdk/python/vendor.py notes/shout` copies it in, and a folder that carries its own `tulpa_plugin/` keeps that one when it is installed, which is also how a plugin pins a version.
 
 ## 4. Try it
 
@@ -67,6 +63,8 @@ Pack the folder into a `.tulpa` file with `python3 plugin-sdk/python/pack.py not
 ## Where to look next
 
 - `examples/hello-world-python`: a setting, a tool, a tab, a prompt section and a route.
+- `examples/python-deps`: several files and a package from PyPI kept in a virtual environment of the plugin's own.
+- [`AGENTS.md`](./AGENTS.md): the same ground as a brief for an agent that writes plugins.
 - `examples/telegram`: a plugin with a loop that runs while it is on, which answers messages with the plugin's agent (`host.agent_reply`).
 - `examples/skills`: a plugin with a database, uploads and folder approvals (in Rust).
 - `scripts/verify-examples` runs them all against a disposable backend, and is how you test a plugin of your own the same way.
