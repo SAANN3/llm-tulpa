@@ -23,6 +23,10 @@ pub struct PluginSchema {
 pub enum PluginSchemaError {
     /// The plugin's name cannot be turned into a table prefix
     BadName(String),
+    /// The plugin's own schema and role need a name Postgres can hold (63 bytes)
+    NameTooLong(String),
+    /// The database user may not create roles, which a plugin with a schema of its own needs
+    NoCreateRole,
     /// A step breaks the rules above; which one, and why
     Refused { step: usize, why: String },
     /// The database has applied more steps than the build has: it is newer than this build, refused like a newer schema
@@ -34,6 +38,8 @@ impl fmt::Display for PluginSchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PluginSchemaError::BadName(name) => write!(f, "'{name}' cannot be used in a table name; use lowercase letters, digits and underscores"),
+            PluginSchemaError::NameTooLong(name) => write!(f, "'{name}' is longer than the 63 bytes Postgres allows for a schema name; use a shorter plugin name"),
+            PluginSchemaError::NoCreateRole => write!(f, "the database user cannot create roles (CREATEROLE), which a plugin with a database of its own needs"),
             PluginSchemaError::Refused { step, why } => write!(f, "database step {step} is refused: {why}"),
             PluginSchemaError::Ahead { applied, known } => {
                 write!(f, "the database has {applied} steps of this plugin applied but this build knows {known}; use a matching build")
@@ -58,6 +64,16 @@ pub fn prefix(plugin_name: &str, plugin_subname: &str) -> Result<String, PluginS
         }
     }
     Ok(format!("plugin_{plugin_name}_{plugin_subname}"))
+}
+
+/// The name of the schema and of the role a plugin with a database of its own gets: the same as its table prefix, so a role,
+/// a schema and a ledger entry are all found by one name.
+pub fn role_name(plugin_name: &str, plugin_subname: &str) -> Result<String, PluginSchemaError> {
+    let name = prefix(plugin_name, plugin_subname)?;
+    if name.len() > 63 {
+        return Err(PluginSchemaError::NameTooLong(name));
+    }
+    Ok(name)
 }
 
 /// The words of a statement, upper-cased, with `ON DELETE` taken out (a foreign key's `ON DELETE CASCADE` is no deletion).
@@ -145,6 +161,66 @@ impl PluginSchema {
         })
     }
 
+    /// Makes the schema and the role of a plugin with a database of its own, if they are not there yet. The role cannot log
+    /// in and owns the schema; it may only reference the user ids of the core tables, so that `REFERENCES users (id)` works in
+    /// its tables. The backend's own user is made a member of it, which is what lets `SET ROLE` to it work (a superuser needs
+    /// no membership, and it is harmless there).
+    pub async fn prepare_own_schema(&self, plugin_name: &str, plugin_subname: &str) -> Result<String, PluginSchemaError> {
+        let role = role_name(plugin_name, plugin_subname)?;
+        let allowed = self
+            .db
+            .query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT rolcreaterole OR rolsuper AS ok FROM pg_roles WHERE rolname = current_user"))
+            .await?
+            .map(|row| row.try_get::<bool>("", "ok"))
+            .transpose()?
+            .unwrap_or(false);
+        if !allowed {
+            return Err(PluginSchemaError::NoCreateRole);
+        }
+        // `role` is a plain lowercase word (checked by `prefix`), so it can be written into the statements. One transaction:
+        // a failure half way leaves no role without its schema.
+        let txn = self.db.begin().await?;
+        txn.execute_unprepared(&format!(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN CREATE ROLE {role} NOLOGIN; END IF; END $$"
+        ))
+        .await?;
+        txn.execute_unprepared(&format!("GRANT {role} TO CURRENT_USER")).await?;
+        txn.execute_unprepared(&format!("CREATE SCHEMA IF NOT EXISTS {role} AUTHORIZATION {role}")).await?;
+        txn.execute_unprepared(&format!("GRANT REFERENCES (id) ON TABLE users TO {role}")).await?;
+        txn.commit().await?;
+        Ok(role)
+    }
+
+    /// `apply` for a plugin with a schema of its own (`prepare_own_schema` has run): each step runs as the plugin's role with
+    /// its schema first on the search path, so a plain `CREATE TABLE items` lands in the plugin's schema and a statement
+    /// that reaches for a core table is refused by Postgres for want of a privilege. The same rules apply as for any plugin's
+    /// steps, except that names need no prefix: the schema is the plugin's own.
+    pub async fn apply_in_own_schema(&self, plugin_name: &str, plugin_subname: &str, steps: &[String]) -> Result<usize, PluginSchemaError> {
+        let role = role_name(plugin_name, plugin_subname)?;
+        check_steps("", steps)?;
+        let applied = self.applied(plugin_name, plugin_subname).await?;
+        if applied > steps.len() {
+            return Err(PluginSchemaError::Ahead { applied, known: steps.len() });
+        }
+        for (at, step) in steps.iter().enumerate().skip(applied) {
+            let txn = self.db.begin().await?;
+            txn.execute_unprepared(&format!("SET LOCAL ROLE {role}")).await?;
+            txn.execute_unprepared(&format!("SET LOCAL search_path = {role}, public")).await?;
+            txn.execute_unprepared(step).await?;
+            // The ledger is the backend's, not the plugin's
+            txn.execute_unprepared("RESET ROLE").await?;
+            txn.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO plugin_migrations (plugin_name, plugin_subname, version) VALUES ($1, $2, $3) \
+                 ON CONFLICT (plugin_name, plugin_subname) DO UPDATE SET version = EXCLUDED.version, applied_at = now()",
+                [plugin_name.into(), plugin_subname.into(), ((at + 1) as i32).into()],
+            ))
+            .await?;
+            txn.commit().await?;
+        }
+        Ok(steps.len() - applied)
+    }
+
     /// Applies the steps the database has not seen, in order; how many that was. All of `steps` are checked first, so a
     /// refused step is found before anything runs.
     pub async fn apply(&self, plugin_name: &str, plugin_subname: &str, steps: &[String]) -> Result<usize, PluginSchemaError> {
@@ -187,6 +263,24 @@ mod tests {
         assert!(prefix("Knowledge", "skills").is_err());
         assert!(prefix("", "skills").is_err());
         assert!(prefix("a b", "c").is_err());
+    }
+
+    #[test]
+    fn a_plugin_with_a_schema_of_its_own_has_a_role_of_the_same_name_that_fits_postgres() {
+        assert_eq!(role_name("example", "skills").unwrap(), "plugin_example_skills");
+        assert!(matches!(role_name(&"n".repeat(40), &"s".repeat(30)), Err(PluginSchemaError::NameTooLong(_))));
+        assert!(matches!(role_name("Bad", "x"), Err(PluginSchemaError::BadName(_))));
+    }
+
+    #[test]
+    fn in_a_schema_of_its_own_names_need_no_prefix_but_a_plugin_still_only_adds() {
+        let steps = |s: &str| vec![s.to_string()];
+        assert!(check_steps("", &steps("CREATE TABLE items (id int)")).is_ok());
+        assert!(check_steps("", &steps("ALTER TABLE items ADD COLUMN note TEXT")).is_ok());
+        assert!(check_steps("", &steps("DROP TABLE items")).is_err());
+        assert!(check_steps("", &steps("DELETE FROM items")).is_err());
+        assert!(check_steps("", &steps("CREATE TABLE \"Items\" (id int)")).is_err());
+        assert!(check_steps("", &steps("SELECT 1")).is_err());
     }
 
     #[test]

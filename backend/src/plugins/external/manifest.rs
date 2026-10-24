@@ -34,6 +34,9 @@ pub struct Manifest {
     /// A tab of the plugin's own in Settings, shown to every user while the plugin is enabled
     #[serde(default)]
     pub tab: Option<Tab>,
+    /// Present when the plugin keeps its data in the database: it gets a schema and a role of its own
+    #[serde(default)]
+    pub database: Option<Database>,
     /// Informational: which SDK the plugin was written with
     #[serde(default)]
     pub sdk: Option<String>,
@@ -54,6 +57,18 @@ pub struct Manifest {
     /// The oldest backend version the plugin works with
     #[serde(default)]
     pub min_tulpa: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Database {
+    /// The folder, inside the plugin's own, whose `.sql` files are its migrations, one step each, applied in the order of
+    /// their names
+    #[serde(default = "default_migrations")]
+    pub migrations: String,
+}
+
+fn default_migrations() -> String {
+    "migrations".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,6 +153,13 @@ impl Manifest {
         check_params("settings", &self.settings).map_err(ManifestError)?;
         if self.default_enabled && !self.settings.is_empty() {
             return Err(ManifestError("default_enabled cannot be set for a plugin with settings".to_string()));
+        }
+        if let Some(database) = &self.database {
+            let folder = Path::new(&database.migrations);
+            if database.migrations.is_empty() || !folder.is_relative() || folder.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                return Err(ManifestError(format!("the migrations folder '{}' must be a plain folder name inside the plugin's own", database.migrations)));
+            }
+            schema::role_name(&self.name, &self.subname).map_err(|e| ManifestError(e.to_string()))?;
         }
         if let Some(tab) = &self.tab {
             if !tab::valid_tab_id(&tab.id) || tab::RESERVED_TAB_IDS.contains(&tab.id.as_str()) {
@@ -282,6 +304,15 @@ run = "{plugin_dir}/target/release/tulpa-example-hello"
     }
 
     #[test]
+    fn a_database_is_declared_with_the_default_migrations_folder() {
+        let m = Manifest::parse(&format!("{GOOD}\n[database]\n")).unwrap();
+        assert_eq!(m.database.map(|d| d.migrations), Some("migrations".to_string()));
+        assert!(Manifest::parse(GOOD).unwrap().database.is_none());
+        let named = Manifest::parse(&format!("{GOOD}\n[database]\nmigrations = \"sql/steps\"\n")).unwrap();
+        assert_eq!(named.database.map(|d| d.migrations), Some("sql/steps".to_string()));
+    }
+
+    #[test]
     fn what_cannot_work_is_refused_with_the_reason() {
         let cases = [
             (GOOD.replace("protocol = 1", "protocol = 2"), "protocol"),
@@ -293,6 +324,10 @@ run = "{plugin_dir}/target/release/tulpa-example-hello"
             (GOOD.replace("kind = \"source\"", "kind = \"prebuilt\""), "prebuilt binary"),
             (format!("{GOOD}\n[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n"), "listed twice"),
             (GOOD.replace("kind =", "default_enabled = true\nkind =") + "[[settings]]\nname = \"a\"\ntype = \"string\"\ndescription = \"x\"\n", "default_enabled"),
+            (format!("{GOOD}\n[database]\nmigrations = \"../sql\"\n"), "plain folder name"),
+            (format!("{GOOD}\n[database]\nmigrations = \"/sql\"\n"), "plain folder name"),
+            (format!("{GOOD}\n[database]\nmigrations = \"\"\n"), "plain folder name"),
+            (format!("{}\n[database]\n", GOOD.replace("\"example\"", &format!("\"{}\"", "n".repeat(40))).replace("\"hello\"", &format!("\"{}\"", "s".repeat(30)))), "63 bytes"),
             (format!("{GOOD}\n[tab]\nid = \"models\"\ntitle = \"T\"\n"), "tab id"),
             (format!("{GOOD}\n[tab]\nid = \"ok\"\ntitle = \" \"\n"), "no title"),
         ];

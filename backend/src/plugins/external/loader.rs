@@ -6,12 +6,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use sea_orm::DatabaseConnection;
 use tokio::process::Command;
 
 use super::builder::ExternalPluginBuilder;
+use super::db::PluginDb;
 use super::manifest::{Manifest, expand_command};
 use super::process::PluginProcess;
 use crate::plugins::base::PluginBuilder;
+use crate::plugins::schema::role_name;
 
 /// How long a plugin's `check` command may run
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -19,13 +22,13 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 /// Starts every plugin in `<root>/<name>/<subname>/` and returns a builder for each that came up. `taken` holds the
 /// `(name, subname)` of the plugins that are already registered (the ones compiled in): an external plugin with the same
 /// name is refused, since two plugins under one key would stop the whole backend at registration. `plugins_dir` is where
-/// every plugin's data folder is.
-pub async fn load_all(root: &Path, plugins_dir: &Path, taken: &HashSet<(String, String)>) -> Vec<Arc<dyn PluginBuilder>> {
+/// every plugin's data folder is, and `db` is what the plugins that keep data in the database are given.
+pub async fn load_all(root: &Path, plugins_dir: &Path, taken: &HashSet<(String, String)>, db: &DatabaseConnection) -> Vec<Arc<dyn PluginBuilder>> {
     let mut seen = taken.clone();
     let mut builders: Vec<Arc<dyn PluginBuilder>> = Vec::new();
     for dir in plugin_folders(root) {
         let label = dir.strip_prefix(root).unwrap_or(&dir).display().to_string();
-        match load_one(&dir, plugins_dir, &mut seen).await {
+        match load_one(&dir, plugins_dir, &mut seen, db).await {
             Ok(builder) => builders.push(Arc::new(builder)),
             Err(why) => tracing::error!("external plugin {label} is not available: {why}"),
         }
@@ -50,7 +53,7 @@ fn plugin_folders(root: &Path) -> Vec<PathBuf> {
     subfolders(root).iter().flat_map(|name| subfolders(name)).filter(|dir| dir.join("plugin.toml").is_file()).collect()
 }
 
-async fn load_one(dir: &Path, plugins_dir: &Path, seen: &mut HashSet<(String, String)>) -> Result<ExternalPluginBuilder, String> {
+async fn load_one(dir: &Path, plugins_dir: &Path, seen: &mut HashSet<(String, String)>, db: &DatabaseConnection) -> Result<ExternalPluginBuilder, String> {
     let manifest = Manifest::load(dir).map_err(|e| e.to_string())?;
     let key = (manifest.name.clone(), manifest.subname.clone());
     if seen.contains(&key) {
@@ -62,11 +65,35 @@ async fn load_one(dir: &Path, plugins_dir: &Path, seen: &mut HashSet<(String, St
         run_check(check, dir, &data_dir).await?;
     }
 
+    // Read before the process starts: a migration that cannot be read is found without a program left running
+    let migrations = match &manifest.database {
+        Some(database) => read_migrations(&dir.join(&database.migrations))?,
+        None => vec![],
+    };
+    let plugin_db = match &manifest.database {
+        Some(_) => Some(Arc::new(PluginDb::new(db.clone(), role_name(&manifest.name, &manifest.subname).map_err(|e| e.to_string())?))),
+        None => None,
+    };
+
     // Its tools are asked for when it is configured (they may depend on the settings), not here
-    let process = PluginProcess::start(&manifest, dir, &data_dir).await?;
+    let process = PluginProcess::start(&manifest, dir, &data_dir, plugin_db).await?;
     tracing::info!("external plugin {}/{} {} started (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
     seen.insert(key);
-    Ok(ExternalPluginBuilder::new(manifest, process))
+    Ok(ExternalPluginBuilder::new(manifest, migrations, process))
+}
+
+/// The `.sql` files of a plugin's migrations folder in the order of their names, one step each. A plugin with no such folder
+/// has no steps. The names decide the order, so they start with a number (`0001_items.sql`); a step that has been released
+/// is never edited, a change is a new file.
+fn read_migrations(folder: &Path) -> Result<Vec<String>, String> {
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("cannot read the migrations folder {}: {e}", folder.display())),
+    };
+    let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "sql")).collect();
+    files.sort();
+    files.iter().map(|file| std::fs::read_to_string(file).map_err(|e| format!("cannot read the migration {}: {e}", file.display()))).collect()
 }
 
 /// Runs the manifest's `check` and turns a non-zero exit into an error carrying what it printed ("missing ffmpeg")

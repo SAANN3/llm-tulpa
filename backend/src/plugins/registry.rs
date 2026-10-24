@@ -133,8 +133,16 @@ impl PluginRegistry {
         // The plugin's own tables come first: what it stored has to be there whether or not it is enabled
         let prefix = schema::prefix(&plugin_name, &plugin_subname).map_err(|e| PluginError::Schema(e.to_string()))?;
         let steps = builder.migrations(&prefix);
+        if builder.own_schema() {
+            self.schema.prepare_own_schema(&plugin_name, &plugin_subname).await.map_err(|e| PluginError::Schema(e.to_string()))?;
+        }
         if !steps.is_empty() {
-            let applied = self.schema.apply(&plugin_name, &plugin_subname, &steps).await.map_err(|e| PluginError::Schema(e.to_string()))?;
+            let applied = if builder.own_schema() {
+                self.schema.apply_in_own_schema(&plugin_name, &plugin_subname, &steps).await
+            } else {
+                self.schema.apply(&plugin_name, &plugin_subname, &steps).await
+            }
+            .map_err(|e| PluginError::Schema(e.to_string()))?;
             if applied > 0 {
                 tracing::info!("plugin {plugin_name}/{plugin_subname}: {applied} database step(s) applied");
             }

@@ -67,6 +67,29 @@ impl ParamSpec {
     }
 }
 
+/// Which of the shared folder approvals a tool draws on: the same three every built-in tool that reads, writes or deletes
+/// files uses, so a folder the user has approved for one is approved for the others
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Bucket {
+    Read,
+    Write,
+    Delete,
+}
+
+/// A folder a tool works in, for the user's approval. Exactly one of `folder` and `path_arg` is set.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Access {
+    pub bucket: Bucket,
+    /// A fixed folder; `{data_dir}` (the plugin's data folder) and `{user_id}` (the user whose chat the call is in) are
+    /// replaced
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// The name of a string argument that holds the path the call works on (a file, or a folder)
+    #[serde(default)]
+    pub path_arg: Option<String>,
+}
+
 /// One tool a plugin offers the model
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolSpec {
@@ -78,6 +101,10 @@ pub struct ToolSpec {
     /// Ask the user before every call
     #[serde(default)]
     pub confirm: bool,
+    /// The folders the tool reads, writes or deletes in: each is asked about the way a built-in tool's folder is, and a call
+    /// runs only once every one is approved
+    #[serde(default)]
+    pub access: Vec<Access>,
     /// How long a call may take; the default applies when absent
     #[serde(default)]
     pub timeout_s: Option<u64>,
@@ -107,6 +134,22 @@ pub fn check_tools(tools: &[ToolSpec]) -> Result<(), String> {
             return Err(format!("tool '{}' has no description; the model decides when to call a tool from it", tool.name));
         }
         check_params(&format!("tool '{}'", tool.name), &tool.parameters)?;
+        for access in &tool.access {
+            match (&access.folder, &access.path_arg) {
+                (Some(folder), None) => {
+                    let rest = folder.replace("{data_dir}", "").replace("{user_id}", "");
+                    if folder.is_empty() || rest.contains('{') || rest.contains('}') {
+                        return Err(format!("tool '{}': the folder '{folder}' may only use {{data_dir}} and {{user_id}}", tool.name));
+                    }
+                }
+                (None, Some(arg)) => {
+                    if !tool.parameters.iter().any(|p| p.name == *arg && p.kind == ParamType::String) {
+                        return Err(format!("tool '{}': path_arg '{arg}' is not a string argument of the tool", tool.name));
+                    }
+                }
+                _ => return Err(format!("tool '{}': an access names either a folder or a path_arg", tool.name)),
+            }
+        }
     }
     Ok(())
 }
@@ -203,6 +246,25 @@ mod tests {
             let err = check_tools(&specs).unwrap_err();
             assert!(err.contains(expected), "{err:?} should mention {expected:?}");
         }
+    }
+
+    #[test]
+    fn a_tools_folders_are_checked() {
+        let ok = json!({"name": "a.b", "description": "d", "parameters": [{"name": "path", "type": "string", "description": "x"}],
+            "access": [{"bucket": "write", "folder": "{data_dir}/{user_id}"}, {"bucket": "read", "path_arg": "path"}]});
+        assert!(check_tools(&[tool(ok)]).is_ok());
+        let cases = [
+            (json!({"bucket": "write"}), "either a folder or a path_arg"),
+            (json!({"bucket": "write", "folder": "/a", "path_arg": "path"}), "either a folder or a path_arg"),
+            (json!({"bucket": "write", "folder": "{data_dir}/{other}"}), "{data_dir} and {user_id}"),
+            (json!({"bucket": "read", "path_arg": "missing"}), "not a string argument"),
+        ];
+        for (access, expected) in cases {
+            let t = tool(json!({"name": "a.b", "description": "d", "parameters": [{"name": "path", "type": "string", "description": "x"}], "access": [access]}));
+            let err = check_tools(&[t]).unwrap_err();
+            assert!(err.contains(expected), "{err:?} should mention {expected:?}");
+        }
+        assert!(serde_json::from_value::<ToolSpec>(json!({"name": "a.b", "description": "d", "access": [{"bucket": "execute", "folder": "/a"}]})).is_err());
     }
 
     #[test]

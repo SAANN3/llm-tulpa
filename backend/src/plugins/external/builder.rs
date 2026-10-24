@@ -15,11 +15,12 @@ use super::http;
 use super::manifest::Manifest;
 use super::process::PluginProcess;
 use super::rpc::{BAD_ARGS, CallError, DEFAULT_CALL_TIMEOUT, METHOD_NOT_FOUND, NOT_FOUND};
-use super::spec::{ToolSpec, check_settings, check_tools};
+use super::spec::{Access, Bucket, ToolSpec, check_settings, check_tools};
 use crate::plugins::base::{Plugin, PluginBuilder, PluginError};
 use crate::plugins::env::PluginEnv;
 use crate::plugins::tab::{TabFile, TabInfo, TabLayout};
-use crate::tools::base::{PropertyInfo, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError, ToolPermission, ToolSerializationError};
+use crate::tools::base::{PropertyInfo, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolContext, ToolError, ToolPermission, ToolSerializationError};
+use crate::tools::storage::{check_directory_scope, check_file_scope, normalize};
 
 /// How long each hook may take. Every call to a plugin has a limit, so one that hangs costs the caller this much and no more.
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,12 +37,14 @@ const STAGING_DIR: &str = ".staging";
 /// Lives as long as the backend, like every builder; it owns the process, so a settings rebuild does not restart it.
 pub struct ExternalPluginBuilder {
     manifest: Arc<Manifest>,
+    /// The plugin's database steps, read from its migrations folder when it was loaded
+    migrations: Vec<String>,
     process: Arc<PluginProcess>,
 }
 
 impl ExternalPluginBuilder {
-    pub fn new(manifest: Manifest, process: Arc<PluginProcess>) -> Self {
-        Self { manifest: Arc::new(manifest), process }
+    pub fn new(manifest: Manifest, migrations: Vec<String>, process: Arc<PluginProcess>) -> Self {
+        Self { manifest: Arc::new(manifest), migrations, process }
     }
 }
 
@@ -71,6 +74,14 @@ impl PluginBuilder for ExternalPluginBuilder {
         self.manifest.default_enabled
     }
 
+    fn migrations(&self, _prefix: &str) -> Vec<String> {
+        self.migrations.clone()
+    }
+
+    fn own_schema(&self) -> bool {
+        self.manifest.database.is_some()
+    }
+
     async fn shutdown(&self) {
         self.process.shutdown().await;
     }
@@ -98,10 +109,6 @@ struct Link {
 }
 
 impl Link {
-    async fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, PluginError> {
-        self.process.call(method, params, timeout).await.map_err(|e| self.error(e, timeout))
-    }
-
     /// A plugin may leave a method out; the SDKs answer all of them. `None` is "the plugin does not have it".
     async fn call_optional(&self, method: &str, params: Value, timeout: Duration) -> Result<Option<Value>, PluginError> {
         match self.process.call(method, params, timeout).await {
@@ -175,7 +182,9 @@ impl Plugin for ExternalPlugin {
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         self.tools
             .iter()
-            .map(|spec| Box::new(ExternalTool { spec: spec.clone(), plugin: self.link.label.clone(), process: self.link.process.clone() }) as Box<dyn Tool>)
+            .map(|spec| {
+                Box::new(ExternalTool { spec: spec.clone(), plugin: self.link.label.clone(), data_dir: self.data_dir.clone(), process: self.link.process.clone() }) as Box<dyn Tool>
+            })
             .collect()
     }
 
@@ -265,7 +274,41 @@ fn staged_path(path: &str) -> Option<PathBuf> {
 struct ExternalTool {
     spec: ToolSpec,
     plugin: String,
+    data_dir: PathBuf,
     process: Arc<PluginProcess>,
+}
+
+fn shared_bucket(bucket: Bucket) -> SharedBucket {
+    match bucket {
+        Bucket::Read => SharedBucket::StorageRead,
+        Bucket::Write => SharedBucket::StorageWrite,
+        Bucket::Delete => SharedBucket::StorageDelete,
+    }
+}
+
+impl ExternalTool {
+    fn uses(&self, bucket: Bucket) -> bool {
+        self.spec.access.iter().any(|access| access.bucket == bucket)
+    }
+
+    /// What the user is asked about for one access, or `None` when the call has nothing there to ask about
+    fn check_access(&self, access: &Access, user_id: i64, data: &Value, scope: &ResolvedScope) -> Option<ToolPermission> {
+        let bucket = shared_bucket(access.bucket);
+        let granted = scope.shared.get(&bucket);
+        if let Some(folder) = &access.folder {
+            let folder = folder.replace("{data_dir}", &self.data_dir.to_string_lossy()).replace("{user_id}", &user_id.to_string());
+            return Some(check_directory_scope(&folder, bucket, granted));
+        }
+        let arg = access.path_arg.as_deref()?;
+        match data.get(arg) {
+            None | Some(Value::Null) => None,
+            Some(Value::String(path)) => {
+                // A folder is what is asked about when the path is one; for a file it is the folder the file is in
+                Some(if normalize(Path::new(path)).is_dir() { check_directory_scope(path, bucket, granted) } else { check_file_scope(path, bucket, granted) })
+            }
+            Some(_) => Some(ToolPermission::Denied { reason: format!("'{arg}' must be a path, as text"), escalation: None }),
+        }
+    }
 }
 
 #[async_trait]
@@ -282,9 +325,38 @@ impl Tool for ExternalTool {
         self.spec.parameters.iter().map(|p| p.property_info()).collect()
     }
 
-    /// A tool that asked for it (`confirm`) needs the user's approval before it first runs in a chat, and the approval holds for
-    /// that chat like any built-in tool's. Nothing finer is offered: only the plugin knows what a call does, so the backend
-    /// has no folder or host to scope a grant to.
+    fn shared_buckets(&self) -> &'static [SharedBucket] {
+        use SharedBucket::{StorageDelete as D, StorageRead as R, StorageWrite as W};
+        match (self.uses(Bucket::Read), self.uses(Bucket::Write), self.uses(Bucket::Delete)) {
+            (false, false, false) => &[],
+            (true, false, false) => &[R],
+            (false, true, false) => &[W],
+            (false, false, true) => &[D],
+            (true, true, false) => &[R, W],
+            (true, false, true) => &[R, D],
+            (false, true, true) => &[W, D],
+            (true, true, true) => &[R, W, D],
+        }
+    }
+
+    /// The tool's own bucket holds the approval of `confirm`; it is kept next to the shared ones only when the tool asks
+    fn uses_own_bucket(&self) -> bool {
+        self.spec.confirm || self.spec.access.is_empty()
+    }
+
+    /// The folders in `access` are asked about one at a time, in the order the spec lists them, each the way a built-in tool's
+    /// folder is (a grant for a folder covers every tool that uses it). Then, for a tool that asked for it (`confirm`), the
+    /// user's approval before it first runs in a chat, which holds for that chat. Only the plugin knows what else a call does,
+    /// so nothing finer is offered.
+    fn is_dangerous_for(&self, user_id: i64, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
+        for access in &self.spec.access {
+            if let Some(permission @ ToolPermission::Denied { .. }) = self.check_access(access, user_id, &data, &scope) {
+                return Ok(permission);
+            }
+        }
+        self.is_dangerous(data, scope)
+    }
+
     fn is_dangerous(&self, _data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
         let approved = scope.own.as_ref().and_then(|own| own.get("approved")).and_then(Value::as_bool) == Some(true);
         if !self.spec.confirm || approved {

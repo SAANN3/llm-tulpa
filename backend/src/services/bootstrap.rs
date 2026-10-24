@@ -316,7 +316,7 @@ pub async fn bootstrap(
         .iter()
         .map(|b| (b.plugin_name().to_string(), b.plugin_subname().to_string()))
         .collect();
-    plugin_builders.extend(external::loader::load_all(&external_plugins_dir, &plugins_dir, &compiled_in).await);
+    plugin_builders.extend(external::loader::load_all(&external_plugins_dir, &plugins_dir, &compiled_in, &db).await);
     let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)

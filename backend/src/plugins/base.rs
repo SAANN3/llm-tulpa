@@ -153,6 +153,12 @@ pub trait PluginBuilder: Send + Sync {
         vec![]
     }
 
+    /// Whether the plugin's tables live in a schema of its own, with a role of its own, instead of in the core schema under the
+    /// table prefix. `migrations` then run as that role, with plain table names. `false` by default.
+    fn own_schema(&self) -> bool {
+        false
+    }
+
     /// Called on every registered builder when the backend is stopping: the place to end what the builder owns beyond the
     /// instances it builds (an external plugin's process). Nothing by default.
     async fn shutdown(&self) {}
