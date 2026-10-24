@@ -1717,7 +1717,8 @@ def a_python_plugin_of_several_files_gets_the_bundled_sdk_and_its_package_in_a_v
     paths = [f["path"] for f in staged["files"]]
     assert "tulpa_plugin/__init__.py" in paths and "tulpa_plugin/host.py" in paths, f"the backend added its SDK: {paths}"
     assert "sizes.py" in paths and "main.py" in paths, f"and the plugin's own modules are there: {paths}"
-    has(staged["build"], "venv", "the build makes a virtual environment")
+    has(staged["build"], "build.py", "the build is the plugin's script")
+    assert "build.py" in paths, f"which is in the plugin: {paths}"
     task = install_staged(staged)
     eq((task["state"], task["error"]), ("done", None), "installed: " + str(task.get("log", ""))[-600:])
     has(str(task.get("log", "")), "humanize", "the package was installed")

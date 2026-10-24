@@ -8,11 +8,11 @@ help_message = "Shows how a Python plugin that is split into modules and needs a
 sdk      = "python"
 kind     = "source"
 
-# The package goes into a virtual environment inside the plugin's folder, so nothing is installed on the machine itself. The build
-# runs where the plugin is unpacked and the folder is then moved into place; a virtual environment still works after that move
-# as long as it is started as `.venv/bin/python` (its own scripts, such as `pip`, would not). On Windows the program is
-# `.venv\Scripts\python.exe`.
-build = "python3 -m venv {plugin_dir}/.venv && {plugin_dir}/.venv/bin/python -m pip install --disable-pip-version-check -r {plugin_dir}/requirements.txt"
+# The package goes into a virtual environment inside the plugin's folder (build.py makes it), so nothing is installed on the machine
+# itself. The build runs where the plugin is unpacked and the folder is then moved into place; a virtual environment still works
+# after that move as long as it is started as `.venv/bin/python` (its own scripts, such as `pip`, would not). On Windows the
+# program is `.venv\Scripts\python.exe`. There is no shell: two steps are a script, not `a && b`.
+build = "python3 {plugin_dir}/build.py"
 run   = "{plugin_dir}/.venv/bin/python {plugin_dir}/main.py"
 
 # exit 0 = ready; what it prints is shown when it is not

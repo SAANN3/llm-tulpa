@@ -35,7 +35,7 @@ run      = "python3 {plugin_dir}/main.py"
 check    = "python3 -c \"import sys; sys.exit(0 if sys.version_info >= (3, 10) else 'needs Python 3.10 or newer')\""
 ```
 
-`run`, `build` and `check` are command lines split like a shell would split them but run **without a shell**: no `&&` of your own inside one word, no pipes, no `$VAR`. `{plugin_dir}` and `{data_dir}` are replaced in each word. A `[[settings]]` table makes a field the owner fills in before the plugin can run (`name`, `type` of `string|number|integer|boolean|array|object`, `description`, `required`); a `[tab]` table (`id`, `title`) gives the plugin a tab; `[database]` gives it a schema. The full list is in `PROTOCOL.md`, "plugin.toml".
+`run`, `build` and `check` are command lines split like a shell would split them but run **without a shell**: so no `a && b`, no pipes, no `$VAR` (a build of two steps is a script). `{plugin_dir}` and `{data_dir}` are replaced in each word. A `[[settings]]` table makes a field the owner fills in before the plugin can run (`name`, `type` of `string|number|integer|boolean|array|object`, `description`, `required`); a `[tab]` table (`id`, `title`) gives the plugin a tab; `[database]` gives it a schema. The full list is in `PROTOCOL.md`, "plugin.toml".
 
 ## The program
 
@@ -75,9 +75,11 @@ Split freely. `python3 main.py` puts the folder of `main.py` first on the import
 Install them into a virtual environment inside the plugin, in `build` (it runs once, on install), and start the program with that environment's Python:
 
 ```toml
-build = "python3 -m venv {plugin_dir}/.venv && {plugin_dir}/.venv/bin/python -m pip install --disable-pip-version-check -r {plugin_dir}/requirements.txt"
+build = "python3 {plugin_dir}/build.py"
 run   = "{plugin_dir}/.venv/bin/python {plugin_dir}/main.py"
 ```
+
+`build.py` (copy `examples/python-deps/build.py`) runs `python -m venv .venv` and then `.venv/bin/python -m pip install -r requirements.txt`; it is a script because `build` has no shell, so `a && b` does not work there.
 
 Pin versions in `requirements.txt` (`humanize==4.12.3`). Start the environment as `.venv/bin/python` (on Windows `.venv\Scripts\python.exe`), never through an installed script such as `.venv/bin/pip` at run time: the plugin is built where it is unpacked and moved into place afterwards, and the environment's own scripts break when moved while its Python does not. The machine needs `python3 -m venv` (on Debian, `python3-venv`); say so in `check` if the plugin depends on it. Do not use `pip install` on the machine itself or `sudo`.
 
