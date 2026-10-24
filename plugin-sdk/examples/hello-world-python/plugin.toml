@@ -1,0 +1,26 @@
+name     = "example"
+subname  = "hello_python"
+version  = "0.1.0"
+protocol = 1
+summary  = "Greets people by name, in Python: a small plugin with a tool, settings, a tab and a prompt section"
+help_message = "The Rust hello plugin written in Python, with no build step. It adds one tool, hello_python.greet, that the model can use to greet someone; the greeting is set in its settings, and its tab lets each user have greetings in capitals."
+sdk      = "python"
+kind     = "source"
+
+# Nothing to build: Python runs the file as it is
+run = "python3 {plugin_dir}/main.py"
+
+# exit 0 = ready; what it prints is shown when it is not
+check = "python3 -c \"import sys; sys.exit(0 if sys.version_info >= (3, 10) else 'needs Python 3.10 or newer')\""
+
+# The owner fills these in on the Plugins page before the plugin can be switched on
+[[settings]]
+name        = "greeting"
+type        = "string"
+description = "The word the greeting starts with; Hello when empty"
+required    = false
+
+# A tab of its own in Settings
+[tab]
+id    = "hello-python"
+title = "Hello (Python)"
