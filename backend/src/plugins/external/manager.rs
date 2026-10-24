@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, mpsc};
 use utoipa::ToSchema;
 
 use super::loader::{plugin_folders, start_plugin};
+use super::agent::AgentAccess;
 use super::installer::InstallTask;
 use super::supervisor::{Event, Status, Supervisor};
 use crate::plugins::registry::PluginRegistry;
@@ -77,6 +78,7 @@ pub struct ExternalPlugins {
     pub(super) root: PathBuf,
     pub(super) plugins_dir: PathBuf,
     db: DatabaseConnection,
+    agent: Arc<AgentAccess>,
     pub(super) registry: Arc<PluginRegistry>,
     pub(super) store: Arc<ExternalPluginStore>,
     events: mpsc::UnboundedSender<Event>,
@@ -90,7 +92,7 @@ pub struct ExternalPlugins {
 
 impl ExternalPlugins {
     /// `root` is the folder of the plugins (`<root>/<name>/<subname>`), `plugins_dir` the one their data folders are in.
-    pub fn new(root: PathBuf, plugins_dir: PathBuf, db: DatabaseConnection, registry: Arc<PluginRegistry>, store: Arc<ExternalPluginStore>) -> Arc<Self> {
+    pub fn new(root: PathBuf, plugins_dir: PathBuf, db: DatabaseConnection, agent: Arc<AgentAccess>, registry: Arc<PluginRegistry>, store: Arc<ExternalPluginStore>) -> Arc<Self> {
         let (events, mut heard) = mpsc::unbounded_channel();
         // A plugin the supervisor gave up on is switched off and recorded as failing. The task holds the registry and the
         // store, not the manager, and ends when the last supervisor is gone.
@@ -111,7 +113,7 @@ impl ExternalPlugins {
                 }
             }
         });
-        Arc::new(Self { root, plugins_dir, db, registry, store, events, loaded: Mutex::new(HashMap::new()), tasks: std::sync::Mutex::new(Vec::new()), installing: Arc::new(Mutex::new(())) })
+        Arc::new(Self { root, plugins_dir, db, agent, registry, store, events, loaded: Mutex::new(HashMap::new()), tasks: std::sync::Mutex::new(Vec::new()), installing: Arc::new(Mutex::new(())) })
     }
 
     /// Starts every plugin in the plugins folder. One that cannot start is recorded with the reason and the others carry on;
@@ -188,7 +190,7 @@ impl ExternalPlugins {
         if !dir.join("plugin.toml").is_file() {
             return Err(ManagerError::NotFound(format!("there is no plugin.toml in {}", dir.display())));
         }
-        let builder = match start_plugin(&dir, &self.plugins_dir, &self.db, self.events.clone()).await {
+        let builder = match start_plugin(&dir, &self.plugins_dir, &self.db, &self.agent, self.events.clone()).await {
             Ok(builder) => builder,
             Err(e) => {
                 let version = e.manifest.as_ref().map(|m| m.version.clone());

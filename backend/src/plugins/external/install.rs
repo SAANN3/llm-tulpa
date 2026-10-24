@@ -10,6 +10,7 @@ use tokio::process::Command;
 
 use super::manifest::{Manifest, current_target, expand_command};
 use super::process::{LogRing, PluginProcess};
+use super::services::HostServices;
 use super::stage::sha256_of;
 
 /// A build that runs longer than this is ended
@@ -86,7 +87,7 @@ pub fn verify_prebuilt(manifest: &Manifest, tree: &Path) -> Result<(), String> {
 
 /// Starts the program once, from where it is staged, to see that it runs and speaks the protocol, and ends it again.
 pub async fn trial_start(manifest: &Manifest, tree: &Path, data_dir: &Path) -> Result<(), String> {
-    let process = PluginProcess::start(manifest, tree, data_dir, None, Arc::new(LogRing::default())).await?;
+    let process = PluginProcess::start(manifest, tree, data_dir, Arc::new(HostServices::default()), Arc::new(LogRing::default())).await?;
     process.shutdown().await;
     Ok(())
 }

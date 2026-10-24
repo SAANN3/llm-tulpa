@@ -36,6 +36,15 @@ class Host:
             # A log line that cannot be delivered is not worth failing the call for
             pass
 
+    async def agent_reply(self, conversation: str, text: str, *, title: str | None = None, images: Sequence[str] = (), think: bool = False) -> str:
+        """Has the plugin's own agent answer a message: a model with no tools and a chat of its own for each `conversation`, where
+        the same conversation always has the same chat, which is how the model remembers what was said before. `title` names a
+        conversation's chat the first time. `images` are base64, without a data-URL prefix. It waits as long as the model takes."""
+        answer = await self._connection.call("agent.reply", {"conversation": conversation, "title": title, "text": text, "images": list(images), "think": think})
+        if not isinstance(answer, dict) or not isinstance(answer.get("content"), str):
+            raise ProtocolError(f"agent.reply answered {answer!r}, not a reply")
+        return answer["content"]
+
     async def db_query(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Runs a statement that returns rows (a SELECT, or an INSERT/UPDATE/DELETE with RETURNING) in the plugin's database
         and gives them as a list of dicts keyed by column name. `params` fill `$1`, `$2`...: each goes to Postgres as text,

@@ -254,6 +254,14 @@ impl Host {
         serde_json::from_value(done).map_err(|e| Error(format!("db.batch answered something unusable: {e}")))
     }
 
+    /// Has the plugin's own agent answer a message: a model with no tools and a chat of its own for each `conversation`, where
+    /// the same conversation always has the same chat, which is how the model remembers what was said before. `title` names a
+    /// conversation's chat the first time. `images` are base64, without a data-URL prefix. It waits as long as the model takes.
+    pub async fn agent_reply(&self, conversation: &str, title: Option<&str>, text: &str, images: &[String], think: bool) -> Result<String, Error> {
+        let answer = self.conn.call("agent.reply", json!({"conversation": conversation, "title": title, "text": text, "images": images, "think": think})).await?;
+        answer["content"].as_str().map(str::to_string).ok_or_else(|| Error(format!("agent.reply answered {answer}, not a reply")))
+    }
+
     /// The folder that is the plugin's own for files; the backend does not create it
     pub fn data_dir(&self) -> Option<std::path::PathBuf> {
         self.conn.host_info().and_then(|info| info["data_dir"].as_str().map(Into::into))

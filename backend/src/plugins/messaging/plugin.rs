@@ -50,7 +50,7 @@ const RECEIVED_REACTION: &str = "👀";
 /// message that also had real text worth answering. Runs on a blocking thread: real
 /// image data makes this genuinely CPU-bound work, not something to do inline on the
 /// async runtime that's also driving this provider's connection loop.
-async fn normalize_images(images: Vec<String>) -> Vec<String> {
+pub(crate) async fn normalize_images(images: Vec<String>) -> Vec<String> {
     tokio::task::spawn_blocking(move || {
         images
             .into_iter()

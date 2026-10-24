@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::sync::{MutexGuard, mpsc};
 use utoipa::ToSchema;
 
-use super::db::PluginDb;
+use super::services::HostServices;
 use super::manifest::Manifest;
 use super::process::{LogRing, PluginProcess};
 use super::rpc::{CallError, METHOD_NOT_FOUND};
@@ -86,7 +86,7 @@ pub struct Supervisor {
     manifest: Manifest,
     plugin_dir: PathBuf,
     data_dir: PathBuf,
-    db: Option<Arc<PluginDb>>,
+    services: Arc<HostServices>,
     logs: Arc<LogRing>,
     current: RwLock<Option<Arc<PluginProcess>>>,
     replay: Mutex<Replay>,
@@ -111,13 +111,13 @@ fn backoff(crashes: usize) -> Option<Duration> {
 
 impl Supervisor {
     /// A plugin with no process yet; `run` starts it.
-    pub fn new(manifest: Manifest, plugin_dir: PathBuf, data_dir: PathBuf, db: Option<Arc<PluginDb>>, events: mpsc::UnboundedSender<Event>) -> Arc<Supervisor> {
+    pub fn new(manifest: Manifest, plugin_dir: PathBuf, data_dir: PathBuf, services: Arc<HostServices>, events: mpsc::UnboundedSender<Event>) -> Arc<Supervisor> {
         Arc::new(Supervisor {
             label: format!("{}/{}", manifest.name, manifest.subname),
             manifest,
             plugin_dir,
             data_dir,
-            db,
+            services,
             logs: Arc::new(LogRing::default()),
             current: RwLock::new(None),
             replay: Mutex::new(Replay::default()),
@@ -202,7 +202,7 @@ impl Supervisor {
             return Ok(());
         }
         *self.replay.lock().unwrap() = Replay::default();
-        let process = PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.db.clone(), self.logs.clone()).await?;
+        let process = PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.services.clone(), self.logs.clone()).await?;
         let id = self.run_id.fetch_add(1, Ordering::Relaxed) + 1;
         *self.current.write().unwrap() = Some(process);
         self.timeouts_in_a_row.store(0, Ordering::Relaxed);
@@ -241,7 +241,7 @@ impl Supervisor {
             return None;
         }
         self.logs.push("-- starting the plugin again --".to_string());
-        let process = match PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.db.clone(), self.logs.clone()).await {
+        let process = match PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.services.clone(), self.logs.clone()).await {
             Ok(process) => process,
             Err(e) => return Some(Err(e)),
         };

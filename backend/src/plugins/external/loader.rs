@@ -10,7 +10,9 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use super::builder::ExternalPluginBuilder;
+use super::agent::{AgentAccess, PluginAgent};
 use super::db::PluginDb;
+use super::services::HostServices;
 use super::manifest::{Manifest, expand_command};
 use super::supervisor::{Event, Supervisor};
 use crate::plugins::schema::role_name;
@@ -49,7 +51,7 @@ pub fn plugin_folders(root: &Path) -> Vec<PathBuf> {
 
 /// The plugin in `dir`, started and ready to be registered. `plugins_dir` is where every plugin's data folder is, `db` what a
 /// plugin that keeps data in the database is given, and `events` where its supervisor reports.
-pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnection, events: mpsc::UnboundedSender<Event>) -> Result<ExternalPluginBuilder, StartError> {
+pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnection, agent: &Arc<AgentAccess>, events: mpsc::UnboundedSender<Event>) -> Result<ExternalPluginBuilder, StartError> {
     let manifest = Manifest::load(dir).map_err(|e| e.to_string())?;
     let failed = |manifest: &Manifest, why: String| StartError { manifest: Some(manifest.clone()), why };
     let data_dir = plugins_dir.join(&manifest.name).join(&manifest.subname);
@@ -72,7 +74,8 @@ pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnectio
     // program is looked for here instead, when the command names a file.
     program_exists(&manifest, dir, &data_dir).map_err(|why| failed(&manifest, why))?;
 
-    let supervisor = Supervisor::new(manifest.clone(), dir.to_path_buf(), data_dir.clone(), plugin_db, events);
+    let services = Arc::new(HostServices { db: plugin_db, agent: Some(Arc::new(PluginAgent::new(agent.clone(), &manifest.name, &manifest.subname))) });
+    let supervisor = Supervisor::new(manifest.clone(), dir.to_path_buf(), data_dir.clone(), services, events);
     tracing::info!("external plugin {}/{} {} loaded (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
     Ok(ExternalPluginBuilder::new(manifest, migrations, supervisor, dir.to_path_buf(), data_dir))
 }

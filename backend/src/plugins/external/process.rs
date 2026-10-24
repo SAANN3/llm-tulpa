@@ -16,9 +16,9 @@ use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::db::{PluginDb, Sql};
+use super::services::HostServices;
 use super::manifest::{Manifest, SUPPORTED_PROTOCOL, expand_command};
-use super::rpc::{BAD_ARGS, CallError, INTERNAL, Incoming, METHOD_NOT_FOUND, RpcClient, RpcError, read_line};
+use super::rpc::{BAD_ARGS, CallError, Incoming, RpcClient, RpcError, read_line};
 
 /// How long a plugin has to say `hello` after it starts
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -59,8 +59,7 @@ struct HostSide {
     label: String,
     info: Value,
     logs: Arc<LogRing>,
-    /// `None` for a plugin whose manifest has no `[database]`
-    db: Option<Arc<PluginDb>>,
+    services: Arc<HostServices>,
     hello: Mutex<Option<oneshot::Sender<Result<(), String>>>>,
 }
 
@@ -94,31 +93,12 @@ impl Incoming for HostSide {
                 self.logs.push(message.to_string());
                 Ok(Value::Null)
             }
-            "db.query" | "db.execute" | "db.batch" => self.database(method, params).await,
-            _ => Err(RpcError::new(METHOD_NOT_FOUND, format!("the host has no method {method}"))),
+            _ => self.services.call(method, params).await,
         }
     }
 }
 
 impl HostSide {
-    async fn database(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        let db = self.db.as_ref().ok_or_else(|| RpcError::new(BAD_ARGS, "this plugin has no database: add [database] to plugin.toml"))?;
-        let bad = |e: serde_json::Error| RpcError::new(BAD_ARGS, format!("{method}: {e}"));
-        let failed = |why: String| RpcError::new(INTERNAL, why);
-        match method {
-            "db.query" => db.query(serde_json::from_value::<Sql>(params).map_err(bad)?).await.map_err(failed),
-            "db.execute" => Ok(json!(db.execute(serde_json::from_value::<Sql>(params).map_err(bad)?).await.map_err(failed)?)),
-            _ => {
-                #[derive(Deserialize)]
-                struct Batch {
-                    statements: Vec<Sql>,
-                }
-                let batch: Batch = serde_json::from_value(params).map_err(bad)?;
-                Ok(json!(db.batch(batch.statements).await.map_err(failed)?))
-            }
-        }
-    }
-
     fn check_hello(&self, params: Value) -> Result<(), String> {
         let hello: Hello = serde_json::from_value(params).map_err(|e| format!("hello is malformed: {e}"))?;
         if hello.protocol != SUPPORTED_PROTOCOL {
@@ -143,7 +123,7 @@ impl PluginProcess {
     /// `hello` names a protocol this backend does not speak, is killed and the reason returned along with the end of its stderr.
     /// What it logs goes to `logs`, which the caller may hand to the next process of the same plugin so the lines before a
     /// crash are still there after it.
-    pub async fn start(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path, db: Option<Arc<PluginDb>>, logs: Arc<LogRing>) -> Result<Arc<PluginProcess>, String> {
+    pub async fn start(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path, services: Arc<HostServices>, logs: Arc<LogRing>) -> Result<Arc<PluginProcess>, String> {
         let label = format!("{}/{}", manifest.name, manifest.subname);
         let words = expand_command(&manifest.run_command(), plugin_dir, data_dir).map_err(|e| e.to_string())?;
         let (program, args) = words.split_first().ok_or("the run command is empty")?;
@@ -178,7 +158,7 @@ impl PluginProcess {
                 "plugin_dir": plugin_dir,
             }),
             logs: logs.clone(),
-            db,
+            services,
             hello: Mutex::new(Some(tx)),
         });
         let rpc = RpcClient::start(child.stdout.take().ok_or("no stdout")?, child.stdin.take().ok_or("no stdin")?, host, label);

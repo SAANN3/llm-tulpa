@@ -9,6 +9,7 @@ use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, pr
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
+use crate::plugins::external::agent::AgentAccess;
 use crate::plugins::external::manager::ExternalPlugins;
 use crate::plugins::knowledge::skills::builder::SkillsBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
@@ -312,6 +313,7 @@ pub async fn bootstrap(
         Arc::new(SignaturesBuilder),
         Arc::new(SkillsBuilder::new()),
     ];
+    let agent_access = Arc::new(AgentAccess { agent: plugin_agent.clone(), chat_store: chat_store.clone() });
     let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone() };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)
@@ -319,7 +321,7 @@ pub async fn bootstrap(
         .map_err(BootstrapError::Plugins)?;
     // The external plugins come up after the compiled-in ones, which keep their names: one that clashes is left out, with the
     // reason recorded, and so is any other that cannot start, without stopping the backend
-    let external_plugins = ExternalPlugins::new(external_plugins_dir, plugins_dir, db.clone(), plugin_registry.clone(), Arc::new(ExternalPluginStore::new(db.clone())));
+    let external_plugins = ExternalPlugins::new(external_plugins_dir, plugins_dir, db.clone(), agent_access, plugin_registry.clone(), Arc::new(ExternalPluginStore::new(db.clone())));
     external_plugins.start_all().await;
 
     let services = AppServices {
