@@ -1102,26 +1102,60 @@ def tool_results(chat):
     return [m for m in messages(chat) if m["role"] == "tool"]
 
 
-@scenario
-def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written():
+class SkillsVariant:
+    """One of the two skills plugins the same scenarios run against: the built-in one and its port in plugin-sdk/examples/skills."""
+
+    def __init__(self, name, subname, tool_domain, folder, tab_id):
+        self.plugin = {"plugin_name": name, "plugin_subname": subname}
+        self.tool_domain, self.folder, self.tab_id = tool_domain, folder, tab_id
+        self.tab_url = f"/api/plugins/tab?plugin_name={name}&plugin_subname={subname}"
+
+    def t(self, tool):
+        return f"{self.tool_domain}.{tool}"
+
+    def installed(self):
+        return any((p["plugin_name"], p["plugin_subname"]) == tuple(self.plugin.values()) for p in ok("/api/plugins"))
+
+
+BUILT_IN_SKILLS = SkillsVariant("knowledge", "skills", "skills", "/knowledge/skills/", "skills")
+SKILLS_PORT = SkillsVariant("example", "skills", "example_skills", "/example/skills/", "example-skills")
+
+
+def both_skills_plugins(fn):
+    """Registers the scenario for the built-in skills plugin under its own name, and for the example port under the same name
+    with `_in_the_example_port`: the port has to behave the same, which is what makes it a port. The port's run is skipped
+    when this backend has not got it installed."""
+    SCENARIOS[fn.__name__] = lambda: fn(BUILT_IN_SKILLS)
+
+    def on_the_port():
+        if not SKILLS_PORT.installed():
+            raise Skip("the example/skills plugin is not installed in this backend's external_plugins_dir")
+        fn(SKILLS_PORT)
+
+    SCENARIOS[fn.__name__ + "_in_the_example_port"] = on_the_port
+    return fn
+
+
+@both_skills_plugins
+def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written(V):
     settings(auto_confirm=False)
-    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable the skills plugin")
+    eq(api("/api/plugins/enable", {**V.plugin, "enabled": True})[0], 204, "enable the skills plugin")
     chat = new_chat("skills")
     source = "/tmp/fake_skill_src_%d" % os.getpid()
     os.makedirs(source + "/notes", exist_ok=True)
     open(source + "/SKILL.md", "w").write("---\nname: from-folder\ndescription: Installed from a folder.\n---\n\nDo the folder thing.\n")
     open(source + "/notes/a.md", "w").write("note A")
-    write = {"name": "skills.write", "arguments": {"name": "lab-report", "description": "Use for a lab report.\nSecond line.", "content": "# Steps\n1. Do it"}}
+    write = {"name": V.t("write"), "arguments": {"name": "lab-report", "description": "Use for a lab report.\nSecond line.", "content": "# Steps\n1. Do it"}}
     script({"tool_calls": [write]})
     s = turn(chat, "save a skill")
     eq(s["status"], "waiting_for_permission", "a write asks first")
-    has(s["pending"][0]["permission"]["escalation"]["ui_message"], "/knowledge/skills/1", "it names the user's own skills folder")
-    script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "lab-report"}},
-                           {"name": "skills.add_file", "arguments": {"name": "lab-report", "path": "scripts/run.sh", "content": "echo hi"}},
-                           {"name": "skills.read_file", "arguments": {"name": "lab-report", "path": "scripts/run.sh"}},
-                           {"name": "skills.read_file", "arguments": {"name": "lab-report", "path": "../../2/x"}},
-                           {"name": "skills.list", "arguments": {}}]},
-           {"tool_calls": [{"name": "skills.install", "arguments": {"path": source}}]})
+    has(s["pending"][0]["permission"]["escalation"]["ui_message"], V.folder + "1", "it names the user's own skills folder")
+    script({"tool_calls": [{"name": V.t("read"), "arguments": {"name": "lab-report"}},
+                           {"name": V.t("add_file"), "arguments": {"name": "lab-report", "path": "scripts/run.sh", "content": "echo hi"}},
+                           {"name": V.t("read_file"), "arguments": {"name": "lab-report", "path": "scripts/run.sh"}},
+                           {"name": V.t("read_file"), "arguments": {"name": "lab-report", "path": "../../2/x"}},
+                           {"name": V.t("list"), "arguments": {}}]},
+           {"tool_calls": [{"name": V.t("install"), "arguments": {"path": source}}]})
     eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "permanent"}]})[0], 202, "approve the folder")
     s = wait_idle(chat)
     # the read-only tools and the add ran on the grant; the install also reads a folder nobody has approved
@@ -1133,7 +1167,7 @@ def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written(
     has(results[3], "echo hi", "a file added to the skill is read back")
     has(results[4], "climbs out", "a path leaving the skill is refused")
     has(results[5], "Use for a lab report. Second line.", "the list shows the description on one line")
-    script({"tool_calls": [{"name": "skills.delete", "arguments": {"name": "lab-report"}}]}, {"text": "gone"})
+    script({"tool_calls": [{"name": V.t("delete"), "arguments": {"name": "lab-report"}}]}, {"text": "gone"})
     eq(api("/api/agent/answer", {"chat_id": chat, "decisions": [{"index": 0, "allowance": "only_now"}]})[0], 202, "approve reading the source")
     s = wait_idle(chat)
     eq(s["status"], "waiting_for_permission", "a delete asks on its own")
@@ -1147,18 +1181,18 @@ def skills_tools_ask_for_the_users_folder_and_the_prompt_lists_what_was_written(
     has(system, "- from-folder: Installed from a folder.", "the prompt lists the installed skill")
     assert "lab-report" not in system, "a deleted skill is not listed"
     chat3 = new_chat("skills-3")
-    script({"tool_calls": [{"name": "skills.delete", "arguments": {"name": "from-folder"}}]})
+    script({"tool_calls": [{"name": V.t("delete"), "arguments": {"name": "from-folder"}}]})
     eq(turn(chat3, "clean up")["status"], "waiting_for_permission", "cleaning up asks too")
     script({"text": "ok"})
     api("/api/agent/answer", {"chat_id": chat3, "decisions": [{"index": 0, "allowance": "only_now"}]})
     wait_idle(chat3)
-    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    api("/api/plugins/enable", {**V.plugin, "enabled": False})
     os.system("rm -rf " + source)
     settings()
 
 
-@scenario
-def another_users_skills_are_not_listed_and_not_readable():
+@both_skills_plugins
+def another_users_skills_are_not_listed_and_not_readable(V):
     made = ok("/api/users", {"username": "skills-bob-%d" % os.getpid(), "password": "bob-pass-123"})
     bob_id = made["id"]
     BOB = token_for(bob_id, made["username"], "user")
@@ -1167,9 +1201,9 @@ def another_users_skills_are_not_listed_and_not_readable():
         full = {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False,
                 "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000}
         eq(request(BACKEND, "/api/settings", full, token=BOB)[0] // 100, 2, "bob's settings")
-        eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable the skills plugin")
+        eq(api("/api/plugins/enable", {**V.plugin, "enabled": True})[0], 204, "enable the skills plugin")
         owner = new_chat("skills-owner")
-        script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "owner-secret", "description": "The owner's own skill.", "content": "Private."}}]}, {"text": "saved"})
+        script({"tool_calls": [{"name": V.t("write"), "arguments": {"name": "owner-secret", "description": "The owner's own skill.", "content": "Private."}}]}, {"text": "saved"})
         turn(owner, "save it")
 
         def bob_turn(prompt):
@@ -1180,9 +1214,9 @@ def another_users_skills_are_not_listed_and_not_readable():
             msgs = request(BACKEND, f"/api/chats/messages?chat_id={chat['id']}&limit=200", token=BOB)[1]["messages"]
             return sorted(msgs, key=lambda m: m["id"])
 
-        script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "owner-secret"}},
-                               {"name": "skills.delete", "arguments": {"name": "owner-secret"}},
-                               {"name": "skills.list", "arguments": {}}]}, {"text": "done"})
+        script({"tool_calls": [{"name": V.t("read"), "arguments": {"name": "owner-secret"}},
+                               {"name": V.t("delete"), "arguments": {"name": "owner-secret"}},
+                               {"name": V.t("list"), "arguments": {}}]}, {"text": "done"})
         results = [str(m["content"]) for m in bob_turn("read it") if m["role"] == "tool"]
         has(results[0], "not found", "bob cannot read the owner's skill")
         has(results[1], "not found", "bob cannot delete it")
@@ -1190,30 +1224,30 @@ def another_users_skills_are_not_listed_and_not_readable():
         assert "owner-secret" not in system_of_last_main_call(), "bob's prompt does not list the owner's skill"
 
         again = new_chat("skills-owner-again")
-        script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "owner-secret"}}]}, {"text": "ok"})
+        script({"tool_calls": [{"name": V.t("read"), "arguments": {"name": "owner-secret"}}]}, {"text": "ok"})
         turn(again, "check")
         has(str([m["content"] for m in tool_results(again)]), "Private.", "the owner still reads their own skill")
         has(system_of_last_main_call(), "- owner-secret: The owner's own skill.", "and their prompt lists it")
-        eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "owner-secret"}})[0], 200, "clean up")
+        eq(api("/api/plugins/tab/action", {**V.plugin, "action": "delete", "args": {"row": "owner-secret"}})[0], 200, "clean up")
     finally:
-        api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+        api("/api/plugins/enable", {**V.plugin, "enabled": False})
         status, _ = api(f"/api/users?id={bob_id}", None, "DELETE")
         eq(status, 204, "the user is deleted again")
         settings()
 
 
-@scenario
-def switching_the_skills_plugin_off_hides_it_and_keeps_the_skills():
+@both_skills_plugins
+def switching_the_skills_plugin_off_hides_it_and_keeps_the_skills(V):
     settings(auto_confirm=True)
-    enable = lambda on: api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": on})[0]
+    enable = lambda on: api("/api/plugins/enable", {**V.plugin, "enabled": on})[0]
     eq(enable(True), 204, "enable")
     chat = new_chat("skills-onoff")
-    script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "keeper", "description": "Kept while off.", "content": "Body."}}]}, {"text": "saved"})
+    script({"tool_calls": [{"name": V.t("write"), "arguments": {"name": "keeper", "description": "Kept while off.", "content": "Body."}}]}, {"text": "saved"})
     turn(chat, "save it")
     eq(enable(False), 204, "disable")
-    eq([t for t in ok("/api/plugins/tabs") if t["id"] == "skills"], [], "the tab is gone while it is off")
+    eq([t for t in ok("/api/plugins/tabs") if t["id"] == V.tab_id], [], "the tab is gone while it is off")
     off = new_chat("skills-off")
-    script({"tool_calls": [{"name": "skills.read", "arguments": {"name": "keeper"}}]}, {"text": "ok"})
+    script({"tool_calls": [{"name": V.t("read"), "arguments": {"name": "keeper"}}]}, {"text": "ok"})
     turn(off, "read it")
     has(str([m["content"] for m in tool_results(off)]), "no tool named", "its tools are gone while it is off")
     assert "# Skills" not in system_of_last_main_call(), "and its part of the prompt"
@@ -1222,26 +1256,26 @@ def switching_the_skills_plugin_off_hides_it_and_keeps_the_skills():
     script({"text": "ok"})
     turn(on, "hello")
     has(system_of_last_main_call(), "- keeper: Kept while off.", "the skill is listed again, nothing was lost")
-    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "keeper"}})[0], 200, "clean up")
+    eq(api("/api/plugins/tab/action", {**V.plugin, "action": "delete", "args": {"row": "keeper"}})[0], 200, "clean up")
     enable(False)
     settings()
 
 
-@scenario
-def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user():
+@both_skills_plugins
+def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user(V):
     settings(auto_confirm=True)
-    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
-    tab = lambda action, args: api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": action, "args": args})
+    eq(api("/api/plugins/enable", {**V.plugin, "enabled": True})[0], 204, "enable")
+    tab = lambda action, args: api("/api/plugins/tab/action", {**V.plugin, "action": action, "args": args})
     chat = new_chat("skill-switch")
-    script({"tool_calls": [{"name": "skills.write", "arguments": {"name": "sleeper", "description": "Only for the sleeper case.", "content": "Body."}}]}, {"text": "saved"})
+    script({"tool_calls": [{"name": V.t("write"), "arguments": {"name": "sleeper", "description": "Only for the sleeper case.", "content": "Body."}}]}, {"text": "saved"})
     turn(chat, "save it")
     eq(tab("enable", {"row": "sleeper", "on": False})[0], 200, "switch off")
 
     off = new_chat("skill-off")
     script(
-        {"tool_calls": [{"name": "skills.read", "arguments": {"name": "sleeper"}}]},
-        {"tool_calls": [{"name": "skills.list", "arguments": {}}]},
-        {"tool_calls": [{"name": "skills.write", "arguments": {"name": "sleeper", "description": "Mine now.", "content": "Overwritten."}}]},
+        {"tool_calls": [{"name": V.t("read"), "arguments": {"name": "sleeper"}}]},
+        {"tool_calls": [{"name": V.t("list"), "arguments": {}}]},
+        {"tool_calls": [{"name": V.t("write"), "arguments": {"name": "sleeper", "description": "Mine now.", "content": "Overwritten."}}]},
         {"text": "ok"},
     )
     turn(off, "use it")
@@ -1250,22 +1284,22 @@ def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user():
     has(results[0], "not found", "skills.read does not open it")
     assert "sleeper" not in results[1], "skills.list does not show it"
     has(results[2], "turned off", "the model cannot write over it")
-    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
+    row = [r for r in ok(V.tab_url)["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
     eq(row["switch"]["on"], False, "the user's list still shows it, off")
 
     eq(tab("enable", {"row": "sleeper", "on": True})[0], 200, "switch on")
     # The model can turn off what it made, never what the user added, and cannot turn anything back on
     mine = new_chat("skill-self-off")
     script(
-        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "sleeper"}}]},
-        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "sleeper"}}]},
+        {"tool_calls": [{"name": V.t("disable"), "arguments": {"name": "sleeper"}}]},
+        {"tool_calls": [{"name": V.t("disable"), "arguments": {"name": "sleeper"}}]},
         {"text": "ok"},
     )
     turn(mine, "retire it")
     results = [m["content"] for m in tool_results(mine)]
     has(results[0], "turned off", "the model turned off its own skill")
     has(results[1], "turned off by the user", "and cannot touch it once it is off")
-    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
+    row = [r for r in ok(V.tab_url)["sections"][1]["blocks"][0]["rows"] if r["id"] == "sleeper"][0]
     eq(row["switch"]["on"], False, "the user sees it off")
     eq(tab("enable", {"row": "sleeper", "on": True})[0], 200, "the user turns it back on")
     on = new_chat("skill-on")
@@ -1273,20 +1307,20 @@ def a_skill_switched_off_is_hidden_from_the_model_and_kept_for_the_user():
     turn(on, "hello")
     has(system_of_last_main_call(), "- sleeper: Only for the sleeper case.", "listed again, unchanged by the model's attempt")
     eq(tab("delete", {"row": "sleeper"})[0], 200, "clean up")
-    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    api("/api/plugins/enable", {**V.plugin, "enabled": False})
     settings()
 
 
-@scenario
-def the_model_cannot_turn_off_or_change_a_skill_the_user_added():
+@both_skills_plugins
+def the_model_cannot_turn_off_or_change_a_skill_the_user_added(V):
     settings(auto_confirm=True)
-    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
+    eq(api("/api/plugins/enable", {**V.plugin, "enabled": True})[0], 204, "enable")
     # A skill the user added goes through the tab's upload, a multipart form
     boundary = "scenarioboundary"
     skill_md = "---\nname: theirs\ndescription: Added by the user.\n---\nBody.\n"
     parts = "".join(
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
-        for name, value in [("plugin_name", "knowledge"), ("plugin_subname", "skills"), ("action", "upload")]
+        for name, value in [("plugin_name", V.plugin["plugin_name"]), ("plugin_subname", V.plugin["plugin_subname"]), ("action", "upload")]
     ) + f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"theirs/SKILL.md\"\r\n\r\n{skill_md}\r\n--{boundary}--\r\n"
     req = urllib.request.Request(BACKEND + "/api/plugins/tab/upload", data=parts.encode(), method="POST",
                                  headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "multipart/form-data; boundary=" + boundary})
@@ -1294,25 +1328,25 @@ def the_model_cannot_turn_off_or_change_a_skill_the_user_added():
 
     chat = new_chat("skill-user-owned")
     script(
-        {"tool_calls": [{"name": "skills.disable", "arguments": {"name": "theirs"}}]},
-        {"tool_calls": [{"name": "skills.delete", "arguments": {"name": "theirs"}}]},
+        {"tool_calls": [{"name": V.t("disable"), "arguments": {"name": "theirs"}}]},
+        {"tool_calls": [{"name": V.t("delete"), "arguments": {"name": "theirs"}}]},
         {"text": "ok"},
     )
     turn(chat, "retire it")
     results = [m["content"] for m in tool_results(chat)]
     has(results[0], "was added by the user", "turning it off is refused")
     has(results[1], "was added by the user", "and so is deleting it")
-    row = [r for r in ok("/api/plugins/tab?plugin_name=knowledge&plugin_subname=skills")["sections"][1]["blocks"][0]["rows"] if r["id"] == "theirs"][0]
+    row = [r for r in ok(V.tab_url)["sections"][1]["blocks"][0]["rows"] if r["id"] == "theirs"][0]
     eq(row["switch"]["on"], True, "it is still on")
-    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "theirs"}})[0], 200, "clean up")
-    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    eq(api("/api/plugins/tab/action", {**V.plugin, "action": "delete", "args": {"row": "theirs"}})[0], 200, "clean up")
+    api("/api/plugins/enable", {**V.plugin, "enabled": False})
     settings()
 
 
-@scenario
-def auto_confirm_grants_every_folder_a_call_needs_before_it_runs():
+@both_skills_plugins
+def auto_confirm_grants_every_folder_a_call_needs_before_it_runs(V):
     settings(auto_confirm=True)
-    eq(api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": True})[0], 204, "enable")
+    eq(api("/api/plugins/enable", {**V.plugin, "enabled": True})[0], 204, "enable")
     # skills.install needs read access to the zip's folder and write access to the skills folder, which are offered one at a time
     import tempfile, zipfile
     folder = tempfile.mkdtemp(prefix="scenario-zip-")
@@ -1320,13 +1354,13 @@ def auto_confirm_grants_every_folder_a_call_needs_before_it_runs():
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("zipped/SKILL.md", "---\nname: zipped\ndescription: From a zip.\n---\nBody.\n")
     chat = new_chat("auto-confirm-two-folders")
-    script({"tool_calls": [{"name": "skills.install", "arguments": {"path": path}}]}, {"text": "done"})
+    script({"tool_calls": [{"name": V.t("install"), "arguments": {"path": path}}]}, {"text": "done"})
     turn(chat, "install it")
     results = tool_results(chat)
     eq(len(results), 1, "one call, no retry")
     has(str(results[0]["content"]), "zipped", "the install ran on the first call")
-    eq(api("/api/plugins/tab/action", {"plugin_name": "knowledge", "plugin_subname": "skills", "action": "delete", "args": {"row": "zipped"}})[0], 200, "clean up")
-    api("/api/plugins/enable", {"plugin_name": "knowledge", "plugin_subname": "skills", "enabled": False})
+    eq(api("/api/plugins/tab/action", {**V.plugin, "action": "delete", "args": {"row": "zipped"}})[0], 200, "clean up")
+    api("/api/plugins/enable", {**V.plugin, "enabled": False})
     settings()
 
 
@@ -1388,7 +1422,7 @@ def an_external_plugins_settings_tab_prompt_section_and_routes_behave_like_a_bui
     eq(status, 400, "a setting of the wrong type is refused")
     has(str(body), "greeting", "the refusal names the setting")
     hello_on("Hey")
-    tabs = [t for t in ok("/api/plugins/tabs") if t["plugin_name"] == "example"]
+    tabs = [t for t in ok("/api/plugins/tabs") if t["plugin_subname"] == "hello"]
     eq([t["id"] for t in tabs], ["hello"], "the plugin's tab is listed")
 
     tab = ok("/api/plugins/tab?plugin_name=example&plugin_subname=hello")
@@ -1415,7 +1449,7 @@ def an_external_plugins_settings_tab_prompt_section_and_routes_behave_like_a_bui
 
     ok("/api/plugins/tab/action", {**HELLO, "action": "loud", "args": {"on": False}})
     ok("/api/plugins/enable", {**HELLO, "enabled": False})
-    eq([t for t in ok("/api/plugins/tabs") if t["plugin_name"] == "example"], [], "a switched-off plugin has no tab")
+    eq([t for t in ok("/api/plugins/tabs") if t["plugin_subname"] == "hello"], [], "a switched-off plugin has no tab")
     eq(api("/api/plugins/example/hello/greeting")[0], 404, "nor routes")
     hello_on("Hello")
 
