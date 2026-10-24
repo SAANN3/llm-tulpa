@@ -79,7 +79,7 @@ pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnectio
 
 /// Whether the program the plugin's `run` command names is there, when it is a path (`{plugin_dir}/target/release/x`); a bare
 /// name such as `python3` is looked up on the `PATH` when it is started, so it is not judged here.
-fn program_exists(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path) -> Result<(), String> {
+pub fn program_exists(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path) -> Result<(), String> {
     let words = expand_command(&manifest.run_command(), plugin_dir, data_dir).map_err(|e| e.to_string())?;
     let program = words.first().ok_or("the run command is empty")?;
     if !program.contains('/') {

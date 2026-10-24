@@ -1,6 +1,13 @@
 mod enable;
+mod external_export;
+mod external_install;
 mod external_list;
 mod external_load;
+mod external_stage_discard;
+mod external_stage_git;
+mod external_stage_upload;
+mod external_staged;
+mod external_uninstall;
 mod external_unload;
 mod get_help;
 mod list;

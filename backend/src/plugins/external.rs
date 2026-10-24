@@ -4,11 +4,15 @@
 
 pub mod builder;
 pub mod db;
+pub mod export;
 pub mod http;
+pub mod install;
+pub mod installer;
 pub mod loader;
 pub mod manager;
 pub mod manifest;
 pub mod process;
 pub mod rpc;
 pub mod spec;
+pub mod stage;
 pub mod supervisor;

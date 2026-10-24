@@ -200,6 +200,10 @@ impl Manifest {
                     if binary.sha256.len() != 64 || !binary.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
                         return Err(ManifestError(format!("prebuilt.{target}: sha256 is not 64 hex digits")));
                     }
+                    let path = Path::new(&binary.path);
+                    if binary.path.is_empty() || !path.is_relative() || path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                        return Err(ManifestError(format!("prebuilt.{target}: the path '{}' must be inside the plugin's own folder", binary.path)));
+                    }
                 }
                 if !self.prebuilt.contains_key(&current_target()) {
                     return Err(ManifestError(format!("it has no prebuilt binary for {}", current_target())));

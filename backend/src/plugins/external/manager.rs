@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, mpsc};
 use utoipa::ToSchema;
 
 use super::loader::{plugin_folders, start_plugin};
+use super::installer::InstallTask;
 use super::supervisor::{Event, Status, Supervisor};
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::schema;
@@ -32,6 +33,10 @@ pub struct ExternalPluginView {
     pub source_type: String,
     /// The address it was installed from, for one that was not put in the folder by hand
     pub source_url: Option<String>,
+    /// The git branch or tag it came from
+    pub source_ref: Option<String>,
+    /// The checksum of the file it was installed from
+    pub source_sha256: Option<String>,
     pub state: PluginState,
     /// Why it is not running, when it is not
     pub last_error: Option<String>,
@@ -52,6 +57,12 @@ pub enum ManagerError {
     Failed(String),
 }
 
+impl From<crate::services::external_plugin_store::ExternalPluginStoreError> for ManagerError {
+    fn from(e: crate::services::external_plugin_store::ExternalPluginStoreError) -> Self {
+        ManagerError::Failed(e.to_string())
+    }
+}
+
 impl From<ManagerError> for ErrorService {
     fn from(e: ManagerError) -> Self {
         match e {
@@ -63,14 +74,18 @@ impl From<ManagerError> for ErrorService {
 }
 
 pub struct ExternalPlugins {
-    root: PathBuf,
-    plugins_dir: PathBuf,
+    pub(super) root: PathBuf,
+    pub(super) plugins_dir: PathBuf,
     db: DatabaseConnection,
-    registry: Arc<PluginRegistry>,
-    store: Arc<ExternalPluginStore>,
+    pub(super) registry: Arc<PluginRegistry>,
+    pub(super) store: Arc<ExternalPluginStore>,
     events: mpsc::UnboundedSender<Event>,
     /// The supervisor of each plugin that is loaded, for its status
-    loaded: Mutex<HashMap<Key, Arc<Supervisor>>>,
+    pub(super) loaded: Mutex<HashMap<Key, Arc<Supervisor>>>,
+    /// The installs that ran or are running, by their staging id, newest kept
+    pub(super) tasks: std::sync::Mutex<Vec<InstallTask>>,
+    /// Held for the length of an install or an uninstall: one at a time
+    pub(super) installing: Arc<Mutex<()>>,
 }
 
 impl ExternalPlugins {
@@ -96,12 +111,13 @@ impl ExternalPlugins {
                 }
             }
         });
-        Arc::new(Self { root, plugins_dir, db, registry, store, events, loaded: Mutex::new(HashMap::new()) })
+        Arc::new(Self { root, plugins_dir, db, registry, store, events, loaded: Mutex::new(HashMap::new()), tasks: std::sync::Mutex::new(Vec::new()), installing: Arc::new(Mutex::new(())) })
     }
 
     /// Starts every plugin in the plugins folder. One that cannot start is recorded with the reason and the others carry on;
     /// a plugin the database remembers whose folder is gone is recorded as unavailable.
     pub async fn start_all(&self) {
+        super::stage::prune(&self.root);
         let mut seen: Vec<Key> = Vec::new();
         for dir in plugin_folders(&self.root) {
             let (Some(subname), Some(name)) = (dir.file_name(), dir.parent().and_then(|p| p.file_name())) else {
@@ -159,7 +175,7 @@ impl ExternalPlugins {
             .collect())
     }
 
-    async fn view(&self, name: &str, subname: &str) -> Result<ExternalPluginView, ManagerError> {
+    pub(super) async fn view(&self, name: &str, subname: &str) -> Result<ExternalPluginView, ManagerError> {
         let records = self.store.list().await.map_err(|e| ManagerError::Failed(e.to_string()))?;
         let record = records.into_iter().find(|r| r.name == name && r.subname == subname).ok_or_else(|| ManagerError::NotFound(format!("{name}/{subname}")))?;
         let process = self.loaded.lock().await.get(&(name.to_string(), subname.to_string())).map(|s| s.status());
@@ -167,7 +183,7 @@ impl ExternalPlugins {
     }
 
     /// Starts and registers the plugin of a folder, and records how it went
-    async fn load_dir(&self, name: &str, subname: &str) -> Result<(), ManagerError> {
+    pub(super) async fn load_dir(&self, name: &str, subname: &str) -> Result<(), ManagerError> {
         let dir = self.root.join(name).join(subname);
         if !dir.join("plugin.toml").is_file() {
             return Err(ManagerError::NotFound(format!("there is no plugin.toml in {}", dir.display())));
@@ -221,6 +237,8 @@ fn view_of(record: ExternalPluginRecord, process: Option<Status>) -> ExternalPlu
         kind: record.kind,
         source_type: record.source_type,
         source_url: record.source_url,
+        source_ref: record.source_ref,
+        source_sha256: record.source_sha256,
         state: record.state,
         last_error: record.last_error,
         installed_at: record.installed_at,

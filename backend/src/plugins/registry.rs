@@ -295,6 +295,16 @@ impl PluginRegistry {
         self.register_with(builder, host).await
     }
 
+    /// Forgets the stored settings and on/off state of a plugin that is not registered any more
+    pub async fn forget_settings(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), PluginError> {
+        Ok(self.store.delete(plugin_name, plugin_subname).await?)
+    }
+
+    /// Removes a plugin's schema, role and ledger entry from the database
+    pub async fn drop_database(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), PluginError> {
+        self.schema.drop_own_schema(plugin_name, plugin_subname).await.map_err(|e| PluginError::Schema(e.to_string()))
+    }
+
     /// Whether a plugin is registered under this key
     pub async fn contains(&self, plugin_name: &str, plugin_subname: &str) -> bool {
         self.entries.read().await.contains_key(&Self::key(plugin_name, plugin_subname))
