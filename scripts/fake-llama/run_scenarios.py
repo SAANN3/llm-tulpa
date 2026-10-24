@@ -1536,6 +1536,96 @@ def an_external_plugin_can_be_unloaded_and_loaded_again_without_restarting_the_b
     hello_on("Hello")
 
 
+def plugin_file(version, answer):
+    """A `.tulpa` file for a tiny plugin written straight against the protocol, with one tool that answers `answer`: a zip with a
+    plugin.toml and a Python program, which needs no build."""
+    import io, zipfile
+    toml = ('name = "scenario"\nsubname = "pkg"\nversion = "%s"\nprotocol = 1\nsummary = "A plugin made by a scenario"\n'
+            'kind = "source"\nrun = "python3 {plugin_dir}/p.py"\n' % version)
+    program = f"""import json, sys
+def send(o): sys.stdout.write(json.dumps(o) + "\\n"); sys.stdout.flush()
+send({{"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {{"protocol": 1, "sdk": "scenario"}}}})
+for line in sys.stdin:
+    m = json.loads(line)
+    if "method" not in m: continue
+    i, method = m["id"], m["method"]
+    if method == "tools":
+        send({{"jsonrpc": "2.0", "id": i, "result": [{{"name": "scenario_pkg.say", "description": "Says something. Use it when asked.", "parameters": []}}]}})
+    elif method == "call_tool":
+        send({{"jsonrpc": "2.0", "id": i, "result": {{"said": "{answer}"}}}})
+    else:
+        send({{"jsonrpc": "2.0", "id": i, "result": None}})
+    if method == "shutdown": sys.exit(0)
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("scenario-pkg/plugin.toml", toml)
+        z.writestr("scenario-pkg/p.py", program)
+    return buf.getvalue()
+
+
+def stage_plugin_file(data):
+    boundary = "scenarioplugin"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"p.tulpa\"\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(BACKEND + "/api/plugins/external/stage/upload", data=body, method="POST",
+                                 headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "multipart/form-data; boundary=" + boundary})
+    return json.load(urllib.request.urlopen(req, timeout=30))
+
+
+def install_staged(staged):
+    status, task = api("/api/plugins/external/install", {"id": staged["id"]})
+    eq(status, 202, "the install starts")
+    wait_for(lambda: ok("/api/plugins/external/tasks?id=" + staged["id"])["state"] != "running", limit=60, what="the install to end")
+    return ok("/api/plugins/external/tasks?id=" + staged["id"])
+
+
+@scenario
+def a_plugin_is_installed_from_a_file_updated_and_uninstalled_without_restarting_the_backend():
+    """The owner uploads a plugin file, looks at what is in it, installs it, switches it on, and the model uses its tool; a higher
+    version replaces it with its settings and switch kept, and uninstalling removes it and its tool. The backend is not restarted."""
+    hello_plugin()
+    settings()
+    key = {"plugin_name": "scenario", "plugin_subname": "pkg"}
+    if any(p["name"] == "scenario" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+
+    staged = stage_plugin_file(plugin_file("0.1.0", "first"))
+    eq((staged["name"], staged["action"], staged["problems"]), ("scenario", "install", []), "staged as a new plugin, with nothing against it")
+    has(staged["plugin_toml"], 'kind = "source"', "the owner can read the manifest")
+    eq([f["path"] for f in staged["files"]], ["p.py", "plugin.toml"], "and the file list")
+    eq([p for p in ok("/api/plugins") if p["plugin_name"] == "scenario"], [], "nothing is installed until the owner says so")
+    task = install_staged(staged)
+    eq((task["state"], task["error"]), ("done", None), "installed")
+    row = [p for p in ok("/api/plugins/external") if p["name"] == "scenario"][0]
+    eq((row["version"], row["source_type"], row["state"]), ("0.1.0", "file", "ok"), "recorded as installed from a file")
+    eq(api("/api/plugins/enable", {**key, "enabled": True})[0], 204, "switch on")
+
+    chat = new_chat("installed-plugin")
+    script({"tool_calls": [{"name": "scenario_pkg.say", "arguments": {}}]}, {"text": "ok"})
+    turn(chat, "say it")
+    has(str(tool_results(chat)[0]["content"]), "first", "the installed plugin's tool works")
+
+    newer = stage_plugin_file(plugin_file("0.2.0", "second"))
+    eq((newer["action"], newer["installed_version"]), ("update", "0.1.0"), "a higher version is an update")
+    same = stage_plugin_file(plugin_file("0.1.0", "again"))
+    assert same["problems"], "the same version is refused"
+    eq(api("/api/plugins/external/install", {"id": same["id"]})[0], 400, "and cannot be installed")
+    eq(api("/api/plugins/external/stage/discard", {"id": same["id"]})[0], 204, "it can be thrown away")
+    eq((install_staged(newer)["state"]), "done", "updated")
+    eq([p["enabled"] for p in ok("/api/plugins") if p["plugin_name"] == "scenario"], [True], "still switched on")
+    chat = new_chat("updated-plugin")
+    script({"tool_calls": [{"name": "scenario_pkg.say", "arguments": {}}]}, {"text": "ok"})
+    turn(chat, "say it")
+    has(str(tool_results(chat)[0]["content"]), "second", "the new version answers")
+
+    eq(api("/api/plugins/external/uninstall", {**key, "remove_data": True})[0], 204, "uninstalled")
+    eq([p for p in ok("/api/plugins/external") if p["name"] == "scenario"], [], "it is gone from the list")
+    chat = new_chat("uninstalled-plugin")
+    script({"tool_calls": [{"name": "scenario_pkg.say", "arguments": {}}]}, {"text": "ok"})
+    turn(chat, "say it")
+    has(str(tool_results(chat)[0]["content"]), "no tool named", "and its tool is gone")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0
