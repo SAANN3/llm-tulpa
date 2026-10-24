@@ -8,7 +8,7 @@ To the rest of the backend an external plugin is a plugin like any other: it is 
 
 Each plugin lives in its own folder, `<external_plugins_dir>/<name>/<subname>/` (`external_plugins_dir` in the backend's `settings.json`, default `~/.llm-tulpa/external-plugins`). The folder holds a `plugin.toml` and whatever the plugin runs from. What a plugin stores for itself goes in its data folder, `<plugins_dir>/<name>/<subname>`, which is the same folder a built-in plugin gets; the backend does not create it.
 
-`name` and `subname` are lowercase letters, digits and underscores (the same rule the plugin's database tables follow). A plugin whose `(name, subname)` is already taken by a built-in plugin or by another folder is refused.
+`name` and `subname` are lowercase letters, digits and underscores (the same rule the plugin's database tables follow); `external` is not available as a `name`, since `/api/plugins/external/...` is the backend's own. A plugin whose `(name, subname)` is already taken by a built-in plugin or by another folder is refused.
 
 ### `plugin.toml`
 
@@ -54,7 +54,7 @@ migrations = "migrations"       # optional: the folder of .sql files, this is th
 
 `run`, `check` and `build` are command lines, split into words the way a shell would split them (spaces, single and double quotes) but **without a shell**: nothing in them is expanded or piped. `{plugin_dir}` (the plugin's folder) and `{data_dir}` (its data folder) are replaced in each word after splitting, so a folder with a space in its name stays one word. Commands run with the plugin's folder as the working directory, and a program written as a relative path with a slash (`.venv/bin/python`) is looked for in that folder.
 
-The folder must be named `<name>/<subname>` exactly as the manifest says. A plugin whose `check` fails, whose manifest is invalid, or that cannot be started is left out when the backend starts, with the reason in the backend's log; the rest start regardless.
+The folder must be named `<name>/<subname>` exactly as the manifest says. A plugin whose `check` fails, whose manifest is invalid, or that cannot be started is left out when the backend starts, with the reason in the backend's log and in `GET /api/plugins/external` (see "Plugins while the backend runs"); the rest start regardless. `check` runs again when the owner switches the plugin on, and the plugin stays off with its output as the reason when it fails.
 
 The manifest is the only place a plugin's name, subname and version are stated; the program never repeats them and `hello` does not carry them. The same holds for what is static about the plugin: its summary, help text, settings and tab are read from the manifest, so the backend can show them before the program has run. `default_enabled` is refused together with `[[settings]]`: a plugin that needs settings has nothing to run with until they are filled in.
 
@@ -75,6 +75,26 @@ JSON-RPC 2.0, one JSON object per line, UTF-8, over the child's stdin (backend t
 2. The plugin sends the request `hello` with `{protocol, sdk}`. The backend answers `{protocol, tulpa_version, data_dir, plugin_dir}`. If `hello` does not arrive within 5 s, or names a protocol the backend does not speak, the backend kills the process and records why.
 3. The backend calls `configure` with the settings (when the owner has saved them, or `{}` for a plugin without any), then `tools`, then `enable` if the plugin is switched on. A change of the settings runs `disable` (if it was on), `configure`, `tools` and `enable` again; the process is not restarted. Switching the plugin off runs `disable`, and on runs `enable`.
 4. The plugin runs until the backend ends it: `shutdown` is a request the plugin answers (with `null`) before exiting, and the backend then closes stdin and kills the process if it is still there after 5 s. The backend does this when it stops.
+
+## Crashes and restarts
+
+The backend watches the plugin's process. When it ends without having been asked to (it crashed, or was killed), a new one is started after a pause: 1 s after the first crash, 5 s after the second, 30 s after the third and later ones. The new process goes through the opening again (`hello`), then gets `configure` with the settings the old one had and `enable` if the plugin was switched on, so it is where the old one was. Meanwhile the plugin's tools stay registered, and a call to them fails at once with a message saying the plugin is being restarted.
+
+A plugin that fails to answer three calls in a row is taken to be stuck and is restarted the same way. A plugin that crashes five times within ten minutes is given up on: it is switched off (as if the owner had done it), and `GET /api/plugins/external` shows it as `failing` with the last crash. Switching it on again starts a fresh process.
+
+The last 200 lines the plugin wrote to stderr or sent with `log` are kept across restarts, with a marker line where a new process begins.
+
+## Plugins while the backend runs
+
+All owner-only, under `/api/plugins/external`:
+
+| Request | What it does |
+|---|---|
+| `GET /api/plugins/external` | every external plugin the backend has seen: `state` (`ok`, `unavailable`, `failing`, `unloaded`), `last_error`, version, where it came from, and, for one that has a process, `process` with its state (`running`, `restarting`, `failed`), pid, number of restarts and the end of its log |
+| `POST /api/plugins/external/load` `{plugin_name, plugin_subname}` | loads the plugin in `<external_plugins_dir>/<name>/<subname>` as if it had been there at start-up: check, process, migrations, registration. A plugin that cannot start answers 400 with the reason and is recorded as `unavailable`. |
+| `POST /api/plugins/external/unload` `{plugin_name, plugin_subname}` | switches the plugin off if it is on, takes it out of the registry and ends its process. Its files, settings, tables and data folder stay. |
+
+A plugin whose folder is gone from the plugins folder is shown as `unavailable` at the next start. Switching a plugin on or off is the same call as for any plugin (`POST /api/plugins/enable`).
 
 ## Backend to plugin
 
