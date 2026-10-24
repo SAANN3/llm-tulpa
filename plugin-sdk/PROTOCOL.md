@@ -46,6 +46,10 @@ required    = true
 [tab]
 id    = "hello"                 # /settings/hello: lowercase letters, digits and hyphens, not one of the Settings page's own
 title = "Hello"
+
+# optional: the plugin keeps data in the database (see "Database" below)
+[database]
+migrations = "migrations"       # optional: the folder of .sql files, this is the default
 ```
 
 `run`, `check` and `build` are command lines, split into words the way a shell would split them (spaces, single and double quotes) but **without a shell**: nothing in them is expanded or piped. `{plugin_dir}` (the plugin's folder) and `{data_dir}` (its data folder) are replaced in each word after splitting, so a folder with a space in its name stays one word. Commands run with the plugin's folder as the working directory, and a program written as a relative path with a slash (`.venv/bin/python`) is looked for in that folder.
@@ -116,6 +120,10 @@ Every call has a time limit, and a call that is not answered within it fails wit
     {"name": "name", "type": "string", "description": "Who to greet", "required": false}
   ],
   "confirm": false,
+  "access": [
+    {"bucket": "write", "folder": "{data_dir}/{user_id}"},
+    {"bucket": "read", "path_arg": "path"}
+  ],
   "timeout_s": 30
 }
 ```
@@ -123,6 +131,7 @@ Every call has a time limit, and a call that is not answered within it fails wit
 - `name` is `domain.action` in lowercase letters, digits and underscores. A name another plugin or a built-in tool already uses stops the plugin from being switched on.
 - `type` is `string`, `number`, `integer`, `boolean`, `array` or `object`. An `array` also names its element type in `items`.
 - `confirm`: when true, the user is asked before the tool first runs in a chat, and their approval holds for that chat. Default false.
+- `access`: the folders the tool reads, writes or deletes in. Each entry is asked about the way the backend's own file tools ask about a folder, and the three `bucket`s (`read`, `write`, `delete`) are the same approvals those tools use, so a folder the user has already approved for one is approved for the others. The entries are asked one at a time, in the order listed, and the call runs once all are approved (or when the user has auto-confirm on). An entry names either a `folder` (`{data_dir}` is the plugin's data folder and `{user_id}` the user whose chat the call is in, so a plugin that keeps a folder per user asks about that user's) or a `path_arg`, the name of a string argument that holds the path the call works on: for a file the folder it is in is asked about, for a folder that folder. This is the user's say over the model, not a limit on the plugin: the plugin is trusted and can touch any file itself.
 - `timeout_s` is optional.
 
 The list must have no repeated name, a description on every tool, and every argument named once.
@@ -156,6 +165,25 @@ Everything that is empty may be left out. A button with `"upload": true` opens a
 |---|---|---|
 | `hello` | see above | host info |
 | `log` | `{level, message}` with level `error`, `warn`, `info` or `debug` | `null` |
+| `db.query` | `{sql, params?}` | a list of rows, each an object keyed by column name |
+| `db.execute` | `{sql, params?}` | the number of rows changed |
+| `db.batch` | `{statements: [{sql, params?}, ...]}` | a list with the number of rows each statement changed |
+
+## Database
+
+A plugin whose manifest has `[database]` gets a schema and a role of its own, both named `plugin_<name>_<subname>`. The role cannot log in and owns the schema; the only thing it may do with the core tables is reference the user ids, so `user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE` works and a user's rows go when the user does. Creating the role needs a database user with `CREATEROLE` (or a superuser, which the bundled setup has); without it the plugin is left out at start-up, with the reason in the log. The name must fit in 63 bytes.
+
+**Migrations** are the `.sql` files of the migrations folder, applied in the order of their names (`0001_items.sql`, `0002_flag.sql`), one step each, before the plugin starts. Each step runs as the plugin's role with its schema first on the search path, so `CREATE TABLE items (...)` is the plugin's own `items`. The backend counts the steps a database has applied and runs only the ones after them, so a step that has been released is never edited: a change is a new file. A step only adds: `CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE`, `INSERT` and `UPDATE`, no drops or deletes, and no quoted names. A step that fails is rolled back and the plugin is left out.
+
+**Queries** go through the backend: `db.query`, `db.execute` and `db.batch` run on the backend's connection pool inside a transaction that has switched to the plugin's role and its search path, so a plain table name is the plugin's own and a core table is refused for want of a privilege (`permission denied for table users`). They are available from `configure` on.
+
+- `sql` is one statement; `$1`, `$2`... stand for the `params`. A statement that returns rows (a `SELECT`, or `INSERT`/`UPDATE`/`DELETE` with `RETURNING`) goes to `db.query`; anything else to `db.execute`. `db.batch` runs several in one transaction, all or none.
+- A param goes to Postgres as the type its JSON form has: text, `bigint`, `double precision`, `boolean`, or `jsonb` for an array or object. A column of another type needs a cast in the SQL (`$1::timestamptz`, `$1::uuid`), and so does a `null`, which arrives as text. An integer beyond `bigint` is refused.
+- A row's columns come back in their JSON form: numbers, text, booleans, `null`, a timestamp as an ISO 8601 string, `jsonb` as itself.
+- A statement is cancelled after 25 s, a result of more than 8 MiB is refused (add a `LIMIT`), and a batch takes at most 1000 statements.
+- A failed statement answers with an error whose message is Postgres's, ending in its SQLSTATE: `duplicate key value violates unique constraint "items_user_id_name_key" (SQLSTATE 23505)`.
+
+The role is a guard against mistakes, not against a plugin that means harm. The plugin is a program the owner installed and trusts: it runs as the owner, can read the backend's settings file, and could leave its role with a statement of its own. What the role does is keep a plugin's mistake (a query that reaches for the wrong table) from touching the core data, and keep its tables in one place that can be removed.
 
 ## Errors
 

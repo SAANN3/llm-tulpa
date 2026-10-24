@@ -1,0 +1,22 @@
+name     = "example"
+subname  = "skills"
+version  = "0.1.0"
+protocol = 1
+summary  = "Folders of instructions the model reads when a task matches, one set per user (an example port of the built-in skills plugin)"
+help_message = "A skill is a folder with a SKILL.md that says what it is for and how to do it, plus any files it refers to. The model sees each skill's name and description in its instructions and reads the whole skill when a task matches. Nothing to set up: this is the built-in skills plugin written as an external one, with its own tools (example_skills.*), its own tab and its own database tables, so both can be on side by side."
+# Nothing to fill in, so it can come up switched on
+default_enabled = true
+sdk      = "rust"
+kind     = "source"
+
+build = "cargo build --release"
+run   = "{plugin_dir}/target/release/tulpa-example-skills"
+
+check = "cargo --version"
+
+# Skills are kept in a table of the plugin's own schema (migrations/) and their files in its data folder
+[database]
+
+[tab]
+id    = "example-skills"
+title = "Skills (example)"

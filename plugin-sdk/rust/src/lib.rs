@@ -33,7 +33,7 @@ mod tab;
 pub use async_trait::async_trait;
 pub use serde_json::{Value, json};
 pub use http::{HttpRequest, HttpResponse};
-pub use spec::{Param, ParamType, ToolSpec};
+pub use spec::{Bucket, Param, ParamType, ToolSpec};
 pub use tab::{Block, Row, Section, Tab};
 
 use std::fmt;
@@ -87,6 +87,12 @@ impl Failure {
 impl From<String> for Failure {
     fn from(message: String) -> Self {
         Self { kind: FailureKind::Internal, message }
+    }
+}
+
+impl From<Error> for Failure {
+    fn from(e: Error) -> Self {
+        e.0.into()
     }
 }
 
@@ -221,6 +227,31 @@ impl Host {
     pub async fn log(&self, level: Level, message: &str) {
         // A log line that cannot be delivered is not worth failing the tool call for
         let _ = self.conn.call("log", json!({"level": level.word(), "message": message})).await;
+    }
+
+    /// Runs a statement that returns rows (a SELECT, or an INSERT/UPDATE/DELETE with RETURNING) in the plugin's database and
+    /// gives them as a list of objects keyed by column name. `params` fill `$1`, `$2`... : each goes to Postgres as text,
+    /// bigint, double precision, boolean, or jsonb for an array or object, so a column of another type needs a cast in the
+    /// SQL (`$1::timestamptz`), and so does a `null`. Needs `[database]` in the manifest. The error carries Postgres's
+    /// message and SQLSTATE.
+    pub async fn db_query(&self, sql: &str, params: &[Value]) -> Result<Vec<Value>, Error> {
+        match self.conn.call("db.query", json!({"sql": sql, "params": params})).await? {
+            Value::Array(rows) => Ok(rows),
+            other => Err(Error(format!("db.query answered {other}, not a list of rows"))),
+        }
+    }
+
+    /// Runs a statement and gives the number of rows it changed
+    pub async fn db_execute(&self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+        let done = self.conn.call("db.execute", json!({"sql": sql, "params": params})).await?;
+        done.as_u64().ok_or_else(|| Error(format!("db.execute answered {done}, not a count")))
+    }
+
+    /// Runs the statements in one transaction, all or none, and gives how many rows each changed
+    pub async fn db_batch(&self, statements: &[(&str, Vec<Value>)]) -> Result<Vec<u64>, Error> {
+        let statements: Vec<Value> = statements.iter().map(|(sql, params)| json!({"sql": sql, "params": params})).collect();
+        let done = self.conn.call("db.batch", json!({"statements": statements})).await?;
+        serde_json::from_value(done).map_err(|e| Error(format!("db.batch answered something unusable: {e}")))
     }
 
     /// The folder that is the plugin's own for files; the backend does not create it

@@ -1,0 +1,13 @@
+[package]
+name = "tulpa-example-skills"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# From a checkout of llm-tulpa this is the SDK next to the examples; a plugin of your own points at wherever the SDK is.
+tulpa-plugin = { path = "../../rust" }
+tokio = { version = "1.53.1", features = ["fs", "sync", "rt"] }
+rand = "0.8"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[workspace]
