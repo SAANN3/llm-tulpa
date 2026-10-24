@@ -1,6 +1,6 @@
 # External plugin protocol, version 1
 
-An external plugin is a separate program that llm-tulpa's backend starts and talks to. This file is the contract between the two; the SDKs (`rust/`) are conveniences over it, so a plugin in any language can follow it directly.
+An external plugin is a separate program that llm-tulpa's backend starts and talks to. This file is the contract between the two; the SDKs (`rust/`, `python/`) are conveniences over it, so a plugin in any language can follow it directly.
 
 To the rest of the backend an external plugin is a plugin like any other: it is listed on the Plugins page, switched on and off by the owner, its tools are called by the model through the normal permission system, and its prompt and settings behave as a built-in plugin's. Only the owner installs plugins, and an installed plugin runs with the owner's full trust: there is no sandbox, and the process inherits the backend's environment.
 

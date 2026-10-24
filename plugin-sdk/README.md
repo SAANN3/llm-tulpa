@@ -6,8 +6,10 @@ Plugins that run as separate programs next to the backend, written against the c
 plugin-sdk/
   PROTOCOL.md          the contract
   rust/                crate `tulpa-plugin`: the contract behind a trait
+  python/              package `tulpa_plugin`: the same in Python 3.10+, standard library only
   examples/
     hello-world-rust/  a manifest, a setting, a tool, a tab, a prompt section and a route
+    hello-world-python/ the same in Python, with no build step
     skills/            the built-in skills plugin as an external one: database, uploads, folder approvals
 ```
 
@@ -29,6 +31,10 @@ The examples' `Cargo.toml` points at the SDK next to it (`path = "../../rust"`);
 ## Sharing a plugin
 
 A plugin is shared as a `.tulpa` file (a zip of its folder, `plugin.toml` at the top, without `target/` or other build output) or as a git repository. The owner installs either through the backend (`POST /api/plugins/external/stage/upload` or `.../stage/git`, look at what is in it, then `POST /api/plugins/external/install`; see "Installing a plugin" in [`PROTOCOL.md`](./PROTOCOL.md)), and `GET /api/plugins/external/export` makes the file from an installed plugin. A plugin that is built on install has to find its SDK from inside its own folder: the examples point at the SDK next to them (`path = "../../rust"`), which only works in a checkout, so a plugin you share carries the SDK in a folder of its own or depends on it by a git address.
+
+## Writing a plugin in Python
+
+A plugin is a class and a `run` call, with no build and no dependencies: see [`python/README.md`](./python/README.md) and `examples/hello-world-python/main.py`. The example is installed like the Rust one: copy it to `~/.llm-tulpa/external-plugins/example/hello_python` and run `python3 python/vendor.py ~/.llm-tulpa/external-plugins/example/hello_python`, since the copy is no longer next to the SDK. A plugin you share carries the SDK the same way.
 
 ## Writing a plugin in Rust
 

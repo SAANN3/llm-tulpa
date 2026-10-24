@@ -1626,6 +1626,63 @@ def a_plugin_is_installed_from_a_file_updated_and_uninstalled_without_restarting
     has(str(tool_results(chat)[0]["content"]), "no tool named", "and its tool is gone")
 
 
+def python_example_file():
+    """The hello-world-python example as a `.tulpa` file, packed the way an author would: the SDK copied next to `main.py` with
+    `vendor.py`, since a plugin runs where the SDK is not."""
+    import io, pathlib, shutil, subprocess, tempfile, zipfile
+    sdk = pathlib.Path(__file__).resolve().parents[2] / "plugin-sdk"
+    if not (sdk / "examples" / "hello-world-python").is_dir():
+        raise Skip("plugin-sdk/examples/hello-world-python is not in this checkout")
+    work = pathlib.Path(tempfile.mkdtemp(prefix="scenario-pyplugin-"))
+    try:
+        shutil.copytree(sdk / "examples" / "hello-world-python", work / "plugin", ignore=shutil.ignore_patterns("__pycache__"))
+        subprocess.run([sys.executable, str(sdk / "python" / "vendor.py"), str(work / "plugin")], check=True, capture_output=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for path in sorted((work / "plugin").rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts:
+                    z.write(path, "hello-world-python/" + str(path.relative_to(work / "plugin")))
+        return buf.getvalue()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+@scenario
+def the_python_example_installs_from_a_file_without_a_build_and_works_like_a_built_in():
+    """The Python hello plugin is packed with its SDK, staged, installed (there is nothing to build), given its settings and
+    switched on: the model calls its tool, its tab and route answer, and a switch in the tab changes the tool's answer."""
+    hello_plugin()
+    key = {"plugin_name": "example", "plugin_subname": "hello_python"}
+    if any(p["name"] == "example" and p["subname"] == "hello_python" for p in ok("/api/plugins/external")):
+        api("/api/plugins/external/uninstall", {**key, "remove_data": True})
+    settings()
+    staged = stage_plugin_file(python_example_file())
+    eq((staged["name"], staged["subname"], staged["action"], staged["problems"]), ("example", "hello_python", "install", []), "staged as new")
+    assert any(f["path"] == "tulpa_plugin/__init__.py" for f in staged["files"]), "it carries its SDK"
+    eq(staged["build"], None, "nothing to build")
+    task = install_staged(staged)
+    eq((task["state"], task["error"]), ("done", None), "installed")
+    eq(api("/api/plugins/settings", {**key, "settings": {"greeting": "Moi"}})[0], 204, "settings")
+    eq(api("/api/plugins/enable", {**key, "enabled": True})[0], 204, "switch on")
+
+    chat = new_chat("python-plugin")
+    script({"tool_calls": [{"name": "hello_python.greet", "arguments": {"name": "Ada"}}]}, {"text": "Greeted."})
+    turn(chat, "Greet Ada with the python plugin")
+    has(str(tool_results(chat)[0]["content"]), "Moi, Ada!", "the tool answers with the greeting from the settings")
+    has(system_of_last_main_call(), "hello_python plugin is on", "the plugin's prompt section is in the prompt")
+    tab = ok("/api/plugins/tab?plugin_name=example&plugin_subname=hello_python")
+    has(tab["sections"][0]["blocks"][0]["text"], "Moi", "the tab shows the greeting")
+    eq(ok("/api/plugins/example/hello_python/greeting"), {"greeting": "Moi", "asked_by": 1}, "its route")
+    tab = ok("/api/plugins/tab/action", {**key, "action": "loud", "args": {"on": True}})
+    has(tab["message"], "capitals", "a tab action")
+    chat = new_chat("python-plugin-loud")
+    script({"tool_calls": [{"name": "hello_python.greet", "arguments": {"name": "Ada"}}]}, {"text": "ok"})
+    turn(chat, "Greet Ada again")
+    has(str(tool_results(chat)[0]["content"]), "MOI, ADA!", "the switch changed the answer")
+    status = api("/api/plugins/external/uninstall", {**key, "remove_data": True})[0]
+    eq(status, 204, "uninstalled")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0
