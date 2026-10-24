@@ -68,10 +68,25 @@ pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnectio
         None => None,
     };
 
-    // Its tools are asked for when it is configured (they may depend on the settings), not here
-    let supervisor = Supervisor::start(manifest.clone(), dir.to_path_buf(), data_dir.clone(), plugin_db, events).await.map_err(|why| failed(&manifest, why))?;
-    tracing::info!("external plugin {}/{} {} started (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
+    // A plugin that is off has no process, so a program that was never built would only show when it is switched on. The
+    // program is looked for here instead, when the command names a file.
+    program_exists(&manifest, dir, &data_dir).map_err(|why| failed(&manifest, why))?;
+
+    let supervisor = Supervisor::new(manifest.clone(), dir.to_path_buf(), data_dir.clone(), plugin_db, events);
+    tracing::info!("external plugin {}/{} {} loaded (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
     Ok(ExternalPluginBuilder::new(manifest, migrations, supervisor, dir.to_path_buf(), data_dir))
+}
+
+/// Whether the program the plugin's `run` command names is there, when it is a path (`{plugin_dir}/target/release/x`); a bare
+/// name such as `python3` is looked up on the `PATH` when it is started, so it is not judged here.
+fn program_exists(manifest: &Manifest, plugin_dir: &Path, data_dir: &Path) -> Result<(), String> {
+    let words = expand_command(&manifest.run_command(), plugin_dir, data_dir).map_err(|e| e.to_string())?;
+    let program = words.first().ok_or("the run command is empty")?;
+    if !program.contains('/') {
+        return Ok(());
+    }
+    let path = if Path::new(program).is_relative() { plugin_dir.join(program) } else { PathBuf::from(program) };
+    if path.is_file() { Ok(()) } else { Err(format!("its program {} does not exist; a plugin of kind source has to be built first", path.display())) }
 }
 
 /// The `.sql` files of a plugin's migrations folder in the order of their names, one step each. A plugin with no such folder

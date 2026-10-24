@@ -1,7 +1,9 @@
-//! Keeps one external plugin's process running. Every call to the plugin goes through here, so the rest of the backend holds a
-//! `Supervisor` and never a process: when the process ends without having been asked to, a new one is started (after a
-//! growing pause), told the settings and whether the plugin is switched on, and the calls that were refused meanwhile work
-//! again. A plugin that keeps crashing is given up on and an event says so, so the registry can switch it off.
+//! Keeps one external plugin's process running while the plugin is switched on. A plugin that is off has no process: `run`
+//! starts one when the plugin is switched on, `stop` ends it when it is switched off. In between, every call to the plugin goes
+//! through here, so the rest of the backend holds a `Supervisor` and never a process: when the process ends without having been
+//! asked to, a new one is started (after a growing pause), told the settings and that the plugin is on, and the calls that were
+//! refused meanwhile work again. A plugin that keeps crashing is given up on and an event says so, so the registry can switch
+//! it off.
 //!
 //! The tools of a plugin that is being restarted stay registered. Taking them out and putting them back would change the
 //! tool list the model is sent, for a pause of a second or so, and a call in that time fails with a message that says the
@@ -9,13 +11,13 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{MutexGuard, mpsc};
 use utoipa::ToSchema;
 
 use super::db::PluginDb;
@@ -36,6 +38,8 @@ const REPLAY_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
+    /// No process: the plugin is switched off, or was never switched on since the backend started
+    Stopped,
     Running,
     /// The process ended; a new one is on its way
     Restarting,
@@ -84,14 +88,16 @@ pub struct Supervisor {
     data_dir: PathBuf,
     db: Option<Arc<PluginDb>>,
     logs: Arc<LogRing>,
-    current: RwLock<Arc<PluginProcess>>,
+    current: RwLock<Option<Arc<PluginProcess>>>,
     replay: Mutex<Replay>,
     health: Mutex<Health>,
     timeouts_in_a_row: AtomicU32,
-    /// Set when the backend (or the owner) ends the plugin: its process going away is then no crash
-    closing: AtomicBool,
-    /// One start at a time: the monitor after a crash and `revive` must not both start one
-    starting: tokio::sync::Mutex<()>,
+    /// Bumped by `run` and `stop`. A monitor belongs to the run it was started for and ends when that is no longer the current one,
+    /// so a process that was stopped on purpose is never taken for a crash.
+    run_id: AtomicU64,
+    /// One start or stop at a time, and no restart in the middle of either: whoever starts or stops the plugin holds this across
+    /// the whole sequence (`lifecycle`)
+    lifecycle: tokio::sync::Mutex<()>,
     events: mpsc::UnboundedSender<Event>,
 }
 
@@ -104,36 +110,37 @@ fn backoff(crashes: usize) -> Option<Duration> {
 }
 
 impl Supervisor {
-    /// Starts the plugin's process; it answers for the plugin from then on.
-    pub async fn start(
-        manifest: Manifest,
-        plugin_dir: PathBuf,
-        data_dir: PathBuf,
-        db: Option<Arc<PluginDb>>,
-        events: mpsc::UnboundedSender<Event>,
-    ) -> Result<Arc<Supervisor>, String> {
-        let logs = Arc::new(LogRing::default());
-        let process = PluginProcess::start(&manifest, &plugin_dir, &data_dir, db.clone(), logs.clone()).await?;
-        let supervisor = Arc::new(Supervisor {
+    /// A plugin with no process yet; `run` starts it.
+    pub fn new(manifest: Manifest, plugin_dir: PathBuf, data_dir: PathBuf, db: Option<Arc<PluginDb>>, events: mpsc::UnboundedSender<Event>) -> Arc<Supervisor> {
+        Arc::new(Supervisor {
             label: format!("{}/{}", manifest.name, manifest.subname),
             manifest,
             plugin_dir,
             data_dir,
             db,
-            logs,
-            current: RwLock::new(process),
+            logs: Arc::new(LogRing::default()),
+            current: RwLock::new(None),
             replay: Mutex::new(Replay::default()),
-            health: Mutex::new(Health { state: State::Running, restarts: 0, crashes: VecDeque::new(), last_error: None }),
+            health: Mutex::new(Health { state: State::Stopped, restarts: 0, crashes: VecDeque::new(), last_error: None }),
             timeouts_in_a_row: AtomicU32::new(0),
-            closing: AtomicBool::new(false),
-            starting: tokio::sync::Mutex::new(()),
+            run_id: AtomicU64::new(0),
+            lifecycle: tokio::sync::Mutex::new(()),
             events,
-        });
-        tokio::spawn(supervisor.clone().monitor());
-        Ok(supervisor)
+        })
     }
 
-    fn process(&self) -> Arc<PluginProcess> {
+    /// Taken by whoever starts or stops the plugin, and held until the sequence is done (start, configure, enable; or disable,
+    /// stop), so that two of them never overlap and a restart after a crash never lands in the middle.
+    pub async fn lifecycle(&self) -> MutexGuard<'_, ()> {
+        self.lifecycle.lock().await
+    }
+
+    /// Keeps why the plugin could not be switched on, for the Plugins page to show next to a plugin that is off
+    pub fn record_error(&self, why: &str) {
+        self.health.lock().unwrap().last_error = Some(why.to_string());
+    }
+
+    fn process(&self) -> Option<Arc<PluginProcess>> {
         self.current.read().unwrap().clone()
     }
 
@@ -145,20 +152,19 @@ impl Supervisor {
         let health = self.health.lock().unwrap();
         Status {
             state: health.state,
-            pid: self.process().pid().filter(|_| health.state == State::Running),
+            pid: self.process().and_then(|p| p.pid()).filter(|_| health.state == State::Running),
             restarts: health.restarts,
             last_error: health.last_error.clone(),
             logs: self.logs.tail(50),
         }
     }
 
-    /// A call to the plugin. It fails at once while the plugin is being restarted or given up on. What the call carries is
-    /// noted when it works (the settings, the switch), so a new process can be brought to the same place.
+    /// A call to the plugin. It fails at once while the plugin has no process: switched off, being restarted, or given up on. What
+    /// the call carries is noted when it works (the settings, the switch), so a new process can be brought to the same place.
     pub async fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, CallError> {
-        if self.state() != State::Running {
+        let Some(process) = self.process().filter(|_| self.state() == State::Running) else {
             return Err(CallError::Closed);
-        }
-        let process = self.process();
+        };
         let result = process.call(method, params.clone(), timeout).await;
         match &result {
             Err(CallError::Timeout) => {
@@ -189,45 +195,56 @@ impl Supervisor {
         }
     }
 
-    /// Ends the plugin for good (the backend is stopping, or the plugin is unloaded)
-    pub async fn shutdown(&self) {
-        self.closing.store(true, Ordering::Relaxed);
-        self.process().shutdown().await;
-    }
-
-    /// Starts a new process if the plugin has none that works: after the supervisor gave up on it, or when it was found dead
-    /// before the monitor noticed. Switching a failed plugin on again goes through here. A plugin being restarted already is
-    /// not started twice.
-    pub async fn revive(self: &Arc<Self>) -> Result<(), String> {
-        if self.closing.load(Ordering::Relaxed) {
-            return Err("the plugin was unloaded".to_string());
+    /// Starts the plugin's process if it has none that works (after it was switched off, or given up on) and watches it. The
+    /// caller then configures it and switches it on. Needs the `lifecycle` guard.
+    pub async fn run(self: &Arc<Self>, _held: &MutexGuard<'_, ()>) -> Result<(), String> {
+        if self.state() == State::Running && self.process().is_some_and(|p| p.is_alive()) {
+            return Ok(());
         }
-        let was = self.state();
-        match was {
-            State::Running if self.process().is_alive() => return Ok(()),
-            State::Restarting => return Err("it is being restarted after a crash; try again in a moment".to_string()),
-            _ => {}
-        }
-        self.start_process().await?;
-        {
+        *self.replay.lock().unwrap() = Replay::default();
+        let process = PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.db.clone(), self.logs.clone()).await?;
+        let id = self.run_id.fetch_add(1, Ordering::Relaxed) + 1;
+        *self.current.write().unwrap() = Some(process);
+        self.timeouts_in_a_row.store(0, Ordering::Relaxed);
+        let was_failing = {
             let mut health = self.health.lock().unwrap();
             health.state = State::Running;
             health.crashes.clear();
-            health.last_error = None;
-        }
-        // The monitor ended when it gave up; one that is still there is watching and moves on to the new process by itself
-        if was == State::Failed {
-            tokio::spawn(self.clone().monitor());
+            health.last_error.take().is_some()
+        };
+        if was_failing {
             let _ = self.events.send(Event::Revived { name: self.manifest.name.clone(), subname: self.manifest.subname.clone() });
         }
+        tokio::spawn(self.clone().monitor(id));
         Ok(())
     }
 
-    /// Starts a process, hands it the settings and the switch, and makes it the current one.
-    async fn start_process(&self) -> Result<(), String> {
-        let _only_one = self.starting.lock().await;
+    /// Ends the plugin's process: asked to stop, killed if it does not. Nothing happens if there is none. Needs the `lifecycle` guard.
+    pub async fn stop(&self, _held: &MutexGuard<'_, ()>) {
+        self.run_id.fetch_add(1, Ordering::Relaxed);
+        let process = self.current.write().unwrap().take();
+        {
+            let mut health = self.health.lock().unwrap();
+            health.state = State::Stopped;
+        }
+        *self.replay.lock().unwrap() = Replay::default();
+        if let Some(process) = process {
+            process.shutdown().await;
+        }
+    }
+
+    /// Starts a process again after a crash, hands it the settings and the switch, and makes it the current one. `None` when the
+    /// plugin was stopped or started by someone else in the meantime, and nothing is left running for it.
+    async fn start_again(&self, id: u64) -> Option<Result<(), String>> {
+        let _only_one = self.lifecycle.lock().await;
+        if self.run_id.load(Ordering::Relaxed) != id {
+            return None;
+        }
         self.logs.push("-- starting the plugin again --".to_string());
-        let process = PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.db.clone(), self.logs.clone()).await?;
+        let process = match PluginProcess::start(&self.manifest, &self.plugin_dir, &self.data_dir, self.db.clone(), self.logs.clone()).await {
+            Ok(process) => process,
+            Err(e) => return Some(Err(e)),
+        };
         let (settings, enabled) = {
             let replay = self.replay.lock().unwrap();
             (replay.settings.clone(), replay.enabled)
@@ -255,11 +272,11 @@ impl Supervisor {
         .await;
         if let Err(why) = handed {
             process.kill();
-            return Err(why);
+            return Some(Err(why));
         }
-        *self.current.write().unwrap() = process;
+        *self.current.write().unwrap() = Some(process);
         self.timeouts_in_a_row.store(0, Ordering::Relaxed);
-        Ok(())
+        Some(Ok(()))
     }
 
     fn note_crash(&self, why: &str) -> usize {
@@ -273,17 +290,14 @@ impl Supervisor {
         health.crashes.len()
     }
 
-    /// Waits for the current process to end; if nobody asked it to, restarts it until it stays up or the plugin is given up on.
-    async fn monitor(self: Arc<Self>) {
+    /// Waits for the process of run `id` to end; if nobody asked it to, starts it again until it stays up or the plugin is given
+    /// up on.
+    async fn monitor(self: Arc<Self>, id: u64) {
         loop {
-            let process = self.process();
+            let Some(process) = self.process() else { return };
             let how = process.wait_exit().await;
-            if self.closing.load(Ordering::Relaxed) {
+            if self.run_id.load(Ordering::Relaxed) != id {
                 return;
-            }
-            // `revive` may have put a new process in place of the one this was waiting for
-            if !Arc::ptr_eq(&process, &self.process()) {
-                continue;
             }
             let tail = self.logs.tail(5).join(" | ");
             let mut why = format!("the process ended ({how})");
@@ -305,18 +319,17 @@ impl Supervisor {
                     return;
                 };
                 tokio::time::sleep(pause).await;
-                if self.closing.load(Ordering::Relaxed) {
-                    return;
-                }
-                match self.start_process().await {
-                    Ok(()) => {
+                match self.start_again(id).await {
+                    // Stopped, or started by someone else, while this waited
+                    None => return,
+                    Some(Ok(())) => {
                         let mut health = self.health.lock().unwrap();
                         health.state = State::Running;
                         health.restarts += 1;
                         tracing::info!("plugin {}: running again", self.label);
                         break;
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         tracing::warn!("plugin {}: could not be started again: {e}", self.label);
                         crashes = self.note_crash(&e);
                     }

@@ -188,11 +188,22 @@ impl PluginRegistry {
             },
             None => (None, None),
         };
-        let enabled = enabled && !restore_failed;
+        let mut enabled = enabled && !restore_failed;
+        // A plugin that was on and cannot be switched on again (an external one whose program is gone, say) must not stop the
+        // backend from starting: it is left off, and what is stored for it is left as it was so that the next start tries again
+        let mut left_off = false;
 
         if enabled {
             if let Some(plugin) = &plugin {
-                plugin.on_enabled().await?;
+                if let Err(e) = plugin.on_enabled().await {
+                    tracing::error!("plugin {plugin_name}/{plugin_subname} could not be switched on again: {e}; leaving it off");
+                    enabled = false;
+                    left_off = true;
+                }
+            }
+        }
+        if enabled {
+            if let Some(plugin) = &plugin {
                 // Register this plugin's tools in the shared ToolService.
                 // If there's a collision (another plugin or built-in already owns that name),
                 // undo on_enabled and leave this plugin disabled rather than crashing.
@@ -214,7 +225,7 @@ impl PluginRegistry {
 
         // Only persisted when there's actually something to persist — a plugin
         // registered with no settings at all (from either source) has nothing to write.
-        if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
+        if let Some(settings) = initial_settings.filter(|_| !restore_failed && !left_off) {
             match self.store.set(&plugin_name, &plugin_subname, settings, enabled).await {
                 // First run: the owner account doesn't exist until the setup wizard's last step, and
                 // a settings-less plugin registers before it. Nothing is lost — enabling or

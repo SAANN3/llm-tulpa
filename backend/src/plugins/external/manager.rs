@@ -187,7 +187,6 @@ impl ExternalPlugins {
             // A tool name that is taken leaves the plugin registered but off; it is taken out again so that it can be loaded
             // anew (the process is ended by the registry, or here when it never got that far)
             let _ = self.registry.unregister(name, subname).await;
-            supervisor.shutdown().await;
             let why = e.to_string();
             self.note(name, subname, Some(&version), Some(kind), PluginState::Unavailable, Some(&why)).await;
             return Err(ManagerError::Refused(why));

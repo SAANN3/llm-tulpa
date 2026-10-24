@@ -1,10 +1,11 @@
 //! The registry's view of an external plugin. `ExternalPluginBuilder` answers the static questions (summary, settings, tab)
-//! from the plugin's manifest and lives as long as the process; `ExternalPlugin` is one configured instance, whose hooks are
-//! calls to the process, and hands the registry proxy tools whose calls go there too.
+//! from the plugin's manifest and lives as long as the backend; `ExternalPlugin` is one configured instance, whose hooks are
+//! calls to the process, and hands the registry proxy tools whose calls go there too. The process runs only while the plugin is
+//! switched on: `on_enabled` starts it and `on_disabled` ends it.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -35,7 +36,7 @@ const USER_DELETED_TIMEOUT: Duration = Duration::from_secs(10);
 /// Where uploaded files wait for the plugin to take them, inside its data folder
 const STAGING_DIR: &str = ".staging";
 
-/// Lives as long as the backend, like every builder; it owns the process, so a settings rebuild does not restart it.
+/// Lives as long as the backend, like every builder; it owns the plugin's supervisor, which a settings rebuild keeps.
 pub struct ExternalPluginBuilder {
     manifest: Arc<Manifest>,
     /// The plugin's database steps, read from its migrations folder when it was loaded
@@ -94,30 +95,26 @@ impl PluginBuilder for ExternalPluginBuilder {
     }
 
     async fn shutdown(&self) {
-        self.supervisor.shutdown().await;
+        let held = self.supervisor.lifecycle().await;
+        self.supervisor.stop(&held).await;
     }
 
     /// What the plugin needs is checked again when the owner switches it on (it may have been there at start-up and gone
-    /// since), and a plugin the supervisor gave up on is started afresh, which is how the owner retries it.
+    /// since).
     async fn before_enable(&self) -> Result<(), PluginError> {
         if let Some(check) = &self.manifest.check {
             run_check(check, &self.plugin_dir, &self.data_dir).await.map_err(PluginError::InvalidState)?;
         }
-        self.supervisor.revive().await.map_err(|why| PluginError::FailedUnknown(format!("the plugin {}/{} cannot be started: {why}", self.manifest.name, self.manifest.subname)))
+        Ok(())
     }
 
-    /// Settings that do not fit the manifest never reach the plugin. The plugin then gets them in `configure`, where it can
-    /// refuse them for a reason only it knows (a token the service rejects), and lists its tools, which may depend on them.
+    /// Settings that do not fit the manifest never reach the plugin. The plugin gets the rest in `configure` when it is
+    /// switched on, where it can refuse them for a reason only it knows (a token the service rejects). Nothing is started
+    /// here: a plugin that is off has no process.
     async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         check_settings(&self.manifest.settings, &settings).map_err(PluginError::InvalidState)?;
         let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), supervisor: self.supervisor.clone() };
-        link.call_optional("configure", json!({"settings": settings}), CONFIGURE_TIMEOUT).await?;
-        let tools = match link.call_optional("tools", json!({}), DEFAULT_CALL_TIMEOUT).await? {
-            Some(listed) => serde_json::from_value::<Vec<ToolSpec>>(listed).map_err(|e| PluginError::FailedUnknown(format!("the plugin {} sent a tool list that is unusable: {e}", link.label)))?,
-            None => vec![],
-        };
-        check_tools(&tools).map_err(|why| PluginError::FailedUnknown(format!("the plugin {}: {why}", link.label)))?;
-        Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: Arc::new(tools), data_dir: env.data_dir.clone() }))
+        Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: RwLock::new(Arc::new(vec![])), data_dir: env.data_dir.clone() }))
     }
 }
 
@@ -163,8 +160,27 @@ pub struct ExternalPlugin {
     manifest: Arc<Manifest>,
     link: Link,
     settings: Value,
-    tools: Arc<Vec<ToolSpec>>,
+    /// What the plugin listed when it was last switched on. They may depend on the settings, so they are asked for after
+    /// `configure`; the registry reads them once the plugin is on, and again to take them out when it goes off, so they stay
+    /// after it.
+    tools: RwLock<Arc<Vec<ToolSpec>>>,
     data_dir: PathBuf,
+}
+
+impl ExternalPlugin {
+    /// Hands the plugin its settings, asks for its tools and switches it on; the process is running.
+    async fn activate(&self) -> Result<(), PluginError> {
+        let link = &self.link;
+        link.call_optional("configure", json!({"settings": self.settings}), CONFIGURE_TIMEOUT).await?;
+        let tools = match link.call_optional("tools", json!({}), DEFAULT_CALL_TIMEOUT).await? {
+            Some(listed) => serde_json::from_value::<Vec<ToolSpec>>(listed).map_err(|e| PluginError::FailedUnknown(format!("the plugin {} sent a tool list that is unusable: {e}", link.label)))?,
+            None => vec![],
+        };
+        check_tools(&tools).map_err(|why| PluginError::FailedUnknown(format!("the plugin {}: {why}", link.label)))?;
+        *self.tools.write().unwrap() = Arc::new(tools);
+        link.call_optional("enable", json!({}), ENABLE_TIMEOUT).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -185,22 +201,38 @@ impl Plugin for ExternalPlugin {
         http::router(self.link.label.clone(), self.link.supervisor.clone())
     }
 
+    /// Starts the plugin's process and brings it up. If any step fails the process is ended again, so a plugin that could not be
+    /// switched on is not left running.
     async fn on_enabled(&self) -> Result<(), PluginError> {
-        self.link.call_optional("enable", json!({}), ENABLE_TIMEOUT).await?;
-        Ok(())
-    }
-
-    /// A plugin that cannot be told to stop (it crashed, it hangs) is switched off all the same: the owner must be able to turn
-    /// off what is misbehaving, and what is not running has nothing left to stop.
-    async fn on_disabled(&self) -> Result<(), PluginError> {
-        if let Err(e) = self.link.call_optional("disable", json!({}), DISABLE_TIMEOUT).await {
-            tracing::warn!("{e}");
+        let supervisor = &self.link.supervisor;
+        let held = supervisor.lifecycle().await;
+        if let Err(why) = supervisor.run(&held).await {
+            supervisor.record_error(&why);
+            return Err(PluginError::FailedUnknown(format!("the plugin {} cannot be started: {why}", self.link.label)));
+        }
+        if let Err(e) = self.activate().await {
+            supervisor.record_error(&e.to_string());
+            supervisor.stop(&held).await;
+            return Err(e);
         }
         Ok(())
     }
 
+    /// A plugin that cannot be told to stop (it crashed, it hangs) is switched off all the same: the owner must be able to turn
+    /// off what is misbehaving, and what is not running has nothing left to stop. Its process ends either way.
+    async fn on_disabled(&self) -> Result<(), PluginError> {
+        let supervisor = &self.link.supervisor;
+        let held = supervisor.lifecycle().await;
+        if let Err(e) = self.link.call_optional("disable", json!({}), DISABLE_TIMEOUT).await {
+            tracing::warn!("{e}");
+        }
+        supervisor.stop(&held).await;
+        Ok(())
+    }
+
     fn tools(&self) -> Vec<Box<dyn Tool>> {
-        self.tools
+        let tools = self.tools.read().unwrap().clone();
+        tools
             .iter()
             .map(|spec| {
                 Box::new(ExternalTool { spec: spec.clone(), plugin: self.link.label.clone(), data_dir: self.data_dir.clone(), supervisor: self.link.supervisor.clone() }) as Box<dyn Tool>
@@ -220,9 +252,26 @@ impl Plugin for ExternalPlugin {
         }
     }
 
+    /// A plugin that is off has no process, and still has to hear of it: it is started for this one call, given its settings and
+    /// ended again.
     async fn on_user_deleted(&self, user_id: i64) {
+        let supervisor = &self.link.supervisor;
+        let held = supervisor.lifecycle().await;
+        let started_for_this = supervisor.state() == State::Stopped;
+        if started_for_this {
+            if let Err(why) = supervisor.run(&held).await {
+                tracing::warn!("plugin {} could not be started to hear that user {user_id} was deleted: {why}", self.link.label);
+                return;
+            }
+            if let Err(e) = self.link.call_optional("configure", json!({"settings": self.settings}), CONFIGURE_TIMEOUT).await {
+                tracing::warn!("{e}");
+            }
+        }
         if let Err(e) = self.link.call_optional("user_deleted", json!({"user_id": user_id}), USER_DELETED_TIMEOUT).await {
             tracing::warn!("{e}");
+        }
+        if started_for_this {
+            supervisor.stop(&held).await;
         }
     }
 
@@ -301,6 +350,7 @@ struct ExternalTool {
 /// What a caller is told when the plugin cannot be reached
 pub fn not_running(state: State) -> &'static str {
     match state {
+        State::Stopped => "is switched off",
         State::Restarting => "is being restarted after a crash; try again in a moment",
         State::Failed => "crashed too often and was switched off",
         State::Running => "is not running",
