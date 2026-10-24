@@ -100,6 +100,23 @@ All owner-only, under `/api/plugins/external`:
 
 A plugin whose folder is gone from the plugins folder is shown as `unavailable` at the next start. Switching a plugin on or off is the same call as for any plugin (`POST /api/plugins/enable`).
 
+## Installing a plugin
+
+A plugin is installed in two steps, so that nothing of it runs before the owner has seen what it is. All routes are owner-only.
+
+**A `.tulpa` file** is a zip with `plugin.toml` at its top (or inside the one folder that holds everything, as a zip of a folder has it). A plugin of kind `source` ships its sources and the `build` command; one of kind `prebuilt` ships a binary per machine with its checksum. Whatever a build or a run leaves behind (`target/`, virtual environments, caches) is not part of it. A source plugin that depends on the SDK has to carry it or point at it by a git or registry address: a `path` that leads outside the plugin's own folder does not exist where it is built.
+
+1. **Stage.** `POST /api/plugins/external/stage/upload` (a multipart form with the file as `file`) or `POST /api/plugins/external/stage/git` (`{url, git_ref?}`: the latest commit of a branch or tag, without its history; `https`, `http` and `ssh` addresses only; needs `git` where the backend runs) unpacks it into `<external_plugins_dir>/.staging/<id>/` and answers with what the owner needs to decide: the manifest and its raw text, the README, the file list, the commands that would run (`check`, `build`, `run`), whether it keeps a database or a tab, whether it would install or update, and `problems` (a built-in plugin's name; a version that is not higher than the installed one) that rule it out. `GET /api/plugins/external/stage/file?id=&path=` gives the text of a file, so the code can be read. A staged plugin that is not installed is removed after an hour; `POST /api/plugins/external/stage/discard` removes it at once.
+2. **Install.** `POST /api/plugins/external/install` `{id}` answers `202` with a task and does the rest in the background; `GET /api/plugins/external/tasks?id=` follows it (its `step`, its `log` with the build's output, its `error`). One install runs at a time. It runs the plugin's `check`, builds it (`kind = "source"`, 20 minutes at most) or checks the binary against its sha256 (`kind = "prebuilt"`), starts the program once to see that it runs and says `hello`, moves it into `<external_plugins_dir>/<name>/<subname>/` and loads it. Any failure removes what was staged and leaves the installed version, if any, as it was.
+
+A failing `check` does not stop a new plugin from being installed: it is recorded as `unavailable` with what is missing, and `POST /api/plugins/external/load` brings it up once that is there. It does stop an update of a plugin that is running, since the new version would not start.
+
+**Update.** A staged plugin whose `name` and `subname` are installed and whose version is higher replaces it. The new version is built and tried first; then the installed one is stopped, its folder is put aside and the new one is loaded. If the new one will not load (a tool name taken, say) the old folder is put back and loaded again, and switched on if it was on. The settings and the switch are kept either way, and only the migration steps the database has not seen are applied. A migration that has run cannot be undone, so a new version that fails after its steps ran leaves them in place; steps only add.
+
+**Uninstall.** `POST /api/plugins/external/uninstall` `{plugin_name, plugin_subname, remove_data?}` unloads the plugin and deletes its folder and its record. Its settings, its database schema and its data folder stay, so installing it again picks up where it left off, unless `remove_data` is true: then its schema, its role, its record of applied steps, its settings and its data folder go too.
+
+**Export.** `GET /api/plugins/external/export?plugin_name=&plugin_subname=` answers the plugin's folder as `<name>-<subname>-<version>.tulpa`.
+
 ## Backend to plugin
 
 | Method | Params | Result |
