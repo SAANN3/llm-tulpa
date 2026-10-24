@@ -1486,6 +1486,28 @@ def an_external_plugin_that_is_killed_comes_back_with_its_settings_and_its_tool_
 
 
 @scenario
+def an_external_plugin_has_a_process_only_while_it_is_switched_on():
+    """A plugin that is off is loaded and listed but nothing of it runs: switching it off ends its process, switching it on starts
+    a new one, and its tool works at once."""
+    hello_plugin()
+    hello_on("Lazy")
+    settings()
+    first = hello_process()["process"]
+    eq(first["state"], "running", "on: it runs")
+    eq(api("/api/plugins/enable", {**HELLO, "enabled": False})[0], 204, "switch off")
+    off = hello_process()
+    eq((off["state"], off["process"]["state"], off["process"]["pid"]), ("ok", "stopped", None), "off: no process")
+    wait_for(lambda: not os.path.exists(f"/proc/{first['pid']}"), limit=10, what="the process to end")
+    eq([p["enabled"] for p in ok("/api/plugins") if p["plugin_subname"] == "hello"], [False], "it is listed, off")
+    eq(api("/api/plugins/enable", {**HELLO, "enabled": True})[0], 204, "switch on")
+    on = hello_process()["process"]
+    eq(on["state"], "running", "on again: it runs")
+    assert on["pid"] != first["pid"], "a new process"
+    has(greet("external-lazy", "Ada"), "Lazy, Ada!", "its settings reached the new process")
+    hello_on("Hello")
+
+
+@scenario
 def an_external_plugin_can_be_unloaded_and_loaded_again_without_restarting_the_backend():
     """The owner unloads an external plugin: its process ends and its tool and route are gone, while its files and settings stay;
     loading it again brings it back switched on with the settings it had."""
