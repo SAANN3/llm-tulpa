@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bootstrap;
 pub mod chat_store;
 pub mod error;
+pub mod external_plugin_store;
 pub mod event_bus;
 pub mod file_store;
 pub mod folder_store;
