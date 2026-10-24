@@ -1,4 +1,7 @@
 mod enable;
+mod external_list;
+mod external_load;
+mod external_unload;
 mod get_help;
 mod list;
 mod proxy;
