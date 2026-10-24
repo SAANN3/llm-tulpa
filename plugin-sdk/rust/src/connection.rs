@@ -4,12 +4,14 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stdio::{Input, Output};
-use crate::{CallContext, Error, FailureKind, Host, Plugin, PROTOCOL, ToolFailure};
+use crate::{CallContext, Error, Failure, FailureKind, Host, HttpRequest, Plugin, PROTOCOL, UploadedFile};
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
@@ -131,19 +133,79 @@ async fn dispatch(conn: &Arc<Connection>, plugin: &Arc<dyn Plugin>, method: &str
             // On a task of its own so that a panic in the tool is an error answer, not the end of the plugin
             let plugin = plugin.clone();
             match tokio::spawn(async move { plugin.call_tool(&tool, args, ctx).await }).await {
-                Ok(Ok(result)) => Ok(result),
-                Ok(Err(ToolFailure { kind, message })) => Err((
-                    match kind {
-                        FailureKind::BadArgs => BAD_ARGS,
-                        FailureKind::NotFound => NOT_FOUND,
-                        FailureKind::Internal => INTERNAL,
-                    },
-                    message,
-                )),
+                Ok(result) => failed(result),
                 Err(_) => Err((INTERNAL, "the tool panicked".to_string())),
             }
+        }
+        "configure" => {
+            let settings = params.get("settings").cloned().unwrap_or(Value::Null);
+            failed(plugin.configure(settings, Host { conn: conn.clone() }).await.map(|()| Value::Null))
+        }
+        "enable" => failed(plugin.enable().await.map(|()| Value::Null)),
+        "disable" => failed(plugin.disable().await.map(|()| Value::Null)),
+        "prompt_section" => {
+            let (user_id, tools) = (user_id(&params)?, params["tools"].as_bool().unwrap_or(true));
+            Ok(plugin.prompt_section(user_id, tools).await.map_or(Value::Null, Value::String))
+        }
+        "tab_layout" => tab(plugin.tab_layout(user_id(&params)?).await),
+        "tab_action" => {
+            let action = params["action"].as_str().ok_or((INVALID_PARAMS, "tab_action needs an action".to_string()))?;
+            tab(plugin.tab_action(user_id(&params)?, action, params.get("args").cloned().unwrap_or(Value::Null)).await)
+        }
+        "tab_upload" => {
+            let action = params["action"].as_str().ok_or((INVALID_PARAMS, "tab_upload needs an action".to_string()))?;
+            let files = params["files"]
+                .as_array()
+                .ok_or((INVALID_PARAMS, "tab_upload needs files".to_string()))?
+                .iter()
+                .filter_map(|f| Some(UploadedFile { path: f["path"].as_str()?.to_string(), file: f["file"].as_str()?.into() }))
+                .collect();
+            tab(plugin.tab_upload(user_id(&params)?, action, params["row"].as_str().map(str::to_string), files).await)
+        }
+        "http_request" => {
+            let body = STANDARD.decode(params["body_b64"].as_str().unwrap_or_default()).map_err(|e| (INVALID_PARAMS, format!("body_b64: {e}")))?;
+            let pairs = |value: &Value| -> Vec<(String, String)> {
+                value.as_array().into_iter().flatten().filter_map(|h| Some((h[0].as_str()?.to_string(), h[1].as_str()?.to_string()))).collect()
+            };
+            let request = HttpRequest {
+                user_id: params["user_id"].as_i64(),
+                method: params["method"].as_str().unwrap_or("GET").to_string(),
+                path: params["path"].as_str().unwrap_or("/").to_string(),
+                query: params["query"].as_str().unwrap_or_default().to_string(),
+                headers: pairs(&params["headers"]),
+                body,
+            };
+            // On a task of its own, like a tool call: a panic is an error answer, not the end of the plugin
+            let plugin = plugin.clone();
+            let response = tokio::spawn(async move { plugin.http_request(request).await }).await.map_err(|_| (INTERNAL, "the route panicked".to_string()))?;
+            Ok(json!({"status": response.status, "headers": response.headers, "body_b64": STANDARD.encode(response.body)}))
+        }
+        "user_deleted" => {
+            plugin.user_deleted(user_id(&params)?).await;
+            Ok(Value::Null)
         }
         "shutdown" => Ok(Value::Null),
         _ => Err((METHOD_NOT_FOUND, format!("the plugin has no method {method}"))),
     }
+}
+
+fn user_id(params: &Value) -> Result<i64, (i64, String)> {
+    params["user_id"].as_i64().ok_or((INVALID_PARAMS, "user_id is missing".to_string()))
+}
+
+fn failed(result: Result<Value, Failure>) -> Result<Value, (i64, String)> {
+    result.map_err(|Failure { kind, message }| {
+        (
+            match kind {
+                FailureKind::BadArgs => BAD_ARGS,
+                FailureKind::NotFound => NOT_FOUND,
+                FailureKind::Internal => INTERNAL,
+            },
+            message,
+        )
+    })
+}
+
+fn tab(result: Result<crate::Tab, Failure>) -> Result<Value, (i64, String)> {
+    failed(result.and_then(|tab| serde_json::to_value(tab).map_err(|e| Failure::from(e.to_string()))))
 }

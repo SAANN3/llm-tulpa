@@ -2,10 +2,8 @@ name     = "example"
 subname  = "hello"
 version  = "0.1.0"
 protocol = 1
-summary  = "Greets people by name: the smallest plugin that has a tool"
-help_message = "An example external plugin. It adds one tool, hello.greet, that the model can use to greet someone."
-# It takes no settings, so it can come up switched on
-default_enabled = true
+summary  = "Greets people by name: a small plugin with a tool, settings, a tab and a prompt section"
+help_message = "An example external plugin. It adds one tool, hello.greet, that the model can use to greet someone; the greeting is set in its settings, and its tab lets each user have greetings in capitals."
 sdk      = "rust"
 kind     = "source"
 
@@ -14,3 +12,15 @@ run   = "{plugin_dir}/target/release/tulpa-example-hello"
 
 # exit 0 = ready; what it prints is shown when it is not
 check = "cargo --version"
+
+# The owner fills these in on the Plugins page before the plugin can be switched on
+[[settings]]
+name        = "greeting"
+type        = "string"
+description = "The word the greeting starts with; Hello when empty"
+required    = false
+
+# A tab of its own in Settings
+[tab]
+id    = "hello"
+title = "Hello"

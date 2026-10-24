@@ -34,13 +34,25 @@ run   = "{plugin_dir}/target/release/tulpa-example-hello"
 
 check     = "cargo --version"  # optional: exit 0 = what the plugin needs is there; its output says what is missing
 min_tulpa = "0.3.0"            # optional: the oldest backend it works with
+
+# optional: what the owner fills in on the Plugins page before the plugin can be switched on
+[[settings]]
+name        = "token"
+type        = "string"          # string | number | integer | boolean | array | object; an array also has items = "string"
+description = "Shown under the field"
+required    = true
+
+# optional: a tab of the plugin's own in Settings, shown to every user while the plugin is on
+[tab]
+id    = "hello"                 # /settings/hello: lowercase letters, digits and hyphens, not one of the Settings page's own
+title = "Hello"
 ```
 
 `run`, `check` and `build` are command lines, split into words the way a shell would split them (spaces, single and double quotes) but **without a shell**: nothing in them is expanded or piped. `{plugin_dir}` (the plugin's folder) and `{data_dir}` (its data folder) are replaced in each word after splitting, so a folder with a space in its name stays one word. Commands run with the plugin's folder as the working directory, and a program written as a relative path with a slash (`.venv/bin/python`) is looked for in that folder.
 
 The folder must be named `<name>/<subname>` exactly as the manifest says. A plugin whose `check` fails, whose manifest is invalid, or that cannot be started is left out when the backend starts, with the reason in the backend's log; the rest start regardless.
 
-The manifest is the only place a plugin's name, subname and version are stated; the program never repeats them and `hello` does not carry them.
+The manifest is the only place a plugin's name, subname and version are stated; the program never repeats them and `hello` does not carry them. The same holds for what is static about the plugin: its summary, help text, settings and tab are read from the manifest, so the backend can show them before the program has run. `default_enabled` is refused together with `[[settings]]`: a plugin that needs settings has nothing to run with until they are filled in.
 
 ## Transport
 
@@ -57,20 +69,42 @@ JSON-RPC 2.0, one JSON object per line, UTF-8, over the child's stdin (backend t
 
 1. The backend starts the process with the environment it has itself plus `TULPA_PLUGIN_PROTOCOL` (the protocol version), `TULPA_DATA_DIR` and `TULPA_PLUGIN_DIR`.
 2. The plugin sends the request `hello` with `{protocol, sdk}`. The backend answers `{protocol, tulpa_version, data_dir, plugin_dir}`. If `hello` does not arrive within 5 s, or names a protocol the backend does not speak, the backend kills the process and records why.
-3. The backend calls `tools`.
+3. The backend calls `configure` with the settings (when the owner has saved them, or `{}` for a plugin without any), then `tools`, then `enable` if the plugin is switched on. A change of the settings runs `disable` (if it was on), `configure`, `tools` and `enable` again; the process is not restarted. Switching the plugin off runs `disable`, and on runs `enable`.
 4. The plugin runs until the backend ends it: `shutdown` is a request the plugin answers (with `null`) before exiting, and the backend then closes stdin and kills the process if it is still there after 5 s. The backend does this when it stops.
 
 ## Backend to plugin
 
 | Method | Params | Result |
 |---|---|---|
+| `configure` | `{settings}` | `null` |
 | `tools` | none | a list of tool specs (below) |
 | `call_tool` | `{tool, args, ctx}` | the tool's result, any JSON |
+| `enable` / `disable` | none | `null` |
+| `prompt_section` | `{user_id, tools}` | a string, or `null` for nothing |
+| `tab_layout` | `{user_id}` | a tab layout (below) |
+| `tab_action` | `{user_id, action, args}` | the tab layout after |
+| `tab_upload` | `{user_id, action, row, files}` | the tab layout after |
+| `http_request` | `{user_id, method, path, query, headers, body_b64}` | `{status, headers, body_b64}` |
+| `user_deleted` | `{user_id}` | `null` |
 | `shutdown` | none | `null` |
+
+A plugin may leave out any of these but `shutdown`: answering `-32601` (method not found) to `configure`, `tools`, `enable`, `disable`, `prompt_section` or `user_deleted` means there is nothing to do, and to a tab method means the plugin has no tab. The SDKs answer all of them.
+
+**`configure`**: `settings` is an object that already passed the manifest's `[[settings]]` (every required one present, each of the type it names; a setting the manifest does not list is passed through). The plugin refuses settings only it can judge, such as a token the service rejects, with the error `-32002` and a message the owner reads; the settings are then not saved. `tools` is asked for after each `configure`, so the tools may depend on the settings.
+
+**`disable`**: a plugin that fails, hangs or has died is switched off all the same; the failure is logged.
+
+**`prompt_section`**: text added to the system prompt of that user's chats while the plugin is on. `tools` says whether the chat sends the model its tools. It is asked for at the start of every turn and has 5 s: a plugin that does not answer in time adds nothing that turn. It must be the same text every time while what it describes has not changed, because any change makes the model server read the whole chat again.
+
+**Tab**: `tab_layout` is what the tab shows `user_id`; `tab_action` is what the user did (`action` is the word the control carries, `args` what it sent: `{"on": bool}` for a switch, `{"row": id}` for a row's button, `{"row": id, "on": bool}` for a row's switch); both answer with the layout as it is after. `tab_upload` gets files the user dropped on a drop zone (`action` is the zone's) or chose with a row's upload button (`row` is that row's id), as `files: [{path, file}]`: `path` is the path the file had in the user's browser, `file` where the backend wrote it, under `<data_dir>/.staging/`. The backend removes that folder when the call ends, so the plugin copies or moves what it keeps.
+
+**`http_request`**: everything under `/api/plugins/<name>/<subname>/` goes to the plugin while it is on. Only the owner reaches these routes, and `user_id` is theirs. `path` starts with `/` and is relative to the plugin; `query` has no `?`; `headers` is a list of `[name, value]` pairs without `Authorization` and `Cookie`. A body of more than 8 MiB is refused with 413. The answer's `headers` and `body_b64` may be left out; `content-length`, `transfer-encoding` and `connection` in it are ignored.
+
+**`user_deleted`**: `user_id` was deleted: the plugin removes what it keeps for them outside the backend's database. It is sent to every plugin that has been started, switched on or not.
 
 `ctx` in `call_tool` carries `user_id` (the user whose chat the call is in), `chat_id`, `model` and `provider`. A tool works on `user_id`'s data only.
 
-A call that the backend does not get an answer to within 30 s (or the tool's `timeout_s`) fails with an error the model sees.
+Every call has a time limit, and a call that is not answered within it fails with an error the caller sees: 30 s for most (`call_tool` uses the tool's `timeout_s` when it has one), 120 s for `tab_upload`, 10 s for `disable` and `user_deleted`, 5 s for `prompt_section`.
 
 ### Tool spec
 
@@ -93,6 +127,29 @@ A call that the backend does not get an answer to within 30 s (or the tool's `ti
 
 The list must have no repeated name, a description on every tool, and every argument named once.
 
+### Tab layout
+
+```json
+{
+  "sections": [
+    {"title": "Greetings", "blocks": [
+      {"type": "text", "text": "A line", "dim": false},
+      {"type": "switch", "action": "loud", "label": "Greet in capitals", "help": "optional", "on": true},
+      {"type": "items", "empty": "Nothing here.", "rows": [
+        {"id": "r1", "title": "A row", "subtitle": "optional", "badge": "optional",
+         "switch": {"action": "toggle", "on": true},
+         "buttons": [{"action": "go", "label": "Go", "confirm": "optional question asked first", "upload": false}]}
+      ]},
+      {"type": "drop", "action": "add", "label": "Drop files here", "help": "optional", "accept": [".zip"]}
+    ]}
+  ],
+  "message": "optional: a line after an action",
+  "popup": {"title": "optional", "text": "a text shown in a popup"}
+}
+```
+
+Everything that is empty may be left out. A button with `"upload": true` opens a file picker and sends the files to `tab_upload` with the row's id.
+
 ## Plugin to backend
 
 | Method | Params | Result |
@@ -102,7 +159,7 @@ The list must have no repeated name, a description on every tool, and every argu
 
 ## Errors
 
-A failed call answers with a JSON-RPC `error`: `{code, message}`. `message` is what the model (for a tool) or the owner reads, so it says what went wrong. Codes: the standard JSON-RPC ones (`-32601` method not found, `-32602` invalid params, `-32603` internal error) and `-32001` not found, `-32002` bad arguments. A process that exits, or closes its stdout, fails every call waiting on it and every later one.
+A failed call answers with a JSON-RPC `error`: `{code, message}`. `message` is what the model (for a tool), the owner (for settings) or the user (for a tab) reads, so it says what went wrong. Codes: the standard JSON-RPC ones (`-32601` method not found, `-32602` invalid params, `-32603` internal error) and `-32001` not found, `-32002` bad arguments. Outside a tool call the backend turns `-32002` into a refusal of the request (HTTP 400), `-32001` into 404 and anything else into a failure on the plugin's side (500). A process that exits, or closes its stdout, fails every call waiting on it and every later one.
 
 ## Versioning
 
