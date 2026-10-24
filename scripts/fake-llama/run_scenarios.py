@@ -1454,6 +1454,66 @@ def an_external_plugins_settings_tab_prompt_section_and_routes_behave_like_a_bui
     hello_on("Hello")
 
 
+def hello_process():
+    """The example/hello plugin as the external-plugin list shows it, with its process."""
+    return [p for p in ok("/api/plugins/external") if p["name"] == "example" and p["subname"] == "hello"][0]
+
+
+def greet(chat_name, name):
+    chat = new_chat(chat_name)
+    script({"tool_calls": [{"name": "hello.greet", "arguments": {"name": name}}]}, {"text": "Greeted."})
+    turn(chat, "Greet " + name)
+    return str(tool_results(chat)[0]["content"])
+
+
+@scenario
+def an_external_plugin_that_is_killed_comes_back_with_its_settings_and_its_tool_works_again():
+    """The process of an external plugin ends without being asked to: the backend starts a new one, tells it the settings and that
+    it is switched on, and the plugin's tool works again, with nothing done by the owner."""
+    hello_plugin()
+    hello_on("Back")
+    settings()
+    first = hello_process()
+    eq(first["process"]["state"], "running", "it runs")
+    os.kill(first["process"]["pid"], 9)
+    wait_for(lambda: hello_process()["process"]["state"] == "running" and hello_process()["process"]["restarts"] == 1, limit=20, what="the plugin to be started again")
+    again = hello_process()
+    assert again["process"]["pid"] != first["process"]["pid"], "a new process"
+    eq(again["state"], "ok", "it is not marked failing")
+    has(greet("external-after-kill", "Ada"), "Back, Ada!", "the greeting from the settings, which the new process was told")
+    eq([p["enabled"] for p in ok("/api/plugins") if p["plugin_subname"] == "hello"], [True], "still switched on")
+    hello_on("Hello")
+
+
+@scenario
+def an_external_plugin_can_be_unloaded_and_loaded_again_without_restarting_the_backend():
+    """The owner unloads an external plugin: its process ends and its tool and route are gone, while its files and settings stay;
+    loading it again brings it back switched on with the settings it had."""
+    hello_plugin()
+    hello_on("Again")
+    settings()
+    pid = hello_process()["process"]["pid"]
+    eq(api("/api/plugins/external/unload", HELLO)[0], 204, "unload")
+    eq([p for p in ok("/api/plugins") if p["plugin_subname"] == "hello"], [], "it is not in the plugin list")
+    eq(hello_process()["state"], "unloaded", "it is recorded as unloaded")
+    eq(api("/api/plugins/example/hello/greeting")[0], 404, "its route is gone")
+    wait_for(lambda: not os.path.exists(f"/proc/{pid}"), limit=10, what="its process to end")
+    chat = new_chat("external-unloaded")
+    script({"tool_calls": [{"name": "hello.greet", "arguments": {"name": "Ada"}}]}, {"text": "ok"})
+    turn(chat, "Greet Ada")
+    has(str(tool_results(chat)[0]["content"]), "no tool named", "the tool is gone")
+    eq(api("/api/plugins/external/unload", HELLO)[0], 404, "it cannot be unloaded twice")
+
+    status, loaded = api("/api/plugins/external/load", HELLO)
+    eq(status, 200, "load")
+    eq((loaded["state"], loaded["process"]["state"]), ("ok", "running"), "it runs again")
+    eq([p["enabled"] for p in ok("/api/plugins") if p["plugin_subname"] == "hello"], [True], "switched on as it was")
+    has(greet("external-reloaded", "Ada"), "Again, Ada!", "with the settings it had")
+    eq(api("/api/plugins/external/load", HELLO)[0], 400, "it cannot be loaded twice")
+    eq(api("/api/plugins/external/load", {"plugin_name": "example", "plugin_subname": "missing"})[0], 404, "a folder with no plugin in it")
+    hello_on("Hello")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0
