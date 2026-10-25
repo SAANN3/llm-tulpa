@@ -1834,7 +1834,6 @@ def the_telegram_example_answers_a_chat_through_the_agent_and_ignores_the_others
     """The Telegram plugin of plugin-sdk/examples, installed from a file and pointed at a fake Bot API: a wrong token is refused when
     it is switched on; a message from an allowed chat is acknowledged, tagged with who sent it, answered by the model and sent back
     threaded to it, in pieces when it is long; a photo reaches the model; another chat gets no answer."""
-    hello_plugin()
     key = {"plugin_name": "example", "plugin_subname": "telegram"}
     if any(p["name"] == "example" and p["subname"] == "telegram" for p in ok("/api/plugins/external")):
         api("/api/plugins/external/uninstall", {**key, "remove_data": True})
@@ -1897,6 +1896,44 @@ def the_telegram_example_answers_a_chat_through_the_agent_and_ignores_the_others
         wait_for(lambda: any(m["text"] == "A small picture." for m in fake_telegram.sent), what="the answer about the photo")
         assert fake_telegram.downloads, "the photo was downloaded"
         has(json.dumps(calls("main")[-1]["messages"]), "image", "and the model was sent an image")
+
+        # The owner chooses a model for the plugin: its chat, which exists already, moves to it with the next message; with no
+        # choice a chat is left on the model it has
+        # Plugin chats are not in the chat list; this one is the newest chat of the sender's name
+        found = {}
+        def plugin_chat():
+            if "id" not in found:
+                for n in range(300, 0, -1):
+                    status, chat = api(f"/api/chats?id={n}")
+                    if status == 200 and chat["name"] == "Ada":
+                        found["id"] = n
+                        break
+            return ok(f"/api/chats?id={found['id']}")
+        def plugin_model():
+            return [p for p in ok("/api/plugins") if p["plugin_subname"] == "telegram"][0]["model"]
+        eq((plugin_chat()["model"], plugin_model()), ("fake.gguf", None), "the chat began on the default model and the plugin has no choice")
+        eq(api("/api/plugins/model", {"plugin_name": "example", "plugin_subname": "nope", "model": "other.gguf"})[0], 404, "no such plugin")
+        eq(api("/api/plugins/model", {**key, "profile_id": 999999})[0], 404, "no such launch profile")
+        listed = ok("/api/plugins")
+        assert [p for p in listed if p["plugin_subname"] == "telegram" and p["plugin_name"] == "example"][0]["uses_agent"], "a plugin that says agent = true has a model to choose"
+        tool_only = [p for p in listed if not p["uses_agent"]]
+        assert tool_only, "and a plugin that does not say so has none"
+        eq(api("/api/plugins/model", {"plugin_name": tool_only[0]["plugin_name"], "plugin_subname": tool_only[0]["plugin_subname"], "model": "fake.gguf"})[0], 400, "no model for a plugin with no chats of its own")
+        eq(api("/api/plugins/model", {**key, "model": "other.gguf"})[0], 400, "a model nobody has registered is refused")
+        # The seeded Ollama model stands for "another model": nothing answers there, but the chat's model shows where it went
+        eq(api("/api/plugins/model", {**key, "model": "verify-model:latest", "provider": "ollama"})[0], 204, "a model is chosen for the plugin")
+        eq(plugin_model(), {"provider": "ollama", "model": "verify-model:latest", "launch_profile_id": None}, "the list shows it")
+        eq(plugin_chat()["model"], "fake.gguf", "the chat moves with its next message, not before")
+        fake_telegram.push(chat_id, "Which model is this?", message_id=15)
+        wait_for(lambda: plugin_chat()["model"] == "verify-model:latest", what="the chat to move to the chosen model")
+        eq(api("/api/plugins/model", {**key, "profile_id": PROFILE})[0], 204, "a launch profile is chosen instead")
+        script({"text": "Back on the profile."})
+        fake_telegram.push(chat_id, "And now?", message_id=16)
+        wait_for(lambda: any(m["text"] == "Back on the profile." for m in fake_telegram.sent), what="the answer on the profile")
+        eq((plugin_chat()["model"], plugin_chat()["launch_profile_id"]), ("fake.gguf", PROFILE), "the chat is on the profile and its model")
+        eq(plugin_model()["launch_profile_id"], PROFILE, "the list shows the profile")
+        eq(api("/api/plugins/model", {**key})[0], 204, "the choice is taken away")
+        eq(plugin_model(), None, "and the list shows none")
     finally:
         fake_telegram.stop()
         api("/api/plugins/enable", {**key, "enabled": False})

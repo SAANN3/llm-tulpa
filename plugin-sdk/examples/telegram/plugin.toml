@@ -17,6 +17,7 @@ In a group chat, Telegram's privacy mode lets the bot see only messages sent as 
 
 This is the built-in Telegram plugin written as an external one, so both can be on at once with different bots. It sends plain text, not Telegram's formatting, and each photo is answered on its own, not as an album."""
 sdk      = "python"
+agent    = true
 kind     = "source"
 
 # Nothing to build: Python runs the file as it is

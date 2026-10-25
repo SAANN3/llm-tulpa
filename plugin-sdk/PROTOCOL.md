@@ -20,6 +20,7 @@ protocol = 1                   # the protocol version the plugin speaks
 summary  = "Greets people"     # one line, shown in the Plugins list
 help_message = "..."           # optional: a longer text for the plugin's page
 default_enabled = false        # optional: switched on the first time the backend sees it (a plugin with no settings only; the owner's later choice wins)
+agent    = false               # true: the plugin makes chats through agent.reply, so its settings page offers a model for them
 sdk      = "rust"              # rust | python; "python" also means: the backend adds its Python SDK at install time to a folder that has no tulpa_plugin/
 kind     = "source"            # source | prebuilt
 
@@ -217,6 +218,7 @@ Everything that is empty may be left out. A button with `"upload": true` opens a
 
 - `conversation` names the conversation the message is in, as the plugin sees it (a chat id of the platform): up to 200 characters, and the same conversation always gets the same chat, which is how the model remembers what was said before. The chats are the owner's and are listed with their other chats, filed under the plugin's own `(name, subname)`, so two plugins never share a conversation. `title` names a conversation's chat the first time (its id when left out).
 - `text` is the message (up to 200,000 characters). `images` is a list of base64 images without a data-URL prefix (at most 10): each is decoded and written again, and one the model server could not read is dropped with a warning. A message needs text or an image.
+- The chats start on the owner's default model and keep the model they have, unless the owner has chosen a model for the plugin on its settings page: then every `agent.reply` runs on that model (an answer already being written keeps the one it started on).
 - `think` says whether the model thinks before it answers; it is slower and can be more careful.
 - The call waits as long as the model takes, which can be minutes, and is not subject to a time limit; other calls go on meanwhile. A plugin that is switched off while it waits ends with its process, and the answer is stored in the chat all the same.
 

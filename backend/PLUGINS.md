@@ -128,6 +128,7 @@ Registry-level management routes, under `/api/plugins`:
 | `GET /` | Every registered plugin, enabled and disabled alike, with its current settings and its one-line summary, by `plugin_name` then `plugin_subname`. |
 | `GET /settings_schema?plugin_name=&plugin_subname=` | A plugin's settings schema, same shape as a tool's args. |
 | `GET /help?plugin_name=&plugin_subname=` | A plugin's own step-by-step "how to use" message. |
+| `POST /model` | Chooses the model (a launch profile, or an installed model by name) that a plugin's chats run on, or with neither takes the choice away. It is kept in `plugin_models` and shown as `model` in `GET /`. A plugin's chat is put on it whenever the chat is looked up for a message (`ChatStore::find_or_create_plugin_chat`, which every messaging plugin and every external plugin's `agent.reply` goes through), so chats that exist already follow a choice made later; with no choice a chat keeps the model it began on, or the one the owner switched it to. |
 | `POST /settings` | Sets (or replaces) a plugin's settings, rebuilding its live instance. |
 | `POST /enable` | Enables or disables a plugin — fails if it has no settings configured yet. |
 | `GET /external`, `POST /external/load`, `POST /external/unload` | The external plugins with how each is doing (its state, its last error, its process, the end of its log); loading a plugin from its folder and unloading one while the backend runs. |

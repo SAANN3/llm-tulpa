@@ -30,6 +30,7 @@ protocol = 1
 summary  = "Shouts what it is told"          # one line
 help_message = "A longer text for the plugin's page"   # optional
 sdk      = "python"
+agent    = false          # true if the plugin calls host.agent_reply: the owner can then choose the model of its chats
 kind     = "source"
 run      = "python3 {plugin_dir}/main.py"
 check    = "python3 -c \"import sys; sys.exit(0 if sys.version_info >= (3, 10) else 'needs Python 3.10 or newer')\""
