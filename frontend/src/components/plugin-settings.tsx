@@ -2,6 +2,8 @@ import {useEffect, useState} from 'react'
 import {Minus, Plus} from 'pixelarticons/react'
 import '../styles/plugin-settings.scss'
 import type {PluginInfo, PropertyInfo, PropertyType} from '../api/plugins/types'
+import type {ModelChoice} from '../utils/model-choice.ts'
+import {PluginModelField} from './plugin-model.tsx'
 import {Button, Div, Input, Label, TextField, ToggleSwitch} from './primitives'
 
 export interface PluginSettingsProps {
@@ -9,6 +11,8 @@ export interface PluginSettingsProps {
     getSchema: (pluginName: string, pluginSubname: string) => Promise<PropertyInfo[]>
     getHelp: (pluginName: string, pluginSubname: string) => Promise<string>
     onSave: (settings: Record<string, unknown>) => Promise<void>
+    /** Chooses the model the plugin's chats run on; `null` takes the choice away */
+    onModel: (choice: ModelChoice | null) => Promise<void>
     onBack: () => void
 }
 
@@ -36,7 +40,7 @@ const typeHint = (type: PropertyType): string | null => {
 };
 
 /** A settings form built generically from a plugin's own schema */
-export const PluginSettings = ({plugin, getSchema, getHelp, onSave, onBack}: PluginSettingsProps) => {
+export const PluginSettings = ({plugin, getSchema, getHelp, onSave, onModel, onBack}: PluginSettingsProps) => {
     const [schema, setSchema] = useState<PropertyInfo[] | null>(null)
     const [help, setHelp] = useState<string | null>(null)
     const [helpExpanded, setHelpExpanded] = useState(false)
@@ -163,6 +167,8 @@ export const PluginSettings = ({plugin, getSchema, getHelp, onSave, onBack}: Plu
                             <Label variant="secondary" className="plugin-settings__help-text" text={help}/> : null}
                     </Div>
                 ) : null}
+
+                {plugin.uses_agent ? <PluginModelField model={plugin.model} onChosen={onModel}/> : null}
 
                 {schema === null ? (
                     <Label variant="secondary" text="Loading…"/>

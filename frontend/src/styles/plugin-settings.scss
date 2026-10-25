@@ -56,6 +56,19 @@
   letter-spacing: 0.09em;
 }
 
+.plugin-settings__model {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  flex-wrap: wrap;
+}
+
+.plugin-settings__model-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .plugin-settings__object {
   min-height: 70px;
   font-size: 13px;

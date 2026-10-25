@@ -7,6 +7,14 @@ export interface PropertyInfo {
     required: boolean
 }
 
+/** The model chosen for a plugin's chats */
+export interface PluginModel {
+    provider: string
+    model: string
+    /** The launch profile chosen with it (llama.cpp models only) */
+    launch_profile_id: number | null
+}
+
 export interface PluginInfo {
     plugin_name: string
     plugin_subname: string
@@ -14,6 +22,10 @@ export interface PluginInfo {
     settings: Record<string, unknown> | null
     /** What the plugin does, in one short line */
     summary: string
+    /** Whether the plugin has chats of its own, so a model can be chosen for them */
+    uses_agent: boolean
+    /** The model its chats run on; null leaves them on the model they have */
+    model: PluginModel | null
 }
 
 /** A Settings tab an enabled plugin declares */

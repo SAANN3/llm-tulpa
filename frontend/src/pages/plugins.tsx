@@ -41,7 +41,7 @@ const Plugins = () => {
     const [searchParams] = useSearchParams()
     const {tab: tabSlug} = useParams()
     const tab = TABS.find((name) => name.toLowerCase() === tabSlug) ?? TABS[0]
-    const {plugins, loading, reload: reloadPlugins, setEnabled, setSettings, getSchema, getHelp} = usePlugins()
+    const {plugins, loading, reload: reloadPlugins, setEnabled, setSettings, setModel, getSchema, getHelp} = usePlugins()
     const externals = useExternalPlugins()
     const install = usePluginInstall(() => {
         void reloadPlugins()
@@ -123,6 +123,7 @@ const Plugins = () => {
                             getSchema={getSchema}
                             getHelp={getHelp}
                             onSave={(settings) => setSettings(openPlugin.plugin_name, openPlugin.plugin_subname, settings)}
+                            onModel={(choice) => setModel(openPlugin.plugin_name, openPlugin.plugin_subname, choice)}
                             onBack={backToList}
                         />
                     ) : loading ? (
