@@ -2,6 +2,7 @@
 
 .markdown {
   color: currentColor;
+  overflow-wrap: anywhere;
 }
 
 .markdown > *:first-child {
@@ -60,6 +61,7 @@
 }
 
 .markdown pre {
+  max-width: 100%;
   background-color: color-mix(in srgb, currentColor 15%, transparent);
   border: $line-border solid var(--color-border);
   border-radius: 0;
@@ -77,6 +79,10 @@
 }
 
 .markdown table {
+  // A table wider than the reply scrolls inside it instead of widening the reply
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   // A grid of cells reads as one block: solid, so the dotted page background doesn't show in every cell
   background: var(--color-secondary);
@@ -84,6 +90,8 @@
 
 .markdown th,
 .markdown td {
+  // Words stay whole in a narrow column; a table with a very long word scrolls instead
+  overflow-wrap: break-word;
   border: 1px solid currentColor;
   padding: 0.3em 0.6em;
 }

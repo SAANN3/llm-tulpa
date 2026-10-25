@@ -20,10 +20,16 @@
   border-radius: 0;
   padding: 10px 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .chat-message__body {
-  max-width: 70ch;
+  // The reply is as wide as its widest unbreakable line (a line of code, a long address) up to this limit, so on a phone
+  // the limit has to be the screen: otherwise the reply grew past it and every line wrapped at that width, out of sight.
+  // What is wider than the reply (code, a table) scrolls inside it.
+  // Border-box, so the limit includes the line and padding on the left and a full-width reply fits its container
+  box-sizing: border-box;
+  max-width: min(70ch, 100%);
   border-left: 2px solid var(--color-border);
   padding-left: 14px;
   font-size: 15px;
@@ -49,6 +55,7 @@
   font-size: 13px;
   opacity: 0.7;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   border-left: $line-border dashed var(--color-border);
 }
 
