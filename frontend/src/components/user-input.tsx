@@ -3,6 +3,8 @@ import {useEffect, useRef, useState} from 'react'
 import {getHttpsAddress} from '../api/tls/https-address.ts'
 import type {ThinkChoice} from '../api/agent/types'
 import {uploadFile} from '../api/files/upload'
+import {formatBytes} from '../utils/format-bytes.ts'
+import {debugLog} from '../utils/debug.ts'
 import {getThinkingCapability, type ThinkingModel} from '../api/llm/thinking-capability.ts'
 import {Attachment as AttachmentIcon} from 'pixelarticons/react'
 import '../styles/user-input.scss'
@@ -43,6 +45,14 @@ export interface UserInputProps {
 }
 
 const DEFAULT_PLACEHOLDER = 'Message...'
+
+/** A file on its way to the backend: how much of it has been sent */
+interface Uploading {
+    id: number
+    name: string
+    loaded: number
+    total: number
+}
 
 /** Reads a file into raw base64 with no data-URL prefix */
 const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -90,6 +100,9 @@ export const UserInput = ({
     const [images, setImages] = useState<string[]>([])
     const [fileIds, setFileIds] = useState<number[]>([])
     const [uploading, setUploading] = useState(false)
+    const [uploads, setUploads] = useState<Uploading[]>([])
+    const [uploadError, setUploadError] = useState<string | null>(null)
+    const uploadCount = useRef(0)
     const [draggingOver, setDraggingOver] = useState(false)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -225,12 +238,21 @@ export const UserInput = ({
 
         if (otherFiles.length > 0) {
             setUploading(true)
-            try {
-                const uploaded = await Promise.all(otherFiles.map((file) => uploadFile(file, chatId)))
-                setFileIds((prev) => [...prev, ...uploaded.map((file) => file.id)])
-            } finally {
-                setUploading(false)
-            }
+            setUploadError(null)
+            const started: Uploading[] = otherFiles.map((file) => ({id: ++uploadCount.current, name: file.name, loaded: 0, total: file.size}))
+            setUploads((prev) => [...prev, ...started])
+            // One file failing must not throw away the others that went through
+            const results = await Promise.allSettled(otherFiles.map((file, i) => {
+                const id = started[i].id
+                debugLog('upload', 'start', file.name, file.size)
+                return uploadFile(file, chatId, undefined, (loaded, total) => setUploads((prev) => prev.map((u) => (u.id === id ? {...u, loaded, total} : u))))
+                    .finally(() => setUploads((prev) => prev.filter((u) => u.id !== id)))
+            }))
+            const failed = otherFiles.filter((_, i) => results[i].status === 'rejected')
+            results.forEach((result, i) => debugLog('upload', result.status === 'fulfilled' ? 'done' : 'failed', otherFiles[i].name, result.status === 'rejected' ? result.reason : ''))
+            setFileIds((prev) => [...prev, ...results.flatMap((result) => (result.status === 'fulfilled' ? [result.value.id] : []))])
+            if (failed.length > 0) setUploadError(`Could not upload ${failed.map((file) => file.name).join(', ')}.`)
+            setUploading(false)
         }
     }
 
@@ -297,6 +319,24 @@ export const UserInput = ({
                     <Button variant="secondary" text="Cancel" onClicked={() => onCancelEdit?.()}/>
                 </Div>
             ) : null}
+            {uploads.length > 0 ? (
+                <Div className="composer__uploads">
+                    {uploads.map((upload) => (
+                        <Div key={upload.id} className="composer__upload">
+                            <Div className="composer__upload-head">
+                                <Label className="composer__upload-name" text={upload.name}/>
+                                <Label variant="secondary" className="composer__upload-detail"
+                                       text={upload.loaded < upload.total ? `${formatBytes(upload.loaded)} / ${formatBytes(upload.total)}` : 'processing…'}/>
+                            </Div>
+                            <Div className="composer__upload-bar">
+                                <Div className="composer__upload-bar-fill"
+                                     style={{'--fraction': upload.total > 0 ? Math.min(1, upload.loaded / upload.total) : 0} as CSSProperties}/>
+                            </Div>
+                        </Div>
+                    ))}
+                </Div>
+            ) : null}
+            {uploadError ? <Label className="composer__upload-error" text={uploadError}/> : null}
             {images.length > 0 || fileIds.length > 0 ? (
                 <Div className="composer__attachments">
                     {images.map((image, index) => (

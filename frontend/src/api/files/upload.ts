@@ -7,11 +7,13 @@ import type {FileOut} from './types'
  * exists (composing on the home page): the file comes back with `chat_id: null` and is
  * claimed automatically when it's attached to a sent message.
  */
-export const uploadFile = async (file: File, chatId?: number, readOnly?: boolean): Promise<FileOut> => {
+export const uploadFile = async (file: File, chatId?: number, readOnly?: boolean, onProgress?: (loaded: number, total: number) => void): Promise<FileOut> => {
     const form = new FormData()
     if (chatId !== undefined) form.append('chat_id', String(chatId))
     if (readOnly !== undefined) form.append('read_only', String(readOnly))
     form.append('file', file)
-    const {data} = await axios.post<FileOut>(`${BACKEND_URL}/api/files/upload`, form)
+    const {data} = await axios.post<FileOut>(`${BACKEND_URL}/api/files/upload`, form, {
+        onUploadProgress: (event) => onProgress?.(event.loaded, event.total ?? file.size),
+    })
     return data
 };

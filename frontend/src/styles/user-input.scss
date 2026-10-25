@@ -47,6 +47,54 @@
   flex-wrap: wrap;
 }
 
+.composer__uploads {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.composer__upload {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  min-width: 0;
+}
+
+.composer__upload-head {
+  display: flex;
+  justify-content: space-between;
+  gap: $space-3;
+  font-size: 12px;
+}
+
+.composer__upload-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__upload-detail {
+  flex-shrink: 0;
+}
+
+.composer__upload-bar {
+  height: 6px;
+  border: $line-border solid var(--color-border);
+}
+
+.composer__upload-bar-fill {
+  height: 100%;
+  width: calc(var(--fraction, 0) * 100%);
+  background: var(--color-tertiary);
+  transition: width 0.2s linear;
+}
+
+.composer__upload-error {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
 .composer__input {
   width: 100%;
   resize: none;
