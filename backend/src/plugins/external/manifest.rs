@@ -37,6 +37,10 @@ pub struct Manifest {
     /// Present when the plugin keeps its data in the database: it gets a schema and a role of its own
     #[serde(default)]
     pub database: Option<Database>,
+    /// Whether the plugin makes chats through `agent.reply`. The owner can then choose the model of those chats on the plugin's
+    /// settings page; a plugin that does not say so has no such choice, since its tools run in the chat that called them.
+    #[serde(default)]
+    pub agent: bool,
     /// Informational: which SDK the plugin was written with
     #[serde(default)]
     pub sdk: Option<String>,

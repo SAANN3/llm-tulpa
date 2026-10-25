@@ -914,13 +914,29 @@ impl ChatStore {
         plugin_subname: String,
         plugin_chat_id: String,
     ) -> Result<Chat, ChatStoreErrors> {
-        if let Some(chat) = self
-            .find_by_plugin_mapped_id(&plugin_name, &plugin_subname, &plugin_chat_id)
-            .await?
-        {
+        let chat = match self.find_by_plugin_mapped_id(&plugin_name, &plugin_subname, &plugin_chat_id).await? {
+            Some(chat) => chat,
+            None => self.create_plugin_chat(name, plugin_name.clone(), plugin_subname.clone(), plugin_chat_id).await?,
+        };
+        self.follow_plugin_model(chat, &plugin_name, &plugin_subname).await
+    }
+
+    /// Puts a plugin's chat on the model its owner chose for that plugin, when they chose one. Done each time the chat is
+    /// looked up for a message, so a choice made later reaches the chats that exist already (they are made once per sender
+    /// and kept for good); a plugin with no choice leaves its chats on the model they have, which the owner may have switched
+    /// in the chat itself.
+    async fn follow_plugin_model(&self, chat: Chat, plugin_name: &str, plugin_subname: &str) -> Result<Chat, ChatStoreErrors> {
+        let Some(choice) = self.models.plugin_model(plugin_name, plugin_subname).await? else {
+            return Ok(chat);
+        };
+        let profile_id = self.launch.start_profile(choice.model.id, choice.launch_profile_id).await?.map(|p| p.id);
+        if chat.model_id == choice.model.id && chat.launch_profile_id == profile_id {
             return Ok(chat);
         }
-        self.create_plugin_chat(name, plugin_name, plugin_subname, plugin_chat_id).await
+        chats::ActiveModel { id: Set(chat.id), model_id: Set(choice.model.id), launch_profile_id: Set(profile_id), ..Default::default() }
+            .update(&self.db)
+            .await?;
+        self.chat(chat.id).await
     }
 
     /// Persists an updated compaction summary for a chat — folds everything up to and

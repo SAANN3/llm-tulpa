@@ -3,7 +3,7 @@ mod entities;
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
-use entities::{active_model, llm_models, llm_providers};
+use entities::{active_model, llm_models, llm_providers, plugin_model};
 use sea_orm::{
     prelude::*, sea_query::{Expr, OnConflict}, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder,
 };
@@ -15,6 +15,13 @@ use crate::services::error::ErrorService;
 /// needs a model's name (to send to the provider) resolves it through here.
 pub struct ModelStore {
     db: DatabaseConnection,
+}
+
+/// The model an owner chose for a plugin's chats, with the launch profile chosen for it (llama.cpp models only).
+#[derive(Clone, Debug)]
+pub struct PluginModelChoice {
+    pub model: ModelRef,
+    pub launch_profile_id: Option<i64>,
 }
 
 /// A model together with the provider it belongs to.
@@ -196,6 +203,49 @@ impl ModelStore {
     /// still belongs to the model it is used with.
     pub async fn chosen_profile(&self, user_id: i64) -> Result<Option<i64>, ModelStoreErrors> {
         Ok(active_model::Entity::find_by_id(user_id).one(&self.db).await?.and_then(|settings| settings.active_profile_id))
+    }
+
+    /// The model chosen for one plugin's chats, when there is one and the model still exists.
+    pub async fn plugin_model(&self, plugin_name: &str, plugin_subname: &str) -> Result<Option<PluginModelChoice>, ModelStoreErrors> {
+        Ok(self.plugin_models().await?.remove(&(plugin_name.to_string(), plugin_subname.to_string())))
+    }
+
+    /// Every plugin's chosen model, keyed by (name, subname).
+    pub async fn plugin_models(&self) -> Result<HashMap<(String, String), PluginModelChoice>, ModelStoreErrors> {
+        let rows = plugin_model::Entity::find().all(&self.db).await?;
+        let mut models = self.get_many(&rows.iter().map(|row| row.model_id).collect::<Vec<_>>()).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let model = models.remove(&row.model_id)?;
+                Some(((row.plugin_name, row.plugin_subname), PluginModelChoice { model, launch_profile_id: row.launch_profile_id }))
+            })
+            .collect())
+    }
+
+    /// Chooses the model for a plugin's chats, replacing an earlier choice. The caller has checked that the profile belongs
+    /// to the model.
+    pub async fn set_plugin_model(&self, plugin_name: &str, plugin_subname: &str, model_id: i64, launch_profile_id: Option<i64>) -> Result<(), ModelStoreErrors> {
+        plugin_model::Entity::insert(plugin_model::ActiveModel {
+            plugin_name: Set(plugin_name.to_string()),
+            plugin_subname: Set(plugin_subname.to_string()),
+            model_id: Set(model_id),
+            launch_profile_id: Set(launch_profile_id),
+        })
+        .on_conflict(
+            OnConflict::columns([plugin_model::Column::PluginName, plugin_model::Column::PluginSubname])
+                .update_columns([plugin_model::Column::ModelId, plugin_model::Column::LaunchProfileId])
+                .to_owned(),
+        )
+        .exec(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    /// Takes the choice away: the plugin's chats are left on the model they have.
+    pub async fn clear_plugin_model(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), ModelStoreErrors> {
+        plugin_model::Entity::delete_by_id((plugin_name.to_string(), plugin_subname.to_string())).exec(&self.db).await?;
+        Ok(())
     }
 
     /// `default_for_user`, erroring `NoModel` when nothing has been picked yet.

@@ -9,7 +9,7 @@ use utoipa::OpenApi;
 
 use crate::state::AppState;
 
-use super::{enable::*, external_export::*, external_install::*, external_list::*, external_load::*, external_stage_discard::*, external_stage_git::*, external_stage_upload::*, external_staged::*, external_uninstall::*, external_unload::*, get_help::*, list::*, proxy::plugin_proxy, reset_chat::*, set_settings::*, settings_schema::*, tab::*, tab_action::*, tab_upload::*, tabs::*};
+use super::{enable::*, external_export::*, external_install::*, external_list::*, external_load::*, external_stage_discard::*, external_stage_git::*, external_stage_upload::*, external_staged::*, external_uninstall::*, external_unload::*, get_help::*, list::*, proxy::plugin_proxy, reset_chat::*, set_model::*, set_settings::*, settings_schema::*, tab::*, tab_action::*, tab_upload::*, tabs::*};
 
 /// The most a tab's upload may carry: a zip or a folder of notes and scripts
 const MAX_TAB_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -35,6 +35,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/settings_schema", get(plugin_settings_schema))
         .route("/help", get(plugin_help))
         .route("/reset_chat", post(reset_plugin_chat))
+        .route("/model", post(set_plugin_model))
         .route("/external", get(list_external_plugins))
         .route("/external/load", post(load_external_plugin))
         .route("/external/unload", post(unload_external_plugin))
@@ -59,9 +60,11 @@ pub fn router() -> Router<Arc<AppState>> {
 // registered at runtime, so there's nothing to describe statically.
 #[derive(OpenApi)]
 #[openapi(
-    paths(list_plugins, list_external_plugins, stage_external_upload, stage_external_git, get_staged_external, get_staged_external_file, discard_staged_external, install_external_plugin, get_external_install, uninstall_external_plugin, export_external_plugin, load_external_plugin, unload_external_plugin, set_plugin_settings, set_plugin_enabled, plugin_settings_schema, plugin_help, reset_plugin_chat, plugin_tabs, plugin_tab, plugin_tab_action, plugin_tab_upload),
+    paths(list_plugins, list_external_plugins, stage_external_upload, stage_external_git, get_staged_external, get_staged_external_file, discard_staged_external, install_external_plugin, get_external_install, uninstall_external_plugin, export_external_plugin, load_external_plugin, unload_external_plugin, set_plugin_settings, set_plugin_enabled, plugin_settings_schema, plugin_help, reset_plugin_chat, set_plugin_model, plugin_tabs, plugin_tab, plugin_tab_action, plugin_tab_upload),
     components(schemas(
         crate::plugins::registry::PluginInfo,
+        crate::plugins::registry::PluginModelInfo,
+        SetPluginModelBody,
         SetPluginSettingsBody,
         SetPluginEnabledBody,
         ExternalPluginBody,

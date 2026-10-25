@@ -78,6 +78,10 @@ impl PluginBuilder for ExternalPluginBuilder {
         &self.manifest.summary
     }
 
+    fn uses_agent(&self) -> bool {
+        self.manifest.agent
+    }
+
     fn help_message(&self) -> String {
         self.manifest.help_message.clone()
     }

@@ -121,6 +121,13 @@ pub trait PluginBuilder: Send + Sync {
     /// What the plugin does, in one short line: shown under its name in the plugin list.
     fn summary(&self) -> &str;
 
+    /// Whether the plugin has chats of its own, which it hands messages to the agent in (a messaging plugin, an external one
+    /// that calls `agent.reply`). Only such a plugin has a model to choose: a tool runs in the chat that called it, on that
+    /// chat's model.
+    fn uses_agent(&self) -> bool {
+        false
+    }
+
     /// A human-readable info message for this plugin type — e.g. Telegram's explains
     /// how to find/talk to the bot, step by step. Shown as-is on the frontend's plugin
     /// settings panel, same static-per-type nature as `settings_schema` (not per

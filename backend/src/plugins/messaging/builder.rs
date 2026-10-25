@@ -42,6 +42,10 @@ impl<P: MessagingProvider> PluginBuilder for MessagingProviderBuilder<P> {
         P::summary()
     }
 
+    fn uses_agent(&self) -> bool {
+        true
+    }
+
     fn help_message(&self) -> String {
         P::help_message()
     }

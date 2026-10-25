@@ -36,6 +36,20 @@ pub struct PluginInfo {
     pub settings: Option<Value>,
     /// What the plugin does, in one short line
     pub summary: String,
+    /// Whether the plugin has chats of its own, so a model can be chosen for them
+    pub uses_agent: bool,
+    /// The model the owner chose for the plugin's chats; `None` leaves them on the model they have. Filled in by the list
+    /// route, which has the model store; the registry knows nothing of models.
+    pub model: Option<PluginModelInfo>,
+}
+
+/// A model chosen for a plugin's chats
+#[derive(Serialize, ToSchema)]
+pub struct PluginModelInfo {
+    pub provider: String,
+    pub model: String,
+    /// The launch profile chosen with it (llama.cpp models only)
+    pub launch_profile_id: Option<i64>,
 }
 
 struct PluginEntry {
@@ -564,6 +578,8 @@ impl PluginRegistry {
                 enabled: entry.enabled,
                 settings: entry.plugin.as_ref().map(|plugin| plugin.settings_value()),
                 summary: entry.builder.summary().to_string(),
+                uses_agent: entry.builder.uses_agent(),
+                model: None,
             })
             .collect();
         list.sort_by(|a, b| (&a.plugin_name, &a.plugin_subname).cmp(&(&b.plugin_name, &b.plugin_subname)));
