@@ -22,7 +22,7 @@ sub-agent, each get their own replies.
 
 A request with no `user` message in it is refused with a 500, as Qwen's chat template makes llama-server do.
 
-Requests that are not the chat's own (the compaction summary, the key facts, the notes request) are told apart by their
+Requests that are not the chat's own (the compaction summary, the key facts, the notes request, the suggestion of what to write next) are told apart by their
 instruction and answered with a fixed valid reply, so a script only has to describe the conversation itself. They are
 recorded with their own kind.
 """
@@ -45,6 +45,7 @@ SUMMARY = ("1. ESTABLISHED FACTS & FINDINGS\n- The fake summary of the excerpt.\
            "3. CURRENT UNSOLVED OBJECTIVE\n- Carry on with the task.")
 FACTS = json.dumps({"goal": "the fake goal", "facts": ["fake fact one", "fake fact two"]})
 NOTES = "Goal: the fake goal. Plan: step 1 done, step 2 next."
+SUGGESTION = "And what about the themes?"
 TEMPLATE = ("{%- if tools %}<tools>{{ tools }}</tools>{%- endif %}{%- if enable_thinking is defined and enable_thinking is false %}"
             "<think>\n\n</think>{%- endif %}<tool_call>\n</tool_call><think>\n</think>")
 # FAKE_LEVELS="xhigh,medium,low" gives the template Qwen's graduated thinking levels (a page's thinking menu then lists them)
@@ -69,6 +70,9 @@ def kind_of(body):
     # The notes request is the live prompt (tools included, so the server's cache serves it) plus one question
     if last.startswith("The older part of this conversation is about to be compacted"):
         return "notes"
+    # What the user might write next: the live prompt (tools included) plus one question
+    if last.startswith("Write the one message the user is most likely to send next"):
+        return "suggestion"
     if not body.get("tools"):
         if system.startswith("Summarize the conversation excerpt"):
             return "summary"
@@ -178,6 +182,8 @@ class Handler(BaseHTTPRequestHandler):
             text = FACTS
         elif kind == "notes":
             text = NOTES
+        elif kind == "suggestion":
+            text = SUGGESTION
         elif kind == "memory":
             with LOCK:
                 text = MEMORY.pop(0) if MEMORY else '{"memories":[]}'

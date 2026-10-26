@@ -108,7 +108,7 @@ def roles(chat):
 
 def settings(**kw):
     status, _ = api("/api/settings", {"auto_confirm": True, "max_turn_steps": 0, "use_tools": True, "trim_old_thinking": False,
-                                      "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000, **kw})
+                                      "memory_enabled": True, "memory_max_entries": 300, "memory_slice_chars": 3000, "suggest_next": False, **kw})
     assert status < 300
 
 
@@ -441,6 +441,47 @@ def a_chat_keeps_the_thinking_level_it_was_sent_with_and_a_model_has_a_default_l
     eq(api("/api/llm/thinking_default", {"model": "nothing.gguf", "level": "low"})[0], 404, "a model that isn't registered")
     eq(api("/api/llm/thinking_default", model)[0], 204, "no level takes the choice away")
     eq(default(), [], "and the list is empty again")
+
+
+@scenario
+def a_reply_leaves_a_suggestion_for_the_next_message_that_the_next_message_replaces():
+    chat = new_chat("suggest")
+    suggestion = lambda: ok(f"/api/chats?id={chat}")["suggestion"]
+    settings()
+    turn(chat, "first, with the setting off")
+    time.sleep(1.5)
+    eq(calls("suggestion"), [], "nothing is asked while the setting is off")
+    eq(suggestion(), None, "and nothing is kept")
+
+    settings(suggest_next=True)
+    turn(chat, "second")
+    wait_for(suggestion, what="a suggestion")
+    eq(suggestion(), "And what about the themes?", "the line the model wrote")
+    main, asked = calls("main")[-1], calls("suggestion")[-1]
+    eq(asked["messages"][0], main["messages"][0], "the system message is the turn's own, so the server's cached prompt serves it")
+    eq(asked["tool_names"], main["tool_names"], "and so are the tools")
+    eq(asked["messages"][-2]["role"], "assistant", "the reply is the last message before the question")
+    eq(asked["max_tokens"] is not None and asked["max_tokens"] <= 64, True, "a few tokens to spend")
+    eq(asked["chat_template_kwargs"], {"enable_thinking": False}, "with thinking off")
+
+    # a message of the user's makes it stale at once, and the run's own reply brings a new one
+    script({"text": "Slow.", "delay": 2.0})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "third"})
+    eq(suggestion(), None, "the line is about a reply that is no longer the newest message")
+    wait_idle(chat)
+    wait_for(suggestion, what="the suggestion for the new reply")
+
+    # a run the user stops, and a chat of a sub-agent or a plugin, get none
+    before = len(calls("suggestion"))
+    script({"text": "Never finished.", "delay": 5.0})
+    api("/api/agent/turn", {"chat_id": chat, "prompt": "fourth"})
+    wait_for(lambda: state(chat)["status"] == "running", what="the run")
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 204, "stop")
+    wait_idle(chat, 10)
+    time.sleep(1.5)
+    eq(len(calls("suggestion")), before, "a stopped run asks for none")
+    eq(suggestion(), None, "and keeps none")
+    settings()
 
 
 @scenario
