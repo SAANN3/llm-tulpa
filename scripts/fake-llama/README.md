@@ -14,7 +14,7 @@ at once). What it cannot say: anything about a real chat template or model quali
    and its own `files_dir`/`jobs_dir`, and a Postgres it can use (`scripts/verify-env` sets one up; or any throwaway one).
 2. A registered llama.cpp model with a launch profile in that database (the chat is bound to it; the fake answers whatever the model). The
    profile's context window should be 40,960 for the fold scenarios, whose numbers assume it.
-3. Start the fake: `python3 scripts/fake-llama/fake_llama.py 18300 40960` (port, window).
+3. Start the fake: `python3 scripts/fake-llama/fake_llama.py 18300 40960` (port, window). With `FAKE_LEVELS=xhigh,medium,low` in its environment its template offers those thinking levels, so a page's thinking menu lists them.
 
 ## Run
     python3 scripts/fake-llama/run_scenarios.py PATH/TO/settings.json PROFILE_ID [BACKEND_URL] [FAKE_URL] [scenario ...]

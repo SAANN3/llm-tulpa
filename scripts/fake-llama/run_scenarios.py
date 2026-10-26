@@ -414,6 +414,36 @@ def a_fold_in_a_run_of_one_request_and_many_tool_calls_still_sends_a_user_messag
 
 
 @scenario
+def a_chat_keeps_the_thinking_level_it_was_sent_with_and_a_model_has_a_default_level():
+    settings()
+    chat = new_chat("think-level")
+    chat_out = lambda: ok(f"/api/chats?id={chat}")
+    eq(chat_out()["think_level"], None, "no level before a turn names one")
+    turn(chat, "first", think="low")
+    eq(chat_out()["think_level"], "low", "the level the turn was sent with")
+    turn(chat, "second", think=False)
+    eq(chat_out()["think_level"], "off", "no thinking is a level too")
+    turn(chat, "third", think=True)
+    eq(chat_out()["think_level"], "on", "plain thinking")
+    turn(chat, "fourth")
+    eq(chat_out()["think_level"], "on", "a turn that names none leaves the level as it was")
+
+    model = {"model": "fake.gguf", "provider": "llama-cpp"}
+    default = lambda: [d for d in ok("/api/llm/thinking_defaults") if d["model"] == "fake.gguf"]
+    eq(api("/api/llm/thinking_default", model)[0], 204, "a default left by an earlier run is taken away")
+    eq(default(), [], "no default level to begin with")
+    eq(api("/api/llm/thinking_default", {**model, "level": "low"})[0], 204, "a default level is saved")
+    eq(default(), [{**model, "level": "low"}], "the default is listed")
+    eq(api("/api/llm/thinking_default", {**model, "level": "medium"})[0], 204, "a second one replaces the first")
+    eq([d["level"] for d in default()], ["medium"], "one level per model")
+    eq(api("/api/llm/thinking_default", {**model, "level": "  "})[0], 400, "an empty level is refused")
+    eq(api("/api/llm/thinking_default", {**model, "level": "x" * 40})[0], 400, "an overlong level is refused")
+    eq(api("/api/llm/thinking_default", {"model": "nothing.gguf", "level": "low"})[0], 404, "a model that isn't registered")
+    eq(api("/api/llm/thinking_default", model)[0], 204, "no level takes the choice away")
+    eq(default(), [], "and the list is empty again")
+
+
+@scenario
 def the_context_is_measured_by_part_and_memory_edits_reach_the_next_request():
     settings()
     chat = new_chat("memory")

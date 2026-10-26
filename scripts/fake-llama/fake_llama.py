@@ -27,6 +27,7 @@ instruction and answered with a fixed valid reply, so a script only has to descr
 recorded with their own kind.
 """
 import json
+import os
 import sys
 import threading
 import time
@@ -46,6 +47,9 @@ FACTS = json.dumps({"goal": "the fake goal", "facts": ["fake fact one", "fake fa
 NOTES = "Goal: the fake goal. Plan: step 1 done, step 2 next."
 TEMPLATE = ("{%- if tools %}<tools>{{ tools }}</tools>{%- endif %}{%- if enable_thinking is defined and enable_thinking is false %}"
             "<think>\n\n</think>{%- endif %}<tool_call>\n</tool_call><think>\n</think>")
+# FAKE_LEVELS="xhigh,medium,low" gives the template Qwen's graduated thinking levels (a page's thinking menu then lists them)
+if os.environ.get("FAKE_LEVELS"):
+    TEMPLATE += "{%- if reasoning_effort not in (" + ", ".join(repr(level) for level in os.environ["FAKE_LEVELS"].split(",")) + ") %}bad{%- endif %}"
 
 
 def text_of(message):
