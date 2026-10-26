@@ -7,6 +7,8 @@ mod ollama_get;
 mod ollama_set;
 mod ollama_test;
 mod pull;
+mod set_thinking_default;
 mod tasks;
 mod thinking_capability;
+mod thinking_defaults;
 pub mod router;

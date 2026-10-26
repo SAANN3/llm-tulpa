@@ -638,6 +638,7 @@ mod tests {
             tools_enabled: true,
             unseen_end: None,
             memory_snapshot: None,
+            think_level: None,
         }
     }
 

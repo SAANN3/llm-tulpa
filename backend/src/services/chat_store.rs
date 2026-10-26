@@ -254,6 +254,7 @@ impl ChatStore {
             thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
             tools_enabled: row.tools_enabled,
             unseen_end: row.unseen_end,
+            think_level: row.think_level,
             memory_snapshot: row.memory_snapshot,
         }
     }
@@ -695,6 +696,17 @@ impl ChatStore {
         // The measured prompt size (which has the tool definitions in it or not) no longer describes the next request
         chats::ActiveModel { id: Set(chat_id), tools_enabled: Set(tools_enabled), last_prompt_tokens: Set(None), ..Default::default() }
             .update(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// Keeps the thinking level a chat was last sent with. Like `set_unseen_end` it leaves `updated_at` alone: choosing a
+    /// level is not activity in the chat. Ownership is the caller's responsibility.
+    pub async fn set_think_level(&self, chat_id: i64, level: &str) -> Result<(), ChatStoreErrors> {
+        chats::Entity::update_many()
+            .col_expr(chats::Column::ThinkLevel, Expr::value(level))
+            .filter(chats::Column::Id.eq(chat_id))
+            .exec(&self.db)
             .await?;
         Ok(())
     }
@@ -1344,6 +1356,8 @@ pub struct Chat {
     /// The part of the system prompt the user's memory made when the chat started or last folded (see
     /// `chats.memory_snapshot`); `None` until taken.
     pub memory_snapshot: Option<String>,
+    /// The thinking level the chat was last sent with (see `chats.think_level`).
+    pub think_level: Option<String>,
 }
 
 /// How much a chat holds (see `ChatStore::chat_counts`).

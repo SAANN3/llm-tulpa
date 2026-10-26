@@ -3,7 +3,7 @@ mod entities;
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
-use entities::{active_model, llm_models, llm_providers, plugin_model};
+use entities::{active_model, llm_models, llm_providers, model_thinking_default, plugin_model};
 use sea_orm::{
     prelude::*, sea_query::{Expr, OnConflict}, ActiveValue::Set, DatabaseConnection, DbErr, QueryOrder,
 };
@@ -245,6 +245,37 @@ impl ModelStore {
     /// Takes the choice away: the plugin's chats are left on the model they have.
     pub async fn clear_plugin_model(&self, plugin_name: &str, plugin_subname: &str) -> Result<(), ModelStoreErrors> {
         plugin_model::Entity::delete_by_id((plugin_name.to_string(), plugin_subname.to_string())).exec(&self.db).await?;
+        Ok(())
+    }
+
+    /// The thinking level each of the user's models starts on, as (model, level) in no particular order. A model that was
+    /// removed has no row left (the rows go with it).
+    pub async fn thinking_defaults(&self, user_id: i64) -> Result<Vec<(ModelRef, String)>, ModelStoreErrors> {
+        let rows = model_thinking_default::Entity::find().filter(model_thinking_default::Column::UserId.eq(user_id)).all(&self.db).await?;
+        let mut models = self.get_many(&rows.iter().map(|row| row.model_id).collect::<Vec<_>>()).await?;
+        Ok(rows.into_iter().filter_map(|row| Some((models.remove(&row.model_id)?, row.level))).collect())
+    }
+
+    /// Chooses the level a model starts on for the user, replacing an earlier one.
+    pub async fn set_thinking_default(&self, user_id: i64, model_id: i64, level: &str) -> Result<(), ModelStoreErrors> {
+        model_thinking_default::Entity::insert(model_thinking_default::ActiveModel {
+            user_id: Set(user_id),
+            model_id: Set(model_id),
+            level: Set(level.to_string()),
+        })
+        .on_conflict(
+            OnConflict::columns([model_thinking_default::Column::UserId, model_thinking_default::Column::ModelId])
+                .update_column(model_thinking_default::Column::Level)
+                .to_owned(),
+        )
+        .exec(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    /// Takes the choice away: the model starts on its first level again.
+    pub async fn clear_thinking_default(&self, user_id: i64, model_id: i64) -> Result<(), ModelStoreErrors> {
+        model_thinking_default::Entity::delete_by_id((user_id, model_id)).exec(&self.db).await?;
         Ok(())
     }
 

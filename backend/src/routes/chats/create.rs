@@ -103,5 +103,6 @@ pub async fn create_chat(
         launch_profile_id: chat.launch_profile_id,
         tools_enabled: chat.tools_enabled,
         unseen_end: chat.unseen_end,
+        think_level: chat.think_level,
     }))
 }

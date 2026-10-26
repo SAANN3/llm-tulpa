@@ -53,6 +53,8 @@ pub(crate) struct ChatOut {
     /// How the last run on this chat ended, until the chat is opened (`POST /api/chats/seen`): `answered`,
     /// `waiting_for_permission`, `failed` or `step_limit`. `null` when there is nothing new.
     pub(crate) unseen_end: Option<String>,
+    /// The thinking level the chat was last sent with: `off`, `on` or one of its model's levels. `null` until a turn names one.
+    pub(crate) think_level: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -109,6 +111,7 @@ pub async fn get_chats(
             launch_profile_id: chat.launch_profile_id,
             tools_enabled: chat.tools_enabled,
             unseen_end: chat.unseen_end,
+            think_level: chat.think_level,
         })));
     }
 
@@ -135,6 +138,7 @@ pub async fn get_chats(
             launch_profile_id: chat.launch_profile_id,
             tools_enabled: chat.tools_enabled,
             unseen_end: chat.unseen_end,
+            think_level: chat.think_level,
         })
         .collect();
 

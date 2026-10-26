@@ -17,13 +17,17 @@ use super::ollama_get::*;
 use super::ollama_set::*;
 use super::ollama_test::*;
 use super::pull::*;
+use super::set_thinking_default::*;
 use super::tasks::*;
 use super::thinking_capability::*;
+use super::thinking_defaults::*;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/generate", post(generate))
         .route("/thinking_capability", get(thinking_capability))
+        .route("/thinking_defaults", get(thinking_defaults))
+        .route("/thinking_default", post(set_thinking_default))
         .route("/models", get(models))
         .route("/ollama", get(get_ollama_settings).post(set_ollama_settings))
         .route("/ollama/test", post(test_ollama))
@@ -36,7 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(generate, thinking_capability, models, get_ollama_settings, set_ollama_settings, test_ollama, catalog, local_files, pull, import, tasks),
+    paths(generate, thinking_capability, thinking_defaults, set_thinking_default, models, get_ollama_settings, set_ollama_settings, test_ollama, catalog, local_files, pull, import, tasks),
     components(schemas(
         OllamaSettingsOut,
         SetOllamaRequest,
@@ -47,6 +51,8 @@ pub fn router() -> Router<Arc<AppState>> {
         PullRequest,
         ImportBody,
         ImportFile,
+        SetThinkingDefaultRequest,
+        ThinkingDefaultOut,
         crate::services::llm::ThinkingCapability,
         crate::services::llm::LocalModel,
         crate::services::llm::LocalModelDetails,

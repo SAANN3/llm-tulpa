@@ -115,6 +115,17 @@ pub enum ThinkChoice {
     Level(String),
 }
 
+impl ThinkChoice {
+    /// The choice as the composer names it (`off`, `on` or the model's own level), which is how a chat remembers it
+    pub fn name(&self) -> String {
+        match self {
+            ThinkChoice::Enabled(false) => "off".to_string(),
+            ThinkChoice::Enabled(true) => "on".to_string(),
+            ThinkChoice::Level(level) => level.clone(),
+        }
+    }
+}
+
 /// What a model's own chat template actually supports for `think`, discovered by
 /// inspecting its raw text rather than hardcoded per model family. `Graduated`
 /// carries the exact accepted effort strings, in the order the template lists them

@@ -188,12 +188,25 @@ impl Agent {
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
     ) -> Result<StartedTurn, ErrorService> {
+        self.remember_think(chat_id, think.as_ref()).await;
         self.runner.start_prompt(chat_id, prompt, images, file_ids, think).await
+    }
+
+    /// Keeps the level a turn was asked with on the chat, so the composer offers it again next time. Best-effort: a turn
+    /// is not held up by a failure to remember it.
+    async fn remember_think(&self, chat_id: i64, think: Option<&ThinkChoice>) {
+        let Some(think) = think else {
+            return;
+        };
+        if let Err(e) = self.chat_store.set_think_level(chat_id, &think.name()).await {
+            tracing::warn!(chat_id, "could not save the chat's thinking level: {e:?}");
+        }
     }
 
     /// Has the model answer again where it answered last, in the background, and replaces that answer
     /// with the new one — see `TurnRunner::start_regenerate` for what qualifies.
     pub async fn start_regenerate(&self, chat_id: i64, message_id: i64, think: Option<ThinkChoice>) -> Result<(), ErrorService> {
+        self.remember_think(chat_id, think.as_ref()).await;
         self.runner.start_regenerate(chat_id, message_id, think).await
     }
 
