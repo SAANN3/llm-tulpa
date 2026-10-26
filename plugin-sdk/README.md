@@ -12,6 +12,7 @@ plugin-sdk/
     hello-world-python/ the same in Python, with no build step
     python-deps/       a Python plugin of several files with a package from PyPI in a virtual environment of its own
     telegram/          the built-in Telegram plugin as an external one (Python): a loop, settings with a secret, the plugin's agent
+    weather/           a Python plugin with two tools, two settings and a tab, for a showcase: its weather is made up from the city's name (`pack.py` makes its `.tulpa` file)
     skills/            the built-in skills plugin as an external one: database, uploads, folder approvals
 ```
 
