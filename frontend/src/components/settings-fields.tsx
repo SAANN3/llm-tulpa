@@ -1,11 +1,14 @@
-import {useState} from 'react'
+import {useEffect, useState} from 'react'
 import type {ReactNode} from 'react'
 import '../styles/settings-fields.scss'
-import {Button, ChoiceGroup, Div, Input, Label, Slider, ToggleSwitch} from './primitives'
+import {Button, ChoiceGroup, Div, Input, Label, Select, Slider, ToggleSwitch} from './primitives'
 import {useTheme} from '../context/use-theme.ts'
 import {formatTime, type TimeFormat} from '../utils/time-format.ts'
 import {ChooseModelPopup} from './popups/choose-model-popup.tsx'
 import {useModelsData} from '../hooks/use-models-data.ts'
+import {useThinkingDefaults} from '../hooks/use-thinking-defaults.ts'
+import {getThinkingCapability} from '../api/llm/thinking-capability.ts'
+import {offeredLevels} from '../utils/thinking-level.ts'
 import {parseMaxTurnSteps} from '../utils/parse-max-turn-steps.ts'
 import {validateTimezone} from '../utils/validate-timezone.ts'
 import {PasswordInput} from './password-input.tsx'
@@ -111,6 +114,48 @@ export const ActiveModelField = ({provider, model, launchProfileId, onChosen}: A
                 }}
                 onClose={() => setOpen(false)}
             />
+        </SettingsRow>
+    )
+};
+
+/** What the Select says for a model with no chosen level: it starts on its first one */
+const FIRST_LEVEL = "Model's first level"
+
+export interface ThinkingDefaultFieldProps {
+    provider: string
+    /** The default model; the row is left out until there is one */
+    model: string | null
+}
+
+/** The thinking level new chats start on for the default model. Saved at once, apart from the Save of the other tabs; a chat
+ * keeps the level it was last sent with, and another model's is chosen in that model's menu under a message box. */
+export const ThinkingDefaultField = ({provider, model}: ThinkingDefaultFieldProps) => {
+    const {levelFor, choose} = useThinkingDefaults()
+    // null: not asked yet, or a model that doesn't think (no levels to choose from)
+    const [levels, setLevels] = useState<string[] | null>(null)
+
+    useEffect(() => {
+        setLevels(null)
+        if (!model) return
+        let cancelled = false
+        getThinkingCapability(undefined, {model, provider}).then(
+            (capability) => {
+                if (cancelled || capability.kind === 'unsupported') return
+                setLevels(offeredLevels(capability.kind === 'graduated' ? capability.modes : null))
+            },
+            () => {},
+        )
+        return () => {
+            cancelled = true
+        }
+    }, [provider, model])
+
+    if (!model || !levels) return null
+    const chosen = levelFor(provider, model)
+    return (
+        <SettingsRow label="Default thinking" help="The level a chat on the default model starts on, until you pick another in the chat. Each chat then keeps the one it was last sent with.">
+            <Select values={[FIRST_LEVEL, ...levels]} selected={chosen != null && levels.includes(chosen) ? chosen : FIRST_LEVEL}
+                    onChosen={(value) => void choose(provider, model, value === FIRST_LEVEL ? null : value)}/>
         </SettingsRow>
     )
 };

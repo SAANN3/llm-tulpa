@@ -6,6 +6,8 @@ import {uploadFile} from '../api/files/upload'
 import {formatBytes} from '../utils/format-bytes.ts'
 import {debugLog} from '../utils/debug.ts'
 import {getThinkingCapability, type ThinkingModel} from '../api/llm/thinking-capability.ts'
+import {useThinkingDefaults} from '../hooks/use-thinking-defaults.ts'
+import {firstOffered, offeredLevels} from '../utils/thinking-level.ts'
 import {Attachment as AttachmentIcon} from 'pixelarticons/react'
 import '../styles/user-input.scss'
 import {useAuth} from '../context/use-auth.ts'
@@ -29,6 +31,8 @@ export interface UserInputProps {
     clearOnSend?: boolean
     inputDisabled?: boolean
     initialThink?: boolean
+    /** The level the chat was last sent with; the composer starts on it when the model still offers it, else on the model's default */
+    savedLevel?: string | null
     chatId?: number
     /** A message being edited: its text and attachments fill the composer until it is sent or cancelled. `key` tells one edit from the next. */
     editing?: { key: number; text: string; images: string[]; fileIds: number[] } | null
@@ -82,6 +86,7 @@ export const UserInput = ({
     clearOnSend = true,
     inputDisabled,
     initialThink = true,
+    savedLevel,
     chatId,
     modelChoice,
     onModelPicked,
@@ -97,6 +102,10 @@ export const UserInput = ({
     // Until the model is asked, it is taken to think: the switch has always been on by default
     const [canThink, setCanThink] = useState(true)
     const [thinkMode, setThinkMode] = useState<string | null>(null)
+    // Set by the user's own pick (or by a start without thinking), after which what the chat or the model remembers no longer moves the level
+    const levelChosen = useRef(!initialThink)
+    const thinkingDefaults = useThinkingDefaults()
+    const defaultLevel = thinkingDefaults.levelFor(modelChoice?.provider, modelChoice?.model)
     const [images, setImages] = useState<string[]>([])
     const [fileIds, setFileIds] = useState<number[]>([])
     const [uploading, setUploading] = useState(false)
@@ -205,13 +214,30 @@ export const UserInput = ({
         }
     }, [chatId, modelChoice?.provider, modelChoice?.model, modelChoice?.profileId, startProvider, startName])
 
-    // The model button's levels: a graduated model's own, or on and off; off is always last
-    const thinking: ThinkingLevels | null = !canThink ? null : thinkingModes
-        ? {levels: [...thinkingModes, 'off'], selected: think ? thinkMode ?? thinkingModes[0] ?? 'off' : 'off'}
-        : {levels: ['on', 'off'], selected: think ? 'on' : 'off'}
-    const chooseThinking = (level: string) => {
+    // A chat starts on the level it was last sent with, a new one on the model's default; each only while the model offers it
+    useEffect(() => {
+        levelChosen.current = !initialThink
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- a different chat starts over; a changed prop is not one
+    }, [chatId])
+    useEffect(() => {
+        if (levelChosen.current || !canThink) return
+        const level = firstOffered([savedLevel, defaultLevel], thinkingModes)
+        if (level == null) return
         setThink(level !== 'off')
         if (thinkingModes?.includes(level)) setThinkMode(level)
+    }, [savedLevel, defaultLevel, thinkingModes, canThink])
+
+    // The model button's levels: a graduated model's own, or on and off; off is always last
+    const thinking: ThinkingLevels | null = !canThink ? null : thinkingModes
+        ? {levels: offeredLevels(thinkingModes), selected: think ? thinkMode ?? thinkingModes[0] ?? 'off' : 'off'}
+        : {levels: offeredLevels(null), selected: think ? 'on' : 'off'}
+    const chooseThinking = (level: string) => {
+        levelChosen.current = true
+        setThink(level !== 'off')
+        if (thinkingModes?.includes(level)) setThinkMode(level)
+    }
+    const chooseDefault = (level: string | null) => {
+        if (modelChoice) void thinkingDefaults.choose(modelChoice.provider, modelChoice.model, level)
     }
 
     const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
@@ -379,7 +405,8 @@ export const UserInput = ({
                 <Div className="composer__controls">
                     {onModelPicked ? (
                         <ModelMenu current={modelChoice ?? null} onPick={onModelPicked} onUseDefault={onUseDefault} defaultChoice={defaultChoice}
-                                   thinking={thinking} onThinking={chooseThinking} disabled={blocked}/>
+                                   thinking={thinking} onThinking={chooseThinking}
+                                   defaultLevel={defaultLevel} onDefaultLevel={chooseDefault} disabled={blocked}/>
                     ) : null}
                     <MicrophoneButton state={voice.state} level={voice.level} unavailable={voiceHintNow != null} onClicked={onMicrophone}/>
                     <Button className="composer__send" text="Send" onClicked={send} disabled={blocked || !canSend}/>

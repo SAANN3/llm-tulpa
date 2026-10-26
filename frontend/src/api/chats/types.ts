@@ -19,6 +19,8 @@ export interface ChatOut {
     tools_enabled: boolean
     /** How the chat's last run ended, until the chat is opened; null when there is nothing new. */
     unseen_end: UnseenEnd | null
+    /** The thinking level the chat was last sent with (`off`, `on` or one of its model's levels); null until a turn names one. */
+    think_level: string | null
 }
 
 /** The ways a run ends that the user hasn't looked at yet (a run they stopped leaves none) */

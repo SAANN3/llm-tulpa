@@ -1,4 +1,4 @@
-import {ActiveModelField, DebugField, HfTokenField, SettingsSection} from '../../components/settings-fields.tsx'
+import {ActiveModelField, DebugField, HfTokenField, SettingsSection, ThinkingDefaultField} from '../../components/settings-fields.tsx'
 import {useSettings} from '../../context/use-settings.ts'
 import {useDebug} from '../../hooks/use-debug.ts'
 import {setDebug} from '../../utils/debug.ts'
@@ -16,6 +16,7 @@ export const ModelsTab = () => {
                 launchProfileId={settings?.launch_profile_id ?? null}
                 onChosen={(llm_provider, active_model, launch_profile_id) => setSettings({llm_provider, active_model, launch_profile_id})}
             />
+            <ThinkingDefaultField provider={settings?.llm_provider ?? 'ollama'} model={settings?.active_model ?? null}/>
             <HfTokenField hasToken={settings?.has_hf_token ?? false} onSave={(hf_token) => setSettings({hf_token})}/>
             <DebugField enabled={debug} onToggle={setDebug}/>
         </SettingsSection>

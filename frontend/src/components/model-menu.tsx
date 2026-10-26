@@ -35,6 +35,10 @@ export interface ModelMenuProps {
     /** Null for a model that doesn't think */
     thinking: ThinkingLevels | null
     onThinking: (level: string) => void
+    /** The level this model starts on for the user, when they chose one */
+    defaultLevel?: string | null
+    /** Makes a level the model's default, or (null) takes the choice away; without it the menu offers neither */
+    onDefaultLevel?: (level: string | null) => void
     disabled?: boolean
 }
 
@@ -50,7 +54,7 @@ const thinkingText = (thinking: ThinkingLevels): string => {
 
 /** The composer's model button: the model's short name and its thinking level. Its menu lists the thinking levels
  * and the recently used models; every other model is in the Choose model popup behind "All models…". */
-export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinking, onThinking, disabled}: ModelMenuProps) => {
+export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinking, onThinking, defaultLevel, onDefaultLevel, disabled}: ModelMenuProps) => {
     const {models, profiles} = useProfileCatalog()
     const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
     const [recent, setRecent] = useState<RecentModelOut[]>([])
@@ -145,11 +149,30 @@ export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinkin
                                  setMenuAt(null)
                                  onThinking(level)
                              }}>
-                            <Label text={capitalize(level)}/>
+                            <span className="model-menu__entry-name">
+                                <Label text={capitalize(level)}/>
+                                {level === defaultLevel ? <span className="model-menu__mark">*</span> : null}
+                            </span>
                         </Div>
                     )) : (
                         <Label variant="secondary" className="model-menu__note" text="This model doesn't think"/>
                     )}
+                    {thinking && onDefaultLevel && thinking.selected !== defaultLevel ? (
+                        <Div className="model-menu__item" onClick={() => {
+                            setMenuAt(null)
+                            onDefaultLevel(thinking.selected)
+                        }}>
+                            <Label variant="secondary" text={`Make ${thinkingText(thinking)} the default for this model`}/>
+                        </Div>
+                    ) : null}
+                    {thinking && onDefaultLevel && defaultLevel != null ? (
+                        <Div className="model-menu__item" onClick={() => {
+                            setMenuAt(null)
+                            onDefaultLevel(null)
+                        }}>
+                            <Label variant="secondary" text="Clear the default for this model"/>
+                        </Div>
+                    ) : null}
                     <Div className="model-menu__divider"/>
                     {entries.length > 0 ? <Label variant="secondary" className="model-menu__section" text="Recent models"/> : null}
                     {entries.map((choice) => {

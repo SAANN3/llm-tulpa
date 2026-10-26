@@ -105,6 +105,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [chatProvider, setChatProvider] = useState('ollama')
     const [chatProfileId, setChatProfileId] = useState<number | null>(null)
     const [chatToolsEnabled, setChatToolsEnabled] = useState(true)
+    const [chatThinkLevel, setChatThinkLevel] = useState<string | null>(null)
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
     const [folderId, setFolderId] = useState<number | null>(null)
@@ -127,6 +128,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
 
     useEffect(() => {
         setChatName(null)
+        setChatThinkLevel(null)
         setChatModel(null)
         setContextUsed(null)
         setContextMax(null)
@@ -142,6 +144,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatProvider(result.provider)
                 setChatProfileId(result.launch_profile_id)
                 setChatToolsEnabled(result.tools_enabled)
+                setChatThinkLevel(result.think_level)
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
                 setFolderId(result.folder_id)
@@ -452,6 +455,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         editing={editing}
                         onCancelEdit={() => setEditing(null)}
                         initialThink={initialThink}
+                        savedLevel={chatThinkLevel}
                         chatId={chatId}
                         modelChoice={chatModel != null ? {provider: chatProvider, model: chatModel, profileId: chatProfileId} : null}
                         onModelPicked={(choice) => void changeModel(choice)}
