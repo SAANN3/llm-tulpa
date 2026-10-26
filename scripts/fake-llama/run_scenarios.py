@@ -393,6 +393,27 @@ def a_fold_asks_for_notes_summary_and_facts_and_the_next_request_carries_them():
 
 
 @scenario
+def a_fold_in_a_run_of_one_request_and_many_tool_calls_still_sends_a_user_message():
+    settings()
+    chat = new_chat("fold-one-ask")
+    call = {"name": "os.get_date", "arguments": {}}
+    script({"text": BIG, "tool_calls": [call], "prompt_tokens": 25000}, {"text": BIG, "tool_calls": [call], "prompt_tokens": 25000},
+           {"text": BIG, "tool_calls": [call], "prompt_tokens": 25000}, {"text": "Done."})
+    state_after = turn(chat, "port the page to the phone")
+    assert "summary" in [c["kind"] for c in calls()], "the run folded"
+    mains = calls("main")
+    folded = [c for c in mains if "Earlier parts of this conversation were summarized" in c["messages"][0]["content"]]
+    assert folded, "a request went out after the fold"
+    for c in folded:
+        users = [m for m in c["messages"] if m["role"] == "user"]
+        assert users, "a request after the fold carries a user message"
+    eq(folded[0]["messages"][1]["role"], "user", "the user message leads what the fold left")
+    has(folded[0]["messages"][1]["content"], "port the page to the phone", "it is the user's own words")
+    eq(roles(chat)[-1], "assistant", "the run ended on the reply")
+    eq(messages(chat)[-1]["content"], "Done.", "the final reply")
+
+
+@scenario
 def the_context_is_measured_by_part_and_memory_edits_reach_the_next_request():
     settings()
     chat = new_chat("memory")

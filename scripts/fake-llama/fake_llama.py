@@ -20,6 +20,8 @@ for `return_progress` gets them, four per prompt, before the first token),
 message fits it (the first fitting item in the queue is taken), so two chats talking to the fake at once, a parent and its
 sub-agent, each get their own replies.
 
+A request with no `user` message in it is refused with a 500, as Qwen's chat template makes llama-server do.
+
 Requests that are not the chat's own (the compaction summary, the key facts, the notes request) are told apart by their
 instruction and answered with a fixed valid reply, so a script only has to describe the conversation itself. They are
 recorded with their own kind.
@@ -156,6 +158,9 @@ class Handler(BaseHTTPRequestHandler):
                 "max_tokens": body.get("max_tokens"), "messages": messages, "scripted": bool(item), "at": time.time(),
                 "chat_template_kwargs": body.get("chat_template_kwargs"), "stream": bool(body.get("stream")),
             })
+        if not any(message.get("role") == "user" for message in messages):
+            # Qwen's chat template raises this, and llama-server answers 500, whatever the request is for
+            return self.send_json(500, {"error": {"code": 500, "message": "Jinja Exception: No user query found in messages.", "type": "server_error"}})
         delay = float(item.get("delay", 0))
         end = time.time() + delay
         while time.time() < end:
