@@ -19,6 +19,19 @@ pub(super) fn section(messages: &[(i64, String)], tools: bool) -> Option<String>
     pin_user_messages(messages, tools).map(|block| format!("{}{block}", prompts::PINNED_HEADER))
 }
 
+/// The user's newest folded-away message, cut like a pinned one, or a request to go on when there is none:
+/// the user message a request needs when a fold took all of them.
+pub(super) fn latest_ask(messages: &[(i64, String)]) -> String {
+    let newest = messages.iter().rev().map(|(_, text)| text.trim()).find(|text| !text.is_empty());
+    match newest {
+        Some(text) => match text.char_indices().nth(PINNED_MESSAGE_CHARS) {
+            Some((end, _)) => format!("{}… [cut]", &text[..end]),
+            None => text.to_string(),
+        },
+        None => prompts::RESUME_ASK.to_string(),
+    }
+}
+
 /// The user's folded-away messages as one block, in the order they were written: the newest ones that
 /// still fit `PINNED_USER_CHARS`, and a line saying how many older ones are left out. Pure of anything
 /// but the folded messages, so it only changes when a fold moves the boundary and the prompt prefix

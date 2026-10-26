@@ -504,6 +504,9 @@ The JSON is the whole task: do not deliberate at length, decide quickly and answ
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";
 
+/// The user message a request carries when a fold took every user message and none of them had text to repeat.
+pub(super) const RESUME_ASK: &str = "Continue with the work described above.";
+
 /// The reply stored for the last step of a turn that hit the user's step limit when the model answered it
 /// with a tool call and no text.
 pub(super) fn step_limit_no_conclusion() -> String {

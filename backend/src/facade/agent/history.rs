@@ -200,7 +200,14 @@ impl History {
             }),
             _ => None,
         };
-        Built { fold, notes, messages: messages.into_iter().map(to_model).collect(), cleared_results, cleared_chars }
+        let mut messages: Vec<ChatMessage> = messages.into_iter().map(to_model).collect();
+        // A fold can take every user message with it (one request, then a long run of tool calls), and Qwen's
+        // chat template refuses a request with no user message in it (HTTP 500, "No user query found"), so the
+        // newest of the folded ones leads what is left
+        if fold.is_some() && messages.iter().all(|message| message.role != "user") {
+            messages.insert(0, ChatMessage::user(pinned::latest_ask(&folded_user_texts)));
+        }
+        Built { fold, notes, messages, cleared_results, cleared_chars }
     }
 
     /// The model's notes as the block that goes after the summary in the system message, or `None`
@@ -679,6 +686,35 @@ mod tests {
         assert_eq!(history[0].role, "system");
         assert_eq!(history[0].content, expected);
         assert_eq!(history[1].content, "next");
+    }
+
+    #[test]
+    fn a_fold_that_took_every_user_message_leaves_the_newest_one_in_front_of_the_rest() {
+        let mut c = chat();
+        c.summary = Some("s".into());
+        c.summary_up_to_message_id = Some(10);
+        let run = || {
+            let mut tool = message(12, "tool", "result");
+            tool.tool_name = Some("storage.read_file".into());
+            vec![message(11, "assistant", "reading"), tool]
+        };
+        let mut i = inputs(c_clone(&c), run());
+        i.folded_user_texts = vec![(1, "first ask".into()), (7, "port the page".into())];
+        let history = History::build(i);
+        assert_eq!(history.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(), ["system", "user", "assistant", "tool"]);
+        assert_eq!(history[1].content, "port the page");
+
+        // nothing folded was said by the user: a plain request to go on
+        let none = History::build(inputs(c_clone(&c), run()));
+        assert_eq!(none[1].role, "user");
+        assert_eq!(none[1].content, prompts::RESUME_ASK);
+
+        // a user message that stayed (or a notice, which goes out as one) needs no help
+        let mut stayed = inputs(c_clone(&c), vec![message(11, "user", "next"), message(12, "assistant", "ok")]);
+        stayed.folded_user_texts = vec![(1, "old".into())];
+        assert_eq!(History::build(stayed).iter().filter(|m| m.role == "user").count(), 1);
+        let notice = History::build(inputs(c_clone(&c), vec![message(11, "notice", "job done"), message(12, "assistant", "ok")]));
+        assert_eq!(notice.iter().filter(|m| m.role == "user").count(), 1);
     }
 
     #[test]
