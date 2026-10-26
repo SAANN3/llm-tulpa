@@ -36,6 +36,8 @@ pub struct Model {
     pub trim_old_thinking: bool,
     /// Whether a new chat sends the model its tools.
     pub use_tools: bool,
+    /// Whether the model suggests, after a reply, what the user might write next.
+    pub suggest_next: bool,
     /// How many model calls one turn may make before it is stopped; `NULL` for no limit.
     pub max_turn_steps: Option<i32>,
     /// The user's Hugging Face access token, for downloading gated models.

@@ -35,6 +35,7 @@ mod notices;
 mod prompts;
 mod run_tracker;
 mod runner;
+mod suggestion;
 mod subagent_run;
 mod tool_calls;
 mod turn;
@@ -45,6 +46,7 @@ pub use context::{ContextBreakdown, ContextPart, ContextPartKind};
 use history::History;
 use notices::Notices;
 use tool_calls::ToolCalls;
+use suggestion::Suggestion;
 use turn::Turn;
 pub use runner::{Allowance, Decision, ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
 use runner::TurnRunner;
@@ -153,6 +155,14 @@ impl Agent {
             job_store,
             (context_length as f64 * INLINED_RESULT_FRACTION * INLINED_RESULT_CHARS_PER_TOKEN) as u64,
         );
+        let suggestion = Suggestion::new(
+            chat_store.clone(),
+            settings_store.clone(),
+            tools.clone(),
+            tool_context.events.clone(),
+            history.clone(),
+            model.clone(),
+        );
         let runner = TurnRunner::new(
             chat_store.clone(),
             settings_store.clone(),
@@ -162,6 +172,7 @@ impl Agent {
             notices,
             tool_calls.clone(),
             turn,
+            suggestion,
         );
         Self {
             model,

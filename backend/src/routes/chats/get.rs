@@ -55,6 +55,9 @@ pub(crate) struct ChatOut {
     pub(crate) unseen_end: Option<String>,
     /// The thinking level the chat was last sent with: `off`, `on` or one of its model's levels. `null` until a turn names one.
     pub(crate) think_level: Option<String>,
+    /// What the model suggested the user write next, while it is about the chat's newest message. Only the single-chat read
+    /// (`?id=`) carries it; `null` everywhere else and when there is none.
+    pub(crate) suggestion: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -96,6 +99,7 @@ pub async fn get_chats(
     if let Some(id) = query.id {
         let chat = services.chat_store.owned_chat(auth.id, id).await?;
         let contexts = services.launches.contexts(services.context_length).await?;
+        let suggestion = services.chat_store.current_suggestion(id).await?;
 
         return Ok(Json(GetChatsResponse::Single(ChatOut {
             id: chat.id,
@@ -112,6 +116,7 @@ pub async fn get_chats(
             tools_enabled: chat.tools_enabled,
             unseen_end: chat.unseen_end,
             think_level: chat.think_level,
+            suggestion,
         })));
     }
 
@@ -139,6 +144,7 @@ pub async fn get_chats(
             tools_enabled: chat.tools_enabled,
             unseen_end: chat.unseen_end,
             think_level: chat.think_level,
+            suggestion: None,
         })
         .collect();
 

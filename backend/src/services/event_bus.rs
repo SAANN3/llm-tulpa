@@ -70,6 +70,8 @@ pub enum ServerEvent {
     },
     /// The user created a chat (not a sub-agent's or a plugin's): the chat list of their other open pages gets it.
     ChatCreated { chat_id: i64 },
+    /// The chat holds a new suggestion of what the user might write next: read it with `GET /api/chats?id=`.
+    SuggestionReady { chat_id: i64 },
     /// The user renamed a chat; `name` is what it is called now.
     ChatRenamed { chat_id: i64, name: String },
     /// The user deleted a chat. The stream still delivers this one: a deleted chat is the user's all the same.
@@ -226,6 +228,7 @@ impl ServerEvent {
             ServerEvent::RunSteps { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatCreated { chat_id } => Some(*chat_id),
             ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
+            ServerEvent::SuggestionReady { chat_id } => Some(*chat_id),
             ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),
             ServerEvent::ModelState { .. } => None,
         }

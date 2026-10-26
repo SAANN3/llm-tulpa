@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 use super::notices::Notices;
 use super::prompts;
 use super::run_tracker::RunTracker;
+use super::suggestion::Suggestion;
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
@@ -220,6 +221,8 @@ pub(super) struct TurnRunner {
     notices: Notices,
     tool_calls: ToolCalls,
     turn: Turn,
+    /// Writes what the user might say next, after a run that answered.
+    suggestion: Suggestion,
     /// The chats with a run going on: one at a time per chat.
     runs: Arc<Mutex<HashMap<i64, RunTracker>>>,
     /// The `think` choice each chat's last run started with: a run the backend starts itself (a
@@ -242,6 +245,7 @@ impl TurnRunner {
         notices: Notices,
         tool_calls: ToolCalls,
         turn: Turn,
+        suggestion: Suggestion,
     ) -> Self {
         Self {
             chat_store,
@@ -252,6 +256,7 @@ impl TurnRunner {
             notices,
             tool_calls,
             turn,
+            suggestion,
             runs: Arc::new(Mutex::new(HashMap::new())),
             thinks: Arc::new(Mutex::new(HashMap::new())),
             last_ends: Arc::new(Mutex::new(HashMap::new())),
@@ -525,6 +530,8 @@ impl TurnRunner {
         }
         let run = RunTracker::new();
         runs.insert(chat_id, run.clone());
+        // The model is wanted for the run, and a line written for the reply before it would be stale
+        self.suggestion.cancel(chat_id);
         Ok(RunSlot { runs: self.runs.clone(), chat_id, run })
     }
 
@@ -563,6 +570,10 @@ impl TurnRunner {
             // The end is recorded and told before the chat is free, so a new run's start can't come first; the state
             // already says idle (the run is marked ended), which is what a page asking on `RunEnded` needs
             runner.finish(chat_id, &end, &run).await;
+            // After a user's run that answered, not a stop, a failure or a sub-agent's run
+            if matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered) {
+                runner.suggestion.start(chat_id);
+            }
             drop(slot);
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {

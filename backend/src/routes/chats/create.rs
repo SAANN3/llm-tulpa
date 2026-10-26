@@ -104,5 +104,6 @@ pub async fn create_chat(
         tools_enabled: chat.tools_enabled,
         unseen_end: chat.unseen_end,
         think_level: chat.think_level,
+        suggestion: None,
     }))
 }

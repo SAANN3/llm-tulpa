@@ -507,6 +507,10 @@ pub(super) const PINNED_HEADER: &str = "The user's own messages from before this
 /// The user message a request carries when a fold took every user message and none of them had text to repeat.
 pub(super) const RESUME_ASK: &str = "Continue with the work described above.";
 
+/// Asked after a reply, as one more user message at the end of the chat, for the line shown in the empty message box.
+pub(super) const SUGGEST_NEXT: &str = "Write the one message the user is most likely to send next in this chat, in their own voice and \
+                              language: a single short line, with no quotes and no explanation. If nothing natural follows, write nothing.";
+
 /// The reply stored for the last step of a turn that hit the user's step limit when the model answered it
 /// with a tool call and no text.
 pub(super) fn step_limit_no_conclusion() -> String {

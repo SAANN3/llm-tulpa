@@ -89,6 +89,7 @@ impl SettingsStore {
             auto_confirm: row.auto_confirm,
             trim_old_thinking: row.trim_old_thinking,
             use_tools: row.use_tools,
+            suggest_next: row.suggest_next,
             max_turn_steps: row.max_turn_steps,
             memory_enabled: row.memory_enabled,
             memory_max_entries: row.memory_max_entries,
@@ -175,6 +176,9 @@ impl SettingsStore {
         if let Some(use_tools) = update.use_tools {
             model.use_tools = Set(use_tools);
         }
+        if let Some(suggest_next) = update.suggest_next {
+            model.suggest_next = Set(suggest_next);
+        }
         if let Some(steps) = update.max_turn_steps {
             if !(0..=MAX_TURN_STEPS_LIMIT).contains(&steps) {
                 return Err(SettingsStoreErrors::InvalidTurnSteps(steps));
@@ -247,6 +251,11 @@ impl SettingsStore {
         Ok(self.row(user_id).await?.use_tools)
     }
 
+    /// Whether the model suggests, after each reply in this user's chats, what they might write next.
+    pub async fn suggest_next(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
+        Ok(self.row(user_id).await?.suggest_next)
+    }
+
     /// The user's memory switch and limits.
     pub async fn memory_prefs(&self, user_id: i64) -> Result<MemoryPrefs, SettingsStoreErrors> {
         let row = self.row(user_id).await?;
@@ -313,6 +322,8 @@ pub struct Settings {
     /// New chats send the model its tools. Off for a model too small for them, or a window they would
     /// mostly fill; a chat keeps the value it was created with and has its own switch.
     pub use_tools: bool,
+    /// After a reply, the model writes one line of what the user might send next, shown in the empty message box.
+    pub suggest_next: bool,
     /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
     /// `None` for no limit.
     pub max_turn_steps: Option<i32>,
@@ -346,6 +357,7 @@ pub struct SettingsUpdate {
     pub auto_confirm: Option<bool>,
     pub trim_old_thinking: Option<bool>,
     pub use_tools: Option<bool>,
+    pub suggest_next: Option<bool>,
     /// The turn step limit, 0 for none
     pub max_turn_steps: Option<i32>,
     pub memory_enabled: Option<bool>,

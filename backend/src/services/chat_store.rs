@@ -711,6 +711,43 @@ impl ChatStore {
         Ok(())
     }
 
+    /// Keeps what the model suggested the user write after the reply `for_message_id`. Like `set_think_level` it leaves
+    /// `updated_at` alone. Ownership is the caller's responsibility.
+    pub async fn set_suggestion(&self, chat_id: i64, text: &str, for_message_id: i64) -> Result<(), ChatStoreErrors> {
+        chats::Entity::update_many()
+            .col_expr(chats::Column::Suggestion, Expr::value(text))
+            .col_expr(chats::Column::SuggestionForMessageId, Expr::value(for_message_id))
+            .filter(chats::Column::Id.eq(chat_id))
+            .exec(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    /// The suggestion the chat holds, while it is still about the chat's newest message: anything said, edited, regenerated
+    /// or deleted since makes it stale, which is told by the ids and needs nothing cleared.
+    pub async fn current_suggestion(&self, chat_id: i64) -> Result<Option<String>, ChatStoreErrors> {
+        let row = chats::Entity::find_by_id(chat_id).one(&self.db).await?.ok_or(ChatStoreErrors::NotFound)?;
+        let (Some(text), Some(for_id)) = (row.suggestion, row.suggestion_for_message_id) else {
+            return Ok(None);
+        };
+        let newest = messages::Entity::find()
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .order_by_desc(messages::Column::Id)
+            .one(&self.db)
+            .await?;
+        Ok(newest.filter(|message| message.id == for_id).map(|_| text))
+    }
+
+    /// The id and role of the chat's newest message, to tell what the run that just ended said last.
+    pub async fn newest_message(&self, chat_id: i64) -> Result<Option<(i64, String, String)>, ChatStoreErrors> {
+        let newest = messages::Entity::find()
+            .filter(messages::Column::ChatId.eq(chat_id))
+            .order_by_desc(messages::Column::Id)
+            .one(&self.db)
+            .await?;
+        Ok(newest.map(|message| (message.id, message.role, message.content)))
+    }
+
     /// Records how a run on the chat ended, until the user looks at the chat (see `chats.unseen_end`). Doesn't
     /// touch `updated_at`, so the chat keeps its place in the list. Ownership is the caller's responsibility.
     pub async fn set_unseen_end(&self, chat_id: i64, unseen_end: &str) -> Result<(), ChatStoreErrors> {
