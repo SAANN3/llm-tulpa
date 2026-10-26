@@ -66,6 +66,7 @@ const Settings = () => {
             auto_confirm: draft.autoConfirm,
             trim_old_thinking: draft.trimOldThinking,
             use_tools: draft.useTools,
+            suggest_next: draft.suggestNext,
             max_turn_steps: steps.value,
             memory_enabled: draft.memoryEnabled,
             memory_max_entries: draft.memoryMaxEntries,

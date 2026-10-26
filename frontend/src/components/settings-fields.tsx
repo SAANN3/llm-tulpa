@@ -218,6 +218,14 @@ export const TrimOldThinkingField = ({enabled, onToggle}: SwitchFieldProps) => (
     </SettingsRow>
 );
 
+/** Whether the model suggests, after a reply, what to write next */
+export const SuggestNextField = ({enabled, onToggle}: SwitchFieldProps) => (
+    <SettingsRow label="Suggest what to write next"
+                 help="After a reply, the model writes one line of what you might send next. It shows faded in the empty message box; Tab (or a tap on it) puts it in the box. It costs about a second of the model after each reply, and it is skipped when the model would have to read the chat again.">
+        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
+    </SettingsRow>
+);
+
 /** Whether new chats send the model its tools — each chat has its own switch afterwards */
 export const UseToolsField = ({enabled, onToggle}: SwitchFieldProps) => (
     <SettingsRow label="Use tools in new chats" accent={!enabled}

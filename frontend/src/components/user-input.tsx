@@ -33,6 +33,8 @@ export interface UserInputProps {
     initialThink?: boolean
     /** The level the chat was last sent with; the composer starts on it when the model still offers it, else on the model's default */
     savedLevel?: string | null
+    /** A line of what to write next, shown faded in the empty box; Tab or a tap on its hint puts it in the box */
+    suggestion?: string | null
     chatId?: number
     /** A message being edited: its text and attachments fill the composer until it is sent or cancelled. `key` tells one edit from the next. */
     editing?: { key: number; text: string; images: string[]; fileIds: number[] } | null
@@ -87,6 +89,7 @@ export const UserInput = ({
     inputDisabled,
     initialThink = true,
     savedLevel,
+    suggestion,
     chatId,
     modelChoice,
     onModelPicked,
@@ -240,6 +243,14 @@ export const UserInput = ({
         if (modelChoice) void thinkingDefaults.choose(modelChoice.provider, modelChoice.model, level)
     }
 
+    // Shown only while there is nothing in the box and nothing is being said or edited
+    const suggestionShown = suggestion && value.length === 0 && !editing && voice.state === 'idle' ? suggestion : null
+    const takeSuggestion = () => {
+        if (!suggestionShown) return
+        setValue(suggestionShown)
+        textareaRef.current?.focus()
+    }
+
     const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
 
     const send = () => {
@@ -374,16 +385,20 @@ export const UserInput = ({
                     ))}
                 </Div>
             ) : null}
+            {suggestionShown ? <Button className="composer__take" variant="secondary" text="Use suggestion" onClicked={takeSuggestion}/> : null}
             <input ref={fileInputRef} type="file" multiple onChange={onFilePicked} style={{display: 'none'}}/>
             <TextField
                 ref={textareaRef}
                 className="composer__input"
                 text={value}
                 onChanged={setValue}
-                placeholder={placeholder}
+                placeholder={suggestionShown ?? placeholder}
                 disabled={inputIsDisabled}
                 onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Tab' && !e.shiftKey && suggestionShown) {
+                        e.preventDefault()
+                        takeSuggestion()
+                    } else if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
                         send()
                     }
@@ -399,7 +414,12 @@ export const UserInput = ({
                         ? <Label variant="secondary" text="Listening… [Esc] Cancel"/>
                         : <>
                             <Label variant="secondary" text="[Enter] Send"/>
-                            <Label variant="secondary" text="[Shift+Enter] Newline"/>
+                            {suggestionShown ? (
+                                // The second line says how to take the suggestion while there is one; a tap does it where there is no Tab
+                                <Div className="composer__suggest" onClick={takeSuggestion}>
+                                    <Label variant="secondary" text="[Tab] Use suggestion"/>
+                                </Div>
+                            ) : <Label variant="secondary" text="[Shift+Enter] Newline"/>}
                         </>}
                 </Div>
                 <Div className="composer__controls">

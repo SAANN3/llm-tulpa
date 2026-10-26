@@ -11,6 +11,8 @@ export interface Settings {
     trim_old_thinking: boolean
     /** New chats send the model its tools; off for a model too small for them or a window they would mostly fill. */
     use_tools: boolean
+    /** After a reply, the model writes one line of what you might send next, shown in the empty message box. */
+    suggest_next: boolean
     /** How many model calls one turn may make before it is stopped and the model is asked to wrap up; null for no limit. */
     max_turn_steps: number | null
     /** The model learns things about you from your chats and has them in new chats' prompts. */
@@ -40,6 +42,7 @@ export interface SettingsUpdate {
     auto_confirm?: boolean
     trim_old_thinking?: boolean
     use_tools?: boolean
+    suggest_next?: boolean
     /** The turn step limit, 0 for none */
     max_turn_steps?: number
     memory_enabled?: boolean

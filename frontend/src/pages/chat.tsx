@@ -106,6 +106,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [chatProfileId, setChatProfileId] = useState<number | null>(null)
     const [chatToolsEnabled, setChatToolsEnabled] = useState(true)
     const [chatThinkLevel, setChatThinkLevel] = useState<string | null>(null)
+    const [chatSuggestion, setChatSuggestion] = useState<string | null>(null)
     const [contextUsed, setContextUsed] = useState<number | null>(null)
     const [contextMax, setContextMax] = useState<number | null>(null)
     const [folderId, setFolderId] = useState<number | null>(null)
@@ -129,6 +130,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     useEffect(() => {
         setChatName(null)
         setChatThinkLevel(null)
+        setChatSuggestion(null)
         setChatModel(null)
         setContextUsed(null)
         setContextMax(null)
@@ -145,6 +147,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatProfileId(result.launch_profile_id)
                 setChatToolsEnabled(result.tools_enabled)
                 setChatThinkLevel(result.think_level)
+                setChatSuggestion(result.suggestion)
                 setContextUsed(result.last_prompt_tokens)
                 setContextMax(result.context_length)
                 setFolderId(result.folder_id)
@@ -156,6 +159,14 @@ const ChatView = ({chatId}: { chatId: number }) => {
             cancelled = true
         }
     }, [chatId])
+
+    // The model wrote a line for what comes next: read it with the chat (the line is only valid while it is about the newest message)
+    useServerEvent('suggestion_ready', (event) => {
+        if (event.chat_id !== chatId) return
+        getChats({id: chatId}).then((result) => {
+            if (!('chats' in result)) setChatSuggestion(result.suggestion)
+        })
+    })
 
     // A rename from the header here, or from the sidebar or another page, reaches the title the same way
     useServerEvent('chat_renamed', (event) => {
@@ -240,6 +251,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const handleSend = async (prompt: string, think?: ThinkChoice, images?: string[], fileIds?: number[]) => {
         const forChatId = chatId
         lastThinkRef.current = think ?? true
+        setChatSuggestion(null)
         setTurnError(null)
         setSearchHighlight(null)
         // An edit sends the new text as an ordinary turn, once what it replaces is gone. If that
@@ -456,6 +468,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         onCancelEdit={() => setEditing(null)}
                         initialThink={initialThink}
                         savedLevel={chatThinkLevel}
+                        suggestion={busy ? null : chatSuggestion}
                         chatId={chatId}
                         modelChoice={chatModel != null ? {provider: chatProvider, model: chatModel, profileId: chatProfileId} : null}
                         onModelPicked={(choice) => void changeModel(choice)}

@@ -21,6 +21,8 @@ export interface ChatOut {
     unseen_end: UnseenEnd | null
     /** The thinking level the chat was last sent with (`off`, `on` or one of its model's levels); null until a turn names one. */
     think_level: string | null
+    /** What the model suggested you write next, while it is about the chat's newest message; only the single-chat read has it. */
+    suggestion: string | null
 }
 
 /** The ways a run ends that the user hasn't looked at yet (a run they stopped leaves none) */

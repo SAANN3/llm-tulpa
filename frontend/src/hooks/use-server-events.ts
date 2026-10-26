@@ -15,6 +15,8 @@ export type ServerEvent =
     | { type: 'chat_seen'; chat_id: number }
     | { type: 'chat_created'; chat_id: number }
     | { type: 'chat_renamed'; chat_id: number; name: string }
+    /** The chat holds a new suggestion of what to write next: read it with the chat */
+    | { type: 'suggestion_ready'; chat_id: number }
     | { type: 'chat_deleted'; chat_id: number }
     | { type: 'messages_removed'; chat_id: number; message_ids: number[] }
     /** What the model wrote of the reply since the last piece, for showing it live; the stored message is what counts */

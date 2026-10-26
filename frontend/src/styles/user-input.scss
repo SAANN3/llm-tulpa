@@ -113,6 +113,16 @@
   gap: $space-2;
 }
 
+// The hint that takes the suggestion: tappable too
+.composer__suggest {
+  cursor: pointer;
+}
+
+// Where the footer's hints are hidden (a phone, which has no Tab) this button takes the suggestion
+.composer__take {
+  display: none;
+}
+
 // Two lines in the height of one button
 .composer__hint {
   display: flex;

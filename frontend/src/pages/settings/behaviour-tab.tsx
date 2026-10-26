@@ -1,6 +1,6 @@
 import {useNavigate} from 'react-router-dom'
 import {Button} from '../../components/primitives'
-import {AutoConfirmField, MaxTurnStepsField, SettingsRow, SettingsSection, TrimOldThinkingField, UseToolsField} from '../../components/settings-fields.tsx'
+import {AutoConfirmField, MaxTurnStepsField, SettingsRow, SettingsSection, SuggestNextField, TrimOldThinkingField, UseToolsField} from '../../components/settings-fields.tsx'
 import type {SettingsDraftProps} from './draft.ts'
 
 /** How the model works in the user's chats */
@@ -13,6 +13,7 @@ export const BehaviourTab = ({draft, onDraft}: SettingsDraftProps) => {
             </SettingsRow>
             <AutoConfirmField enabled={draft.autoConfirm} onToggle={(autoConfirm) => onDraft({autoConfirm})}/>
             <TrimOldThinkingField enabled={draft.trimOldThinking} onToggle={(trimOldThinking) => onDraft({trimOldThinking})}/>
+            <SuggestNextField enabled={draft.suggestNext} onToggle={(suggestNext) => onDraft({suggestNext})}/>
             <UseToolsField enabled={draft.useTools} onToggle={(useTools) => onDraft({useTools})}/>
             <MaxTurnStepsField text={draft.maxTurnStepsText} onChanged={(maxTurnStepsText) => onDraft({maxTurnStepsText})}/>
         </SettingsSection>
