@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="220" viewBox="0 0 1000 220" role="img" aria-label="llm-tulpa">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#E08AA4" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#E08AA4" stop-opacity="0"/>
+    </radialGradient>
+    <path id="petal" d="M0,0 C3,-7 9,-5 12,0 C8,1 3,4 0,0 Z"/>
+  </defs>
+  <rect width="1000" height="220" rx="14" fill="#1E1418"/>
+  <rect x="1" y="1" width="998" height="218" rx="13" fill="none" stroke="#E08AA4" stroke-opacity="0.35"/>
+  <circle cx="500" cy="82" r="120" fill="url(#glow)"/>
+  <g fill="#E08AA4" transform="translate(500,82) scale(3.6)">
+    <use href="#petal"/>
+    <use href="#petal" transform="rotate(90)"/>
+    <use href="#petal" transform="rotate(180)"/>
+    <use href="#petal" transform="rotate(270)"/>
+  </g>
+  <text x="500" y="168" text-anchor="middle" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="40" font-weight="700" fill="#EED7DD">llm-tulpa<tspan fill="#E08AA4">.</tspan></text>
+  <text x="500" y="196" text-anchor="middle" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="14" fill="#EED7DD" fill-opacity="0.65">a local LLM agent that does things. nothing leaves your machine.</text>
+</svg>
