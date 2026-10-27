@@ -1,8 +1,9 @@
+# llm-tulpa
+
 <p align="center">
   <img src="./readme/logo.svg" alt="llm-tulpa" width="720">
 </p>
 
-# llm-tulpa
 A chat assistant that runs on your own computer and can actually do things: read and write files, run commands, look things up on the web. It asks before it changes anything, and nothing leaves your machine.
 
 <p align="center">
