@@ -2,6 +2,11 @@
 A chat assistant that runs on your own computer and can actually do things: read and write files, run commands, look things up on the web. It asks before it changes anything, and nothing leaves your machine.
 
 <p align="center">
+  <video src="./readme/tulpa-demo.mp4" width="300" controls muted loop playsinline></video>
+</p>
+<p align="center"><em>A minute of it: a chat that does things, any model, plugins installed without a restart, voice, and themes. <a href="./readme/tulpa-demo.mp4">Open the video</a> if it does not play here.</em></p>
+
+<p align="center">
   <img src="./readme/chat-tool-usage.png" alt="A chat where the agent ran a shell command through a tool call, the call opened to show its arguments and result" width="720">
 </p>
 <p align="center"><em>Asked to read a project folder — the agent thinks about it (collapsed above), then stops to ask permission before running <code>storage.list_directory</code>.</em></p>
