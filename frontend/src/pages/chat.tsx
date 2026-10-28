@@ -406,6 +406,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                                             content={m.content}
                                             created_at={m.created_at}
                                             arguments={m.arguments}
+                                            images={m.images}
                                             expanded={id != null ? (expandedTools[id] ?? false) : false}
                                             onToggle={() => id != null && toggleToolExpanded(id)}
                                             preserveScrollFor={preserveScrollFor}

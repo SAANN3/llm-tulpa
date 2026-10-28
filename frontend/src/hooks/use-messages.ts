@@ -27,6 +27,8 @@ export type DisplayMessage =
     tool_name: string | null;
     created_at: string;
     arguments: Record<string, unknown>
+    /** Pictures the tool handed to the model (`llm.read_image`), shown under its header */
+    images?: string[]
 }
     | { id?: number; role: 'notice'; content: string; created_at: string }
 
@@ -52,6 +54,7 @@ const toDisplayMessages = (page: MessageOut[], queue: ToolArgsQueue = {args: []}
                 tool_name: m.tool_name,
                 created_at: m.created_at,
                 arguments: queue.args.shift() ?? {},
+                images: m.images,
             }
         }
         if (m.role === 'notice') {

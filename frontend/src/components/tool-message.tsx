@@ -4,6 +4,7 @@ import {useNavigate} from 'react-router-dom'
 
 import '../styles/tool-message.scss'
 import {Button, Div, Label} from './primitives'
+import {Attachment} from './attachment.tsx'
 import {highlightText} from '../utils/highlight.tsx'
 import {useFormatTime} from '../hooks/use-format-time.ts'
 
@@ -12,6 +13,8 @@ export interface ToolMessageProps {
     content: unknown
     created_at: string
     arguments?: Record<string, unknown>
+    /** Pictures the tool handed to the model, shown under the header so the person sees what it was shown */
+    images?: string[]
     success?: boolean
     err?: string | null
     expanded: boolean
@@ -79,6 +82,7 @@ export const ToolMessage = ({
     content,
     created_at,
     arguments: args,
+    images,
     success,
 
     err,
@@ -130,6 +134,11 @@ export const ToolMessage = ({
             {expanded ? <ChevronDown width={14} height={14}/> : <ChevronRight width={14} height={14}/>}
           </span>
                 </Div>
+                {images && images.length > 0 ? (
+                    <Div className="tool-message__images">
+                        {images.map((image, index) => <Attachment key={index} kind="image" image={image} size={120}/>)}
+                    </Div>
+                ) : null}
                 {expanded ? (
                     <Div className="vbox tool-message__detail">
                         {argsText ? <DetailBlock label="ARGUMENTS" text={argsText} highlightQuery={highlightQuery}/> : null}

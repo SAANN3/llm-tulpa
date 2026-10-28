@@ -21,6 +21,13 @@
   border-radius: 0;
 }
 
+.tool-message__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
 .tool-message__dot {
   width: 6px;
   height: 6px;
