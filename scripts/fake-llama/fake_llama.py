@@ -9,6 +9,7 @@ The backend is pointed at it with `llama_cpp.external_url` (it then neither star
                    requests (they have no item of their own), so a page can be looked at while a fold goes on
   POST /__memory   a JSON list of texts, used one per memory request (the question a fold asks about the user), in order
                    (empty: `{"memories":[]}`)
+  POST /__vision   true or false: whether `/props` says the server was started with a vision projector (true after a reset)
   POST /__reset    forget the script and the recorded calls
   GET  /__calls    every request seen so far: its kind, whether it carried tools, the messages, the reply cap
 
@@ -38,6 +39,8 @@ SCRIPT = []
 MEMORY = []
 CALLS = []
 SLOW = {}
+# What /props says about images: a server started with a projector reports vision (a request can switch it with /__vision)
+VISION = {"on": True}
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18300
 N_CTX = int(sys.argv[2]) if len(sys.argv) > 2 else 40960
 
@@ -112,7 +115,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"status": "ok"})
         if self.path == "/props":
             return self.send_json(200, {"chat_template": TEMPLATE, "model_path": "/models/fake.gguf", "total_slots": 1,
-                                        "default_generation_settings": {"n_ctx": N_CTX}})
+                                        "default_generation_settings": {"n_ctx": N_CTX},
+                                        "modalities": {"vision": VISION["on"], "audio": False}})
         if self.path == "/slots":
             return self.send_json(200, [{"id": 0, "n_ctx": N_CTX, "is_processing": False}])
         if self.path == "/metrics":
@@ -137,8 +141,13 @@ class Handler(BaseHTTPRequestHandler):
                 SLOW.clear()
                 SLOW.update(body)
             return self.send_json(200, {})
+        if self.path == "/__vision":
+            with LOCK:
+                VISION["on"] = bool(body)
+            return self.send_json(200, {})
         if self.path == "/__reset":
             with LOCK:
+                VISION["on"] = True
                 SCRIPT.clear()
                 MEMORY.clear()
                 CALLS.clear()

@@ -444,6 +444,52 @@ def a_chat_keeps_the_thinking_level_it_was_sent_with_and_a_model_has_a_default_l
 
 
 @scenario
+def a_picture_a_tool_returns_reaches_the_model_as_a_user_message_after_the_results():
+    import tempfile
+    settings()
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as shot:
+        shot.write(png)
+    chat = new_chat("read-image")
+    script({"text": "", "tool_calls": [{"name": "llm.read_image", "arguments": {"path": shot.name}}]}, {"text": "A one pixel image."})
+    turn(chat, "what does the page look like?")
+    eq(roles(chat), ["user", "assistant", "tool", "assistant"], "the chat holds no message the user did not write")
+    tool = messages(chat)[2]
+    eq(len(tool.get("images") or []), 1, "the picture is kept on the tool's own message")
+    has(tool["content"], "The image follows in the next message", "the result the model reads")
+    assert "attached_images" not in tool["content"] and len(tool["content"]) < 500, "the result carries no base64: " + tool["content"][:200]
+
+    second = calls("main")[1]["messages"]
+    eq([m["role"] for m in second[-4:]], ["user", "assistant", "tool", "user"], "the request has the picture after the tool result")
+    eq(isinstance(second[-2]["content"], str), True, "the tool message is text")
+    parts = second[-1]["content"]
+    eq([p["type"] for p in parts], ["text", "image_url"], "a user message with the note and the image")
+    has(parts[0]["text"], "llm.read_image", "the note names the tool that returned it")
+    has(parts[0]["text"], "not written by the user", "and says the user did not send it")
+    assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,"), "the picture itself"
+
+    # a later request in the chat still carries it, in the same place
+    script({"text": "Still one pixel."})
+    turn(chat, "and now?")
+    later = calls("main")[-1]["messages"]
+    eq(sum(1 for m in later if isinstance(m["content"], list) and any(p["type"] == "image_url" for p in m["content"])), 1, "once, not twice")
+
+    # a model without vision is refused before anything is stored
+    fake("/__vision", False)
+    try:
+        other = new_chat("read-image-no-vision")
+        script({"text": "", "tool_calls": [{"name": "llm.read_image", "arguments": {"path": shot.name}}]}, {"text": "I can't."})
+        turn(other, "look at it")
+        refused = messages(other)[2]
+        eq(refused.get("images") or [], [], "nothing is attached")
+        has(refused["content"], "can't take images", "the model is told why")
+        assert not any(isinstance(m["content"], list) for m in calls("main")[-1]["messages"]), "and no picture goes out"
+    finally:
+        fake("/__vision", True)
+        os.unlink(shot.name)
+
+
+@scenario
 def a_reply_leaves_a_suggestion_for_the_next_message_that_the_next_message_replaces():
     chat = new_chat("suggest")
     suggestion = lambda: ok(f"/api/chats?id={chat}")["suggestion"]
