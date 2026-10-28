@@ -288,6 +288,11 @@ impl LlmProvider for LlamaCppProvider {
         }
     }
 
+    /// What the server's `/props` says it was started with: it takes images only when a projector was loaded.
+    async fn accepts_images(&self, _model: &str) -> Option<bool> {
+        self.props().await.ok()?.modalities?.vision
+    }
+
     /// The one model a running llama-server serves: it has no registry to list.
     async fn list_local_models(&self) -> Result<Vec<LocalModel>, LlmErrors> {
         let props = self.props().await?;
@@ -782,6 +787,15 @@ struct Props {
     total_slots: Option<u64>,
     #[serde(default)]
     default_generation_settings: Option<GenerationSettings>,
+    /// Absent in a server too old to report it
+    #[serde(default)]
+    modalities: Option<Modalities>,
+}
+
+#[derive(Deserialize, Default)]
+struct Modalities {
+    #[serde(default)]
+    vision: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

@@ -136,9 +136,8 @@ pub struct ToolContext {
     /// fetched back later through `GET /files`/`GET /files/download`. Most tools will
     /// never touch this field.
     pub file_store: Arc<FileStore>,
-    /// For a tool that itself needs to ask the model something — e.g. `llm.read_image`
-    /// making its own one-shot vision call on an image the model can't already see
-    /// inline. Not reentrant the way holding the full `Agent`/`ToolService` would be:
+    /// For a tool that itself needs to ask the model server something — e.g. `llm.read_image`
+    /// asking whether the chat's model takes images. Not reentrant the way holding the full `Agent`/`ToolService` would be:
     /// a provider only ever talks to its own model server, it doesn't know about tools
     /// or turns at all, so a tool calling through this can't loop back into anything.
     pub providers: LlmProviders,
@@ -165,7 +164,7 @@ pub struct ToolContext {
     /// The user who owns this chat — files a tool creates belong to them.
     pub user_id: i64,
     /// The model this chat is bound to — what a tool that makes its own model call
-    /// (`llm.read_image`) should run against.
+    /// or asks about the model (`llm.read_image`) should use.
     pub model: String,
     /// The provider `model` belongs to — which of `providers` a tool's own model call goes to.
     pub provider: String,
@@ -185,6 +184,13 @@ impl ToolContext {
         Self { chat_id, user_id, provider, model, ..self.clone() }
     }
 }
+
+/// The key of a tool's JSON result under which it hands over pictures for the model to look at: an
+/// array of base64-encoded images (no data-URL prefix). The agent takes them out of the result before
+/// it is stored, so the text the model reads never carries the base64, and keeps them on the result's
+/// message; the history sends them as a user message right after the tool results (a tool message
+/// can't carry an image to the model server).
+pub const ATTACHED_IMAGES_KEY: &str = "attached_images";
 
 /// One of the shared, cross-tool permission buckets a tool can draw its scope from —
 /// see `Tool::shared_buckets`. Variants are fully independent levels: granting

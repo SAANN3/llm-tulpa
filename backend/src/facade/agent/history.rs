@@ -24,6 +24,7 @@ use crate::tools::base::Tool;
 use crate::tools::ui::attach_file::AttachFileTool;
 
 mod pinned;
+mod tool_images;
 
 /// Maximum number of characters of reasoning (`message.thinking`) preserved when
 /// replaying an assistant message back to the model in `to_ollama_message`.
@@ -207,6 +208,7 @@ impl History {
         if fold.is_some() && messages.iter().all(|message| message.role != "user") {
             messages.insert(0, ChatMessage::user(pinned::latest_ask(&folded_user_texts)));
         }
+        let messages = tool_images::after_tool_results(messages);
         Built { fold, notes, messages, cleared_results, cleared_chars }
     }
 

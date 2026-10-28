@@ -64,6 +64,10 @@ pub trait LlmProvider: Send + Sync {
     /// to look is never treated as a finding.
     async fn tool_call_markers(&self, model: &str) -> Vec<String>;
 
+    /// Whether the model can take an image in a message: `None` when the provider can't say, which
+    /// callers treat as yes (a failure to look is never treated as a finding).
+    async fn accepts_images(&self, model: &str) -> Option<bool>;
+
     /// The models this provider can serve right now.
     async fn list_local_models(&self) -> Result<Vec<LocalModel>, LlmErrors>;
 

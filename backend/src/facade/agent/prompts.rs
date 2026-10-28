@@ -504,6 +504,15 @@ The JSON is the whole task: do not deliberate at length, decide quickly and answ
 pub(super) const PINNED_HEADER: &str = "The user's own messages from before this point, verbatim (a summary can paraphrase a request; \
                               these are the words):\n";
 
+/// The line that comes with the pictures a tool handed over, in the user message they are sent in: it says
+/// the message is the system's, so the model doesn't thank the user for an image they didn't send.
+pub(super) fn tool_images_note(tools: &[String]) -> String {
+    match tools {
+        [one] => format!("[Added by the system, not written by the user: the image {one} returned just above.]"),
+        _ => format!("[Added by the system, not written by the user: the images the tools above returned, in order: {}.]", tools.join(", ")),
+    }
+}
+
 /// The user message a request carries when a fold took every user message and none of them had text to repeat.
 pub(super) const RESUME_ASK: &str = "Continue with the work described above.";
 

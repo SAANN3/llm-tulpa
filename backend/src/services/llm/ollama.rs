@@ -125,6 +125,11 @@ impl OllamaService {
     /// — see `thinking_capability` for why that's the real template and why it's read
     /// fresh every time.
     async fn chat_template(&self, model: &str) -> Result<String, LlmErrors> {
+        Ok(self.show(model).await?.template)
+    }
+
+    /// What `/api/show` says about `model`: its template and its capabilities.
+    async fn show(&self, model: &str) -> Result<ShowResponse, LlmErrors> {
         let url = format!("{}/api/show", self.base());
         let body = serde_json::json!({ "model": model });
 
@@ -140,13 +145,7 @@ impl OllamaService {
             return Err(LlmErrors::UnexpectedStatus(PROVIDER, status, body));
         }
 
-        #[derive(Deserialize, Default)]
-        struct ShowResponse {
-            #[serde(default)]
-            template: String,
-        }
-        let parsed: ShowResponse = decode_response(res).await?;
-        Ok(parsed.template)
+        decode_response(res).await
     }
 
     /// Fetches ollama.com's public model library page. There is no API behind it, so
@@ -172,6 +171,15 @@ impl OllamaService {
 
         res.text().await.map_err(|e| LlmErrors::DecodeFailed(PROVIDER, e.to_string()))
     }
+}
+
+#[derive(Deserialize, Default)]
+struct ShowResponse {
+    #[serde(default)]
+    template: String,
+    /// Absent before Ollama reported capabilities
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
 }
 
 #[async_trait]
@@ -348,6 +356,12 @@ impl LlmProvider for OllamaService {
             Ok(template) => extract_tool_call_markers(&template),
             Err(_) => vec![],
         }
+    }
+
+    /// Ollama lists `vision` among a model's capabilities; a version that doesn't list any says nothing.
+    async fn accepts_images(&self, model: &str) -> Option<bool> {
+        let capabilities = self.show(model).await.ok()?.capabilities?;
+        Some(capabilities.iter().any(|capability| capability == "vision"))
     }
 
     /// The models actually installed in this Ollama instance, from `/api/tags` — the

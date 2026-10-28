@@ -1,23 +1,18 @@
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use tool_derive::ToolParams;
 
-use crate::services::llm::{CallParams, ChatMessage, ThinkChoice};
+use crate::plugins::messaging::plugin::normalize_images;
 use crate::tools::base::{
     PropertyInfo, PropertyType, ResolvedScope, SharedBucket, Tool, ToolContext, ToolError,
-    ToolParams, ToolPermission, ToolSerializationError,
+    ToolParams, ToolPermission, ToolSerializationError, ATTACHED_IMAGES_KEY,
 };
 use crate::tools::storage::{check_file_scope, normalize, refuse_if_larger};
 
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
-
-/// Used when `prompt` is left empty — a neutral "just tell me what's in it" request
-/// rather than requiring the model to always come up with something to ask.
-const DEFAULT_PROMPT: &str = "Describe this image in detail: what it shows, any text visible in \
-     it, and anything else that seems relevant.";
 
 /// Added to what goes wrong reaching the file. A model that was shown an image in the conversation
 /// can still call this tool for it, naming a path or address it made up; the failure is where it can
@@ -31,17 +26,6 @@ pub struct ReadImageTool;
 struct ReadImageArgs {
     #[tool(description = "Absolute or relative path to the image file to look at.")]
     path: String,
-    #[tool(
-        description = "What to ask about the image, in your own words — e.g. \"is there a cat \
-                        in this picture\", \"transcribe any text in this screenshot\", \"what's \
-                        the dominant color scheme\". Leave empty for a general description."
-    )]
-    prompt: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ReadImageOut {
-    answer: String,
 }
 
 #[async_trait]
@@ -51,12 +35,14 @@ impl Tool for ReadImageTool {
     }
 
     fn description(&self) -> &str {
-        "Looks at an image file on disk and answers a question about it (or gives a general \
-         description if no prompt is given). This is only for an image you found or were \
-         pointed to by path — not one already shown to you directly in this conversation, \
-         which you can already see yourself; calling this on one of those just wastes a call \
-         and a real model turn. Check whether you can already see the image before reaching \
-         for this."
+        "Shows you an image file from disk: the picture comes into this conversation right after \
+         the result, as an image you look at yourself, so what you say about it is what you \
+         see (a screenshot of a page you are styling, a chart, a photo). This is only for an \
+         image you found or were pointed to by path — not one already shown to you directly in \
+         this conversation, which you can already see yourself; calling this on one of those \
+         just fills the context with the same picture twice. Check whether you can already see \
+         the image before reaching for this. A picture stays in the conversation until the chat \
+         is compacted, so ask for it only when you need to look."
     }
 
     fn required_properties(&self) -> Vec<PropertyInfo> {
@@ -86,36 +72,34 @@ impl Tool for ReadImageTool {
         // No model takes an image this large, and reading it whole would only fill memory
         refuse_if_larger(&path, MAX_IMAGE_BYTES, "for an image", "make a smaller copy first (for example with ImageMagick's `convert`)").await?;
 
+        // The picture is kept in the chat, and a model that can't take images would then fail every later
+        // request until it was cleared: so it is refused here, before anything is stored
+        let provider = ctx.providers.get(&ctx.provider).map_err(|e| {
+            ToolError::FailedUnknown(format!("couldn't read the image: {}", e.message.unwrap_or_default()))
+        })?;
+        if provider.accepts_images(&ctx.model).await == Some(false) {
+            return Err(ToolError::FailedUnknown(format!(
+                "the model of this chat can't take images (its server reports no vision support), so '{}' can't be shown to it: \
+                 tell the user, or use another way to find out what is in it (OCR on the command line, say).",
+                path.display()
+            )));
+        }
+
         let bytes = tokio::fs::read(&path)
             .await
             .map_err(|e| ToolError::FailedUnknown(format!("couldn't read '{}': {e}.{ATTACHED_HINT}", path.display())))?;
 
-        let prompt = args
-            .prompt
-            .filter(|p| !p.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_PROMPT.to_string());
+        let attached = normalize_images(vec![STANDARD.encode(&bytes)]).await;
+        if attached.is_empty() {
+            return Err(ToolError::FailedUnknown(format!("'{}' is not an image that can be decoded (a damaged or unsupported file).", path.display())));
+        }
 
-        // A one-shot, tool-free call — this isn't a turn of its own, just this tool
-        // asking the (vision-capable) model a single question about one image and
-        // relaying the answer back. `think: Some(false)`: nothing here needs a
-        // reasoning trace, just a direct answer.
-        let message = ChatMessage::user_with_images(prompt, vec![STANDARD.encode(&bytes)]);
-        let provider = ctx.providers.get(&ctx.provider).map_err(|e| {
-            ToolError::FailedUnknown(format!("couldn't read the image: {}", e.message.unwrap_or_default()))
-        })?;
-        let response = provider.chat(vec![], Some(message), &[], Some(ThinkChoice::Enabled(false)), &ctx.model, None, &CallParams::default(), None).await.map_err(|e| {
-            let reason = match e {
-                crate::services::llm::LlmErrors::RequestFailed(_, msg) => msg,
-                crate::services::llm::LlmErrors::UnexpectedStatus(provider, status, body) => {
-                    format!("{provider} returned status {status}: {body}")
-                }
-                crate::services::llm::LlmErrors::DecodeFailed(_, msg) => msg,
-                crate::services::llm::LlmErrors::Rejected(_, msg) | crate::services::llm::LlmErrors::Failed(msg) => msg,
-                crate::services::llm::LlmErrors::Unavailable(err) => err.message.unwrap_or_default(),
-            };
-            ToolError::FailedUnknown(format!("couldn't read the image: {reason}"))
-        })?;
-
-        Ok(serde_json::to_value(ReadImageOut { answer: response.message.content })?)
+        // What the model reads in place of the picture in the result: the picture itself comes right after,
+        // as a message of its own (see `ATTACHED_IMAGES_KEY`)
+        let mut result = serde_json::Map::new();
+        result.insert("path".to_string(), Value::String(path.display().to_string()));
+        result.insert("shown".to_string(), Value::String("The image follows in the next message.".to_string()));
+        result.insert(ATTACHED_IMAGES_KEY.to_string(), serde_json::to_value(attached)?);
+        Ok(Value::Object(result))
     }
 }

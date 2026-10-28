@@ -149,7 +149,13 @@ fn pick_thinking_boundary(messages: &[Message], already: Option<i64>, budget_cha
 }
 
 fn clearable(message: &Message) -> bool {
-    message.role == "tool" && message.content.chars().count() >= MIN_CLEARED_CHARS
+    message.role == "tool" && (message.content.chars().count() >= MIN_CLEARED_CHARS || !message.images.is_empty())
+}
+
+/// What a tool result weighs in the budget: its text, and each picture it carries as the characters
+/// a picture is estimated to cost the model.
+fn weight(message: &Message) -> usize {
+    message.content.chars().count() + message.images.len() * super::IMAGE_COST_CHARS
 }
 
 /// The new boundary, and how many characters it frees, for `messages` (oldest first, everything
@@ -162,7 +168,7 @@ fn pick_boundary(messages: &[Message], already: Option<i64>, budget_chars: usize
     let mut boundary = None;
     let mut seen_newest = false;
     for message in messages.iter().rev().filter(|m| clearable(m)) {
-        let len = message.content.chars().count();
+        let len = weight(message);
         if !seen_newest {
             seen_newest = true;
             kept += len;
@@ -180,7 +186,7 @@ fn pick_boundary(messages: &[Message], already: Option<i64>, budget_chars: usize
     let freed: usize = messages
         .iter()
         .filter(|m| clearable(m) && m.id <= boundary && already.is_none_or(|old| m.id > old))
-        .map(|m| m.content.chars().count())
+        .map(weight)
         .sum();
     (freed >= MIN_SAVED_CHARS).then_some((boundary, freed))
 }
@@ -200,6 +206,8 @@ pub(in crate::facade::agent) fn stub_cleared(messages: &mut [Message], cleared_u
             let call = calls.pop_front().filter(|c| message.tool_name.as_deref().is_none_or(|name| name == c.tool_name));
             if message.id <= limit && clearable(message) {
                 message.content = stub(message, call.as_ref());
+                // The picture goes with the result it came in
+                message.images.clear();
             }
         }
     }
@@ -210,6 +218,9 @@ fn stub(message: &Message, call: Option<&ToolCallOut>) -> String {
     let arguments = call
         .map(|c| truncated(&c.arguments.to_string(), STUB_ARGUMENTS_CHARS))
         .unwrap_or_default();
+    if !message.images.is_empty() {
+        return format!("[Image cleared to save context: {name}({arguments}) showed it. Call it again if you need to look at it.]");
+    }
     let beginning = truncated(&first_line(&message.content), STUB_BEGINNING_CHARS);
     format!(
         "[Result cleared to save context: {name}({arguments}) returned {} characters, beginning \"{beginning}\". \
@@ -375,5 +386,40 @@ mod tests {
         stub_cleared(&mut messages, Some(3));
         assert!(messages[1].content.contains("/a.rs"));
         assert!(messages[2].content.contains("/b.rs"));
+    }
+
+    fn picture_result(id: i64) -> Message {
+        let mut message = message(id, "tool", json!({"path": "/p/shot.png", "shown": "The image follows in the next message."}).to_string(), vec![]);
+        message.tool_name = Some("llm.read_image".to_string());
+        message.images = vec!["AAAA".to_string()];
+        message
+    }
+
+    #[test]
+    fn a_picture_counts_as_large_and_is_cleared_with_its_result() {
+        let picture_call = ToolCallOut { tool_name: "llm.read_image".to_string(), arguments: json!({"path": "/p/shot.png"}) };
+        let mut messages = vec![
+            message(1, "assistant", String::new(), vec![picture_call]),
+            picture_result(2),
+            message(3, "assistant", String::new(), vec![call("a.rs")]),
+            message(4, "tool", read_result(900), vec![]),
+        ];
+        assert!(clearable(&messages[1]), "a short result with a picture is clearable");
+        assert_eq!(weight(&messages[1]), messages[1].content.chars().count() + crate::facade::agent::compaction::IMAGE_COST_CHARS);
+
+        stub_cleared(&mut messages, Some(2));
+        assert!(messages[1].images.is_empty(), "the picture goes with the result it came in");
+        assert!(messages[1].content.starts_with("[Image cleared to save context: llm.read_image("), "{}", messages[1].content);
+        assert!(messages[1].content.contains("/p/shot.png"), "{}", messages[1].content);
+    }
+
+    #[test]
+    fn a_picture_older_than_the_fresh_budget_moves_the_boundary_past_it() {
+        let mut messages = vec![picture_result(2), message(4, "tool", read_result(900), vec![])];
+        messages.insert(1, message(3, "assistant", String::new(), vec![call("a.rs")]));
+        // the newest result is always kept; the older picture weighs 8,000 characters and the budget is 100
+        let (boundary, freed) = pick_boundary(&messages, None, 100).expect("a boundary");
+        assert_eq!(boundary, 2);
+        assert!(freed >= crate::facade::agent::compaction::IMAGE_COST_CHARS);
     }
 }

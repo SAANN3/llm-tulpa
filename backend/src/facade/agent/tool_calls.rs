@@ -15,7 +15,7 @@ use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage, ToolCal
 use crate::services::error::ErrorService;
 use crate::services::permission_store::{PermissionStore, PermissionStoreErrors};
 use crate::services::tools::ToolService;
-use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission};
+use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission, ATTACHED_IMAGES_KEY};
 use crate::tools::subagent;
 
 /// The most of the context window one tool result may take, as a fraction of it in tokens. A result past this
@@ -124,6 +124,15 @@ impl ToolCalls {
         }
         let head: String = text.chars().take(cap_chars).collect();
         Value::String(format!("{head}\n{}", prompts::tool_result_cut(cap_chars, total))).to_string()
+    }
+
+    /// The pictures a tool handed over under `ATTACHED_IMAGES_KEY`, taken out of its result: the
+    /// result is stored as text, and the pictures ride on its message instead.
+    fn take_images(result: &mut Value) -> Vec<String> {
+        let Some(Value::Array(images)) = result.as_object_mut().and_then(|object| object.remove(ATTACHED_IMAGES_KEY)) else {
+            return vec![];
+        };
+        images.into_iter().filter_map(|image| image.as_str().map(str::to_string)).collect()
     }
 
     /// Gives a sub-agent's chat the grants its parent chat has.
@@ -236,11 +245,15 @@ impl ToolCalls {
             .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, chat.user_id, is_subagent)
             .await;
 
+        let mut images = Vec::new();
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
                 let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.provider, chat.model);
                 match self.tools.call_tool(&next.tool_name, next.arguments, &ctx).await {
-                    Ok(value) => (true, false, None, value),
+                    Ok(mut value) => {
+                        images = Self::take_images(&mut value);
+                        (true, false, None, value)
+                    }
                     Err(e) => {
                         let message = e.to_string();
                         (false, false, Some(message.clone()), Value::String(message))
@@ -265,7 +278,7 @@ impl ToolCalls {
                 tool_success: Some(success),
                 tool_denied: denied,
                 tool_calls: vec![],
-                images: vec![],
+                images,
                 file_ids: vec![],
                 prompt_tokens: None,
                 eval_tokens: None,

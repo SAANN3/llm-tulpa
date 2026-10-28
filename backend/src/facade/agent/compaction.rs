@@ -31,6 +31,11 @@ const NOTES: StepDef = StepDef::fixed("notes", "Saving notes");
 const SUMMARY: StepDef = StepDef::fixed("summary", "Summarizing");
 const FACTS: StepDef = StepDef::fixed("facts", "Extracting facts");
 
+/// What one image costs the model in characters of prompt, for sizing the history. About 2,000 tokens: a
+/// 1080p screenshot at the one token per 1,000 pixels measured with a Qwen vision projector. The size of the
+/// file says nothing about it (counting the base64 of a PNG would price a small screenshot at tens of thousands of tokens).
+const IMAGE_COST_CHARS: usize = 8_000;
+
 /// `trigger_tokens`/`keep_chars` (below) are derived from the
 /// real, configured context window rather than hardcoded — otherwise they'd silently
 /// drift out of sync with `OLLAMA_CONTEXT_LENGTH` if that's ever changed without also
@@ -248,7 +253,7 @@ impl Compaction {
                     } else {
                         thinking
                     }
-                    + message.images.iter().map(String::len).sum::<usize>()
+                    + message.images.len() * IMAGE_COST_CHARS
                     + Self::fixed_cost_chars(message)
             })
             .collect();
