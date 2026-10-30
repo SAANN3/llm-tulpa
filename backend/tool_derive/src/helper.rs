@@ -20,15 +20,8 @@ pub fn field_properties(fields: &Punctuated<Field, Token![,]>) -> Result<Vec<Tok
                 Some(inner) => (inner, false),
                 None => (&field.ty, true),
             };
-            let property_type = property_type_for(schema_ty)?;
-            let items = match vec_inner_type(schema_ty) {
-                Some(element) => {
-                    let element_type = property_type_for(element)?;
-                    quote! { Some(#element_type) }
-                }
-                None => quote! { None },
-            };
-            let description = description_for(field)?;
+            let (description, nested) = metadata_for(field)?;
+            let property_type = property_type_for(schema_ty, nested)?;
 
             Ok(quote! {
                 PropertyInfo {
@@ -36,7 +29,6 @@ pub fn field_properties(fields: &Punctuated<Field, Token![,]>) -> Result<Vec<Tok
                     property_type: #property_type,
                     description: #description.to_string(),
                     required: #required,
-                    items: #items,
                 }
             })
         })
@@ -68,10 +60,8 @@ fn generic_inner_type<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
     }
 }
 
-/// Reads `#[tool(description = "...")]` off a field. This is the one attribute key we
-/// support today — anything else inside `tool(...)` is a compile error rather than
-/// silently ignored, so typos surface immediately instead of producing an empty schema.
-fn description_for(field: &Field) -> Result<String, Error> {
+/// Unknown attribute keys are errors so a typo cannot silently produce an incomplete schema.
+fn metadata_for(field: &Field) -> Result<(String, bool), Error> {
     let attr = field
         .attrs
         .iter()
@@ -81,24 +71,28 @@ fn description_for(field: &Field) -> Result<String, Error> {
         })?;
 
     let mut description = None;
+    let mut nested = false;
     attr.meta.require_list()?.parse_nested_meta(|meta| {
         if meta.path.is_ident("description") {
             let value: LitStr = meta.value()?.parse()?;
             description = Some(value.value());
             Ok(())
+        } else if meta.path.is_ident("nested") {
+            nested = true;
+            Ok(())
         } else {
-            Err(meta.error("unsupported key in #[tool(...)], expected `description`"))
+            Err(meta.error("unsupported key in #[tool(...)], expected `description` or `nested`"))
         }
     })?;
 
-    description.ok_or_else(|| Error::new_spanned(attr, "expected description = \"...\""))
+    description.map(|description| (description, nested)).ok_or_else(|| Error::new_spanned(attr, "expected description = \"...\""))
 }
 
 /// Maps a Rust field type to the `PropertyType` the model's tool schema expects.
 /// Deliberately narrow (primitives + `Vec`) — anything else falls back to `Object`
 /// rather than failing, since a wrong-but-present schema is easier to debug than a
 /// macro that refuses to compile on an unrecognized type.
-fn property_type_for(ty: &Type) -> Result<TokenStream, Error> {
+fn property_type_for(ty: &Type, nested: bool) -> Result<TokenStream, Error> {
     let Type::Path(type_path) = ty else {
         return Err(Error::new_spanned(ty, "unsupported type for a tool parameter"));
     };
@@ -117,8 +111,13 @@ fn property_type_for(ty: &Type) -> Result<TokenStream, Error> {
             quote! { PropertyType::Integer }
         }
         "bool" => quote! { PropertyType::Boolean },
-        "Vec" => quote! { PropertyType::Array },
-        _ => quote! { PropertyType::Object },
+        "Vec" => {
+            let element = vec_inner_type(ty).ok_or_else(|| Error::new_spanned(ty, "an array needs an element type"))?;
+            let items = property_type_for(element, nested)?;
+            quote! { PropertyType::Array { items: Box::new(#items) } }
+        }
+        _ if nested => quote! { PropertyType::Object { properties: <#ty as ToolParams>::tool_properties() } },
+        _ => quote! { PropertyType::Object { properties: vec![] } },
     };
 
     Ok(variant)

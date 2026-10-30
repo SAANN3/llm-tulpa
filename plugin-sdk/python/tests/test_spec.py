@@ -2,11 +2,12 @@ import asyncio
 import os
 import sys
 import unittest
-from typing import Annotated, Optional
+from typing import Annotated, Optional, TypedDict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tulpa_plugin import BadArgs, CallContext, NotFound, Plugin, access_folder, access_path_arg, tool, WRITE, READ  # noqa: E402
+from tulpa_plugin.spec import params_of
+from tulpa_plugin import Array, Object, Param, BadArgs, CallContext, NotFound, Plugin, access_folder, access_path_arg, tool, WRITE, READ  # noqa: E402
 
 
 class Sample(Plugin):
@@ -80,6 +81,35 @@ class Calls(unittest.TestCase):
         with self.assertRaises(NotFound):
             self.call("sample.nothing", {})
 
+
+class OptionalRow(TypedDict, total=False):
+    count: Annotated[int, "Count"]
+
+
+class Row(OptionalRow):
+    name: Annotated[str, "Name"]
+
+
+class SchemaTests(unittest.TestCase):
+    def test_recursive_annotations(self):
+        def search(rows: Annotated[list[Row], "Rows"], matrix: Annotated[list[list[int]], "Matrix"], note: Annotated[str | None, "Note"] = None):
+            pass
+
+        rows, matrix, note = [p.to_json() for p in params_of(search, {})]
+        fields = {p["name"]: p for p in rows["items"]["properties"]}
+        self.assertEqual(rows["items"]["type"], "object")
+        self.assertTrue(fields["name"]["required"])
+        self.assertFalse(fields["count"]["required"])
+        self.assertEqual(matrix["items"], {"type": "array", "items": "integer"})
+        self.assertFalse(note["required"])
+
+    def test_legacy_constructor_and_structured_types(self):
+        old = Param("ids", "array", "Ids", items="integer")
+        new = Param("ids", Array("integer"), "Ids")
+        self.assertEqual(old.to_json(), new.to_json())
+        self.assertEqual(new.to_json(), {"name": "ids", "type": "array", "description": "Ids", "required": True, "items": "integer"})
+        obj = Param("rows", Array(Object([Param("name", "string", "Name")])), "Rows")
+        self.assertEqual(obj.to_json()["items"]["properties"][0]["name"], "name")
 
 if __name__ == "__main__":
     unittest.main()

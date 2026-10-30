@@ -43,6 +43,28 @@ calls `await host.db_query(sql, params)`, `db_execute` and `db_batch` (see "Data
 **Printing:** `run` keeps the real standard output for the protocol and points the program's standard output at its standard error, so a `print` lands in the
 log the backend shows instead of corrupting the conversation.
 
+## Nested tool parameters
+
+`list[T]` supports nested lists and `TypedDict` objects. Describe each object field with `Annotated`; `TypedDict` required keys determine which fields are required (including `total=False` and, on Python versions providing them, `Required`/`NotRequired`). For example:
+
+```python
+from typing import Annotated, TypedDict
+from tulpa_plugin import Plugin, tool
+
+class Row(TypedDict):
+    name: Annotated[str, "Name"]
+
+class Rows(Plugin):
+    @tool("rows.save", "Saves rows")
+    async def save(self, rows: Annotated[list[Row], "Rows"]):
+        return {"count": len(rows)}
+```
+
+For manual declarations, `Param("rows", Array(Object([Param("name", "string", "Name")])), "Rows")` uses the same representation. Import `Array`, `Object` and `Param` from `tulpa_plugin`. The existing `Param(..., "array", ..., items="integer")` constructor is accepted and normalized to `Array("integer")`.
+
+These declarations describe object fields and arrays; enum choices, bounds, composition and recursive references are not supported. Argument validation remains the tool's responsibility. `X | None` makes an argument optional; it does not advertise a nullable JSON type.
+
+
 ## Shipping a plugin
 
 A plugin whose manifest says `sdk = "python"` is given this package by the backend when it is installed, unless the folder carries a `tulpa_plugin/` of its own (which is kept, to pin a version). To run a folder by hand, `python3 vendor.py <the plugin's folder>` puts `tulpa_plugin/` next to its `main.py`.

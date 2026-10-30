@@ -1,58 +1,73 @@
 //! What a plugin says about itself and its tools (its settings in the manifest, its tools in `tools`) (see `plugin-sdk/PROTOCOL.md`),
 //! checked before anything of it reaches the registry.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use crate::tools::base::{PropertyInfo, PropertyType};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamType {
     String,
     Number,
     Integer,
     Boolean,
-    Array,
-    Object,
+    Array {
+        #[serde(deserialize_with = "deserialize_item_type")]
+        items: Box<ParamType>,
+    },
+    Object {
+        #[serde(default)]
+        properties: Vec<ParamSpec>,
+    },
 }
 
 impl ParamType {
-    fn word(self) -> &'static str {
+    fn word(&self) -> &'static str {
         match self {
             ParamType::String => "string",
             ParamType::Number => "number",
             ParamType::Integer => "integer",
             ParamType::Boolean => "boolean",
-            ParamType::Array => "array",
-            ParamType::Object => "object",
+            ParamType::Array { .. } => "array",
+            ParamType::Object { .. } => "object",
         }
     }
 
-    fn property_type(self) -> PropertyType {
+    fn property_type(&self) -> PropertyType {
         match self {
             ParamType::String => PropertyType::String,
             ParamType::Number => PropertyType::Number,
             ParamType::Integer => PropertyType::Integer,
             ParamType::Boolean => PropertyType::Boolean,
-            ParamType::Array => PropertyType::Array,
-            ParamType::Object => PropertyType::Object,
+            ParamType::Array { items } => PropertyType::Array { items: Box::new(items.property_type()) },
+            ParamType::Object { properties } => PropertyType::Object { properties: properties.iter().map(ParamSpec::property_info).collect() },
         }
     }
 }
 
 /// One argument of a tool
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ParamSpec {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(flatten)]
     pub kind: ParamType,
     pub description: String,
     #[serde(default)]
     pub required: bool,
-    /// For an array, the type of its elements
-    #[serde(default)]
-    pub items: Option<ParamType>,
+}
+
+// Protocol 1 plugins send primitive item types as strings; normalize them at the boundary.
+fn deserialize_item_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Box<ParamType>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Item { Primitive(String), Structured(ParamType) }
+    let kind = match Item::deserialize(deserializer)? {
+        Item::Primitive(kind) => serde_json::from_value(serde_json::json!({"type": kind})).map_err(serde::de::Error::custom)?,
+        Item::Structured(kind) => kind,
+    };
+    Ok(Box::new(kind))
 }
 
 impl ParamSpec {
@@ -62,7 +77,6 @@ impl ParamSpec {
             property_type: self.kind.property_type(),
             description: self.description.clone(),
             required: self.required,
-            items: self.items.map(ParamType::property_type),
         }
     }
 }
@@ -162,21 +176,27 @@ pub fn check_params(owner: &str, params: &[ParamSpec]) -> Result<(), String> {
         if param.name.is_empty() || !seen.insert(param.name.as_str()) {
             return Err(format!("{owner}: '{}' is empty or listed twice", param.name));
         }
-        if param.kind == ParamType::Array && param.items.is_none() {
-            return Err(format!("{owner}: array '{}' needs its element type in \"items\"", param.name));
-        }
+        check_type(owner, &param.kind)?;
     }
     Ok(())
 }
 
-fn fits(kind: ParamType, value: &Value) -> bool {
+fn check_type(owner: &str, kind: &ParamType) -> Result<(), String> {
+    match kind {
+        ParamType::Array { items } => check_type(owner, items),
+        ParamType::Object { properties } => check_params(owner, properties),
+        _ => Ok(()),
+    }
+}
+
+fn fits(kind: &ParamType, value: &Value) -> bool {
     match kind {
         ParamType::String => value.is_string(),
         ParamType::Number => value.is_number(),
         ParamType::Integer => value.is_i64() || value.is_u64(),
         ParamType::Boolean => value.is_boolean(),
-        ParamType::Array => value.is_array(),
-        ParamType::Object => value.is_object(),
+        ParamType::Array { .. } => value.is_array(),
+        ParamType::Object { .. } => value.is_object(),
     }
 }
 
@@ -190,10 +210,10 @@ pub fn check_settings(schema: &[ParamSpec], settings: &Value) -> Result<(), Stri
             None if param.required => return Err(format!("setting '{}' is required", param.name)),
             None => {}
             Some(value) => {
-                if !fits(param.kind, value) {
+                if !fits(&param.kind, value) {
                     return Err(format!("setting '{}' must be of type {}", param.name, param.kind.word()));
                 }
-                if let (ParamType::Array, Some(items), Some(list)) = (param.kind, param.items, value.as_array()) {
+                if let (ParamType::Array { items }, Some(list)) = (&param.kind, value.as_array()) {
                     if let Some(bad) = list.iter().position(|element| !fits(items, element)) {
                         return Err(format!("setting '{}': element {bad} must be of type {}", param.name, items.word()));
                     }
@@ -227,18 +247,19 @@ mod tests {
         let t = tool(json!({"name": "a.b", "description": "d", "parameters": [{"name": "n", "type": "array", "items": "integer", "description": "x", "required": true}]}));
         assert!(!t.confirm && t.timeout_s.is_none());
         let info = t.parameters[0].property_info();
-        assert!(info.required && matches!(info.property_type, PropertyType::Array) && matches!(info.items, Some(PropertyType::Integer)));
+        assert!(info.required && matches!(info.property_type, PropertyType::Array { items } if matches!(*items, PropertyType::Integer)));
         assert!(check_tools(&[t]).is_ok());
     }
 
     #[test]
     fn a_list_with_a_mistake_is_refused_with_the_tool_named() {
+        let missing_items = serde_json::from_value::<ParamSpec>(json!({"name":"l", "type":"array", "description":"x"}));
+        assert!(missing_items.unwrap_err().to_string().contains("items"));
         let ok = json!({"name": "a.b", "description": "d"});
         let cases = [
             (vec![ok.clone(), ok.clone()], "twice"),
             (vec![json!({"name": "ab", "description": "d"})], "domain.action"),
             (vec![json!({"name": "a.b", "description": " "})], "no description"),
-            (vec![json!({"name": "a.b", "description": "d", "parameters": [{"name": "l", "type": "array", "description": "x"}]})], "element type"),
             (vec![json!({"name": "a.b", "description": "d", "parameters": [{"name": "l", "type": "string", "description": "x"}, {"name": "l", "type": "string", "description": "x"}]})], "listed twice"),
         ];
         for (list, expected) in cases {

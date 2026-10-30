@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import types
 import typing
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Any, Callable
 
 #: Which of the user's folder approvals a tool draws on (the same three every file tool of the backend uses)
@@ -25,17 +25,39 @@ def access_path_arg(bucket: str, arg: str) -> dict[str, str]:
 
 
 @dataclass
-class Param:
-    name: str
-    type: str
-    description: str
-    required: bool = True
-    items: str | None = None
+class Array:
+    items: str | Array | Object
 
     def to_json(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"name": self.name, "type": self.type, "description": self.description, "required": self.required}
-        if self.items is not None:
-            data["items"] = self.items
+        return {"type": "array", "items": self.items if isinstance(self.items, str) else self.items.to_json()}
+
+
+@dataclass
+class Object:
+    properties: list[Param]
+
+    def to_json(self) -> dict[str, Any]:
+        return {"type": "object", "properties": [p.to_json() for p in self.properties]}
+
+
+@dataclass
+class Param:
+    name: str
+    type: str | Array | Object
+    description: str
+    required: bool = True
+    items: InitVar[str | None] = None
+
+    def __post_init__(self, items: str | None) -> None:
+        # Preserve the existing constructor while storing array data only in its type.
+        if items is not None:
+            if self.type != "array":
+                raise TypeError("items is only valid for an array")
+            self.type = Array(items)
+
+    def to_json(self) -> dict[str, Any]:
+        kind = {"type": self.type} if isinstance(self.type, str) else self.type.to_json()
+        data: dict[str, Any] = {"name": self.name, **kind, "description": self.description, "required": self.required}
         return data
 
 
@@ -63,8 +85,8 @@ class ToolSpec:
 _SCALARS = {str: "string", bool: "boolean", int: "integer", float: "number"}
 
 
-def _json_type(annotation: Any, where: str) -> tuple[str, str | None, bool]:
-    """The protocol's type of a Python annotation: `(type, element type of an array, optional)`"""
+def _json_type(annotation: Any, where: str) -> tuple[str | Array | Object, bool]:
+    """Return the recursive type and whether the argument is optional."""
     optional = False
     origin = typing.get_origin(annotation)
     if origin is typing.Annotated:
@@ -77,15 +99,39 @@ def _json_type(annotation: Any, where: str) -> tuple[str, str | None, bool]:
             raise TypeError(f"{where}: a union of several types cannot be described to the model; use one type, or `X | None`")
         annotation = arms[0]
         origin = typing.get_origin(annotation)
+    if origin is not None and origin in (getattr(typing, "Required", None), getattr(typing, "NotRequired", None)):
+        annotation = typing.get_args(annotation)[0]
+        return _json_type(annotation, where)
     if annotation in _SCALARS:
-        return _SCALARS[annotation], None, optional
+        return _SCALARS[annotation], optional
+    if typing.is_typeddict(annotation):
+        properties = []
+        for name, hint in typing.get_type_hints(annotation, include_extras=True).items():
+            description = ""
+            if typing.get_origin(hint) is typing.Annotated:
+                args = typing.get_args(hint)
+                description = next((m for m in args[1:] if isinstance(m, str)), "")
+                hint = args[0]
+            required = name in annotation.__required_keys__
+            origin_hint = typing.get_origin(hint)
+            if origin_hint is not None and origin_hint in (getattr(typing, "Required", None), getattr(typing, "NotRequired", None)):
+                required = origin_hint is getattr(typing, "Required", None)
+                hint = typing.get_args(hint)[0]
+                if typing.get_origin(hint) is typing.Annotated:
+                    description = next((m for m in typing.get_args(hint)[1:] if isinstance(m, str)), description)
+            if not description:
+                raise TypeError(f"{where}.{name}: describe the field with Annotated[type, description]")
+            kind, _ = _json_type(hint, f"{where}.{name}")
+            properties.append(Param(name, kind, description, required))
+        return Object(properties), optional
     if annotation is dict or origin is dict:
-        return "object", None, optional
+        return "object", optional
     if annotation is list or origin is list:
         args = typing.get_args(annotation)
-        if len(args) != 1 or args[0] not in _SCALARS:
+        if len(args) != 1:
             raise TypeError(f"{where}: a list needs its element type (list[str], list[int], ...)")
-        return "array", _SCALARS[args[0]], optional
+        items, _ = _json_type(args[0], where + " items")
+        return Array(items), optional
     raise TypeError(f"{where}: {annotation!r} is not a type a tool argument can have (str, int, float, bool, list[...], dict)")
 
 
@@ -100,11 +146,11 @@ def params_of(function: Callable[..., Any], descriptions: dict[str, str], skip: 
         where = f"{function.__qualname__}, argument '{name}'"
         if name not in hints:
             raise TypeError(f"{where}: give it a type, so that the model is told what it takes")
-        kind, items, optional = _json_type(hints[name], where)
+        kind, optional = _json_type(hints[name], where)
         description = descriptions.get(name)
         if description is None and typing.get_origin(hints[name]) is typing.Annotated:
             description = next((m for m in typing.get_args(hints[name])[1:] if isinstance(m, str)), None)
         if not description:
             raise TypeError(f"{where}: describe it, with Annotated[type, \"what it is\"] or params={{'{name}': \"what it is\"}}; the model reads this")
-        result.append(Param(name, kind, description, parameter.default is inspect.Parameter.empty and not optional, items))
+        result.append(Param(name, kind, description, parameter.default is inspect.Parameter.empty and not optional))
     return result

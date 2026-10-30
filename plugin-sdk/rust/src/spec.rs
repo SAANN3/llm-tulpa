@@ -1,33 +1,49 @@
 //! The tool descriptions a plugin sends in `tools`.
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamType {
     String,
     Number,
     Integer,
     Boolean,
-    Array,
-    Object,
+    Array {
+        #[serde(serialize_with = "serialize_item_type")]
+        items: Box<ParamType>,
+    },
+    Object {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        properties: Vec<Param>,
+    },
+}
+
+// Keep the primitive-item shorthand used by existing protocol 1 plugins.
+fn serialize_item_type<S: Serializer>(kind: &ParamType, serializer: S) -> Result<S::Ok, S::Error> {
+    let word = match kind {
+        ParamType::String => "string",
+        ParamType::Number => "number",
+        ParamType::Integer => "integer",
+        ParamType::Boolean => "boolean",
+        _ => return kind.serialize(serializer),
+    };
+    serializer.serialize_str(word)
 }
 
 /// One argument of a tool. Required unless `optional` is called.
 #[derive(Clone, Debug, Serialize)]
 pub struct Param {
     name: String,
-    #[serde(rename = "type")]
+    #[serde(flatten)]
     kind: ParamType,
     description: String,
     required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    items: Option<ParamType>,
 }
 
 impl Param {
     pub fn new(name: &str, kind: ParamType, description: &str) -> Self {
-        Self { name: name.into(), kind, description: description.into(), required: true, items: None }
+        Self { name: name.into(), kind, description: description.into(), required: true }
     }
 
     pub fn string(name: &str, description: &str) -> Self {
@@ -48,7 +64,7 @@ impl Param {
 
     /// An array of `items`
     pub fn array(name: &str, items: ParamType, description: &str) -> Self {
-        Self { items: Some(items), ..Self::new(name, ParamType::Array, description) }
+        Self::new(name, ParamType::Array { items: Box::new(items) }, description)
     }
 
     pub fn optional(mut self) -> Self {
@@ -124,5 +140,23 @@ impl ToolSpec {
     pub fn timeout_s(mut self, seconds: u64) -> Self {
         self.timeout_s = Some(seconds);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn recursive_types_preserve_primitive_array_declarations() {
+        assert_eq!(serde_json::to_value(Param::array("ids", ParamType::Integer, "Ids")).unwrap(),
+            json!({"name":"ids","type":"array","items":"integer","description":"Ids","required":true}));
+        let rows = Param::array("rows", ParamType::Object { properties: vec![
+            Param::string("name", "Name"), Param::integer("count", "Count").optional(),
+        ] }, "Rows");
+        let wire = serde_json::to_value(rows).unwrap();
+        assert_eq!(wire["items"]["type"], "object");
+        assert_eq!(wire["items"]["properties"][1]["required"], false);
     }
 }

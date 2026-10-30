@@ -41,3 +41,16 @@ A plugin is a class and a `run` call, with no build and no dependencies: see [`p
 ## Writing a plugin in Rust
 
 Implement `tulpa_plugin::Plugin` (`call_tool` and the hooks you use: `configure`, `tools`, the tab, `prompt_section`, `http_request`...; what the plugin is, its settings and its tab go in `plugin.toml`) and call `tulpa_plugin::serve` from `main`. The crate documentation has the smallest complete plugin, and `examples/hello-world-rust/src/main.rs` uses most of the hooks: a setting, a tool that takes an argument and logs, a tab with a switch and a button, a prompt section and a route. A plugin that keeps data in the database lists `[database]` in its manifest and keeps its `.sql` migrations in a folder; `examples/skills` shows that, with files in the data folder and uploads.
+
+### Nested tool parameters
+
+In Rust, the existing `ParamType` enum carries container data:
+
+```rust
+Param::array("rows", ParamType::Object { properties: vec![
+    Param::string("name", "Name"),
+    Param::integer("count", "Optional count").optional(),
+] }, "Rows")
+```
+
+Use `ParamType::Array { items: Box::new(element_type) }` for a nested array. Primitive `Param::array` calls retain their wire format. Code constructing the former unit variants `ParamType::Array` or `ParamType::Object` must provide their contents; use an empty property list for an opaque object.

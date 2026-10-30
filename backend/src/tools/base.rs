@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 use utoipa::ToSchema;
 
@@ -268,30 +268,49 @@ impl fmt::Display for ToolType {
 #[derive(Serialize, ToSchema)]
 pub struct PropertyInfo {
     pub name: String,
+    #[serde(flatten)]
     pub property_type: PropertyType,
     pub description: String,
     /// Whether the model must supply this argument. `#[derive(ToolParams)]` sets this
     /// from the field's own type — `false` for `Option<T>`, `true` otherwise — so a
     /// tool's args struct is the one place this is decided.
     pub required: bool,
-    /// For an `Array`, the type of its elements (`Vec<i64>` gives `Integer`), which the schema sends as
-    /// `items`: a chat template that writes the parameter out as a type (gpt-oss's) reads it, and
-    /// llama.cpp's template engine fails the whole request when it isn't there. `None` for anything else.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub items: Option<PropertyType>,
 }
 
-/// JSON Schema primitive types, restricted to what Ollama's tool-calling schema
-/// actually accepts as a parameter type.
+/// Parameter types; containers own their contents so unrelated types cannot carry array or object fields.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(tag = "property_type", rename_all = "lowercase")]
 pub enum PropertyType {
     String,
     Number,
     Integer,
     Boolean,
-    Array,
-    Object,
+    Array {
+        #[serde(serialize_with = "serialize_item_type")]
+        #[schema(schema_with = item_type_schema)]
+        items: Box<PropertyType>,
+    },
+    Object {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[schema(no_recursion)]
+        properties: Vec<PropertyInfo>,
+    },
+}
+
+fn item_type_schema() -> utoipa::openapi::Schema {
+    use utoipa::openapi::{Ref, schema::{ObjectBuilder, OneOfBuilder, Type}};
+    OneOfBuilder::new()
+        .item(ObjectBuilder::new().schema_type(Type::String).enum_values(Some(["string", "number", "integer", "boolean"])))
+        .item(Ref::from_schema_name("PropertyType"))
+        .build().into()
+}
+
+// Existing settings clients read primitive array items as strings.
+fn serialize_item_type<S: Serializer>(kind: &PropertyType, serializer: S) -> Result<S::Ok, S::Error> {
+    match kind {
+        PropertyType::Array { .. } | PropertyType::Object { .. } => kind.serialize(serializer),
+        _ => serializer.serialize_str(&kind.to_string()),
+    }
 }
 
 impl fmt::Display for PropertyType {
@@ -301,8 +320,8 @@ impl fmt::Display for PropertyType {
             PropertyType::Number => "number",
             PropertyType::Integer => "integer",
             PropertyType::Boolean => "boolean",
-            PropertyType::Array => "array",
-            PropertyType::Object => "object",
+            PropertyType::Array { .. } => "array",
+            PropertyType::Object { .. } => "object",
         };
         write!(f, "{s}")
     }

@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
-use crate::tools::base::Tool;
+use crate::tools::base::{PropertyInfo, PropertyType, Tool};
 
 /// One entry of the `tools` array in a chat request — the schema the server forwards to the
 /// model so it knows what's callable. Ollama and llama-server's OpenAI-compatible endpoint take
@@ -37,23 +37,46 @@ pub struct ToolParameters {
     /// order here changes the prompt's bytes on every single call — right alongside
     /// the current date riding on the newest message only (`History`), this is the other half
     /// of what made Ollama/llama.cpp's prefix cache fail to match almost immediately on every turn.
-    properties: BTreeMap<String, ToolProperty>,
+    #[serde(serialize_with = "serialize_properties")]
+    properties: BTreeMap<String, PropertyInfo>,
 }
 
-#[derive(Serialize)]
-pub struct ToolProperty {
-    #[serde(rename = "type")]
-    property_type: String,
-    description: String,
-    /// An array's element type; left out otherwise, so every other parameter's bytes stay as they were
-    #[serde(skip_serializing_if = "Option::is_none")]
-    items: Option<ToolItems>,
+struct ToolProperty<'a> {
+    kind: &'a PropertyType,
+    description: Option<&'a str>,
 }
 
-#[derive(Serialize)]
-pub struct ToolItems {
-    #[serde(rename = "type")]
-    item_type: String,
+impl Serialize for ToolProperty<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("type", &self.kind.to_string())?;
+        if let Some(description) = self.description {
+            map.serialize_entry("description", description)?;
+        }
+        match self.kind {
+            PropertyType::Array { items } => {
+                map.serialize_entry("items", &ToolProperty { kind: items, description: None })?;
+            }
+            PropertyType::Object { properties } if !properties.is_empty() => {
+                let required: Vec<_> = properties.iter().filter(|p| p.required).map(|p| &p.name).collect();
+                let children: BTreeMap<_, _> = properties.iter().map(|p| {
+                    (&p.name, ToolProperty { kind: &p.property_type, description: Some(&p.description) })
+                }).collect();
+                map.serialize_entry("properties", &children)?;
+                map.serialize_entry("required", &required)?;
+            }
+            _ => {}
+        }
+        map.end()
+    }
+}
+
+fn serialize_properties<S: Serializer>(properties: &BTreeMap<String, PropertyInfo>, serializer: S) -> Result<S::Ok, S::Error> {
+    let mut map = serializer.serialize_map(Some(properties.len()))?;
+    for (name, property) in properties {
+        map.serialize_entry(name, &ToolProperty { kind: &property.property_type, description: Some(&property.description) })?;
+    }
+    map.end()
 }
 
 
@@ -66,16 +89,7 @@ pub fn tool_definitions(tools: &[&dyn Tool]) -> Vec<ToolDefinition> {
             let properties = tool
                 .required_properties()
                 .into_iter()
-                .map(|property| {
-                    (
-                        property.name,
-                        ToolProperty {
-                            property_type: property.property_type.to_string(),
-                            description: property.description,
-                            items: property.items.map(|item| ToolItems { item_type: item.to_string() }),
-                        },
-                    )
-                })
+                .map(|property| (property.name.clone(), property))
                 .collect();
 
             ToolDefinition {

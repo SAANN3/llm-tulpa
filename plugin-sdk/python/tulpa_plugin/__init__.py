@@ -21,11 +21,11 @@ from .failure import BadArgs, Failure, NotFound
 from .host import Host
 from .plugin import Plugin, tool
 from .run import PROTOCOL, run
-from .spec import DELETE, READ, WRITE, Param, ToolSpec, access_folder, access_path_arg
+from .spec import Array, Object, DELETE, READ, WRITE, Param, ToolSpec, access_folder, access_path_arg
 from .tab import Block, Row, Section, Tab
 from .types import CallContext, HttpRequest, HttpResponse, UploadedFile
 
 __all__ = [
-    "BadArgs", "Block", "CallContext", "DELETE", "Failure", "Host", "HttpRequest", "HttpResponse", "NotFound", "PROTOCOL", "Param",
+    "Array", "Object", "BadArgs", "Block", "CallContext", "DELETE", "Failure", "Host", "HttpRequest", "HttpResponse", "NotFound", "PROTOCOL", "Param",
     "Plugin", "READ", "Row", "Section", "Tab", "ToolSpec", "UploadedFile", "WRITE", "access_folder", "access_path_arg", "run", "tool",
 ]

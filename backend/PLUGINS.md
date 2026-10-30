@@ -139,3 +139,5 @@ Registry-level management routes, under `/api/plugins`:
 | `POST /reset_chat` | Wipes a plugin-linked chat's message history, keeping the chat and its external mapping intact — useful for retesting behavior without a stale reply from earlier still in the history the model gets replayed on every turn. |
 
 A plugin's own instance-level routes (`Plugin::api_router()`) mount under `/api/plugins/{plugin_name}/{plugin_subname}/...` — none of the built-in providers expose any; an external plugin's are answered by its program (`http_request`).
+
+Tool parameter types support nested objects and arrays through the existing parameter list. Object children carry their own names, descriptions and required flags; arrays carry one element type. See [`plugin-sdk/PROTOCOL.md`](../plugin-sdk/PROTOCOL.md) for the wire format and SDK examples.
