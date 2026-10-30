@@ -255,7 +255,7 @@ impl MessagingProvider for TelegramProvider {
          1. Message @BotFather on Telegram and create a bot (or reuse an existing one) to get a bot token.\n\
          2. Paste that token into this plugin's \"token\" setting and save.\n\
          3. Open a chat with your bot (search its @username) and send it any message — Telegram will show your numeric chat id in the message the bot receives, or you can get it from @userinfobot.\n\
-         4. Add that chat id to \"allowed_chat_ids\" and save — the bot only ever responds in chats listed there.\n\
+         4. Add the chat/channel id to \"allowed_chat_ids\", or turn on \"whitelist_by_user\" and add sender user IDs to \"allowed_user_ids\" to allow those senders in any chat the bot receives. Only the selected list is checked; an empty active list allows nobody. Save the settings.\n\
          5. Enable the plugin with the toggle.\n\
          6. In the chat, send /chat followed by your message (e.g. \"/chat what's the weather like\"), or just send /chat alone and reply to its prompt with your message.\n\
          7. The bot reacts with 👀 to show it received your message, then replies threaded to it once the answer is ready.\n\

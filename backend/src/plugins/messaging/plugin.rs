@@ -121,7 +121,7 @@ async fn run_with_reconnect<P: MessagingProvider>(provider: Arc<P>, tx: mpsc::Se
 }
 
 /// Settings shared by every messaging provider, wrapping the provider's own.
-/// `allowed_chat_ids` lives here — once, generically — rather than being redefined per
+/// Whitelist settings live here — once, generically — rather than being redefined per
 /// provider, since filtering is `MessagingPlugin`'s job, not the provider's: a provider
 /// only ever reports what arrived, and whether to act on it is decided here, before
 /// anything downstream (like the agent) is ever invoked. Empty means nothing is
@@ -129,7 +129,12 @@ async fn run_with_reconnect<P: MessagingProvider>(provider: Arc<P>, tx: mpsc::Se
 /// enforces for `enabled` applies here too.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessagingSettings<S> {
+    #[serde(default)]
     pub allowed_chat_ids: Vec<String>,
+    #[serde(default)]
+    pub whitelist_by_user: bool,
+    #[serde(default)]
+    pub allowed_user_ids: Vec<String>,
     /// Forwarded as-is to `Agent::chat`'s own `think` parameter for every reply this
     /// provider sends — a per-provider setting rather than a global app one, since how
     /// much a few extra seconds of latency matters is genuinely different in a chat app
@@ -168,14 +173,20 @@ fn default_timezone() -> String {
 /// Exists only so `#[derive(ToolParams)]` has a concrete, non-generic struct to read —
 /// `MessagingSettings<S>` can't derive it directly, since the macro inspects each
 /// field's own type to pick a `PropertyType`, and `provider: S` is generic. Field name
-/// and type are kept in sync with `MessagingSettings::allowed_chat_ids` by hand; the
+/// and type follow `MessagingSettings` by hand (optional schema fields may be left empty); the
 /// two aren't the same struct, but this one is never constructed, only ever asked for
 /// its `tool_properties()`.
 #[derive(ToolParams)]
 struct MessagingSharedSettingsSchema {
-    #[tool(description = "Chat/channel IDs this provider is allowed to act on — anything else is silently ignored.")]
+    #[tool(description = "Chat/channel IDs allowed when whitelist_by_user is off. Ignored in user mode. An empty active list allows nobody.")]
     #[allow(dead_code)]
-    allowed_chat_ids: Vec<String>,
+    allowed_chat_ids: Option<Vec<String>>,
+    #[tool(description = "When on, allow only senders in allowed_user_ids, in any conversation the bot receives; ignore allowed_chat_ids. When off, allow only listed chats.")]
+    #[allow(dead_code)]
+    whitelist_by_user: bool,
+    #[tool(description = "Sender user IDs allowed when whitelist_by_user is on. Ignored in chat mode. Use numeric platform IDs, not display names or usernames. An empty active list allows nobody.")]
+    #[allow(dead_code)]
+    allowed_user_ids: Option<Vec<String>>,
     #[tool(description = "Whether replies think before answering — slower, but can give a more careful answer.")]
     #[allow(dead_code)]
     think: bool,
@@ -191,13 +202,24 @@ struct MessagingSharedSettingsSchema {
     timezone: String,
 }
 
-/// The shared `allowed_chat_ids` field's schema, followed by whatever `P` itself
+/// The shared messaging settings schema, followed by whatever `P` itself
 /// contributes — used by `MessagingProviderBuilder::settings_schema` to build one flat
 /// property list for the frontend settings form.
 pub fn settings_schema<P: MessagingProvider>() -> Vec<PropertyInfo> {
     let mut properties = MessagingSharedSettingsSchema::tool_properties();
     properties.extend(P::settings_schema());
     properties
+}
+
+impl<S> MessagingSettings<S> {
+    fn allows(&self, message: &IncomingMessage) -> bool {
+        let (allowed_ids, id) = if self.whitelist_by_user {
+            (&self.allowed_user_ids, &message.author_id)
+        } else {
+            (&self.allowed_chat_ids, &message.chat_id)
+        };
+        allowed_ids.contains(id)
+    }
 }
 
 /// The two background tasks a running instance owns — the provider's own connection
@@ -234,7 +256,7 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
         Self { provider: Arc::new(provider), settings, running: Mutex::new(None), agent, chat_store }
     }
 
-    /// One incoming message's worth of work — filters by `allowed_chat_ids`, resolves
+    /// One incoming message's worth of work — checks the active whitelist, resolves
     /// (or creates) the internal chat mapped to `message.chat_id`, gets the agent's
     /// reply, and sends it back via `provider`. A plain function, not a `&self` method:
     /// it runs inside the read loop spawned by `on_enabled`, which can't borrow `self`
@@ -245,26 +267,29 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
     /// unattended inside a background loop with nothing to report a `Result` to.
     async fn on_new_message(
         message: IncomingMessage,
-        allowed_chat_ids: &[String],
-        think: bool,
-        name_hint: bool,
-        timezone: &str,
+        settings: &MessagingSettings<P::Settings>,
         provider: &Arc<P>,
         agent: &Arc<Agent>,
         chat_store: &Arc<ChatStore>,
     ) {
         tracing::info!(
-            "messaging plugin: received message from {} (chat_id {})",
+            "messaging plugin: received message from {} (chat_id {}, user_id {})",
             message.author,
-            message.chat_id
+            message.chat_id,
+            message.author_id
         );
 
-        if !allowed_chat_ids.iter().any(|id| id == &message.chat_id) {
+        if !settings.allows(&message) {
             // Logged at `info`, not silently dropped — this is the only way to learn a
-            // chat's id in the first place (Telegram doesn't expose it up front), so
+            // chat's or sender's id in the first place, so
             // the very first message from a not-yet-allowed chat needs to be visible
-            // here for that id to ever make it into `allowed_chat_ids`.
-            tracing::info!("messaging plugin: ignoring chat_id {} — not in allowed_chat_ids", message.chat_id);
+            // here for that id to ever make it into the active whitelist.
+            tracing::info!(
+                "messaging plugin: ignoring chat_id {}, user_id {} — not in {}",
+                message.chat_id,
+                message.author_id,
+                if settings.whitelist_by_user { "allowed_user_ids" } else { "allowed_chat_ids" }
+            );
             return;
         }
 
@@ -301,9 +326,9 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
         // falls apart the moment more than one person talks to the bot (a group chat,
         // most obviously). Only prefixed when the setting is on: the untagged form is
         // what every provider already sent before this existed, and stays the default.
-        let text = if name_hint {
-            let tz: chrono_tz::Tz = timezone.parse().unwrap_or_else(|_| {
-                tracing::warn!("messaging plugin: invalid timezone {timezone:?} in settings, falling back to UTC");
+        let text = if settings.name_hint {
+            let tz: chrono_tz::Tz = settings.timezone.parse().unwrap_or_else(|_| {
+                tracing::warn!("messaging plugin: invalid timezone {:?} in settings, falling back to UTC", settings.timezone);
                 chrono_tz::UTC
             });
             let sent_at = message.sent_at.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S %Z");
@@ -316,7 +341,7 @@ impl<P: MessagingProvider> MessagingPlugin<P> {
         };
         // No messaging plugin has a way to attach an already-uploaded file yet — only
         // images (already decoded/normalized above), so this is always empty.
-        let reply = match agent.reply(chat.id, text, images, Some(ThinkChoice::Enabled(think))).await {
+        let reply = match agent.reply(chat.id, text, images, Some(ThinkChoice::Enabled(settings.think))).await {
             Ok(reply) => reply,
             Err(err) => {
                 tracing::warn!(
@@ -366,16 +391,13 @@ impl<P: MessagingProvider> Plugin for MessagingPlugin<P> {
             run_with_reconnect(run_provider, tx, &run_label).await;
         });
 
-        let allowed_chat_ids = self.settings.allowed_chat_ids.clone();
-        let think = self.settings.think;
-        let name_hint = self.settings.name_hint;
-        let timezone = self.settings.timezone.clone();
+        let settings = self.settings.clone();
         let read_provider = self.provider.clone();
         let agent = self.agent.clone();
         let chat_store = self.chat_store.clone();
         let read = tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                Self::on_new_message(message, &allowed_chat_ids, think, name_hint, &timezone, &read_provider, &agent, &chat_store).await;
+                Self::on_new_message(message, &settings, &read_provider, &agent, &chat_store).await;
             }
         });
 

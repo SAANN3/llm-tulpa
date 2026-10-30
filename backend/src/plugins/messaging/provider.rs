@@ -24,8 +24,8 @@ pub enum Attachment {
 #[derive(Debug, Clone)]
 pub struct IncomingMessage {
     /// The chat/channel/conversation this arrived on — platform-specific, opaque to
-    /// everything above the provider. `MessagingPlugin` only ever compares it against
-    /// `allowed_chat_ids` as a string, never interprets it.
+    /// everything above the provider. `MessagingPlugin` compares it against
+    /// `allowed_chat_ids` in chat-whitelist mode as a string, never interprets it.
     pub chat_id: String,
     /// This message's own platform-specific id — opaque, like `chat_id` — passed back
     /// into `reply_message`/`react_on_message` so a provider can act on the message
@@ -34,8 +34,9 @@ pub struct IncomingMessage {
     pub author: String,
     /// This message's sender's platform-specific user id — opaque, like `chat_id`/
     /// `message_id`. Distinct from `author` (a display name, which two different users
-    /// can share, and which a user can change): exists so `MessagingSettings::name_hint`
-    /// (see `plugin.rs`) can tell senders apart reliably in a group chat.
+    /// can share, and which a user can change): checked against `allowed_user_ids` in
+    /// user-whitelist mode. Also lets `MessagingSettings::name_hint` (see `plugin.rs`)
+    /// tell senders apart reliably in a group chat.
     pub author_id: String,
     /// When the platform says this was actually sent — not when it reached this
     /// process, which can lag behind by however long a debounce/queue/reconnect added
@@ -68,8 +69,8 @@ impl IncomingMessage {
 #[async_trait]
 pub trait MessagingProvider: Send + Sync + 'static {
     /// This provider's own settings — bot token, etc. Opaque to `MessagingPlugin`,
-    /// which only ever stores and round-trips it, never reads a field of it (the one
-    /// field `MessagingPlugin` does care about, `allowed_chat_ids`, lives one level up
+    /// which only ever stores and round-trips it, never reads a field of it (the
+    /// shared settings `MessagingPlugin` checks, including its whitelists, live one level up
     /// in `MessagingSettings` instead, precisely so it doesn't have to).
     type Settings: Send + Sync + Clone + Serialize + DeserializeOwned + 'static;
 
@@ -87,7 +88,7 @@ pub trait MessagingProvider: Send + Sync + 'static {
 
     /// This provider's own settings fields, for the frontend settings form —
     /// `MessagingProviderBuilder::settings_schema` appends this after the shared
-    /// `allowed_chat_ids` field, giving one flat property list overall. In practice
+    /// settings fields, giving one flat property list overall. In practice
     /// this is almost always just `Self::Settings::tool_properties()` — derive
     /// `ToolParams` on the concrete `Settings` struct (same `#[derive(ToolParams)]` +
     /// `#[tool(description = "...")]` pattern already used for tool arguments) and

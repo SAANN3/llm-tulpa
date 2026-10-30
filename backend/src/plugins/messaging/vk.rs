@@ -308,7 +308,7 @@ impl MessagingProvider for VkProvider {
          5. Still under Bots settings → Long Poll API → Settings → Event types, check \"Message received\" under Messages, and save — without this, message_new events are never delivered even though everything else is configured correctly.\n\
          6. Enable the plugin with the toggle.\n\
          7. Open the community's page and send it a direct message. Your own VK numeric user id — the chat id for a direct conversation — is visible on your own profile page's URL (vk.com/id<number>).\n\
-         8. Add that id to \"allowed_chat_ids\" and save — the bot only ever responds in chats listed there; a message from anywhere else is just logged and ignored.\n\
+         8. Add the chat/channel id to \"allowed_chat_ids\", or turn on \"whitelist_by_user\" and add sender user IDs to \"allowed_user_ids\" to allow those senders in any chat the bot receives. Only the selected list is checked; an empty active list allows nobody. Save the settings.\n\
          9. In a direct message, just send your message. In a group chat the bot's been added to, send /chat followed by your message (e.g. \"/chat what's the weather like\"), or reply to one of the bot's own messages.\n\
          10. The bot reacts with 👀 to show it received your message, then replies threaded to it once the answer is ready."
             .to_string()

@@ -299,7 +299,7 @@ impl MessagingProvider for DiscordProvider {
          3. Paste the bot token into this plugin's \"token\" setting and save.\n\
          4. Under OAuth2 → URL Generator, check the \"bot\" scope and the \"Send Messages\", \"Read Message History\", and \"Add Reactions\" permissions, then open the generated URL to invite the bot to your server.\n\
          5. Turn on Developer Mode in Discord (User Settings → Advanced), then right-click the channel you want the bot to use and \"Copy Channel ID\".\n\
-         6. Add that channel id to \"allowed_chat_ids\" and save — the bot only ever responds in channels listed there.\n\
+         6. Add the chat/channel id to \"allowed_chat_ids\", or turn on \"whitelist_by_user\" and add sender user IDs to \"allowed_user_ids\" to allow those senders in any chat the bot receives. Only the selected list is checked; an empty active list allows nobody. Save the settings.\n\
          7. Enable the plugin with the toggle.\n\
          8. In the channel, send /chat followed by your message (e.g. \"/chat what's the weather like\"), @mention the bot, or reply to one of its messages.\n\
          9. The bot reacts with 👀 to show it received your message, then replies threaded to it once the answer is ready."
