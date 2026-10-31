@@ -1,7 +1,10 @@
 //! What a plugin's tab in Settings shows, as data. The backend draws it with one component, so a plugin needs no UI code: it
 //! says what is on the page for the user who opened it, and answers what the user does there with the page as it is after.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
+use serde_json::Value;
 
 /// Everything the tab shows one user
 #[derive(Clone, Debug, Default, Serialize)]
@@ -80,6 +83,20 @@ pub enum Block {
         help: Option<String>,
         on: bool,
     },
+    /// Saves on button click or Enter; sends args with value set to the entered string.
+    Input {
+        action: String,
+        label: String,
+        value: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        placeholder: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+        password: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        submit_label: Option<String>,
+        args: HashMap<String, Value>,
+    },
     /// A list of rows; `empty` is said when there are none
     Items { empty: String, rows: Vec<Row> },
     /// A drop zone for files and folders; `accept` lists the endings it takes (`.zip`), all when empty
@@ -106,6 +123,31 @@ impl Block {
         Block::Switch { action: action.into(), label: label.into(), help: None, on }
     }
 
+    pub fn input(action: impl Into<String>, label: impl Into<String>, value: impl Into<String>) -> Self {
+        Block::Input { action: action.into(), label: label.into(), value: value.into(), placeholder: None,
+            help: None, password: false, submit_label: None, args: HashMap::new() }
+    }
+
+    pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        if let Block::Input { placeholder, .. } = &mut self { *placeholder = Some(text.into()); }
+        self
+    }
+
+    pub fn password(mut self) -> Self {
+        if let Block::Input { password, .. } = &mut self { *password = true; }
+        self
+    }
+
+    pub fn submit_label(mut self, text: impl Into<String>) -> Self {
+        if let Block::Input { submit_label, .. } = &mut self { *submit_label = Some(text.into()); }
+        self
+    }
+
+    pub fn arg(mut self, name: impl Into<String>, value: impl Into<Value>) -> Self {
+        if let Block::Input { args, .. } = &mut self { args.insert(name.into(), value.into()); }
+        self
+    }
+
     pub fn items(empty: impl Into<String>, rows: Vec<Row>) -> Self {
         Block::Items { empty: empty.into(), rows }
     }
@@ -114,9 +156,9 @@ impl Block {
         Block::Drop { action: action.into(), label: label.into(), help: None, accept: accept.iter().map(|a| a.to_string()).collect() }
     }
 
-    /// A line of help under a switch or a drop zone; nothing for the other blocks
+    /// A line of help under an input, switch or drop zone; nothing for the other blocks
     pub fn help(mut self, text: impl Into<String>) -> Self {
-        if let Block::Switch { help, .. } | Block::Drop { help, .. } = &mut self {
+        if let Block::Switch { help, .. } | Block::Drop { help, .. } | Block::Input { help, .. } = &mut self {
             *help = Some(text.into());
         }
         self
@@ -197,6 +239,17 @@ impl Row {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn input_parameters_and_action_context_are_preserved() {
+        let block = Block::input("save_url", "Server URL", "initial").placeholder("https://server/mcp")
+            .help("Connection address").password().submit_label("Apply").arg("row", "server-1");
+        assert_eq!(serde_json::to_value(block).unwrap(), json!({"type": "input", "action": "save_url",
+            "label": "Server URL", "value": "initial", "placeholder": "https://server/mcp", "help": "Connection address",
+            "password": true, "submit_label": "Apply", "args": {"row": "server-1"}}));
+        assert_eq!(serde_json::to_value(Block::input("save", "Name", "")).unwrap(), json!({"type": "input",
+            "action": "save", "label": "Name", "value": "", "password": false, "args": {}}));
+    }
 
     #[test]
     fn a_tab_is_sent_in_the_shape_the_backend_reads() {

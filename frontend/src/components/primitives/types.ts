@@ -38,6 +38,7 @@ export interface ButtonProps {
 }
 
 export interface InputProps {
+  disabled?: boolean
   inputRef?: Ref<HTMLInputElement>
   text: string
   onChanged: (text: string) => void

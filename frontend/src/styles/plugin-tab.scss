@@ -134,3 +134,16 @@
     }
   }
 }
+
+.plugin-tab__input {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: $space-2;
+  min-width: 0;
+
+  > input {
+    flex: 1;
+    min-width: 0;
+  }
+}

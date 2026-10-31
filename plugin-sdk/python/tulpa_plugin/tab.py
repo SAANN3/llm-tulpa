@@ -70,6 +70,17 @@ class Block:
         return cls(data)
 
     @classmethod
+    def input(cls, action: str, label: str, value: str = "", *, placeholder: str | None = None,
+              help: str | None = None, password: bool = False, submit_label: str | None = None,
+              args: dict[str, Any] | None = None) -> "Block":
+        """Saves on click or Enter; sends args with value set to the entered string."""
+        data: dict[str, Any] = {"type": "input", "action": action, "label": label, "value": value, "password": password, "args": dict(args or {})}
+        for name, option in (("placeholder", placeholder), ("help", help), ("submit_label", submit_label)):
+            if option is not None:
+                data[name] = option
+        return cls(data)
+
+    @classmethod
     def items(cls, empty: str, rows: list[Row]) -> "Block":
         """A list of rows; `empty` is said when there are none"""
         return cls({"type": "items", "empty": empty, "rows": [row.to_json() for row in rows]})

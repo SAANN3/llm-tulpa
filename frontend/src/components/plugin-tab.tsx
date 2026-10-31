@@ -6,6 +6,7 @@ import {Button, Div, Label, ToggleSwitch} from './primitives'
 import {ConfirmPopup} from './popups/base/confirm-popup.tsx'
 import {Popup} from './popups/base/popup.tsx'
 import {DropZone} from './drop-zone.tsx'
+import {PluginTabInput} from './plugin-tab-input.tsx'
 import {SettingsRow, SettingsSection} from './settings-fields.tsx'
 
 export interface PluginTabProps {
@@ -14,7 +15,7 @@ export interface PluginTabProps {
 }
 
 /** What a plugin's own Settings tab holds, drawn from the layout the plugin sends (see `plugins::tab` in the backend):
- * sections of text, switches, lists of rows with buttons, and drop zones. What it shows and what the user does in it are
+ * sections of text, inputs, switches, lists of rows with buttons, and drop zones. What it shows and what the user does in it are
  * `usePluginTabLayout`'s; this only draws. */
 export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
     const {layout, error, busy, popup, closePopup, act, upload} = usePluginTabLayout(pluginName, pluginSubname)
@@ -65,6 +66,9 @@ export const PluginTab = ({pluginName, pluginSubname}: PluginTabProps) => {
                         <ToggleSwitch toggled={block.on} disabled={busy} onToggled={(on) => void act(block.action, {on})}/>
                     </SettingsRow>
                 )
+            case 'input':
+                return <PluginTabInput key={`${pluginName}:${pluginSubname}:${at}:${block.action}:${JSON.stringify(Object.entries(block.args ?? {}).sort(([a], [b]) => a.localeCompare(b)))}`}
+                                       block={block} busy={busy} act={act}/>
             case 'items':
                 return (
                     <Div key={at} className="plugin-tab__rows">

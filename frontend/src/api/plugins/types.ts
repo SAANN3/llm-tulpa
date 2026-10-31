@@ -64,6 +64,7 @@ export interface TabRow {
 /** One thing in a section; every control carries the `action` it sends back to the plugin */
 export type TabBlock =
     | { type: 'text'; text: string; dim: boolean }
+    | { type: 'input'; action: string; label: string; value?: string; placeholder?: string | null; help?: string | null; password?: boolean; submit_label?: string | null; args?: Record<string, unknown> }
     | { type: 'switch'; action: string; label: string; help: string | null; on: boolean }
     | { type: 'items'; empty: string; rows: TabRow[] }
     | { type: 'drop'; action: string; label: string; help: string | null; accept: string[] }

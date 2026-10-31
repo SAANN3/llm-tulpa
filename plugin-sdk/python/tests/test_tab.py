@@ -29,6 +29,17 @@ class TabShape(unittest.TestCase):
         self.assertEqual(blocks[2]["rows"][0]["buttons"][2]["confirm"], "Sure?")
         self.assertEqual(blocks[3], {"type": "drop", "action": "upload", "label": "Drop here", "accept": [".zip"]})
 
+    def test_input_parameters_and_action_context_are_preserved(self):
+        args = {"row": "server-1", "value": "old"}
+        block = Block.input("save_url", "Server URL", "initial", placeholder="https://server/mcp",
+                            help="Connection address", password=True, submit_label="Apply", args=args).to_json()
+        args["row"] = "changed"
+        self.assertEqual(block, {"type": "input", "action": "save_url", "label": "Server URL", "value": "initial",
+                                 "placeholder": "https://server/mcp", "help": "Connection address", "password": True,
+                                 "submit_label": "Apply", "args": {"row": "server-1", "value": "old"}})
+        self.assertEqual(Block.input("save", "Name").to_json(),
+                         {"type": "input", "action": "save", "label": "Name", "value": "", "password": False, "args": {}})
+
     def test_a_section_without_a_title_has_none_and_a_popup_is_kept(self):
         tab = Tab().section(Section()).popup("T", "text").to_json()
         self.assertNotIn("title", tab["sections"][0])

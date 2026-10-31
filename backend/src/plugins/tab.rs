@@ -3,9 +3,11 @@
 //! other Settings pages, so a plugin needs no frontend code of its own. What the user does in it goes back to the plugin
 //! (`tab_action`, `tab_upload`), which answers with the layout as it is now.
 //!
-//! The vocabulary is small on purpose: a titled section holds text, a switch, a list of rows that carry buttons (and a
+//! The vocabulary is small on purpose: a titled section holds text, a switch, an input, a list of rows that carry buttons (and a
 //! switch of their own), and a drop zone for files. A plugin that needs more adds a block here and the one component learns
 //! to draw it.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,6 +68,21 @@ pub enum Block {
     },
     /// A labeled switch. Sends `action` with `{"on": bool}`.
     Switch { action: String, label: String, help: Option<String>, on: bool },
+    /// Saves on button click or Enter; sends `args` with `value` set to the entered string.
+    Input {
+        action: String,
+        label: String,
+        #[serde(default)]
+        value: String,
+        placeholder: Option<String>,
+        help: Option<String>,
+        #[serde(default)]
+        password: bool,
+        submit_label: Option<String>,
+        #[serde(default)]
+        #[schema(value_type = Object)]
+        args: HashMap<String, Value>,
+    },
     /// A list of rows, each with a title, buttons and perhaps a switch; `empty` is said when there are none
     Items {
         #[serde(default)]

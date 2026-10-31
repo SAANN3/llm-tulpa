@@ -8,6 +8,7 @@ export const Input = ({
     onChanged,
     placeholder,
     type = 'text',
+    disabled,
     autoFocus,
     onHovered,
     onKeyDown,
@@ -17,6 +18,7 @@ export const Input = ({
     <input
         ref={inputRef}
         type={type}
+        disabled={disabled}
         style={style}
         className={className}
         data-variant={variant}

@@ -203,6 +203,18 @@ The list must have no repeated name, a description on every tool, and every argu
 
 Everything that is empty may be left out. A button with `"upload": true` opens a file picker and sends the files to `tab_upload` with the row's id.
 
+An editable field is an `input` block:
+
+```json
+{"type":"input","action":"save_url","label":"Server URL","value":"https://server/mcp",
+ "placeholder":"https://server/mcp","help":"Connection address","password":false,
+ "submit_label":"Save","args":{"row":"server-1"}}
+```
+
+`action` and `label` are required. `value` defaults to an empty string, `password` to false, `args` to an empty object, and the button text to `Save`; placeholder/help are optional. Save or Enter sends `tab_action` with the block's arguments plus `value` set to the entered string (overwriting an `args.value`). Typing alone sends nothing. Inputs and buttons are disabled while a tab request runs; failed requests keep the draft. Other fields' unsaved drafts survive layout updates when their identity and server value stay the same. Keep an input's action, arguments and placement stable to retain its draft across unrelated updates. A changed server value replaces the draft. Password mode masks the field; the value still follows the ordinary tab payload contract. Plugins validate submitted strings and use the authenticated `user_id` passed to `tab_action` for ownership.
+
+Python: `Block.input("save_url", "Server URL", value, placeholder="https://server/mcp", args={"row": id})`. Rust: `Block::input("save_url", "Server URL", value).placeholder("https://server/mcp").arg("row", id)`; `.help(...)`, `.password()` and `.submit_label(...)` set the other options.
+
 ## Plugin to backend
 
 | Method | Params | Result |
