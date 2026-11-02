@@ -88,7 +88,7 @@ impl Compaction {
             }
             let provider = self.model.provider(&chat)?;
             let params = self.model.params(&chat).await?;
-            let tools_snapshot = self.tools.snapshot_tools().await;
+            let tools_snapshot = self.tools.snapshot_tools(chat.user_id).await;
             let tools: Vec<&dyn Tool> = tools_snapshot
                 .iter()
                 .map(|t| t.as_ref())

@@ -50,10 +50,10 @@ pub trait Plugin: Send + Sync {
     /// any background work started in `on_enabled`, not just report itself as off.
     async fn on_disabled(&self) -> Result<(), PluginError>;
 
-    /// Tools this plugin contributes to the agent's tool set. Called on `on_enabled`;
-    /// the returned tools are registered in `ToolService` by name and removed again
-    /// on `on_disabled`. Defaults to an empty list — plugins that only serve API routes
-    /// or run background work don't need to override this.
+    /// Tools this plugin contributes for every user. Published when the plugin is enabled
+    /// and removed when it is disabled. A list that changes per user, or that changes while
+    /// the plugin stays enabled, is published through `PluginEnv::tools` instead.
+    /// Defaults to an empty list.
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         vec![]
     }
@@ -253,6 +253,7 @@ impl From<ToolServiceError> for PluginError {
     fn from(e: ToolServiceError) -> Self {
         match e {
             ToolServiceError::Collision(name) => PluginError::ToolConflict(name),
+            ToolServiceError::Inactive => PluginError::InvalidState(e.to_string()),
         }
     }
 }

@@ -226,13 +226,13 @@ impl ToolCalls {
             .next()
             .ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "no pending tool call to run"))?;
 
-        let stored = self.stored_scope(chat_id, &next.tool_name).await?;
+        let stored = self.stored_scope(chat_id, chat.user_id, &next.tool_name).await?;
         let had_scope = scope.is_some() || stored.own.is_some() || !stored.shared.is_empty();
         // A one-time grant adds to what the chat already has, the way a permanent one would: it holds only
         // what was missing (one more command of a shell line, the folder of a download whose host is already
         // approved), so on its own it would refuse the very call it was meant to let through
         let effective_scope = match scope {
-            Some(scope) => match self.tools.get_tool(&next.tool_name).await {
+            Some(scope) => match self.tools.get_tool(chat.user_id, &next.tool_name).await {
                 Some(tool) => with_one_time_grant(stored, resolved_scope_from_json(tool.as_ref(), scope)),
                 None => ResolvedScope::default(),
             },
@@ -317,7 +317,8 @@ impl ToolCalls {
     /// the second would erase the first's grant. Reading fresh at the moment each one is
     /// actually persisted is what makes approving both, in sequence, correct.
     pub(super) async fn allow_scope(&self, chat_id: i64, tool_name: String, scope: Value) -> Result<(), ErrorService> {
-        let Some(tool) = self.tools.get_tool(&tool_name).await else {
+        let chat = self.chat_store.chat(chat_id).await?;
+        let Some(tool) = self.tools.get_tool(chat.user_id, &tool_name).await else {
             return Err(ErrorService::new(
                 StatusCode::BAD_REQUEST,
                 format!("no tool named '{tool_name}'"),
@@ -365,8 +366,8 @@ impl ToolCalls {
     /// under the same JSON key (`SharedBucket::json_key`), so a tool declaring both
     /// `StorageRead` and `StorageWrite` would have one silently overwrite the other if
     /// they were merged into a single map instead of kept apart by bucket.
-    async fn stored_scope(&self, chat_id: i64, tool_name: &str) -> Result<ResolvedScope, ErrorService> {
-        let Some(tool) = self.tools.get_tool(tool_name).await else {
+    async fn stored_scope(&self, chat_id: i64, user_id: i64, tool_name: &str) -> Result<ResolvedScope, ErrorService> {
+        let Some(tool) = self.tools.get_tool(user_id, tool_name).await else {
             return Ok(ResolvedScope::default());
         };
 
@@ -419,7 +420,7 @@ impl ToolCalls {
             };
         }
 
-        let Some(tool) = self.tools.get_tool(tool_name).await else {
+        let Some(tool) = self.tools.get_tool(user_id, tool_name).await else {
             return AgentToolPermission::Denied {
                 reason: format!("no tool named '{tool_name}'"),
                 escalation: None,
@@ -478,8 +479,8 @@ impl ToolCalls {
         name: String,
         arguments: Value,
     ) -> Result<AgentToolCall, ErrorService> {
-        let scope = self.stored_scope(chat_id, &name).await?;
         let chat = self.chat_store.chat(chat_id).await?;
+        let scope = self.stored_scope(chat_id, chat.user_id, &name).await?;
         let permission = self.tool_permission(&name, arguments.clone(), scope, chat.user_id, chat.parent_chat_id.is_some()).await;
 
         Ok(AgentToolCall {

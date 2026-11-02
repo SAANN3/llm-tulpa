@@ -110,13 +110,6 @@ fn join_sections(mut sections: Vec<(PluginKey, String)>) -> Option<String> {
     (!texts.is_empty()).then(|| texts.join("\n\n"))
 }
 
-/// The names of a plugin's own tools, freshly read from it — used to tell `ToolService`
-/// exactly what to remove on disable, without this module needing to remember anything
-/// about it in between.
-fn tool_names(plugin: &Arc<dyn Plugin>) -> Vec<String> {
-    plugin.tools().iter().map(|t| t.function_name().to_string()).collect()
-}
-
 impl PluginRegistry {
     pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>, schema: Arc<PluginSchema>) -> Self {
         Self { entries: RwLock::new(HashMap::new()), store, tools, schema, host: OnceLock::new() }
@@ -221,11 +214,13 @@ impl PluginRegistry {
                 // Register this plugin's tools in the shared ToolService.
                 // If there's a collision (another plugin or built-in already owns that name),
                 // undo on_enabled and leave this plugin disabled rather than crashing.
-                if let Err(e) = self.tools.add_plugin_tools(plugin.tools()).await {
+                let tools = env.tools.clone();
+                if let Err(e) = tools.replace_global(plugin.tools()).await {
                     tracing::warn!(
                         "could not register tools for {plugin_name}/{plugin_subname}: {e}; disabling plugin"
                     );
                     let _ = plugin.on_disabled().await;
+                    tools.end_instance().await;
                     let enabled = false;
                     if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
                         let _ = self.store.set(&plugin_name, &plugin_subname, settings, enabled).await;
@@ -338,7 +333,7 @@ impl PluginRegistry {
             if let Err(e) = plugin.on_disabled().await {
                 tracing::warn!("plugin {plugin_name}/{plugin_subname}: {e}");
             }
-            self.tools.remove_tools(&tool_names(plugin)).await;
+            entry.env.tools.end_instance().await;
         }
         entry.builder.shutdown().await;
         Ok(())
@@ -399,7 +394,7 @@ impl PluginRegistry {
         if was_enabled {
             if let Some(old_plugin) = &entry.plugin {
                 old_plugin.on_disabled().await?;
-                self.tools.remove_tools(&tool_names(old_plugin)).await;
+                entry.env.tools.end_instance().await;
             }
             // Reflect reality immediately, before attempting the rebuild below: the old
             // instance is genuinely stopped and toolless right now, so a failure further
@@ -419,7 +414,8 @@ impl PluginRegistry {
         if was_enabled {
             plugin.on_enabled().await?;
             // Register the freshly-built plugin's tools.
-            self.tools.add_plugin_tools(plugin.tools()).await.map_err(PluginError::from)?;
+            let tools = entry.env.tools.clone();
+            tools.replace_global(plugin.tools()).await.map_err(PluginError::from)?;
             entry.enabled = true;
         }
 
@@ -454,6 +450,7 @@ impl PluginRegistry {
     pub async fn user_deleted(&self, user_id: i64) {
         // Taken out of the map first, like `prompt_sections`: a plugin may do file work that the lock should not wait for
         let plugins: Vec<Arc<dyn Plugin>> = self.entries.read().await.values().filter_map(|entry| entry.plugin.clone()).collect();
+        self.tools.user_deleted(user_id).await;
         for plugin in plugins {
             plugin.on_user_deleted(user_id).await;
         }
@@ -541,14 +538,14 @@ impl PluginRegistry {
                 plugin.on_enabled().await?;
                 // Validate + register tools atomically. On collision: undo on_enabled
                 // and surface the error — the plugin stays disabled.
-                if let Err(e) = self.tools.add_plugin_tools(plugin.tools()).await {
+                let tools = entry.env.tools.clone();
+                if let Err(e) = tools.replace_global(plugin.tools()).await {
                     let _ = plugin.on_disabled().await;
                     return Err(PluginError::from(e));
                 }
             } else {
                 plugin.on_disabled().await?;
-                // Remove tools after a successful on_disabled.
-                self.tools.remove_tools(&tool_names(plugin)).await;
+                entry.env.tools.end_instance().await;
             }
         }
 

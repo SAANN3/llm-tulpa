@@ -109,7 +109,7 @@ impl Suggestion {
         request.extend(messages);
         request.push(ChatMessage::user(prompts::SUGGEST_NEXT.to_string()));
 
-        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools().await);
+        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools(chat.user_id).await);
         let tools: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let mut params = self.model.params(&chat).await?;
         params.max_reply_tokens = Some(SUGGESTION_TOKENS);

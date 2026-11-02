@@ -74,7 +74,7 @@ pub async fn start_plugin(dir: &Path, plugins_dir: &Path, db: &DatabaseConnectio
     // program is looked for here instead, when the command names a file.
     program_exists(&manifest, dir, &data_dir).map_err(|why| failed(&manifest, why))?;
 
-    let services = Arc::new(HostServices { db: plugin_db, agent: Some(Arc::new(PluginAgent::new(agent.clone(), &manifest.name, &manifest.subname))) });
+    let services = Arc::new(HostServices { db: plugin_db, agent: Some(Arc::new(PluginAgent::new(agent.clone(), &manifest.name, &manifest.subname))), tools: Default::default() });
     let supervisor = Supervisor::new(manifest.clone(), dir.to_path_buf(), data_dir.clone(), services, events);
     tracing::info!("external plugin {}/{} {} loaded (sdk: {})", manifest.name, manifest.subname, manifest.version, manifest.sdk.as_deref().unwrap_or("not stated"));
     Ok(ExternalPluginBuilder::new(manifest, migrations, supervisor, dir.to_path_buf(), data_dir))

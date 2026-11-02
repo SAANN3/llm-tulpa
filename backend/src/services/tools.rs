@@ -1,5 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::RwLock;
 use serde_json::Value;
@@ -9,129 +10,206 @@ use crate::{
     tools::base::{Tool, ToolContext, ToolError},
 };
 
-/// Owns every tool the agent can call, keyed by `Tool::function_name()`.
+static NEXT_LEASE: AtomicU64 = AtomicU64::new(1);
+
+/// Owns every tool the agent can call.
 ///
-/// Static tools (registered at startup) live alongside plugin-provided tools
-/// (registered/unregistered at runtime) in one flat map — this service tracks no
-/// notion of "which plugin owns which name" itself: a plugin's own `tools()` already
-/// lists its names on demand, so whoever is enabling/disabling one (`PluginRegistry`)
-/// just calls it again and hands the names straight to `remove_tools`, the same way
-/// `add_plugin_tools` is handed the tools to add.
+/// Builtins and plugin tools share one map. A plugin's rows are tagged with its lease:
+/// disabling the plugin drops them, and a publish that started before that drop is rejected.
+/// A second counter on the same lease is the external process. Bumping it drops only that
+/// plugin's per-user tools and rejects a publish from the process that just exited, while
+/// the plugin's global tools stay until the plugin itself is disabled.
 ///
-/// Tools are stored as `Arc<dyn Tool>` (rather than `Box`) so a caller can take
-/// an `Arc` clone and hold it past an `.await` point without keeping the lock open —
-/// critical for agent turns that call `.is_dangerous`/`.call_untyped` well after
-/// the initial lookup.
+/// Tools are stored as `Arc<dyn Tool>` so a caller can hold one past an `.await` without
+/// keeping this lock.
 pub struct ToolService {
-    tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
+    tools: RwLock<HashMap<(Option<i64>, String), Registered>>,
+}
+
+struct Registered {
+    tool: Arc<dyn Tool>,
+    lease: Option<u64>,
+}
+
+/// Generations at the start of a publish. Compared again under the same lock that bumps them.
+#[derive(Clone, Copy)]
+struct ToolTicket {
+    lease: u64,
+    instance: u64,
+    process: u64,
+}
+
+/// One plugin's handle on [`ToolService`]. Cloned into every `PluginEnv` for that plugin.
+#[derive(Clone)]
+pub struct ToolControl {
+    service: Weak<ToolService>,
+    lease: u64,
+    instance: Arc<AtomicU64>,
+    process: Arc<AtomicU64>,
 }
 
 impl ToolService {
-    /// Panics if two static tools share a `function_name()`. A name collision means
-    /// the model can't tell the tools apart either, so this is a startup-time
-    /// configuration mistake, not something worth handling gracefully at runtime.
+    /// Panics if two static tools share a `function_name()`.
     pub fn new(tools: Vec<Box<dyn Tool>>) -> Self {
         let mut map = HashMap::with_capacity(tools.len());
         for tool in tools {
             let name = tool.function_name().to_string();
             let arc: Arc<dyn Tool> = Arc::from(tool);
-            if map.insert(name.clone(), arc).is_some() {
+            if map.insert((None, name.clone()), Registered { tool: arc, lease: None }).is_some() {
                 panic!("Tool collision: multiple static tools registered with name '{name}'");
             }
         }
-        Self {
-            tools: RwLock::new(map),
+        Self { tools: RwLock::new(map) }
+    }
+
+    pub fn control(self: &Arc<Self>) -> ToolControl {
+        ToolControl {
+            service: Arc::downgrade(self),
+            lease: NEXT_LEASE.fetch_add(1, Ordering::Relaxed),
+            instance: Arc::new(AtomicU64::new(1)),
+            process: Arc::new(AtomicU64::new(1)),
         }
     }
 
-    /// Registers a plugin's tools.
-    ///
-    /// Validates that **none** of the incoming tools collide with already-registered
-    /// tools before inserting **any** of them — a partial-insert state is never
-    /// possible. Returns `Err` (without modifying anything) if any collision is found,
-    /// including duplicates within the supplied batch.
-    pub async fn add_plugin_tools(&self, tools: Vec<Box<dyn Tool>>) -> Result<(), ToolServiceError> {
-        if tools.is_empty() {
-            return Ok(());
-        }
-
-        // --- Phase 1: validate the whole batch before touching the map ---
-        {
-            let map = self.tools.read().await;
-            // Check for duplicates within the batch itself first
-            let mut incoming: HashMap<&str, ()> = HashMap::with_capacity(tools.len());
-            for tool in &tools {
-                let name = tool.function_name();
-                if incoming.insert(name, ()).is_some() {
-                    return Err(ToolServiceError::Collision(name.to_string()));
-                }
-                if map.contains_key(name) {
-                    return Err(ToolServiceError::Collision(name.to_string()));
-                }
-            }
-        }
-
-        // --- Phase 2: insert (all or nothing, since phase 1 passed) ---
-        let mut map = self.tools.write().await;
-        for tool in tools {
-            let name = tool.function_name().to_string();
-            map.insert(name, Arc::from(tool));
-        }
-        Ok(())
+    pub async fn get_tool(&self, user_id: i64, function_name: &str) -> Option<Arc<dyn Tool>> {
+        let map = self.tools.read().await;
+        map.get(&(Some(user_id), function_name.to_string()))
+            .or_else(|| map.get(&(None, function_name.to_string())))
+            .map(|entry| entry.tool.clone())
     }
 
-    /// Removes tools by name — the caller (a plugin's own `tools()`, called again at
-    /// the point of disabling it) already knows exactly which ones to name; this
-    /// service doesn't track plugin ownership itself. A no-op for any name not present.
-    pub async fn remove_tools(&self, names: &[String]) {
-        if names.is_empty() {
-            return;
-        }
-        let mut map = self.tools.write().await;
-        for name in names {
-            map.remove(name.as_str());
-        }
-    }
-
-    /// Returns an `Arc` clone of a tool by name, or `None`.
-    ///
-    /// The `Arc` lets callers hold the reference past an `.await` point without
-    /// keeping the lock open — critical for permission checks and tool execution
-    /// in agent turns.
-    pub async fn get_tool(&self, function_name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.read().await.get(function_name).cloned()
-    }
-
-    /// Looks up a tool by name and runs it. A missing name surfaces as
-    /// `ToolError::FailedUnknown` — the model hallucinated a tool name.
     pub async fn call_tool(&self, function_name: &str, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
-        let tool = self.tools.read().await.get(function_name).cloned().ok_or_else(|| {
+        let tool = self.get_tool(ctx.user_id, function_name).await.ok_or_else(|| {
             ToolError::FailedUnknown(format!("no tool named '{function_name}'"))
         })?;
         tool.call_untyped(data, ctx).await
     }
 
-    /// Returns a snapshot of all registered tools as `Arc<dyn Tool>` pointers.
-    /// Callers can hold these past `.await` points without keeping the lock open.
-    /// Used by `Turn` to build the tool schema for every model request.
-    pub async fn snapshot_tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.tools.read().await.values().cloned().collect()
+    pub async fn snapshot_tools(&self, user_id: i64) -> Vec<Arc<dyn Tool>> {
+        let map = self.tools.read().await;
+        let mut tools: Vec<_> = map.iter()
+            .filter(|(key, _)| key.0.is_none() || key.0 == Some(user_id))
+            .map(|(_, entry)| entry.tool.clone())
+            .collect();
+        tools.sort_by(|a, b| a.function_name().cmp(b.function_name()));
+        tools
+    }
+
+    pub async fn user_deleted(&self, user_id: i64) {
+        self.tools.write().await.retain(|key, _| key.0 != Some(user_id));
+    }
+
+    /// Global scope (`None`) meets every user. Two user scopes meet only when they are the same user.
+    fn scopes_overlap(existing: Option<i64>, publishing: Option<i64>) -> bool {
+        existing.is_none() || publishing.is_none() || existing == publishing
+    }
+
+    fn replace(
+        map: &mut HashMap<(Option<i64>, String), Registered>,
+        ticket: ToolTicket,
+        instance: u64,
+        process: u64,
+        user_id: Option<i64>,
+        tools: Vec<Box<dyn Tool>>,
+    ) -> Result<(), ToolServiceError> {
+        if ticket.instance != instance || ticket.process != process {
+            return Err(ToolServiceError::Inactive);
+        }
+        let mut incoming = HashSet::new();
+        for tool in &tools {
+            let name = tool.function_name();
+            if !incoming.insert(name) {
+                return Err(ToolServiceError::Collision(name.to_string()));
+            }
+            // A global name is taken for every user. A per-user name is taken for that user
+            // and also blocks a new global of the same name. This plugin's own rows in the
+            // scope being replaced do not count: they are about to be removed.
+            let taken = map.iter().any(|(key, entry)| {
+                let same_scope = key.0 == user_id && entry.lease == Some(ticket.lease);
+                key.1 == name && Self::scopes_overlap(key.0, user_id) && !same_scope
+            });
+            if taken {
+                return Err(ToolServiceError::Collision(name.to_string()));
+            }
+        }
+        map.retain(|key, entry| !(key.0 == user_id && entry.lease == Some(ticket.lease)));
+        for tool in tools {
+            map.insert((user_id, tool.function_name().to_string()), Registered {
+                tool: Arc::from(tool),
+                lease: Some(ticket.lease),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl ToolControl {
+    fn ticket(&self) -> ToolTicket {
+        ToolTicket {
+            lease: self.lease,
+            instance: self.instance.load(Ordering::Relaxed),
+            process: self.process.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Replaces this plugin's global tools. An empty list clears them. Per-user tools stay.
+    pub async fn replace_global(&self, tools: Vec<Box<dyn Tool>>) -> Result<(), ToolServiceError> {
+        self.publish(None, tools).await
+    }
+
+    /// Replaces this plugin's tools for one user. An empty list clears that user's list.
+    /// Plugins call this once a caller is wired; nothing in the backend does yet.
+    #[allow(dead_code)]
+    pub async fn replace_user(&self, user_id: i64, tools: Vec<Box<dyn Tool>>) -> Result<(), ToolServiceError> {
+        self.publish(Some(user_id), tools).await
+    }
+
+    async fn publish(&self, user_id: Option<i64>, tools: Vec<Box<dyn Tool>>) -> Result<(), ToolServiceError> {
+        // Taken before the lock, so a disable or a dead process that lands while we wait cannot be written over.
+        let ticket = self.ticket();
+        let service = self.service.upgrade().ok_or(ToolServiceError::Inactive)?;
+        let mut map = service.tools.write().await;
+        // Bumps happen under this same lock, so a disable or a dead process cannot land in the middle of the check.
+        ToolService::replace(
+            &mut map,
+            ticket,
+            self.instance.load(Ordering::Relaxed),
+            self.process.load(Ordering::Relaxed),
+            user_id,
+            tools,
+        )
+    }
+
+    /// Plugin switched off or unloaded. Drops every tool it published.
+    pub(crate) async fn end_instance(&self) {
+        let Some(service) = self.service.upgrade() else { return };
+        let mut map = service.tools.write().await;
+        // Under the same lock as publish, so a ticket taken earlier fails the generation check.
+        self.instance.fetch_add(1, Ordering::Relaxed);
+        map.retain(|_, entry| entry.lease != Some(self.lease));
+    }
+
+    /// External process exited. Drops per-user tools and rejects that process's in-flight publish.
+    /// Global tools stay; the next process republishes them on the same lease.
+    pub(crate) async fn end_process(&self) {
+        let Some(service) = self.service.upgrade() else { return };
+        let mut map = service.tools.write().await;
+        self.process.fetch_add(1, Ordering::Relaxed);
+        map.retain(|key, entry| key.0.is_none() || entry.lease != Some(self.lease));
     }
 }
 
 #[derive(Debug)]
 pub enum ToolServiceError {
-    /// A tool name from the plugin batch already exists in the map (or appears twice
-    /// within the batch itself).
     Collision(String),
+    Inactive,
 }
 
 impl std::fmt::Display for ToolServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ToolServiceError::Collision(name) => {
-                write!(f, "tool name '{name}' is already registered")
-            }
+            ToolServiceError::Inactive => write!(f, "the plugin is no longer enabled, or its process has exited"),
+            ToolServiceError::Collision(name) => write!(f, "tool name '{name}' is already registered"),
         }
     }
 }

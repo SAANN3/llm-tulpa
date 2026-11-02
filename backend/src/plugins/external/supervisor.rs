@@ -111,6 +111,10 @@ fn backoff(crashes: usize) -> Option<Duration> {
 
 impl Supervisor {
     /// A plugin with no process yet; `run` starts it.
+    pub fn bind_tools(&self, tools: crate::services::tools::ToolControl) {
+        *self.services.tools.lock().unwrap() = Some(tools);
+    }
+
     pub fn new(manifest: Manifest, plugin_dir: PathBuf, data_dir: PathBuf, services: Arc<HostServices>, events: mpsc::UnboundedSender<Event>) -> Arc<Supervisor> {
         Arc::new(Supervisor {
             label: format!("{}/{}", manifest.name, manifest.subname),
@@ -231,6 +235,10 @@ impl Supervisor {
         if let Some(process) = process {
             process.shutdown().await;
         }
+        let tools = self.services.tools.lock().unwrap().clone();
+        if let Some(tools) = tools {
+            tools.end_process().await;
+        }
     }
 
     /// Starts a process again after a crash, hands it the settings and the switch, and makes it the current one. `None` when the
@@ -296,6 +304,10 @@ impl Supervisor {
         loop {
             let Some(process) = self.process() else { return };
             let how = process.wait_exit().await;
+            let tools = self.services.tools.lock().unwrap().clone();
+            if let Some(tools) = tools {
+                tools.end_process().await;
+            }
             if self.run_id.load(Ordering::Relaxed) != id {
                 return;
             }

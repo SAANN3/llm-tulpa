@@ -77,7 +77,7 @@ impl ContextReader {
         let (mut chat, built) = self.history.parts(chat_id).await?;
         // The model a turn in progress runs on, as `Turn::prepare` sees it
         self.model.bind(&mut chat);
-        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools().await);
+        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools(chat.user_id).await);
         let tool_refs: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let tools_chars = if tool_refs.is_empty() { 0 } else { serde_json::to_string(&tool_definitions(&tool_refs)).unwrap_or_default().len() };
 

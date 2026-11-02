@@ -314,7 +314,7 @@ pub async fn bootstrap(
         Arc::new(SkillsBuilder::new()),
     ];
     let agent_access = Arc::new(AgentAccess { agent: plugin_agent.clone(), chat_store: chat_store.clone() });
-    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone() };
+    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone(), tools: tools.clone() };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)
         .await

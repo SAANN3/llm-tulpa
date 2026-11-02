@@ -117,6 +117,7 @@ impl PluginBuilder for ExternalPluginBuilder {
     /// here: a plugin that is off has no process.
     async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         check_settings(&self.manifest.settings, &settings).map_err(PluginError::InvalidState)?;
+        self.supervisor.bind_tools(env.tools.clone());
         let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), supervisor: self.supervisor.clone() };
         Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: RwLock::new(Arc::new(vec![])), data_dir: env.data_dir.clone() }))
     }

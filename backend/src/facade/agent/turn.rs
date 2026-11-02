@@ -244,14 +244,12 @@ impl Turn {
         let chat_id = step.chat_id;
         let mut messages = step.messages.clone();
 
-        // Snapshot the current tool set once per step. Each element is an Arc<dyn Tool>
-        // that can be held past any .await without keeping the ToolService lock open,
-        // so plugin enable/disable can update the set concurrently with ongoing turns.
-        let tools_snapshot: Vec<Arc<dyn Tool>> = self.tools.snapshot_tools().await;
-
         // The chat metadata, read fresh so a model switch takes effect with the next prompt and
         // last_prompt_tokens is available for accurate budget calculation.
         let mut chat: Chat = self.chat_store.chat(chat_id).await?;
+        // Snapshot once per step. The Arc can be held past later awaits, so enable/disable
+        // can change the set while this turn is still running.
+        let tools_snapshot: Vec<Arc<dyn Tool>> = self.tools.snapshot_tools(chat.user_id).await;
         self.model.bind(&mut chat);
         // A chat that has just started takes what the user's memory holds into its prompt, for good: it stays the same
         // between turns, and changes only at a fold

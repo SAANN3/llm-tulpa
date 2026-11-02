@@ -1,7 +1,9 @@
 //! What a plugin may ask of the backend, besides logging: its database and the agent. One of these goes to the plugin's process
 //! (`process.rs` answers the plugin's requests with it).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use crate::services::tools::ToolControl;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -16,6 +18,8 @@ use super::rpc::{BAD_ARGS, INTERNAL, METHOD_NOT_FOUND, RpcError};
 pub struct HostServices {
     pub db: Option<Arc<PluginDb>>,
     pub agent: Option<Arc<PluginAgent>>,
+    /// Set when the plugin is built. The process does not exist yet, so this stays empty until then.
+    pub tools: Mutex<Option<ToolControl>>,
 }
 
 impl HostServices {
