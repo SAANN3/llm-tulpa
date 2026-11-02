@@ -11,6 +11,7 @@ use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
 use crate::plugins::external::agent::AgentAccess;
 use crate::plugins::external::manager::ExternalPlugins;
+use crate::plugins::integrations::mcp::builder::McpBuilder;
 use crate::plugins::knowledge::skills::builder::SkillsBuilder;
 use crate::plugins::messaging::builder::MessagingProviderBuilder;
 use crate::plugins::messaging::discord::DiscordProvider;
@@ -316,6 +317,7 @@ pub async fn bootstrap(
         Arc::new(MessagingProviderBuilder::<VkProvider>::new()),
         Arc::new(SignaturesBuilder),
         Arc::new(SkillsBuilder::new()),
+        Arc::new(McpBuilder::new()),
     ];
     let agent_access = Arc::new(AgentAccess { agent: plugin_agent.clone(), chat_store: chat_store.clone() });
     let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone(), tools: tools.clone(), events: plugin_events.clone() };

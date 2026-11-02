@@ -3,6 +3,7 @@ pub mod coding;
 pub mod env;
 pub mod events;
 pub mod external;
+pub mod integrations;
 pub mod knowledge;
 pub mod messaging;
 pub mod registry;

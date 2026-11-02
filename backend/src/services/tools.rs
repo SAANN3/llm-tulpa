@@ -158,8 +158,6 @@ impl ToolControl {
     }
 
     /// Replaces this plugin's tools for one user. An empty list clears that user's list.
-    /// Plugins call this once a caller is wired; nothing in the backend does yet.
-    #[allow(dead_code)]
     pub async fn replace_user(&self, user_id: i64, tools: Vec<Box<dyn Tool>>) -> Result<(), ToolServiceError> {
         self.publish(Some(user_id), tools).await
     }
