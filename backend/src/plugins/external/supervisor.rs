@@ -115,6 +115,10 @@ impl Supervisor {
         *self.services.tools.lock().unwrap() = Some(tools);
     }
 
+    pub fn bind_events(&self, events: crate::plugins::events::EventControl) {
+        *self.services.events.lock().unwrap() = Some(events);
+    }
+
     pub fn new(manifest: Manifest, plugin_dir: PathBuf, data_dir: PathBuf, services: Arc<HostServices>, events: mpsc::UnboundedSender<Event>) -> Arc<Supervisor> {
         Arc::new(Supervisor {
             label: format!("{}/{}", manifest.name, manifest.subname),
@@ -236,8 +240,12 @@ impl Supervisor {
             process.shutdown().await;
         }
         let tools = self.services.tools.lock().unwrap().clone();
+        let events = self.services.events.lock().unwrap().clone();
         if let Some(tools) = tools {
             tools.end_process().await;
+        }
+        if let Some(events) = events {
+            events.end_process().await;
         }
     }
 
@@ -305,8 +313,12 @@ impl Supervisor {
             let Some(process) = self.process() else { return };
             let how = process.wait_exit().await;
             let tools = self.services.tools.lock().unwrap().clone();
+            let events = self.services.events.lock().unwrap().clone();
             if let Some(tools) = tools {
                 tools.end_process().await;
+            }
+            if let Some(events) = events {
+                events.end_process().await;
             }
             if self.run_id.load(Ordering::Relaxed) != id {
                 return;

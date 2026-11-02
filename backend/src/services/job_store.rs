@@ -16,6 +16,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::task::AbortHandle;
 
 use crate::services::error::ErrorService;
+use crate::plugins::events::{PluginEvent, PluginEvents};
+use serde::Serialize;
 use crate::services::event_bus::{EventBus, ServerEvent};
 use crate::services::process;
 
@@ -30,6 +32,7 @@ pub struct JobStore {
     db: DatabaseConnection,
     jobs_dir: PathBuf,
     events: Arc<EventBus>,
+    plugin_events: Arc<PluginEvents>,
     /// How to stop each running `agent` job: its task, by job id. A task removes its own entry when
     /// it ends; killing the job aborts the task instead.
     agent_tasks: Arc<Mutex<HashMap<i64, AbortHandle>>>,
@@ -38,7 +41,8 @@ pub struct JobStore {
 /// Where a job is in its life. `Exited` means it stopped on its own (whatever its exit
 /// code); `Killed` means it was stopped on request; `Lost` means the backend restarted
 /// while it was running, so how it ended — or whether it's still going — is unknown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     Running,
     Exited,
@@ -74,7 +78,8 @@ impl JobStatus {
 /// backend itself. All are started from a chat, finish on their own or are killed, and report back
 /// the same way — the difference is what "running" means (a process id vs. a task) and what the log
 /// holds (the command's output, the result the sub-agent handed back, or what the task has written so far).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum JobKind {
     Process,
     Agent { chat_id: i64 },
@@ -101,7 +106,7 @@ pub struct AgentJobEnd {
 
 /// What a row actually is, decoupled from the private SeaORM `jobs::Model` — same
 /// pattern as `FileStore`'s `FileRecord`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct JobRecord {
     pub id: i64,
     pub kind: JobKind,
@@ -160,6 +165,7 @@ impl JobStore {
         jobs_dir: PathBuf,
         log_retention_days: u64,
         events: Arc<EventBus>,
+        plugin_events: Arc<PluginEvents>,
     ) -> Self {
         tokio::fs::create_dir_all(&jobs_dir)
             .await
@@ -176,7 +182,7 @@ impl JobStore {
             }
         }
 
-        Self { db, jobs_dir, events, agent_tasks: Arc::new(Mutex::new(HashMap::new())) }
+        Self { db, jobs_dir, events, plugin_events, agent_tasks: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Starts `process` as a new background job for `chat_id` and returns as soon as it
@@ -188,6 +194,7 @@ impl JobStore {
     /// records the exit code and publishes `ServerEvent::JobFinished`.
     pub async fn start(
         &self,
+        user_id: i64,
         chat_id: i64,
         command: &str,
         workdir: Option<&str>,
@@ -241,6 +248,9 @@ impl JobStore {
         )
         .await?;
 
+        let job = self.get(chat_id, id).await?;
+        self.plugin_events.fire(PluginEvent::JobStarted { user_id, chat_id, state: &job }).await;
+        let plugin_events = self.plugin_events.clone();
         let db = self.db.clone();
         let events = self.events.clone();
         tokio::spawn(async move {
@@ -249,17 +259,17 @@ impl JobStore {
                 Ok(status) => status.code().unwrap_or(-1),
                 Err(_) => -1,
             };
-            record_exit(&db, &events, id, exit_code).await;
+            record_exit(&db, &events, &plugin_events, user_id, id, exit_code).await;
         });
 
-        self.get(chat_id, id).await
+        Ok(job)
     }
 
     /// Stops a job lost across a restart whose process is still there (a dev server, say): nothing watches it any
     /// more, but it can still be stopped. Only when the process with the recorded pid is the job's own — it started
     /// when the job did — since after a reboot that number can belong to any program. Anything else is reported as
     /// not running, as before.
-    async fn kill_lost(&self, chat_id: i64, id: i64) -> Result<JobRecord, JobStoreErrors> {
+    async fn kill_lost(&self, chat_id: i64, id: i64, user_id: i64) -> Result<JobRecord, JobStoreErrors> {
         let current = jobs::Entity::find_by_id(id)
             .filter(jobs::Column::ChatId.eq(chat_id))
             .one(&self.db)
@@ -288,7 +298,13 @@ impl JobStore {
             .await?
             .into_iter()
             .next();
-        Ok(killed.map(JobRecord::from).unwrap_or(record))
+        if let Some(killed) = killed {
+            let killed = JobRecord::from(killed);
+            self.plugin_events.fire(PluginEvent::JobFinished { user_id, chat_id, state: &killed }).await;
+            Ok(killed)
+        } else {
+            Ok(record)
+        }
     }
 
     /// Starts `run` — a sub-agent's whole run — as a background job of `chat_id`, and returns as soon
@@ -299,6 +315,7 @@ impl JobStore {
     /// the output of a job that's still running, or was killed, works like it does for a command.
     pub async fn start_agent<F>(
         &self,
+        user_id: i64,
         chat_id: i64,
         prompt: &str,
         agent_chat_id: i64,
@@ -307,7 +324,7 @@ impl JobStore {
     where
         F: Future<Output = AgentJobEnd> + Send + 'static,
     {
-        self.start_in_process(chat_id, prompt, JobKind::Agent { chat_id: agent_chat_id }, move |log_path| async move {
+        self.start_in_process(user_id, chat_id, prompt, JobKind::Agent { chat_id: agent_chat_id }, move |log_path| async move {
             let end = run.await;
             // The result goes into the log before the job is recorded as ended: the moment the
             // row says so, a notice may read it.
@@ -324,17 +341,17 @@ impl JobStore {
     /// gets the path of the job's log (created empty) and writes its progress and result there as it
     /// goes, so `os.job_output` shows a task that is still running; it answers whether it succeeded.
     /// Killing the job aborts the task, and what it had written stays in the log.
-    pub async fn start_task<F, Fut>(&self, chat_id: i64, what: &str, run: F) -> Result<JobRecord, JobStoreErrors>
+    pub async fn start_task<F, Fut>(&self, user_id: i64, chat_id: i64, what: &str, run: F) -> Result<JobRecord, JobStoreErrors>
     where
         F: FnOnce(PathBuf) -> Fut + Send + 'static,
         Fut: Future<Output = bool> + Send + 'static,
     {
-        self.start_in_process(chat_id, what, JobKind::Task, run).await
+        self.start_in_process(user_id, chat_id, what, JobKind::Task, run).await
     }
 
     /// What `start_agent` and `start_task` share: the row, the empty log, and a task that records the
     /// job as ended when `run` is done.
-    async fn start_in_process<F, Fut>(&self, chat_id: i64, command: &str, kind: JobKind, run: F) -> Result<JobRecord, JobStoreErrors>
+    async fn start_in_process<F, Fut>(&self, user_id: i64, chat_id: i64, command: &str, kind: JobKind, run: F) -> Result<JobRecord, JobStoreErrors>
     where
         F: FnOnce(PathBuf) -> Fut + Send + 'static,
         Fut: Future<Output = bool> + Send + 'static,
@@ -371,6 +388,8 @@ impl JobStore {
         )
         .await?;
 
+        let job = self.get(chat_id, id).await?;
+        let plugin_events = self.plugin_events.clone();
         let db = self.db.clone();
         let events = self.events.clone();
         let tasks = self.agent_tasks.clone();
@@ -380,13 +399,14 @@ impl JobStore {
         let handle = tokio::spawn(async move {
             let _ = ready.await;
             let succeeded = run(log_path).await;
-            record_exit(&db, &events, id, if succeeded { 0 } else { 1 }).await;
+            record_exit(&db, &events, &plugin_events, user_id, id, if succeeded { 0 } else { 1 }).await;
             tasks.lock().unwrap().remove(&id);
         });
         self.agent_tasks.lock().unwrap().insert(id, handle.abort_handle());
+        self.plugin_events.fire(PluginEvent::JobStarted { user_id, chat_id, state: &job }).await;
         let _ = registered.send(());
 
-        self.get(chat_id, id).await
+        Ok(job)
     }
 
     /// One of `chat_id`'s jobs. A job that exists but belongs to a different chat is
@@ -448,7 +468,7 @@ impl JobStore {
     /// reported (`notified`) before the process is signalled — whoever asked knows, so
     /// the process ending afterwards must not turn into a notice about it. Errors with
     /// `NotRunning` (carrying the job's actual state) if it had already finished.
-    pub async fn kill(&self, chat_id: i64, id: i64) -> Result<JobRecord, JobStoreErrors> {
+    pub async fn kill(&self, user_id: i64, chat_id: i64, id: i64) -> Result<JobRecord, JobStoreErrors> {
         let claimed = self
             .returning(
                 "UPDATE jobs SET status = 'killed', finished_at = now(), notified = TRUE \
@@ -460,7 +480,7 @@ impl JobStore {
             .next();
 
         let Some(job) = claimed else {
-            return self.kill_lost(chat_id, id).await;
+            return self.kill_lost(chat_id, id, user_id).await;
         };
 
         if let Some(pid) = job.pid.and_then(|pid| u32::try_from(pid).ok()) {
@@ -470,7 +490,9 @@ impl JobStore {
             task.abort();
         }
 
-        Ok(job.into())
+        let job = job.into();
+        self.plugin_events.fire(PluginEvent::JobFinished { user_id, chat_id, state: &job }).await;
+        Ok(job)
     }
 
     /// Atomically takes every finished job of `chat_id` whose outcome the model hasn't
@@ -629,7 +651,7 @@ async fn remove_old_logs(db: &DatabaseConnection, days: u64) -> usize {
 /// What the watcher task does once the process ends by itself. Only touches a job still
 /// marked `running` — one already `killed` (or `lost` across a restart) keeps the status
 /// it was given, and produces no event.
-async fn record_exit(db: &DatabaseConnection, events: &EventBus, id: i64, exit_code: i32) {
+async fn record_exit(db: &DatabaseConnection, events: &EventBus, plugin_events: &PluginEvents, user_id: i64, id: i64, exit_code: i32) {
     let result = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -641,7 +663,12 @@ async fn record_exit(db: &DatabaseConnection, events: &EventBus, id: i64, exit_c
 
     match result {
         Ok(Some(row)) => match jobs::Model::from_query_result(&row, "") {
-            Ok(job) => events.publish(ServerEvent::JobFinished { chat_id: job.chat_id, job_id: job.id }),
+            Ok(job) => {
+                let chat_id = job.chat_id;
+                let record = JobRecord::from(job);
+                plugin_events.fire(PluginEvent::JobFinished { user_id, chat_id, state: &record }).await;
+                events.publish(ServerEvent::JobFinished { chat_id, job_id: record.id });
+            }
             Err(e) => tracing::error!("job {id} exited but its row couldn't be read back: {e}"),
         },
         Ok(None) => {}

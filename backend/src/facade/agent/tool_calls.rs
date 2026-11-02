@@ -11,6 +11,7 @@ use serde_json::Value;
 use super::{AgentScopeGrant, AgentToolCall, AgentToolPermission, CanUseTool, UseToolOut};
 use super::model_call::ModelCall;
 use super::prompts::{self, INTERRUPTED_TOOL_MESSAGE};
+use crate::plugins::events::{PluginEvent, PluginEvents};
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage, ToolCallOut};
 use crate::services::error::ErrorService;
 use crate::services::permission_store::{PermissionStore, PermissionStoreErrors};
@@ -68,6 +69,7 @@ pub(super) struct ToolCalls {
     tool_context: ToolContext,
     /// Which context window a chat runs under, for the cap on a result.
     model: ModelCall,
+    plugin_events: Arc<PluginEvents>,
     /// Chats with a tool call executing right now. See `RunningToolGuard`.
     running: Arc<Mutex<HashSet<i64>>>,
     /// Sub-agent chats whose run is going on right now (from being started until it ends or is
@@ -83,6 +85,7 @@ impl ToolCalls {
         permission_store: Arc<PermissionStore>,
         tool_context: ToolContext,
         model: ModelCall,
+        plugin_events: Arc<PluginEvents>,
     ) -> Self {
         Self {
             chat_store,
@@ -90,6 +93,7 @@ impl ToolCalls {
             permission_store,
             tool_context,
             model,
+            plugin_events,
             running: Arc::new(Mutex::new(HashSet::new())),
             live_subagents: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -245,6 +249,8 @@ impl ToolCalls {
             .tool_permission(&next.tool_name, next.arguments.clone(), effective_scope, chat.user_id, is_subagent)
             .await;
 
+        let call = ToolCallOut { tool_name: next.tool_name.clone(), arguments: next.arguments.clone() };
+        self.plugin_events.fire(PluginEvent::ToolStarted { user_id: chat.user_id, chat_id, call: &call }).await;
         let mut images = Vec::new();
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
@@ -285,6 +291,7 @@ impl ToolCalls {
                 timings: MessageTimings::default(),
             })
             .await?;
+        self.plugin_events.fire(PluginEvent::ToolFinished { user_id: chat.user_id, chat_id, call: &call, result: &stored }).await;
 
         let mut tools = Vec::with_capacity(pending.len());
         for call in pending {

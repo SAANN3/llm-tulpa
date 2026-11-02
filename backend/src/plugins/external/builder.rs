@@ -19,10 +19,26 @@ use super::supervisor::{State, Supervisor};
 use super::rpc::{BAD_ARGS, CallError, DEFAULT_CALL_TIMEOUT, METHOD_NOT_FOUND, NOT_FOUND};
 use super::spec::{Access, Bucket, ToolSpec, check_settings, check_tools};
 use crate::plugins::base::{Plugin, PluginBuilder, PluginError};
+use crate::plugins::events::PluginEvent;
 use crate::plugins::env::PluginEnv;
 use crate::plugins::tab::{TabFile, TabInfo, TabLayout};
 use crate::tools::base::{PropertyInfo, ResolvedScope, ScopeGrant, SharedBucket, Tool, ToolContext, ToolError, ToolPermission, ToolSerializationError};
 use crate::tools::storage::{check_directory_scope, check_file_scope, normalize};
+
+fn event_params(event: &PluginEvent<'_>) -> Result<serde_json::Value, serde_json::Error> {
+    let mut params = serde_json::to_value(event)?;
+    // Images and token counts are not part of the observer payload: the plugin reads the message if it needs them.
+    for field in ["message", "result"] {
+        if let Some(message) = params.get_mut(field).and_then(serde_json::Value::as_object_mut) {
+            let images = message.remove("images").unwrap_or(serde_json::Value::Null);
+            message.insert("image_count".to_string(), json!(images.as_array().map_or(0, Vec::len)));
+            for field in ["thought_duration_ms", "prompt_tokens", "eval_tokens"] {
+                message.remove(field);
+            }
+        }
+    }
+    Ok(params)
+}
 
 /// How long each hook may take. Every call to a plugin has a limit, so one that hangs costs the caller this much and no more.
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -118,6 +134,7 @@ impl PluginBuilder for ExternalPluginBuilder {
     async fn build(&self, settings: Value, env: &PluginEnv) -> Result<Arc<dyn Plugin>, PluginError> {
         check_settings(&self.manifest.settings, &settings).map_err(PluginError::InvalidState)?;
         self.supervisor.bind_tools(env.tools.clone());
+        self.supervisor.bind_events(env.events.clone());
         let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), supervisor: self.supervisor.clone() };
         Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: RwLock::new(Arc::new(vec![])), data_dir: env.data_dir.clone() }))
     }
@@ -225,6 +242,12 @@ impl Plugin for ExternalPlugin {
 
     /// A plugin that cannot be told to stop (it crashed, it hangs) is switched off all the same: the owner must be able to turn
     /// off what is misbehaving, and what is not running has nothing left to stop. Its process ends either way.
+    async fn on_event(&self, event: &PluginEvent<'_>) -> Result<(), PluginError> {
+        let params = event_params(event).map_err(|e| PluginError::FailedUnknown(e.to_string()))?;
+        self.link.call_optional("on_event", params, DEFAULT_CALL_TIMEOUT).await?;
+        Ok(())
+    }
+
     async fn on_disabled(&self) -> Result<(), PluginError> {
         let supervisor = &self.link.supervisor;
         let held = supervisor.lifecycle().await;

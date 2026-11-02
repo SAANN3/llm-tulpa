@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::plugins::events::{EventControl, PluginEventKind};
 use crate::services::tools::ToolControl;
 
 use serde::Deserialize;
@@ -20,6 +21,7 @@ pub struct HostServices {
     pub agent: Option<Arc<PluginAgent>>,
     /// Set when the plugin is built. The process does not exist yet, so this stays empty until then.
     pub tools: Mutex<Option<ToolControl>>,
+    pub events: Mutex<Option<EventControl>>,
 }
 
 impl HostServices {
@@ -43,6 +45,14 @@ impl HostServices {
                         Ok(json!(db.batch(batch.statements).await.map_err(failed)?))
                     }
                 }
+            }
+            "events.subscribe" | "events.unsubscribe" => {
+                let events = self.events.lock().unwrap().clone().ok_or_else(|| RpcError::new(BAD_ARGS, "event subscription is not available to this plugin"))?;
+                #[derive(Deserialize)]
+                struct Kind { kind: PluginEventKind }
+                let kind = serde_json::from_value::<Kind>(params).map_err(bad)?.kind;
+                let result = if method == "events.subscribe" { events.subscribe(kind).await } else { events.unsubscribe(kind).await };
+                result.map(|()| Value::Null).map_err(|e| RpcError::new(BAD_ARGS, e.to_string()))
             }
             _ => Err(RpcError::new(METHOD_NOT_FOUND, format!("the host has no method {method}"))),
         }

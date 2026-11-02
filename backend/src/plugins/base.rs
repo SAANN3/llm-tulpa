@@ -11,6 +11,7 @@ use crate::services::tools::ToolServiceError;
 use crate::tools::base::{PropertyInfo, Tool};
 
 use super::env::PluginEnv;
+use super::events::PluginEvent;
 use super::tab::{TabFile, TabInfo, TabLayout};
 
 /// One running instance of a plugin — e.g. the VK provider under the "messaging"
@@ -56,6 +57,12 @@ pub trait Plugin: Send + Sync {
     /// Defaults to an empty list.
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         vec![]
+    }
+
+    /// Observes an event this plugin subscribed to, after the operation has succeeded.
+    /// An error is logged. The observer cannot undo what was stored.
+    async fn on_event(&self, _event: &PluginEvent<'_>) -> Result<(), PluginError> {
+        Ok(())
     }
 
     /// A text this plugin adds to the system prompt of `user_id`'s chats while it is enabled, `None` for nothing: what

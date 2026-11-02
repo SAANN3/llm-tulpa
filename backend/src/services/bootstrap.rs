@@ -235,18 +235,20 @@ pub async fn bootstrap(
         }
     });
     let preset_store = Arc::new(PresetStore::new(db.clone()));
+    let plugin_events = Arc::new(crate::plugins::events::PluginEvents::default());
     let chat_store = Arc::new(ChatStore::new(
         db.clone(),
         model_store.clone(),
         user_store.clone(),
         folder_store.clone(),
         launch_store.clone(),
+        plugin_events.clone(),
     ));
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
-    let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone()).await);
+    let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone(), plugin_events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
     // Built before the agents: the main agent reads the enabled plugins' prompt sections from it. Plugins are
@@ -263,6 +265,7 @@ pub async fn bootstrap(
         file_store.clone(),
         job_store.clone(),
         events.clone(),
+        plugin_events.clone(),
         stt.clone(),
         permission_store.clone(),
         settings_store.clone(),
@@ -296,6 +299,7 @@ pub async fn bootstrap(
         file_store.clone(),
         job_store.clone(),
         events,
+        plugin_events.clone(),
         stt,
         permission_store.clone(),
         settings_store.clone(),
@@ -314,7 +318,7 @@ pub async fn bootstrap(
         Arc::new(SkillsBuilder::new()),
     ];
     let agent_access = Arc::new(AgentAccess { agent: plugin_agent.clone(), chat_store: chat_store.clone() });
-    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone(), tools: tools.clone() };
+    let plugin_host = PluginHost { db: db.clone(), agent: plugin_agent, chat_store: chat_store.clone(), plugins_dir: plugins_dir.clone(), tools: tools.clone(), events: plugin_events.clone() };
     plugin_registry
         .register_many(plugin_builders, &plugin_host)
         .await

@@ -6,6 +6,8 @@
 //! Nothing here waits for a person: a tool call that needs permission ends the run in the state
 //! *waiting for permission* (read back from the stored chat), and the answer starts a new run.
 
+use crate::plugins::events::{PluginEvent, PluginEventKind, PluginEvents};
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -217,6 +219,7 @@ pub(super) struct TurnRunner {
     settings_store: Arc<SettingsStore>,
     file_store: Arc<FileStore>,
     events: Arc<EventBus>,
+    plugin_events: Arc<PluginEvents>,
     history: History,
     notices: Notices,
     tool_calls: ToolCalls,
@@ -246,6 +249,7 @@ impl TurnRunner {
         tool_calls: ToolCalls,
         turn: Turn,
         suggestion: Suggestion,
+        plugin_events: Arc<PluginEvents>,
     ) -> Self {
         Self {
             chat_store,
@@ -257,6 +261,7 @@ impl TurnRunner {
             tool_calls,
             turn,
             suggestion,
+            plugin_events,
             runs: Arc::new(Mutex::new(HashMap::new())),
             thinks: Arc::new(Mutex::new(HashMap::new())),
             last_ends: Arc::new(Mutex::new(HashMap::new())),
@@ -588,6 +593,7 @@ impl TurnRunner {
             Ok(chat) => chat.user_id,
             Err(e) => return RunEnd::Failed(e.into()),
         };
+        run.set_user_id(user_id);
         let auto_confirm = self.settings_store.auto_confirm(user_id).await.unwrap_or(false);
         let max_steps = self.settings_store.max_turn_steps(user_id).await.unwrap_or(None);
         if matches!(policy, Policy::Attended) {
@@ -631,9 +637,12 @@ impl TurnRunner {
             run.snapshot()
         };
         let ended = RunEnded { reason, detail: detail.clone(), ended_at: chrono::Utc::now(), started_at: run.started_at, eval_tokens: run.eval_tokens, status };
-        self.last_ends.lock().unwrap().insert(chat_id, ended);
+        self.last_ends.lock().unwrap().insert(chat_id, ended.clone());
         // Stored before the event goes out: a page that reads the chat list on `run_ended` must find it
         self.record_end(chat_id, reason).await;
+        if let Some(user_id) = run.user_id {
+            self.plugin_events.fire(PluginEvent::RunFinished { user_id, chat_id, state: &ended }).await;
+        }
         self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens, status });
     }
 
@@ -659,8 +668,15 @@ impl TurnRunner {
             tracing::warn!(chat_id, "couldn't clear how the last run ended: {e:?}");
         }
         // A chat that can't be read has no parent to name; the run itself fails on the same read a moment later
-        let parent_chat_id = self.chat_store.chat(chat_id).await.ok().and_then(|chat| chat.parent_chat_id);
+        let chat = self.chat_store.chat(chat_id).await.ok();
+        let parent_chat_id = chat.as_ref().and_then(|chat| chat.parent_chat_id);
+        if let Some(chat) = &chat { run.set_user_id(chat.user_id); }
         self.events.publish(ServerEvent::RunStarted { chat_id, parent_chat_id, started_at: run.snapshot().started_at });
+        if self.plugin_events.has_subscribers(PluginEventKind::RunStarted).await {
+            if let (Some(chat), Ok(state)) = (chat, self.state(chat_id).await) {
+                self.plugin_events.fire(PluginEvent::RunStarted { user_id: chat.user_id, chat_id, parent_chat_id, state: &state }).await;
+            }
+        }
     }
 
     /// The loop. A step is a model call and what comes of it; after a reply that asks for tools the

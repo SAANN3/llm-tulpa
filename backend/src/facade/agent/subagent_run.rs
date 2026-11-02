@@ -46,7 +46,7 @@ impl Agent {
         let job = self
             .tool_context
             .job_store
-            .start_agent(parent.id, &prompt, sub.id, async move {
+            .start_agent(parent.user_id, parent.id, &prompt, sub.id, async move {
                 // Held for the whole run; dropped when it ends or the job is killed.
                 let _live = live;
                 agent.run_to_end(sub_chat_id, auto_confirm, task_prompt).await

@@ -47,7 +47,7 @@ impl Tool for JobKillTool {
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
         let args: JobKillArgs = serde_json::from_value(data)?;
 
-        let job = ctx.job_store.kill(ctx.chat_id, args.job_id).await.map_err(tool_error)?;
+        let job = ctx.job_store.kill(ctx.user_id, ctx.chat_id, args.job_id).await.map_err(tool_error)?;
 
         Ok(serde_json::to_value(JobKillOut {
             job: JobView::from(&job),

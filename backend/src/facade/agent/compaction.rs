@@ -2,10 +2,12 @@
 //! are cleared (`clearing`), the model is asked for its notes (`notes`), and when that was not enough
 //! the oldest messages are folded into a summary and key facts.
 
+use crate::plugins::events::{PluginEvent, PluginEventKind, PluginEvents};
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::history::History;
 use super::live::{Live, StepDef, StepsReport};
@@ -24,6 +26,16 @@ use clearing::CLEARED_ENOUGH_FRACTION;
 pub(super) mod clearing;
 mod memory;
 mod notes;
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionStatus {
+    Running,
+    Completed,
+    Skipped,
+    Stopped,
+    Failed,
+}
 
 /// The steps of a compaction as a page lists them: the notes the model writes before a fold, the summary, the facts
 const MEMORY: StepDef = StepDef::fixed("memory", "Saving memory");
@@ -88,6 +100,7 @@ const COMPACTION_RETRY_GROWTH: f64 = 0.05;
 #[derive(Clone)]
 pub(super) struct Compaction {
     chat_store: Arc<ChatStore>,
+    plugin_events: Arc<PluginEvents>,
     settings_store: Arc<SettingsStore>,
     /// `None` for the agent of the messaging plugins, whose chats are not asked about the user
     memory_store: Option<Arc<MemoryStore>>,
@@ -116,8 +129,9 @@ impl Compaction {
         model: ModelCall,
         history: History,
         one_shot: OneShot,
+        plugin_events: Arc<PluginEvents>,
     ) -> Self {
-        Self { chat_store, settings_store, memory_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
+        Self { chat_store, plugin_events, settings_store, memory_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over
@@ -133,23 +147,18 @@ impl Compaction {
     /// that is stopped leaves the chat as it was (the notes it may have saved already are kept, as they are
     /// whenever the fold fails later).
     pub(super) async fn maybe_compact(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>, live: Option<&Live>) {
-        let Some(live) = live else {
-            return self.compact_if_needed(chat_id, prompt_eval_count, think, None).await;
-        };
-        tokio::select! {
-            _ = live.stopped() => tracing::info!(chat_id, "compaction dropped: the run was stopped"),
-            _ = self.compact_if_needed(chat_id, prompt_eval_count, think, Some(live)) => {}
-        }
+        self.compact_if_needed(chat_id, prompt_eval_count, think, live).await;
     }
 
     async fn compact_if_needed(&self, chat_id: i64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>, live: Option<&Live>) {
         // The thresholds follow the window the chat's own model runs under (its launch profile's
         // context), not one global number. A failed lookup is a reason to skip this check, not to fail.
-        let context = match self.chat_store.chat(chat_id).await {
-            Ok(chat) => match self.model.context_of(&chat).await {
-                Ok(context) => context,
-                Err(_) => return,
-            },
+        let chat = match self.chat_store.chat(chat_id).await {
+            Ok(chat) => chat,
+            Err(_) => return,
+        };
+        let context = match self.model.context_of(&chat).await {
+            Ok(context) => context,
             Err(_) => return,
         };
         let trigger_tokens = Self::trigger_tokens(context);
@@ -162,6 +171,29 @@ impl Compaction {
             return;
         }
 
+        let started_at = chrono::Utc::now();
+        self.plugin_events.fire(PluginEvent::CompactionStarted {
+            user_id: chat.user_id, chat_id, status: CompactionStatus::Running, state: &chat,
+            started_at, prompt_tokens: prompt_eval_count, context_tokens: context,
+        }).await;
+        // Only the work is cancellable: once started, a compaction also reports its stopped outcome.
+        let (status, detail) = match live {
+            Some(live) => tokio::select! {
+                _ = live.stopped() => (CompactionStatus::Stopped, Some("the run was stopped".to_string())),
+                result = self.compact_attempt(chat_id, context, prompt_eval_count, think, Some(live)) => result,
+            },
+            None => self.compact_attempt(chat_id, context, prompt_eval_count, think, None).await,
+        };
+        if self.plugin_events.has_subscribers(PluginEventKind::CompactionFinished).await {
+            let state = self.chat_store.chat(chat_id).await.unwrap_or(chat);
+            self.plugin_events.fire(PluginEvent::CompactionFinished {
+                user_id: state.user_id, chat_id, status, state: &state, started_at, detail: detail.as_deref(),
+            }).await;
+        }
+    }
+
+    async fn compact_attempt(&self, chat_id: i64, context: u64, prompt_eval_count: Option<u64>, think: Option<ThinkChoice>, live: Option<&Live>) -> (CompactionStatus, Option<String>) {
+        let trigger_tokens = Self::trigger_tokens(context);
         tracing::info!(
             chat_id,
             prompt_eval_count,
@@ -192,7 +224,7 @@ impl Compaction {
                             if let Some(report) = report {
                                 report.skip_waiting("old tool results cleared instead");
                             }
-                            return;
+                            return (CompactionStatus::Completed, None);
                         }
                         tracing::info!(chat_id, freed_chars, estimated, "old tool results cleared, still above the target: folding");
                     }
@@ -207,8 +239,9 @@ impl Compaction {
         }
 
         match self.compact(chat_id, (context as f64 * KEEP_CHARS_PER_TOKEN) as usize, notes_saved, think, prompt_eval_count, report).await {
-            Ok(()) => {
+            Ok(changed) => {
                 self.backoff.lock().unwrap().remove(&chat_id);
+                (if changed { CompactionStatus::Completed } else { CompactionStatus::Skipped }, None)
             }
             Err(e) => {
                 tracing::warn!(
@@ -216,6 +249,7 @@ impl Compaction {
                     e.message.as_deref().unwrap_or("unknown error")
                 );
                 self.backoff.lock().unwrap().insert(chat_id, prompt_eval_count.unwrap_or(0));
+                (CompactionStatus::Failed, e.message)
             }
         }
     }
@@ -233,7 +267,7 @@ impl Compaction {
         think: Option<ThinkChoice>,
         known_prompt_tokens: Option<u64>,
         report: Option<&StepsReport>,
-    ) -> Result<(), ErrorService> {
+    ) -> Result<bool, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         let after_id = chat.summary_up_to_message_id.unwrap_or(0);
 
@@ -269,7 +303,7 @@ impl Compaction {
             if let Some(report) = report {
                 report.skip_waiting("nothing old enough to fold");
             }
-            return Ok(());
+            return Ok(false);
         }
 
         let to_fold = &messages[..split_at];
@@ -326,7 +360,7 @@ impl Compaction {
 
         tracing::info!(chat_id, new_boundary_id, facts_added, "compaction finished for chat_id {chat_id}");
 
-        Ok(())
+        Ok(true)
     }
 
     /// What a message costs in the prompt beyond its text and thinking: the name and arguments of the tool calls

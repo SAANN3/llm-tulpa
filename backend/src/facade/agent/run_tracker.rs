@@ -11,6 +11,8 @@ use crate::services::event_bus::{CallStatus, StepList};
 /// The numbers a page restores "thinking for 1m 30s, N tokens" from after a reload.
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
+    /// Resolved from the run's existing chat read, so lifecycle delivery needs no owner lookup.
+    pub(super) user_id: Option<i64>,
     pub(super) started_at: DateTimeUtc,
     /// When the model call that is in flight started, `None` between calls (a tool is running, say).
     pub(super) call_started_at: Option<DateTimeUtc>,
@@ -60,6 +62,7 @@ pub(super) struct RunTracker {
 impl RunTracker {
     pub(super) fn new() -> Self {
         let info = RunSnapshot {
+            user_id: None,
             started_at: chrono::Utc::now(),
             call_started_at: None,
             eval_tokens: 0,
@@ -79,6 +82,10 @@ impl RunTracker {
 
     pub(super) fn snapshot(&self) -> RunSnapshot {
         self.info.lock().unwrap().clone()
+    }
+
+    pub(super) fn set_user_id(&self, user_id: i64) {
+        self.info.lock().unwrap().user_id = Some(user_id);
     }
 
     pub(super) fn set_step(&self, step: u32) {

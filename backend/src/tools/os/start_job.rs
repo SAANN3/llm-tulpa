@@ -97,7 +97,7 @@ impl Tool for StartJobTool {
 
         let started = ctx
             .job_store
-            .start(ctx.chat_id, &args.command, args.workdir.as_deref(), command)
+            .start(ctx.user_id, ctx.chat_id, &args.command, args.workdir.as_deref(), command)
             .await
             .map_err(tool_error)?;
 

@@ -4,6 +4,7 @@ use sea_orm::{prelude::*, QuerySelect, QueryTrait, TransactionError, Transaction
 
 use super::entities::{chats, messages, plugin_chats, tool_calls};
 use super::{ChatStore, ChatStoreErrors};
+use crate::plugins::events::PluginEvent;
 
 impl ChatStore {
     /// Deletes `message_id` and every message after it, returning how many went, so the chat reads
@@ -24,8 +25,8 @@ impl ChatStore {
 
         // A refusal is the transaction's *value*, not its error: nothing has been written by then,
         // so committing it is harmless, and only a database failure rolls back as an error.
-        self.db
-            .transaction::<_, Result<Vec<i64>, ChatStoreErrors>, DbErr>(|txn| {
+        let (removed, user_id) = self.db
+            .transaction::<_, Result<(Vec<i64>, i64), ChatStoreErrors>, DbErr>(|txn| {
                 Box::pin(async move {
                     let Some(chat) = chats::Entity::find_by_id(chat_id).one(txn).await? else {
                         return Ok(Err(ChatStoreErrors::NotFound));
@@ -68,12 +69,12 @@ impl ChatStore {
                         return Ok(Err(refuse("a tool was used from there on")));
                     }
 
-                    let removed: Vec<i64> = cut().select_only().column(messages::Column::Id).into_tuple().all(txn).await?;
-                    messages::Entity::delete_many()
+                    let removed = messages::Entity::delete_many()
                         .filter(messages::Column::ChatId.eq(chat_id))
                         .filter(messages::Column::Id.gte(message_id))
-                        .exec(txn)
-                        .await?;
+                        .exec_with_returning(txn)
+                        .await?
+                        .into_iter().map(|row| row.id).collect();
 
                     chats::ActiveModel {
                         id: sea_orm::Set(chat_id),
@@ -83,12 +84,16 @@ impl ChatStore {
                     .update(txn)
                     .await?;
 
-                    Ok(Ok(removed))
+                    Ok(Ok((removed, chat.user_id)))
                 })
             })
             .await
             .map_err(|err| match err {
                 TransactionError::Connection(e) | TransactionError::Transaction(e) => ChatStoreErrors::from(e),
-            })?
+            })??;
+        if !removed.is_empty() {
+            self.plugin_events.fire(PluginEvent::MessagesRemoved { user_id, chat_id, message_ids: &removed }).await;
+        }
+        Ok(removed)
     }
 }

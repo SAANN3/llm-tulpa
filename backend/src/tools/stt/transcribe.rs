@@ -121,7 +121,7 @@ impl Tool for TranscribeTool {
             let language = language.to_string();
             let job = ctx
                 .job_store
-                .start_task(ctx.chat_id, &format!("Transcribing {} with {}", path.display(), model.label), move |log| async move {
+                .start_task(ctx.user_id, ctx.chat_id, &format!("Transcribing {} with {}", path.display(), model.label), move |log| async move {
                     stt.transcribe_to_log(model, &language, samples, &log).await
                 })
                 .await

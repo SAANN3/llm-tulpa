@@ -202,6 +202,7 @@ impl PluginRegistry {
 
         if enabled {
             if let Some(plugin) = &plugin {
+                env.events.attach(&plugin);
                 if let Err(e) = plugin.on_enabled().await {
                     tracing::error!("plugin {plugin_name}/{plugin_subname} could not be switched on again: {e}; leaving it off");
                     enabled = false;
@@ -221,6 +222,7 @@ impl PluginRegistry {
                     );
                     let _ = plugin.on_disabled().await;
                     tools.end_instance().await;
+                    env.events.end_instance().await;
                     let enabled = false;
                     if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
                         let _ = self.store.set(&plugin_name, &plugin_subname, settings, enabled).await;
@@ -334,6 +336,7 @@ impl PluginRegistry {
                 tracing::warn!("plugin {plugin_name}/{plugin_subname}: {e}");
             }
             entry.env.tools.end_instance().await;
+            entry.env.events.end_instance().await;
         }
         entry.builder.shutdown().await;
         Ok(())
@@ -395,6 +398,7 @@ impl PluginRegistry {
             if let Some(old_plugin) = &entry.plugin {
                 old_plugin.on_disabled().await?;
                 entry.env.tools.end_instance().await;
+            entry.env.events.end_instance().await;
             }
             // Reflect reality immediately, before attempting the rebuild below: the old
             // instance is genuinely stopped and toolless right now, so a failure further
@@ -412,6 +416,7 @@ impl PluginRegistry {
         entry.plugin = Some(plugin.clone());
 
         if was_enabled {
+            entry.env.events.attach(&plugin);
             plugin.on_enabled().await?;
             // Register the freshly-built plugin's tools.
             let tools = entry.env.tools.clone();
@@ -535,7 +540,8 @@ impl PluginRegistry {
 
         if let Some(plugin) = &entry.plugin {
             if enabled {
-                plugin.on_enabled().await?;
+                entry.env.events.attach(&plugin);
+            plugin.on_enabled().await?;
                 // Validate + register tools atomically. On collision: undo on_enabled
                 // and surface the error — the plugin stays disabled.
                 let tools = entry.env.tools.clone();
@@ -546,6 +552,7 @@ impl PluginRegistry {
             } else {
                 plugin.on_disabled().await?;
                 entry.env.tools.end_instance().await;
+            entry.env.events.end_instance().await;
             }
         }
 

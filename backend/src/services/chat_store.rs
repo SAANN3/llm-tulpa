@@ -12,7 +12,7 @@ use entities::{chats, message_files, message_images, messages, plugin_chats, too
 use sea_orm::{
     prelude::*,
     sea_query::{ColumnName, DynIden, Expr, ExprTrait, TableName},
-    ActiveValue::Set, DatabaseConnection, PaginatorTrait, QueryOrder, QuerySelect,
+    ActiveValue::Set, Condition, DatabaseConnection, PaginatorTrait, QueryOrder, QuerySelect,
     QueryTrait, TransactionError, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 pub use stats::{ContextUsage, ModelUsage, StatsRange, ToolUsage, UsageSummary};
 
 use crate::services::error::ErrorService;
+use crate::plugins::events::{PluginEvent, PluginEventKind, PluginEvents};
 use crate::services::folder_store::{FolderStore, FolderStoreErrors};
 use crate::services::launch_store::{LaunchStore, LaunchStoreErrors};
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
@@ -40,6 +41,7 @@ pub struct ChatStore {
     /// `FolderStore`'s, not this store's.
     folders: Arc<FolderStore>,
     launch: Arc<LaunchStore>,
+    plugin_events: Arc<PluginEvents>,
 }
 
 impl ChatStore {
@@ -50,8 +52,9 @@ impl ChatStore {
         users: Arc<UserStore>,
         folders: Arc<FolderStore>,
         launch: Arc<LaunchStore>,
+        plugin_events: Arc<PluginEvents>,
     ) -> Self {
-        Self { db, models, users, folders, launch }
+        Self { db, models, users, folders, launch, plugin_events }
     }
 
     /// A chat by id — the one place that decides whether a chat is usable (exists and
@@ -65,6 +68,11 @@ impl ChatStore {
             .ok_or(ChatStoreErrors::NotFound)?;
 
         self.to_chat(chat).await
+    }
+
+    pub async fn chat_owner(&self, chat_id: i64) -> Result<i64, ChatStoreErrors> {
+        chats::Entity::find_by_id(chat_id).select_only().column(chats::Column::UserId)
+            .into_tuple().one(&self.db).await?.ok_or(ChatStoreErrors::NotFound)
     }
 
     /// Whether the chat belongs to `user_id`, deleted or not: the event stream tells a user about their own chat's
@@ -666,7 +674,9 @@ impl ChatStore {
         .insert(&self.db)
         .await?;
 
-        Ok(Self::build_chat(row, model))
+        let chat = Self::build_chat(row, model);
+        self.plugin_events.fire(PluginEvent::ChatCreated { user_id, chat_id: chat.id, state: &chat }).await;
+        Ok(chat)
     }
 
     /// Creates the chat a sub-agent runs in: owned by the parent's user, in the parent's folder,
@@ -686,7 +696,9 @@ impl ChatStore {
         .insert(&self.db)
         .await?;
 
-        self.to_chat(row).await
+        let chat = self.to_chat(row).await?;
+        self.plugin_events.fire(PluginEvent::ChatCreated { user_id: chat.user_id, chat_id: chat.id, state: &chat }).await;
+        Ok(chat)
     }
 
     /// Sets whether the model is sent its tools in a chat, from the chat's next request on. Ownership is
@@ -797,13 +809,15 @@ impl ChatStore {
     /// Rebinds a chat to another model, which takes effect from its next turn. Ownership is
     /// the caller's responsibility.
     pub async fn set_model(&self, chat_id: i64, model_id: i64) -> Result<(), ChatStoreErrors> {
-        self.chat(chat_id).await?;
+        let previous = self.chat(chat_id).await?;
         // The profile belongs to the model it was written for: a chat moved to another model starts
         // on that model's default profile (or none, for a model that has none).
         let launch_profile_id = self.launch.default_for_model(model_id).await?.map(|p| p.id);
+        if previous.model_id == model_id && previous.launch_profile_id == launch_profile_id { return Ok(()); }
         chats::ActiveModel { id: Set(chat_id), model_id: Set(model_id), launch_profile_id: Set(launch_profile_id), ..Default::default() }
             .update(&self.db)
             .await?;
+        self.plugin_events.fire(PluginEvent::ModelChanged { user_id: previous.user_id, chat_id, model_id, launch_profile_id }).await;
         Ok(())
     }
 
@@ -818,9 +832,14 @@ impl ChatStore {
             .col_expr(chats::Column::ModelId, sea_orm::sea_query::Expr::value(profile.model_id))
             .col_expr(chats::Column::LaunchProfileId, sea_orm::sea_query::Expr::value(profile.id))
             .filter(chats::Column::ModelId.is_in(from_models.to_vec()))
-            .exec(&self.db)
+            .filter(Condition::any().add(chats::Column::ModelId.ne(profile.model_id))
+                .add(chats::Column::LaunchProfileId.ne(profile.id)).add(chats::Column::LaunchProfileId.is_null()))
+            .exec_with_returning(&self.db)
             .await?;
-        Ok(result.rows_affected)
+        for row in &result {
+            self.plugin_events.fire(PluginEvent::ModelChanged { user_id: row.user_id, chat_id: row.id, model_id: row.model_id, launch_profile_id: row.launch_profile_id }).await;
+        }
+        Ok(result.len() as u64)
     }
 
     /// Moves every chat bound to `model_id` (the ones in the bin too, and sub-agents' and plugins') onto what
@@ -846,9 +865,12 @@ impl ChatStore {
                 .col_expr(chats::Column::LaunchProfileId, sea_orm::sea_query::Expr::value(profile))
                 .filter(chats::Column::ModelId.eq(model_id))
                 .filter(chats::Column::UserId.eq(user_id))
-                .exec(&self.db)
+                .exec_with_returning(&self.db)
                 .await?;
-            moved += result.rows_affected;
+            for row in &result {
+                self.plugin_events.fire(PluginEvent::ModelChanged { user_id: row.user_id, chat_id: row.id, model_id: row.model_id, launch_profile_id: row.launch_profile_id }).await;
+            }
+            moved += result.len() as u64;
         }
         Ok(moved)
     }
@@ -856,8 +878,9 @@ impl ChatStore {
     /// Rebinds a chat to a launch profile, and so to the profile's model, from its next turn.
     /// Ownership is the caller's responsibility.
     pub async fn set_launch_profile(&self, chat_id: i64, profile_id: i64) -> Result<(), ChatStoreErrors> {
-        self.chat(chat_id).await?;
+        let previous = self.chat(chat_id).await?;
         let profile = self.launch.get(profile_id).await?;
+        if previous.model_id == profile.model_id && previous.launch_profile_id == Some(profile_id) { return Ok(()); }
         chats::ActiveModel {
             id: Set(chat_id),
             model_id: Set(profile.model_id),
@@ -866,6 +889,7 @@ impl ChatStore {
         }
         .update(&self.db)
         .await?;
+        self.plugin_events.fire(PluginEvent::ModelChanged { user_id: previous.user_id, chat_id, model_id: profile.model_id, launch_profile_id: Some(profile_id) }).await;
         Ok(())
     }
 
@@ -924,7 +948,9 @@ impl ChatStore {
         .insert(&self.db)
         .await?;
 
-        Ok(Self::build_chat(chat, model))
+        let chat = Self::build_chat(chat, model);
+        self.plugin_events.fire(PluginEvent::ChatCreated { user_id: owner, chat_id: chat.id, state: &chat }).await;
+        Ok(chat)
     }
 
     /// The chat mapped to one plugin instance's external chat id, or `None` if unmapped.
@@ -985,6 +1011,9 @@ impl ChatStore {
         chats::ActiveModel { id: Set(chat.id), model_id: Set(choice.model.id), launch_profile_id: Set(profile_id), ..Default::default() }
             .update(&self.db)
             .await?;
+        self.plugin_events.fire(PluginEvent::ModelChanged {
+            user_id: chat.user_id, chat_id: chat.id, model_id: choice.model.id, launch_profile_id: profile_id,
+        }).await;
         self.chat(chat.id).await
     }
 
@@ -1165,17 +1194,24 @@ impl ChatStore {
     /// reachable only from their parent, so leaving them live would strand them.
     pub async fn delete_chat(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
-        chats::Entity::update_many()
+        let deleted = chats::Entity::update_many()
             .col_expr(chats::Column::IsDeleted, Expr::value(true))
             .filter(chats::Column::Id.eq(chat_id).or(chats::Column::ParentChatId.eq(chat_id)))
-            .exec(&self.db)
+            .filter(chats::Column::IsDeleted.eq(false))
+            .exec_with_returning(&self.db)
             .await?;
+        for row in deleted {
+            self.plugin_events.fire(PluginEvent::ChatDeleted { user_id: row.user_id, chat_id: row.id }).await;
+        }
         Ok(())
     }
 
     /// Deletes one message of a chat (its tool calls, images and files go with it). A message of
     /// another chat is `NotFound`, so a caller can't reach past the chat it already checked.
     pub async fn delete_message(&self, chat_id: i64, message_id: i64) -> Result<(), ChatStoreErrors> {
+        let user_id = if self.plugin_events.has_subscribers(PluginEventKind::MessagesRemoved).await {
+            Some(self.chat_owner(chat_id).await?)
+        } else { None };
         let deleted = messages::Entity::delete_many()
             .filter(messages::Column::Id.eq(message_id))
             .filter(messages::Column::ChatId.eq(chat_id))
@@ -1183,6 +1219,9 @@ impl ChatStore {
             .await?;
         if deleted.rows_affected == 0 {
             return Err(ChatStoreErrors::NotFound);
+        }
+        if let Some(user_id) = user_id {
+            self.plugin_events.fire(PluginEvent::MessagesRemoved { user_id, chat_id, message_ids: &[message_id] }).await;
         }
         Ok(())
     }
@@ -1196,15 +1235,16 @@ impl ChatStore {
     /// rows regardless of `is_deleted`, so soft-deleting one would block that external chat
     /// from ever being linked again.
     pub async fn clear_messages(&self, chat_id: i64) -> Result<(), ChatStoreErrors> {
-        self.chat(chat_id).await?;
+        let chat = self.chat(chat_id).await?;
 
-        self.db
-            .transaction::<_, (), DbErr>(|txn| {
+        let removed = self.db
+            .transaction::<_, Vec<i64>, DbErr>(|txn| {
                 Box::pin(async move {
-                    messages::Entity::delete_many()
+                    let removed = messages::Entity::delete_many()
                         .filter(messages::Column::ChatId.eq(chat_id))
-                        .exec(txn)
-                        .await?;
+                        .exec_with_returning(txn)
+                        .await?
+                        .into_iter().map(|row| row.id).collect();
 
                     chats::ActiveModel {
                         id: Set(chat_id),
@@ -1220,7 +1260,7 @@ impl ChatStore {
                     .update(txn)
                     .await?;
 
-                    Ok(())
+                    Ok(removed)
                 })
             })
             .await
@@ -1228,6 +1268,9 @@ impl ChatStore {
                 TransactionError::Connection(e) | TransactionError::Transaction(e) => ChatStoreErrors::from(e),
             })?;
 
+        if !removed.is_empty() {
+            self.plugin_events.fire(PluginEvent::MessagesRemoved { user_id: chat.user_id, chat_id, message_ids: &removed }).await;
+        }
         Ok(())
     }
 
@@ -1258,9 +1301,11 @@ impl ChatStore {
         let images_ret = images.clone();
         let file_ids_ret = file_ids.clone();
 
-        let message = self
+        let observed = matches!(role.as_str(), "user" | "assistant" | "tool")
+            && self.plugin_events.has_subscribers(PluginEventKind::MessageStored).await;
+        let (message, user_id) = self
             .db
-            .transaction::<_, messages::Model, DbErr>(|txn| {
+            .transaction::<_, (messages::Model, Option<i64>), DbErr>(|txn| {
                 Box::pin(async move {
                     let message = messages::ActiveModel {
                         chat_id: Set(chat_id),
@@ -1321,7 +1366,12 @@ impl ChatStore {
                         .exec(txn)
                         .await?;
 
-                    Ok(message)
+                    let user_id = if observed {
+                        Some(chats::Entity::find_by_id(chat_id).select_only().column(chats::Column::UserId)
+                            .into_tuple::<i64>().one(txn).await?
+                            .ok_or_else(|| DbErr::RecordNotFound("message chat disappeared".to_string()))?)
+                    } else { None };
+                    Ok((message, user_id))
                 })
             })
             .await
@@ -1329,7 +1379,7 @@ impl ChatStore {
                 TransactionError::Connection(e) | TransactionError::Transaction(e) => ChatStoreErrors::from(e),
             })?;
 
-        Ok(Message {
+        let message = Message {
             id: message.id,
             chat_id: message.chat_id,
             role: message.role,
@@ -1345,12 +1395,18 @@ impl ChatStore {
             file_ids: file_ids_ret,
             prompt_tokens: message.prompt_tokens,
             eval_tokens: message.eval_tokens,
-        })
+        };
+        if let Some(user_id) = user_id {
+            self.plugin_events.fire(PluginEvent::MessageStored {
+                user_id, message: &message,
+            }).await;
+        }
+        Ok(message)
     }
 
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct Chat {
     pub id: i64,
     pub user_id: i64,
@@ -1452,6 +1508,7 @@ pub struct HistoryDetail {
     pub content: String,
 }
 
+#[derive(Debug, Serialize)]
 pub struct Message {
     pub id: i64,
     pub chat_id: i64,
@@ -1604,7 +1661,7 @@ fn snippet_around(
     Some((before, content[start..after_start].to_string(), after))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ToolCallOut {
     pub tool_name: String,
     pub arguments: serde_json::Value,

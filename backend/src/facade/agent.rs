@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::plugins::events::PluginEvents;
+
 use sea_orm::prelude::DateTimeUtc;
 use serde::Serialize;
 use serde_json::Value;
@@ -26,7 +28,7 @@ use crate::facade::one_shot::OneShot;
 use crate::tools::base::ToolContext;
 use crate::tools::subagent::SubagentHandle;
 
-mod compaction;
+pub(crate) mod compaction;
 mod context;
 mod history;
 mod live;
@@ -101,6 +103,7 @@ impl Agent {
         file_store: Arc<FileStore>,
         job_store: Arc<JobStore>,
         events: Arc<EventBus>,
+        plugin_events: Arc<PluginEvents>,
         stt: Arc<SttService>,
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
@@ -139,8 +142,9 @@ impl Agent {
             model.clone(),
             history.clone(),
             OneShot::new(providers),
+            plugin_events.clone(),
         );
-        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone());
+        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
         let turn = Turn::new(
             chat_store.clone(),
             tools.clone(),
@@ -173,6 +177,7 @@ impl Agent {
             tool_calls.clone(),
             turn,
             suggestion,
+            plugin_events,
         );
         Self {
             model,

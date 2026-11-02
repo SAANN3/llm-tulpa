@@ -12,6 +12,7 @@ use super::base::PluginError;
 use super::schema;
 use crate::facade::agent::Agent;
 use crate::services::chat_store::ChatStore;
+use super::events::{EventControl, PluginEvents};
 use crate::services::tools::{ToolControl, ToolService};
 
 /// Everything the host can give a plugin, before it is narrowed to one plugin.
@@ -24,6 +25,7 @@ pub struct PluginHost {
     /// The folder every plugin's own folder is inside, from `plugins_dir` in settings.json
     pub plugins_dir: PathBuf,
     pub tools: Arc<ToolService>,
+    pub events: Arc<PluginEvents>,
 }
 
 impl PluginHost {
@@ -37,6 +39,7 @@ impl PluginHost {
             chat_store: self.chat_store.clone(),
             data_dir: self.plugins_dir.join(plugin_name).join(plugin_subname),
             tools: self.tools.control(),
+            events: self.events.control(),
         })
     }
 }
@@ -53,4 +56,6 @@ pub struct PluginEnv {
     pub data_dir: PathBuf,
     /// This plugin's global and per-user tools. The registry publishes `Plugin::tools()` through it on enable.
     pub tools: ToolControl,
+    /// Subscribe here from `on_enabled`. The registry attaches the instance before that hook.
+    pub events: EventControl,
 }
