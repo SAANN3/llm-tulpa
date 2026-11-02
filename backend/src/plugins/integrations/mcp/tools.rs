@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::config::ConnectionConfig;
 use super::runtime::Runtime;
 use super::store::ServerStore;
-use crate::tools::base::{PropertyInfo, PropertyType, Tool, ToolContext, ToolError, ToolPermission};
+use crate::tools::base::{PropertyInfo, PropertyType, ResolvedScope, ScopeGrant, Tool, ToolContext, ToolError, ToolPermission, ToolSerializationError};
 
 const ADD: &str = "Add an MCP server for this user and connect it now. Call this when the user asks to connect an \
 external tool server, including one you have to install first (for example Firefox: install or start its MCP server, \
@@ -106,9 +106,9 @@ impl Tool for AddServer {
         ]
     }
 
-    fn is_dangerous(&self, _data: Value, _scope: crate::tools::base::ResolvedScope) -> Result<ToolPermission, crate::tools::base::ToolSerializationError> {
+    fn is_dangerous(&self, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
         // Starting a program, or sending the user's headers to a URL, is the user's decision.
-        Ok(ToolPermission::Denied { reason: "connecting an MCP server".into(), escalation: None })
+        approve(&data, &scope, "connecting")
     }
 
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
@@ -141,8 +141,8 @@ impl Tool for RemoveServer {
     fn description(&self) -> &str { REMOVE }
     fn required_properties(&self) -> Vec<PropertyInfo> { vec![prop("name", "Server name", true)] }
 
-    fn is_dangerous(&self, _data: Value, _scope: crate::tools::base::ResolvedScope) -> Result<ToolPermission, crate::tools::base::ToolSerializationError> {
-        Ok(ToolPermission::Denied { reason: "removing an MCP server".into(), escalation: None })
+    fn is_dangerous(&self, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
+        approve(&data, &scope, "removing")
     }
 
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
@@ -164,8 +164,8 @@ impl Tool for SetEnabled {
         vec![prop("name", "Server name", true), prop("enabled", "true to connect, false to disconnect", true)]
     }
 
-    fn is_dangerous(&self, _data: Value, _scope: crate::tools::base::ResolvedScope) -> Result<ToolPermission, crate::tools::base::ToolSerializationError> {
-        Ok(ToolPermission::Denied { reason: "changing an MCP server".into(), escalation: None })
+    fn is_dangerous(&self, data: Value, scope: ResolvedScope) -> Result<ToolPermission, ToolSerializationError> {
+        approve(&data, &scope, "changing")
     }
 
     async fn call_untyped(&self, data: Value, ctx: &ToolContext) -> Result<Value, ToolError> {
@@ -174,6 +174,31 @@ impl Tool for SetEnabled {
         self.runtime.set_enabled(ctx.user_id, name, enabled).await.map_err(ToolError::FailedUnknown)?;
         Ok(json!({ "name": name, "enabled": enabled }))
     }
+}
+
+/// A grant names the one server. Without one the runner would refuse the call outright, because a denial
+/// that offers nothing cannot be approved.
+fn approve(data: &Value, scope: &ResolvedScope, verb: &str) -> Result<ToolPermission, ToolSerializationError> {
+    let name = data.get("name").and_then(Value::as_str).filter(|name| !name.is_empty());
+    let Some(name) = name else {
+        return Ok(ToolPermission::Denied { reason: "the server name is missing".into(), escalation: None });
+    };
+    let already = scope
+        .own
+        .as_ref()
+        .and_then(|own| own.get("servers"))
+        .and_then(Value::as_object)
+        .is_some_and(|servers| servers.get(name).and_then(Value::as_bool) == Some(true));
+    if already {
+        return Ok(ToolPermission::Allowed);
+    }
+    Ok(ToolPermission::Denied {
+        reason: format!("{verb} MCP server '{name}'"),
+        escalation: Some(ScopeGrant {
+            scope: ResolvedScope { own: Some(json!({ "servers": { name: true } })), shared: Default::default() },
+            ui_message: format!("Allow {verb} the MCP server '{name}' for the rest of this chat?"),
+        }),
+    })
 }
 
 fn prop_object(name: &str, description: &str) -> PropertyInfo {
