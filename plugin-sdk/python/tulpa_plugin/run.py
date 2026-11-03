@@ -58,6 +58,9 @@ async def _dispatch(plugin: Plugin, host: Host, method: str, params: dict[str, A
     if method == "enable":
         await plugin.enable()
         return None
+    if method == "on_event":
+        await plugin.on_event(params)
+        return None
     if method == "disable":
         await plugin.disable()
         return None

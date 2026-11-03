@@ -65,7 +65,7 @@ Rules that decide whether it works:
 - **Dangerous tools** declare it: `@tool(..., confirm=True)` asks the user once per chat; `access=[...]` makes the usual read/write/delete folder approval for the folders the tool touches (`PROTOCOL.md`, "Tool spec"). A tool that deletes, sends, pays or otherwise cannot be undone is `confirm=True`.
 - **Secrets** the owner must enter (a token) are a `[[settings]]` entry; the plugin reads them in `configure(self, settings, host)`. Never write a secret into a file of the plugin.
 
-Hooks beyond tools (`configure`, `enable`, `disable`, `prompt_section`, `tab_layout`, `tab_action`, `tab_upload`, `http_request`, `user_deleted`) are listed in [`python/README.md`](./python/README.md); `examples/hello-world-python/main.py` uses most of them. A plugin that answers messages from a chat app uses `host.agent_reply` (`examples/telegram`). A plugin that stores data uses `[database]`, `migrations/*.sql` (append-only, new file per change) and `host.db_query/db_execute/db_batch` (`examples/skills`, `PROTOCOL.md`, "Database").
+Hooks beyond tools (`configure`, `enable`, `disable`, `on_event`, `prompt_section`, `tab_layout`, `tab_action`, `tab_upload`, `http_request`, `user_deleted`) are listed in [`python/README.md`](./python/README.md); `host.subscribe` from `enable` is what makes `on_event` run. `examples/hello-world-python/main.py` uses most of them. A plugin that answers messages from a chat app uses `host.agent_reply` (`examples/telegram`). A plugin that stores data uses `[database]`, `migrations/*.sql` (append-only, new file per change) and `host.db_query/db_execute/db_batch` (`examples/skills`, `PROTOCOL.md`, "Database").
 
 ## Several files and packages
 

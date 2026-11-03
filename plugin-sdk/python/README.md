@@ -23,7 +23,7 @@ and `examples/hello-world-python` is a complete one: a setting, a tool, a tab wi
 ## The hooks
 
 Subclass `Plugin` and override what the plugin uses; every hook has a default. They are the methods of the Rust SDK's `Plugin` trait:
-`configure(settings, host)`, `enable`, `disable`, `prompt_section(user_id, tools)`, `tab_layout(user_id)`,
+`configure(settings, host)`, `enable`, `disable`, `on_event(event)`, `prompt_section(user_id, tools)`, `tab_layout(user_id)`,
 `tab_action(user_id, action, args)`, `tab_upload(user_id, action, row, files)`, `http_request(request)` and `user_deleted(user_id)`. A tab
 hook answers with a `Tab` (built with `Tab`, `Section`, `Block` and `Row`) or a dict of the shape in `PROTOCOL.md`.
 
@@ -38,7 +38,7 @@ works on `ctx.user_id`'s data only. `confirm=True`, `timeout_s=...` and `access=
 Any other exception is reported as an internal error with its type and message, and the plugin carries on.
 
 **The host** (`Host`, given to `configure` and in `ctx.host`) has `await host.log(message, level="info")`, `host.data_dir`, `host.plugin_dir`, and the database
-calls `await host.db_query(sql, params)`, `db_execute` and `db_batch` (see "Database" in `PROTOCOL.md` for how params are typed).
+calls `await host.db_query(sql, params)`, `db_execute` and `db_batch` (see "Database" in `PROTOCOL.md` for how params are typed). `await host.subscribe(kind)` from `enable` (and `unsubscribe`) asks for events; `on_event` receives them. The kinds are in `PROTOCOL.md`.
 
 **Printing:** `run` keeps the real standard output for the protocol and points the program's standard output at its standard error, so a `print` lands in the
 log the backend shows instead of corrupting the conversation.

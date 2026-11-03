@@ -142,6 +142,7 @@ async fn dispatch(conn: &Arc<Connection>, plugin: &Arc<dyn Plugin>, method: &str
             failed(plugin.configure(settings, Host { conn: conn.clone() }).await.map(|()| Value::Null))
         }
         "enable" => failed(plugin.enable().await.map(|()| Value::Null)),
+        "on_event" => failed(plugin.on_event(params).await.map(|()| Value::Null)),
         "disable" => failed(plugin.disable().await.map(|()| Value::Null)),
         "prompt_section" => {
             let (user_id, tools) = (user_id(&params)?, params["tools"].as_bool().unwrap_or(true));

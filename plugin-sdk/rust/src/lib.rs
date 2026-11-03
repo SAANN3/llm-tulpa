@@ -166,8 +166,15 @@ pub trait Plugin: Send + Sync + 'static {
     /// Runs one tool. `tool` is one of the names `tools` listed and `args` the arguments the model gave.
     async fn call_tool(&self, tool: &str, args: Value, ctx: CallContext) -> Result<Value, Failure>;
 
-    /// The plugin was switched on: start the background work it does, if any.
+    /// The plugin was switched on: start the background work it does, if any. This is where a plugin calls
+    /// `Host::subscribe`; the subscription ends with the process.
     async fn enable(&self) -> Result<(), Failure> {
+        Ok(())
+    }
+
+    /// One event the plugin subscribed to. `event["type"]` is the kind. It has 5 s to return; a slow answer is logged and the
+    /// event is not tried again.
+    async fn on_event(&self, _event: Value) -> Result<(), Failure> {
         Ok(())
     }
 
@@ -210,6 +217,44 @@ pub trait Plugin: Send + Sync + 'static {
     async fn user_deleted(&self, _user_id: i64) {}
 }
 
+/// One kind of event a plugin can subscribe to. The same word is `event["type"]` in `on_event`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventKind {
+    MessageStored,
+    RunStarted,
+    RunFinished,
+    ToolStarted,
+    ToolFinished,
+    ChatCreated,
+    ChatDeleted,
+    MessagesRemoved,
+    ModelChanged,
+    JobStarted,
+    JobFinished,
+    CompactionStarted,
+    CompactionFinished,
+}
+
+impl EventKind {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::MessageStored => "message_stored",
+            Self::RunStarted => "run_started",
+            Self::RunFinished => "run_finished",
+            Self::ToolStarted => "tool_started",
+            Self::ToolFinished => "tool_finished",
+            Self::ChatCreated => "chat_created",
+            Self::ChatDeleted => "chat_deleted",
+            Self::MessagesRemoved => "messages_removed",
+            Self::ModelChanged => "model_changed",
+            Self::JobStarted => "job_started",
+            Self::JobFinished => "job_finished",
+            Self::CompactionStarted => "compaction_started",
+            Self::CompactionFinished => "compaction_finished",
+        }
+    }
+}
+
 /// A handle for what the plugin asks of the backend
 #[derive(Clone)]
 pub struct Host {
@@ -223,6 +268,17 @@ impl fmt::Debug for Host {
 }
 
 impl Host {
+    /// Ask to be told about one kind of event. Call it from `enable`: a subscription ends when the plugin is switched off or
+    /// its process exits, and the next `enable` subscribes again. `on_event` then receives each one.
+    pub async fn subscribe(&self, kind: EventKind) -> Result<(), Error> {
+        self.conn.call("events.subscribe", json!({"kind": kind.wire()})).await.map(|_| ())
+    }
+
+    /// Stop being told about `kind`.
+    pub async fn unsubscribe(&self, kind: EventKind) -> Result<(), Error> {
+        self.conn.call("events.unsubscribe", json!({"kind": kind.wire()})).await.map(|_| ())
+    }
+
     /// A line in the backend's log and on the plugin's page
     pub async fn log(&self, level: Level, message: &str) {
         // A log line that cannot be delivered is not worth failing the tool call for

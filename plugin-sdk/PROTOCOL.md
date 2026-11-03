@@ -126,6 +126,7 @@ A failing `check` does not stop a new plugin from being installed: it is recorde
 | `tools` | none | a list of tool specs (below) |
 | `call_tool` | `{tool, args, ctx}` | the tool's result, any JSON |
 | `enable` / `disable` | none | `null` |
+| `on_event` | one event, below | `null` |
 | `prompt_section` | `{user_id, tools}` | a string, or `null` for nothing |
 | `tab_layout` | `{user_id}` | a tab layout (below) |
 | `tab_action` | `{user_id, action, args}` | the tab layout after |
@@ -134,11 +135,13 @@ A failing `check` does not stop a new plugin from being installed: it is recorde
 | `user_deleted` | `{user_id}` | `null` |
 | `shutdown` | none | `null` |
 
-A plugin may leave out any of these but `shutdown`: answering `-32601` (method not found) to `configure`, `tools`, `enable`, `disable`, `prompt_section` or `user_deleted` means there is nothing to do, and to a tab method means the plugin has no tab. The SDKs answer all of them.
+A plugin may leave out any of these but `shutdown`: answering `-32601` (method not found) to `configure`, `tools`, `enable`, `disable`, `prompt_section`, `on_event` or `user_deleted` means there is nothing to do, and to a tab method means the plugin has no tab. The SDKs answer all of them.
 
 **`configure`**: `settings` is an object that already passed the manifest's `[[settings]]` (every required one present, each of the type it names; a setting the manifest does not list is passed through). The plugin refuses settings only it can judge, such as a token the service rejects, with the error `-32002` and a message the owner reads; the settings are then not saved. `tools` is asked for after each `configure`, so the tools may depend on the settings.
 
 **`disable`**: a plugin that fails, hangs or has died is switched off all the same; the failure is logged.
+
+**`on_event`**: one event the plugin subscribed to (`events.subscribe`, below). `type` is the kind. A message inside the event (`message`, or `result` on `tool_finished`) has `image_count` instead of its images, and no thought duration or token counts; the plugin reads the message itself when it needs those. The call has 5 s. A plugin that does not answer, or answers with an error, is logged and the event is not sent again. A plugin that has not subscribed is not called.
 
 **`prompt_section`**: text added to the system prompt of that user's chats while the plugin is on. `tools` says whether the chat sends the model its tools. It is asked for at the start of every turn and has 5 s: a plugin that does not answer in time adds nothing that turn. It must be the same text every time while what it describes has not changed, because any change makes the model server read the whole chat again.
 
@@ -150,7 +153,7 @@ A plugin may leave out any of these but `shutdown`: answering `-32601` (method n
 
 `ctx` in `call_tool` carries `user_id` (the user whose chat the call is in), `chat_id`, `model` and `provider`. A tool works on `user_id`'s data only.
 
-Every call has a time limit, and a call that is not answered within it fails with an error the caller sees: 30 s for most (`call_tool` uses the tool's `timeout_s` when it has one), 120 s for `tab_upload`, 10 s for `disable` and `user_deleted`, 5 s for `prompt_section`.
+Every call has a time limit, and a call that is not answered within it fails with an error the caller sees: 30 s for most (`call_tool` uses the tool's `timeout_s` when it has one), 120 s for `tab_upload`, 10 s for `disable` and `user_deleted`, 5 s for `prompt_section` and `on_event`.
 
 ### Tool spec
 
@@ -225,6 +228,10 @@ Python: `Block.input("save_url", "Server URL", value, placeholder="https://serve
 | `db.execute` | `{sql, params?}` | the number of rows changed |
 | `db.batch` | `{statements: [{sql, params?}, ...]}` | a list with the number of rows each statement changed |
 | `agent.reply` | `{conversation, text, title?, images?, think?}` | `{content}`: the model's answer |
+| `events.subscribe` | `{kind}` | `null` |
+| `events.unsubscribe` | `{kind}` | `null` |
+
+`kind` is `message_stored`, `run_started`, `run_finished`, `tool_started`, `tool_finished`, `chat_created`, `chat_deleted`, `messages_removed`, `model_changed`, `job_started`, `job_finished`, `compaction_started` or `compaction_finished`. Subscribe from `enable`. The subscription ends when the plugin is switched off or its process exits, so the next `enable` subscribes again. Each matching event is then `on_event`. A plugin that is not on, or whose process has exited, is told that the subscription is no longer active.
 
 ## The agent
 

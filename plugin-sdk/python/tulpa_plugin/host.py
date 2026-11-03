@@ -8,6 +8,12 @@ from typing import Any, Sequence
 from .connection import Connection, ProtocolError
 
 LEVELS = ("error", "warn", "info", "debug")
+#: What `subscribe` accepts. The same words are the `type` of an `on_event`.
+KINDS = (
+    "message_stored", "run_started", "run_finished", "tool_started", "tool_finished",
+    "chat_created", "chat_deleted", "messages_removed", "model_changed",
+    "job_started", "job_finished", "compaction_started", "compaction_finished",
+)
 
 
 class Host:
@@ -27,6 +33,19 @@ class Host:
         """The folder the plugin's own files (its code, its manifest) are in"""
         path = self._connection.info.get("plugin_dir")
         return Path(path) if path else None
+
+    async def subscribe(self, kind: str) -> None:
+        """Ask to be told about one kind of event. Call it from `enable`: a subscription ends when the plugin is switched off
+        or its process exits, and the next `enable` subscribes again. `on_event` then receives each one."""
+        if kind not in KINDS:
+            raise ValueError(f"unknown event {kind!r}")
+        await self._connection.call("events.subscribe", {"kind": kind})
+
+    async def unsubscribe(self, kind: str) -> None:
+        """Stop being told about `kind`."""
+        if kind not in KINDS:
+            raise ValueError(f"unknown event {kind!r}")
+        await self._connection.call("events.unsubscribe", {"kind": kind})
 
     async def log(self, message: str, level: str = "info") -> None:
         """A line in the backend's log and on the plugin's page"""

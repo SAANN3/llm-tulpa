@@ -40,7 +40,7 @@ A plugin is a class and a `run` call, with no build and no dependencies: see [`p
 
 ## Writing a plugin in Rust
 
-Implement `tulpa_plugin::Plugin` (`call_tool` and the hooks you use: `configure`, `tools`, the tab, `prompt_section`, `http_request`...; what the plugin is, its settings and its tab go in `plugin.toml`) and call `tulpa_plugin::serve` from `main`. The crate documentation has the smallest complete plugin, and `examples/hello-world-rust/src/main.rs` uses most of the hooks: a setting, a tool that takes an argument and logs, a tab with a switch and a button, a prompt section and a route. A plugin that keeps data in the database lists `[database]` in its manifest and keeps its `.sql` migrations in a folder; `examples/skills` shows that, with files in the data folder and uploads.
+Implement `tulpa_plugin::Plugin` (`call_tool` and the hooks you use: `configure`, `tools`, the tab, `prompt_section`, `on_event`, `http_request`...; what the plugin is, its settings and its tab go in `plugin.toml`) and call `tulpa_plugin::serve` from `main`. `Host::subscribe` from `enable` is what makes `on_event` run. The crate documentation has the smallest complete plugin, and `examples/hello-world-rust/src/main.rs` uses most of the hooks: a setting, a tool that takes an argument and logs, a tab with a switch and a button, a prompt section and a route. A plugin that keeps data in the database lists `[database]` in its manifest and keeps its `.sql` migrations in a folder; `examples/skills` shows that, with files in the data folder and uploads.
 
 ### Nested tool parameters
 

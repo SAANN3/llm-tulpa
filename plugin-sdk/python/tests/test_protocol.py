@@ -45,6 +45,13 @@ PLUGIN = textwrap.dedent(
         async def bad(self) -> object:
             return object()
 
+        async def enable(self):
+            await self.host.subscribe("run_started")
+
+        async def on_event(self, event):
+            if event.get("type") == "run_started":
+                await self.host.unsubscribe("run_started")
+
         async def prompt_section(self, user_id, tools):
             return "PROBE SECTION" if tools else None
 
@@ -165,6 +172,14 @@ class Protocol(unittest.TestCase):
         self.assertEqual((response["status"], json.loads(base64.b64decode(response["body_b64"]))), (200, {"path": "/x", "body": "body", "user": 1}))
         self.assertEqual(self.host.call("tab_action", {"user_id": 1, "action": "x", "args": {}})["error"]["code"], -32001)
         self.assertIsNone(self.host.call("user_deleted", {"user_id": 5})["result"])
+
+    def test_subscribing_and_an_event(self):
+        self.host.call("configure", {"settings": {}})
+        self.assertIsNone(self.host.call("enable", {})["result"])
+        self.assertEqual(self.host.log[-1], ("events.subscribe", {"kind": "run_started"}))
+        event = {"type": "run_started", "user_id": 1, "chat_id": 2}
+        self.assertIsNone(self.host.call("on_event", event)["result"])
+        self.assertEqual(self.host.log[-1], ("events.unsubscribe", {"kind": "run_started"}))
 
     def test_shutdown_is_answered_and_the_program_exits(self):
         self.assertIsNone(self.host.call("shutdown", {})["result"])

@@ -145,4 +145,6 @@ Registry-level management routes, under `/api/plugins`:
 
 A plugin's own instance-level routes (`Plugin::api_router()`) mount under `/api/plugins/{plugin_name}/{plugin_subname}/...` — none of the built-in providers expose any; an external plugin's are answered by its program (`http_request`).
 
+An external plugin subscribes to chat and run events the same way a built-in does: `events.subscribe` from `enable`, then `on_event` for each one. The subscription ends with the process. The kinds and the payload are in [`plugin-sdk/PROTOCOL.md`](../plugin-sdk/PROTOCOL.md).
+
 Tool parameter types support nested objects and arrays through the existing parameter list. Object children carry their own names, descriptions and required flags; arrays carry one element type. See [`plugin-sdk/PROTOCOL.md`](../plugin-sdk/PROTOCOL.md) for the wire format and SDK examples.

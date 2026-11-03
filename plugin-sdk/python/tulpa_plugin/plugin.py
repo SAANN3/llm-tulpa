@@ -78,7 +78,12 @@ class Plugin:
         raise NotFound(f"no such tool: {tool}")
 
     async def enable(self) -> None:
-        """The plugin was switched on: start the background work it does, if any."""
+        """The plugin was switched on: start the background work it does, if any. This is where a plugin asks
+        `host.subscribe` for the events it wants; the subscription ends with the process."""
+
+    async def on_event(self, event: dict[str, Any]) -> None:
+        """One event the plugin subscribed to. `event["type"]` is the kind (`run_started`, `message_stored`, ...). It has 5 s
+        to return; a slow answer is logged and the event is not tried again."""
 
     async def disable(self) -> None:
         """The plugin was switched off, or its settings are about to change: stop what `enable` started. The process ends
