@@ -16,8 +16,10 @@ const ADD: &str = "Add an MCP server for this user and connect it now. Call this
 external tool server, including one you have to install first (for example Firefox: install or start its MCP server, \
 then add it here). After it connects, that server's tools show up under the name you chose, such as firefox.list_tabs, \
 and stay available in later chats until removed or disabled. transport is \"http\" or \"stdio\". http needs url \
-(and headers when the server asks for them, as a JSON object of name to value). stdio needs command, plus args, env \
-and cwd when the program needs them. Install and configure the program yourself before this call; this tool only \
+(and headers when the server asks for them, as a JSON object of name to value). stdio: command is only the program, \
+for example python3, and args is the list of its arguments, for example [\"/tmp/server.py\"]. A command that still \
+contains spaces, with no args, is split on spaces the same way as the settings line. env and cwd are optional. \
+Install and configure the program yourself before this call; this tool only \
 records the server and connects. A server name is lowercase letters, digits and underscores.";
 
 const LIST: &str = "List the MCP servers this user already added, whether each is enabled, and how many tools the \
@@ -99,8 +101,8 @@ impl Tool for AddServer {
             prop("transport", "http or stdio", true),
             prop("url", "URL of an http server", false),
             prop_object("headers", "HTTP headers, name to value, when the server asks for them"),
-            prop("command", "Program to start for a stdio server", false),
-            prop("args", "Arguments for a stdio server", false),
+            prop("command", "Program only, such as python3. Not a command line; arguments go in args", false),
+            prop("args", "Arguments for that program, one string each, such as the script path", false),
             prop_object("env", "Extra environment variables for a stdio server, name to value"),
             prop("cwd", "Working directory for a stdio server", false),
         ]
@@ -118,12 +120,12 @@ impl Tool for AddServer {
                 url: args.url.ok_or_else(|| ToolError::FailedUnknown("http needs a url".into()))?,
                 headers: string_map(args.headers)?,
             },
-            "stdio" => ConnectionConfig::Stdio {
-                command: args.command.ok_or_else(|| ToolError::FailedUnknown("stdio needs a command".into()))?,
-                args: args.args,
-                env: string_map(args.env)?,
-                cwd: args.cwd,
-            },
+            "stdio" => {
+                let command = args.command.ok_or_else(|| ToolError::FailedUnknown("stdio needs a command".into()))?;
+                // The settings tab takes one line and splits it. Models paste that line into command.
+                let (command, argv) = split_command_line(command, args.args);
+                ConnectionConfig::Stdio { command, args: argv, env: string_map(args.env)?, cwd: args.cwd }
+            }
             other => return Err(ToolError::FailedUnknown(format!("transport is http or stdio, not '{other}'"))),
         };
         let count = self.runtime.add(ctx.user_id, &args.name, config).await.map_err(ToolError::FailedUnknown)?;
@@ -199,6 +201,17 @@ fn approve(data: &Value, scope: &ResolvedScope, verb: &str) -> Result<ToolPermis
             ui_message: format!("Allow {verb} the MCP server '{name}' for the rest of this chat?"),
         }),
     })
+}
+
+/// `command` is the program. When a model pastes `python3 /tmp/server.py` into it and leaves args empty, split
+/// on whitespace so that line works the same way as the settings field.
+fn split_command_line(command: String, args: Vec<String>) -> (String, Vec<String>) {
+    if !args.is_empty() || !command.split_whitespace().nth(1).is_some() {
+        return (command, args);
+    }
+    let mut parts = command.split_whitespace();
+    let program = parts.next().unwrap_or_default().to_string();
+    (program, parts.map(str::to_string).collect())
 }
 
 fn prop_object(name: &str, description: &str) -> PropertyInfo {
