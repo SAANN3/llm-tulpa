@@ -12,6 +12,7 @@ use super::turn::Turn;
 use crate::services::chat_store::{ChatCounts, ChatStore};
 use crate::services::error::ErrorService;
 use crate::services::llm::{estimated_prompt_tokens, tool_definitions, ChatMessage};
+use crate::services::tool_selection_store::ToolSelectionStore;
 use crate::services::tools::ToolService;
 use crate::tools::base::Tool;
 
@@ -63,30 +64,33 @@ pub struct ContextBreakdown {
 #[derive(Clone)]
 pub(super) struct ContextReader {
     chat_store: Arc<ChatStore>,
+    tool_selection: Arc<ToolSelectionStore>,
     tools: Arc<ToolService>,
     history: History,
     model: ModelCall,
 }
 
 impl ContextReader {
-    pub(super) fn new(chat_store: Arc<ChatStore>, tools: Arc<ToolService>, history: History, model: ModelCall) -> Self {
-        Self { chat_store, tools, history, model }
+    pub(super) fn new(chat_store: Arc<ChatStore>, tool_selection: Arc<ToolSelectionStore>, tools: Arc<ToolService>, history: History, model: ModelCall) -> Self {
+        Self { chat_store, tool_selection, tools, history, model }
     }
 
     pub(super) async fn breakdown(&self, chat_id: i64) -> Result<ContextBreakdown, ErrorService> {
-        let (mut chat, built) = self.history.parts(chat_id).await?;
+        let chat_row = self.chat_store.chat(chat_id).await?;
+        let (names, has_tools) = self.tool_selection.listed(chat_id, chat_row.tool_mode).await?;
+        let (mut chat, built) = self.history.parts(chat_id, has_tools).await?;
         // The model a turn in progress runs on, as `Turn::prepare` sees it
         self.model.bind(&mut chat);
-        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools(chat.user_id).await);
+        let tools = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
         let tool_refs: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let tools_chars = if tool_refs.is_empty() { 0 } else { serde_json::to_string(&tool_definitions(&tool_refs)).unwrap_or_default().len() };
 
         // The user's memory and the plugins' sections are part of the prompt text; they are counted on their own, after the
         // rest of it (each has a blank line in front)
         let memory = self.history.memory_text(&chat).await?.map_or(0, |text| text.len());
-        let sections = self.history.plugin_sections(&chat).await.map_or(0, |text| text.len());
+        let sections = self.history.plugin_sections(&chat, has_tools).await.map_or(0, |text| text.len());
         let own = |len: usize| if len > 0 { len + 2 } else { 0 };
-        let mut system_prompt = self.history.base_system_prompt(&chat).await?.len().saturating_sub(own(memory) + own(sections));
+        let mut system_prompt = self.history.base_system_prompt(&chat, has_tools).await?.len().saturating_sub(own(memory) + own(sections));
         let mut parts = Vec::new();
         if let Some(fold) = &built.fold {
             system_prompt += fold.header.len();

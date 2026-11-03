@@ -7,15 +7,15 @@
 //! conversation again); they join the prompt at the next compaction.
 
 use super::super::live::StepsReport;
-use super::NOTES;
 use super::super::prompts;
+use super::super::turn::Turn;
+use super::NOTES;
 use super::Compaction;
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallKind, StepState};
 use crate::services::llm::{ChatMessage, ReplyPiece, ThinkChoice};
 use crate::tools::base::Tool;
 use crate::tools::chat::write_notes::MAX_NOTES_CHARS;
-use crate::tools::subagent;
 
 /// The notes request is only made with at least this many tokens of the window free: the reply may use what the
 /// window leaves after the measured prompt and a margin, and a model that thinks first needs several thousand
@@ -73,7 +73,8 @@ impl Compaction {
                 // A sub-agent's chat ends with its result; nobody reads its notes later
                 return Ok(Asked::Not("a sub-agent's chat"));
             }
-            if !chat.tools_enabled {
+            let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+            if !has_tools {
                 // Notes are part of working with tools; a chat without them is a plain conversation, and the
                 // model it runs on is often too small to keep notes worth their cost
                 return Ok(Asked::Not("the chat has no tools"));
@@ -88,14 +89,11 @@ impl Compaction {
             }
             let provider = self.model.provider(&chat)?;
             let params = self.model.params(&chat).await?;
-            let tools_snapshot = self.tools.snapshot_tools(chat.user_id).await;
-            let tools: Vec<&dyn Tool> = tools_snapshot
-                .iter()
-                .map(|t| t.as_ref())
-                .filter(|t| subagent::available_to(t.function_name(), false))
-                .collect();
-            let mut history = self.history.for_chat(chat_id).await?;
-            let system_prompt = self.history.system_prompt(&chat, &mut history).await?;
+            // The same list the live request sends, so the server still holds this prompt
+            let tools_snapshot = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
+            let tools: Vec<&dyn Tool> = tools_snapshot.iter().map(|t| t.as_ref()).collect();
+            let mut history = self.history.for_chat(chat_id, has_tools).await?;
+            let system_prompt = self.history.system_prompt(&chat, &mut history, has_tools).await?;
             let mut messages = vec![ChatMessage::system(system_prompt)];
             messages.extend(history);
             let call = report.map(|report| report.call(&NOTES, CallKind::Notes));

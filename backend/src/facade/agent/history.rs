@@ -20,6 +20,7 @@ use crate::services::llm::{ChatMessage, ModelToolCall, ModelToolCallFunction};
 use crate::plugins::registry::PluginRegistry;
 use crate::services::memory_store::MemoryStore;
 use crate::services::settings_store::{CustomPrompt, SettingsStore};
+use crate::services::tool_selection_store::ToolMode;
 use crate::tools::base::Tool;
 use crate::tools::ui::attach_file::AttachFileTool;
 
@@ -61,6 +62,8 @@ struct Inputs {
     messages: Vec<Message>,
     /// The user's own messages the summary replaced, for the pinned block (empty before the first fold)
     folded_user_texts: Vec<(i64, String)>,
+    /// Whether the prompt is the one that talks about tools. An empty whitelist is not.
+    prompt_has_tools: bool,
 }
 
 /// What `History::build` makes, in its parts: see `Built::into_messages` for how they are joined.
@@ -129,18 +132,18 @@ impl History {
     /// `compact`), that replaces everything up to the boundary as a single system
     /// message, prefixed with key facts (if any). Only what's newer is sent verbatim;
     /// otherwise this is the whole history, same as before compaction existed.
-    pub(super) async fn for_chat(&self, chat_id: i64) -> Result<Vec<ChatMessage>, ErrorService> {
-        Ok(Self::build(self.load(chat_id).await?))
+    pub(super) async fn for_chat(&self, chat_id: i64, has_tools: bool) -> Result<Vec<ChatMessage>, ErrorService> {
+        Ok(Self::build(self.load(chat_id, has_tools).await?))
     }
 
     /// The history `for_chat` sends, in its parts, with the chat it was built for.
-    pub(super) async fn parts(&self, chat_id: i64) -> Result<(Chat, Built), ErrorService> {
-        let inputs = self.load(chat_id).await?;
+    pub(super) async fn parts(&self, chat_id: i64, has_tools: bool) -> Result<(Chat, Built), ErrorService> {
+        let inputs = self.load(chat_id, has_tools).await?;
         let chat = inputs.chat.clone();
         Ok((chat, Self::build_parts(inputs)))
     }
 
-    async fn load(&self, chat_id: i64) -> Result<Inputs, ErrorService> {
+    async fn load(&self, chat_id: i64, has_tools: bool) -> Result<Inputs, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
         let trim_thinking = self.settings_store.trim_old_thinking(chat.user_id).await?;
         let (messages, folded_user_texts) = match (&chat.summary, chat.summary_up_to_message_id) {
@@ -150,7 +153,7 @@ impl History {
             ),
             _ => (self.chat_store.messages_after(chat_id, 0).await?, Vec::new()),
         };
-        Ok(Inputs { chat, trim_thinking, messages, folded_user_texts })
+        Ok(Inputs { chat, trim_thinking, messages, folded_user_texts, prompt_has_tools: has_tools })
     }
 
     fn build(inputs: Inputs) -> Vec<ChatMessage> {
@@ -161,7 +164,7 @@ impl History {
     /// messages and summary; the notes either way) apart from the messages, so the context breakdown can
     /// measure each part of exactly what a turn sends.
     fn build_parts(inputs: Inputs) -> Built {
-        let Inputs { chat, trim_thinking, mut messages, folded_user_texts } = inputs;
+        let Inputs { chat, trim_thinking, mut messages, folded_user_texts, prompt_has_tools } = inputs;
         let lengths: Vec<usize> = messages.iter().map(|message| message.content.len()).collect();
         clearing::stub_cleared(&mut messages, chat.cleared_up_to_message_id);
         let (cleared_results, cleared_chars) = messages
@@ -183,7 +186,7 @@ impl History {
 
         let fold = match (&chat.summary, chat.summary_up_to_message_id) {
             (Some(summary), Some(_)) => Some(Fold {
-                header: prompts::fold_header(chat.tools_enabled).to_string(),
+                header: prompts::fold_header(prompt_has_tools).to_string(),
                 // Key facts (goal + list), if available. Facts are durable — they persist across folds and
                 // don't get rewritten.
                 key_facts: chat.key_facts.as_ref().map(|key_facts| {
@@ -196,7 +199,7 @@ impl History {
                     }
                     block
                 }),
-                pinned: pinned::section(&folded_user_texts, chat.tools_enabled),
+                pinned: pinned::section(&folded_user_texts, prompt_has_tools),
                 summary: summary.clone(),
             }),
             _ => None,
@@ -223,20 +226,20 @@ impl History {
     /// (or the built-in one), the sub-agent addendum for a sub-agent's chat, and, when the history
     /// leads with one, that message (the compaction summary and notes) — taken out of `messages`.
     /// Shared by every request built for a chat so they all share the same prefix.
-    pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>) -> Result<String, ErrorService> {
+    pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>, has_tools: bool) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
         let memory = self.memory_text(chat).await?;
-        let sections = self.plugin_sections(chat).await;
+        let sections = self.plugin_sections(chat, has_tools).await;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
-        Ok(Self::compose_system_prompt(custom, memory, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), leading))
+        Ok(Self::compose_system_prompt(custom, memory, sections, has_tools, chat.parent_chat_id.is_some(), leading))
     }
 
     /// The system prompt a turn of `chat` starts with, without what the history leads with.
-    pub(super) async fn base_system_prompt(&self, chat: &Chat) -> Result<String, ErrorService> {
+    pub(super) async fn base_system_prompt(&self, chat: &Chat, has_tools: bool) -> Result<String, ErrorService> {
         let custom = self.settings_store.system_prompt(chat.user_id).await?;
         let memory = self.memory_text(chat).await?;
-        let sections = self.plugin_sections(chat).await;
-        Ok(Self::compose_system_prompt(custom, memory, sections, chat.tools_enabled, chat.parent_chat_id.is_some(), None))
+        let sections = self.plugin_sections(chat, has_tools).await;
+        Ok(Self::compose_system_prompt(custom, memory, sections, has_tools, chat.parent_chat_id.is_some(), None))
     }
 
     /// What the user's memory adds to `chat`'s system prompt: the snapshot the chat took, unless the user has since
@@ -282,9 +285,9 @@ impl History {
     }
 
     /// What the enabled plugins add to `chat`'s system prompt
-    pub(super) async fn plugin_sections(&self, chat: &Chat) -> Option<String> {
+    pub(super) async fn plugin_sections(&self, chat: &Chat, has_tools: bool) -> Option<String> {
         match &self.plugins {
-            Some(plugins) => plugins.prompt_sections(chat.user_id, chat.tools_enabled).await,
+            Some(plugins) => plugins.prompt_sections(chat.user_id, has_tools).await,
             None => None,
         }
     }
@@ -637,7 +640,7 @@ mod tests {
             notes_pending: None,
             cleared_up_to_message_id: None,
             thinking_trimmed_up_to_message_id: None,
-            tools_enabled: true,
+            tool_mode: ToolMode::Blacklist,
             unseen_end: None,
             memory_snapshot: None,
             think_level: None,
@@ -651,7 +654,7 @@ mod tests {
     }
 
     fn inputs(chat: Chat, messages: Vec<Message>) -> Inputs {
-        Inputs { chat, trim_thinking: false, messages, folded_user_texts: vec![] }
+        Inputs { chat, trim_thinking: false, messages, folded_user_texts: vec![], prompt_has_tools: true }
     }
 
     #[test]
@@ -766,7 +769,7 @@ mod tests {
         c.thinking_trimmed_up_to_message_id = Some(4);
         let mut m = message(5, "assistant", "answer");
         m.thinking = Some(long);
-        let trimmed_on = History::build(Inputs { chat: c, trim_thinking: true, messages: vec![m], folded_user_texts: vec![] });
+        let trimmed_on = History::build(Inputs { chat: c, trim_thinking: true, messages: vec![m], folded_user_texts: vec![], prompt_has_tools: true });
         // message 5 is past the boundary 4: replayed at the larger fresh cap
         assert!(trimmed_on[0].content.len() > 20_000 && trimmed_on[0].content.len() < 24_300);
     }

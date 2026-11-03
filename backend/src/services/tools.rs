@@ -85,6 +85,15 @@ impl ToolService {
         tool.call_untyped(data, ctx).await
     }
 
+    /// Every tool this user can be sent: the name, then the description the model sees. Already in name order.
+    pub async fn catalog(&self, user_id: i64) -> Vec<(String, String)> {
+        self.snapshot_tools(user_id)
+            .await
+            .into_iter()
+            .map(|tool| (tool.function_name().to_string(), tool.description().to_string()))
+            .collect()
+    }
+
     pub async fn snapshot_tools(&self, user_id: i64) -> Vec<Arc<dyn Tool>> {
         let map = self.tools.read().await;
         let mut tools: Vec<_> = map.iter()

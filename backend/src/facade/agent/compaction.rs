@@ -20,6 +20,7 @@ use crate::services::event_bus::{CallKind, StepState};
 use crate::services::llm::{ChatMessage, ReplyPiece, ThinkChoice};
 use crate::services::memory_store::MemoryStore;
 use crate::services::settings_store::SettingsStore;
+use crate::services::tool_selection_store::ToolSelectionStore;
 use crate::services::tools::ToolService;
 use clearing::CLEARED_ENOUGH_FRACTION;
 
@@ -100,6 +101,7 @@ const COMPACTION_RETRY_GROWTH: f64 = 0.05;
 #[derive(Clone)]
 pub(super) struct Compaction {
     chat_store: Arc<ChatStore>,
+    tool_selection: Arc<ToolSelectionStore>,
     plugin_events: Arc<PluginEvents>,
     settings_store: Arc<SettingsStore>,
     /// `None` for the agent of the messaging plugins, whose chats are not asked about the user
@@ -123,6 +125,7 @@ impl Compaction {
 
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
+        tool_selection: Arc<ToolSelectionStore>,
         settings_store: Arc<SettingsStore>,
         memory_store: Option<Arc<MemoryStore>>,
         tools: Arc<ToolService>,
@@ -131,7 +134,7 @@ impl Compaction {
         one_shot: OneShot,
         plugin_events: Arc<PluginEvents>,
     ) -> Self {
-        Self { chat_store, plugin_events, settings_store, memory_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
+        Self { chat_store, tool_selection, plugin_events, settings_store, memory_store, tools, model, history, one_shot, backoff: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Checks whether the turn that just finished (or last turn before starting a new one) pushed prompt usage over

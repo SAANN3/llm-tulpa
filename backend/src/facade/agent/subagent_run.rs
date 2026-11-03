@@ -37,6 +37,10 @@ impl Agent {
 
         let auto_confirm = self.settings_store.auto_confirm(parent.user_id).await?;
         let sub = self.chat_store.create_subchat(&parent, sub_chat_name(&prompt)).await?;
+        if let Err(e) = self.tool_selection.copy_chat(parent.id, sub.id).await {
+            let _ = self.chat_store.delete_chat(sub.id).await;
+            return Err(e.into());
+        }
         self.tool_calls.copy_grants(parent.id, sub.id).await?;
 
         let agent = self.clone();

@@ -4,7 +4,13 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, services::event_bus::ServerEvent, state::AppState};
+use crate::{
+    routes::auth::AuthUser,
+    services::error::ErrorService,
+    services::event_bus::ServerEvent,
+    services::tool_selection_store::{ToolMode, ToolSelectionStore},
+    state::AppState,
+};
 
 use super::get::ChatOut;
 
@@ -21,9 +27,12 @@ pub(crate) struct CreateChatRequest {
     /// The provider of `model`; llama.cpp when left out
     #[serde(default)]
     provider: Option<String>,
-    /// Whether the model is sent its tools in this chat; the user's default setting when left out
+    /// Left out, the chat copies the user's selection, names included.
     #[serde(default)]
-    tools_enabled: Option<bool>,
+    tool_mode: Option<ToolMode>,
+    /// The names `tool_mode` lists. Left out together with `tool_mode`, the chat copies the user's list.
+    #[serde(default)]
+    tools: Option<Vec<String>>,
 }
 
 /// Creates a new chat with the given name and returns its info. The chat is bound to the
@@ -68,11 +77,27 @@ pub async fn create_chat(
         (None, None) => Start::Default,
     };
 
-    let tools_enabled = match body.tools_enabled {
-        Some(enabled) => enabled,
-        None => services.settings_store.use_tools(auth.id).await?,
+    let (tool_mode, tool_names) = match (body.tool_mode, body.tools) {
+        (None, None) => {
+            let mode = services.settings_store.tool_mode(auth.id).await?;
+            let names = services.tool_selection.names_for_user(auth.id).await?;
+            (mode, names)
+        }
+        (mode, names) => {
+            let mode = match mode {
+                Some(mode) => mode,
+                None => services.settings_store.tool_mode(auth.id).await?,
+            };
+            let names = names.unwrap_or_default();
+            ToolSelectionStore::check_names(&names)?;
+            (mode, names)
+        }
     };
-    let mut chat = services.chat_store.create_chat(auth.id, body.name, tools_enabled).await?;
+    let mut chat = services.chat_store.create_chat(auth.id, body.name, tool_mode).await?;
+    if let Err(e) = services.tool_selection.replace_chat(chat.id, &tool_names).await {
+        let _ = services.chat_store.delete_chat(chat.id).await;
+        return Err(e.into());
+    }
     let applied = match start {
         Start::Default => Ok(()),
         Start::Profile(profile_id) => services.chat_store.set_launch_profile(chat.id, profile_id).await,
@@ -101,7 +126,7 @@ pub async fn create_chat(
         folder_id: chat.folder_id,
         parent_chat_id: chat.parent_chat_id,
         launch_profile_id: chat.launch_profile_id,
-        tools_enabled: chat.tools_enabled,
+        tool_mode: chat.tool_mode,
         unseen_end: chat.unseen_end,
         think_level: chat.think_level,
         suggestion: None,

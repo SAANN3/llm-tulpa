@@ -40,9 +40,9 @@ pub struct Model {
     pub cleared_up_to_message_id: Option<i64>,
     /// Thinking traces up to and including this message id are replayed as their tail only; NULL when none are.
     pub thinking_trimmed_up_to_message_id: Option<i64>,
-    /// Whether the model is sent its tools in this chat. A model too small for them, or a window the tool
-    /// definitions would mostly fill, runs without; a new chat takes the user's default.
-    pub tools_enabled: bool,
+    /// `blacklist` sends every tool except the names stored for this chat. `whitelist` sends only those
+    /// names. An empty whitelist sends none.
+    pub tool_mode: String,
     /// How the last run ended when the user hasn't looked at the chat since (`answered`, `waiting_for_permission`,
     /// `failed` or `step_limit`); NULL when there is nothing new.
     pub unseen_end: Option<String>,

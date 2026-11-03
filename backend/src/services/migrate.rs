@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBacken
 /// `if current < N { ... }` block to `run_migrations` that alters the existing tables in place
 /// (inside the same transaction) and bump this constant. A database *newer* than this build is
 /// refused rather than "fixed", so an older binary can't damage data a newer one wrote.
-const SCHEMA_VERSION: i32 = 26;
+const SCHEMA_VERSION: i32 = 27;
 
 /// Bumped when a release changes what the setup wizard configures. An install whose
 /// `schema_meta.setup_revision` is behind is offered the wizard again, with its current answers kept.
@@ -357,6 +357,33 @@ const V26_ADDITIONS: &str = "
     ALTER TABLE chats ADD COLUMN IF NOT EXISTS suggestion_for_message_id BIGINT;
 ";
 
+/// What version 27 added on top of version 26: a chat's and a user's tool selection. `tool_mode` is `blacklist`
+/// (every tool except the listed names) or `whitelist` (only the listed names; none when the list is empty).
+/// The old on/off switches become those two extremes.
+const V27_ADDITIONS: &str = "
+    ALTER TABLE chats ADD COLUMN IF NOT EXISTS tool_mode TEXT NOT NULL DEFAULT 'blacklist';
+    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tool_mode TEXT NOT NULL DEFAULT 'blacklist';
+    UPDATE chats SET tool_mode = 'whitelist' WHERE tools_enabled = FALSE;
+    UPDATE user_settings SET tool_mode = 'whitelist' WHERE use_tools = FALSE;
+    ALTER TABLE chats DROP CONSTRAINT IF EXISTS chats_tool_mode_valid;
+    ALTER TABLE chats ADD CONSTRAINT chats_tool_mode_valid CHECK (tool_mode IN ('blacklist', 'whitelist'));
+    ALTER TABLE user_settings DROP CONSTRAINT IF EXISTS user_settings_tool_mode_valid;
+    ALTER TABLE user_settings ADD CONSTRAINT user_settings_tool_mode_valid CHECK (tool_mode IN ('blacklist', 'whitelist'));
+    ALTER TABLE chats DROP COLUMN IF EXISTS tools_enabled;
+    ALTER TABLE user_settings DROP COLUMN IF EXISTS use_tools;
+    CREATE TABLE IF NOT EXISTS tool_names (
+        id BIGSERIAL PRIMARY KEY,
+        chat_id BIGINT REFERENCES chats (id) ON DELETE CASCADE,
+        user_id BIGINT REFERENCES users (id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        CONSTRAINT tool_names_one_owner CHECK ((chat_id IS NULL) <> (user_id IS NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tool_names_chat_name ON tool_names (chat_id, name) WHERE chat_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS tool_names_user_name ON tool_names (user_id, name) WHERE user_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS tool_names_chat ON tool_names (chat_id);
+    CREATE INDEX IF NOT EXISTS tool_names_user ON tool_names (user_id);
+";
+
 /// What version 23 added on top of version 22: the record of the external plugins the backend has loaded (what they are,
 /// where they came from, whether they are running and why not)
 const V23_ADDITIONS: &str = "
@@ -447,6 +474,7 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
         Some(23) => return upgrade_v23_to_v26(db).await,
         Some(24) => return upgrade_v24_to_v26(db).await,
         Some(25) => return upgrade_v25_to_v26(db).await,
+        Some(26) => return upgrade_v26_to_v27(db).await,
         Some(other) => {
             return Err(DbErr::Custom(format!(
                 "the database is at schema version {other}, but this build understands version {SCHEMA_VERSION}; \
@@ -471,10 +499,19 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
+/// Version 26 → 27, in place: a tool selection (`blacklist` or `whitelist`) on chats and user settings, and the names it lists.
+async fn upgrade_v26_to_v27(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
+    txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE")).await?;
+    txn.commit().await
+}
+
 /// Version 25 → 26, in place: adds `user_settings.suggest_next`, `chats.suggestion` and `chats.suggestion_for_message_id`. One transaction.
 async fn upgrade_v25_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE")).await?;
     txn.commit().await
 }
@@ -484,6 +521,7 @@ async fn upgrade_v24_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE")).await?;
     txn.commit().await
 }
@@ -494,6 +532,7 @@ async fn upgrade_v23_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE")).await?;
     txn.commit().await
 }
@@ -505,6 +544,7 @@ async fn upgrade_v22_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE")).await?;
     txn.commit().await
 }
@@ -517,6 +557,7 @@ async fn upgrade_v21_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -531,6 +572,7 @@ async fn upgrade_v20_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -546,6 +588,7 @@ async fn upgrade_v19_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -562,6 +605,7 @@ async fn upgrade_v18_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -579,6 +623,7 @@ async fn upgrade_v17_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -597,6 +642,7 @@ async fn upgrade_v16_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -616,6 +662,7 @@ async fn upgrade_v15_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -636,6 +683,7 @@ async fn upgrade_v14_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -657,6 +705,7 @@ async fn upgrade_v13_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -679,6 +728,7 @@ async fn upgrade_v12_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -713,6 +763,7 @@ async fn upgrade_v2_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -746,6 +797,7 @@ async fn upgrade_v3_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -777,6 +829,7 @@ async fn upgrade_v4_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -807,6 +860,7 @@ async fn upgrade_v5_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -836,6 +890,7 @@ async fn upgrade_v6_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -863,6 +918,7 @@ async fn upgrade_v7_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -886,6 +942,7 @@ async fn upgrade_v11_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -910,6 +967,7 @@ async fn upgrade_v10_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -937,6 +995,7 @@ async fn upgrade_v9_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -963,6 +1022,7 @@ async fn upgrade_v8_to_v26(db: &DatabaseConnection) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     txn.execute_unprepared(&format!("UPDATE schema_meta SET version = {SCHEMA_VERSION} WHERE id = TRUE"))
         .await?;
     txn.commit().await
@@ -1167,6 +1227,7 @@ async fn create_schema(txn: &DatabaseTransaction) -> Result<(), DbErr> {
     txn.execute_unprepared(V24_ADDITIONS).await?;
     txn.execute_unprepared(V25_ADDITIONS).await?;
     txn.execute_unprepared(V26_ADDITIONS).await?;
+    txn.execute_unprepared(V27_ADDITIONS).await?;
     Ok(())
 }
 

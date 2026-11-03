@@ -17,6 +17,7 @@ use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, N
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallKind, EventBus, ServerEvent};
 use crate::services::llm::{CallParams, ChatMessage, ChatResponse, LlmProvider, ReplyPiece, ThinkChoice};
+use crate::services::tool_selection_store::ToolSelectionStore;
 use crate::services::tools::ToolService;
 use crate::tools::base::Tool;
 use crate::tools::subagent;
@@ -143,6 +144,7 @@ enum Asked {
 #[derive(Clone)]
 pub(super) struct Turn {
     chat_store: Arc<ChatStore>,
+    tool_selection: Arc<ToolSelectionStore>,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
     history: History,
@@ -154,6 +156,7 @@ pub(super) struct Turn {
 impl Turn {
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
+        tool_selection: Arc<ToolSelectionStore>,
         tools: Arc<ToolService>,
         events: Arc<EventBus>,
         history: History,
@@ -161,7 +164,14 @@ impl Turn {
         compaction: Compaction,
         tool_calls: ToolCalls,
     ) -> Self {
-        Self { chat_store, tools, events, history, model, compaction, tool_calls }
+        Self { chat_store, tool_selection, tools, events, history, model, compaction, tool_calls }
+    }
+
+    /// Whether `chat_id`'s prompt is the one that talks about tools. A run reads this before it asks history to build that prompt.
+    pub(super) async fn prompt_has_tools(&self, chat_id: i64) -> Result<bool, ErrorService> {
+        let chat = self.chat_store.chat(chat_id).await?;
+        let (_, has_tools) = self.tool_selection.listed(chat_id, chat.tool_mode).await?;
+        Ok(has_tools)
     }
 
     /// Lets go of the claim a turn has on the model server: the run is over.
@@ -229,13 +239,15 @@ impl Turn {
     /// The tools a request for `chat` is sent, out of the full set. Which ones depends on whether this chat
     /// is a sub-agent's — see `subagent::available_to`. Filtering the list (rather than only refusing a call)
     /// is what keeps a sub-agent from being able to try starting one of its own.
-    pub(super) fn tools_for(chat: &Chat, all: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
-        // A chat without tools sends none: the definitions are most of what a small window has to spare
-        if !chat.tools_enabled {
+    pub(super) fn tools_for(chat: &Chat, names: &[String], all: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+        // An empty whitelist sends none: the definitions are most of what a small window has to spare
+        if !chat.tool_mode.prompt_has_tools(names) {
             return Vec::new();
         }
         let is_subagent = chat.parent_chat_id.is_some();
-        all.into_iter().filter(|t| subagent::available_to(t.function_name(), is_subagent)).collect()
+        all.into_iter()
+            .filter(|tool| subagent::available_to(tool.function_name(), is_subagent) && chat.tool_mode.allows(names, tool.function_name()))
+            .collect()
     }
 
     /// The request: the chat's model, provider, tools and call parameters, and the messages with the
@@ -255,7 +267,8 @@ impl Turn {
         // between turns, and changes only at a fold
         self.history.start_memory(&mut chat, messages.len()).await?;
 
-        let tools = Self::tools_for(&chat, tools_snapshot);
+        let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+        let tools = Self::tools_for(&chat, &names, tools_snapshot);
         let provider = self.model.provider(&chat)?;
         let params = self.model.params(&chat).await?;
         let loaded_ms = self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;
@@ -272,7 +285,7 @@ impl Turn {
         // The user's own system prompt, if they set one — fetched once per turn, the same
         // as the chat row above, so a change (or reset) takes effect from the next turn,
         // exactly like a model switch. A user without one gets the built-in default.
-        let system_prompt = self.history.system_prompt(&chat, &mut messages).await?;
+        let system_prompt = self.history.system_prompt(&chat, &mut messages, has_tools).await?;
 
         // Collected now, while `messages` still holds this turn's history, so it
         // survives the `extend` below. Only actually used once we know this response
@@ -488,7 +501,7 @@ impl Turn {
             })
             .await?;
 
-        let fresh_messages = self.history.for_chat(chat_id).await?;
+        let fresh_messages = self.history.for_chat(chat_id, self.prompt_has_tools(chat_id).await?).await?;
         let next = Step {
             chat_id,
             messages: fresh_messages,

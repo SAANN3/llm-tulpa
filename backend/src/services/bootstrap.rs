@@ -25,7 +25,7 @@ use crate::services::{
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
     llama_runtime::LlamaRuntime, llm::LlmProviders, memory_store::MemoryStore, migrate::run_migrations, preset_store::PresetStore,
     migrate::adopt_legacy_data, model_store::ModelStore, permission_store::PermissionStore,
-    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, stt::SttService, tools::ToolService,
+    plugin_settings_store::PluginSettingsStore, settings_store::SettingsStore, stt::SttService, tool_selection_store::ToolSelectionStore, tools::ToolService,
     user_store::UserStore,
 };
 
@@ -39,6 +39,7 @@ pub struct AppServices {
     pub user_store: Arc<UserStore>,
     pub chat_store: Arc<ChatStore>,
     pub settings_store: Arc<SettingsStore>,
+    pub tool_selection: Arc<ToolSelectionStore>,
     pub model_store: Arc<ModelStore>,
     pub permission_store: Arc<PermissionStore>,
     pub file_store: Arc<FileStore>,
@@ -246,6 +247,7 @@ pub async fn bootstrap(
         plugin_events.clone(),
     ));
     let settings_store = Arc::new(SettingsStore::new(db.clone(), model_store.clone()));
+    let tool_selection = Arc::new(ToolSelectionStore::new(db.clone()));
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
@@ -270,6 +272,7 @@ pub async fn bootstrap(
         stt.clone(),
         permission_store.clone(),
         settings_store.clone(),
+        tool_selection.clone(),
         preset_store.clone(),
         launches.clone(),
         Some(plugin_registry.clone()),
@@ -304,6 +307,7 @@ pub async fn bootstrap(
         stt,
         permission_store.clone(),
         settings_store.clone(),
+        tool_selection.clone(),
         preset_store.clone(),
         launches.clone(),
         None,
@@ -337,6 +341,7 @@ pub async fn bootstrap(
         user_store,
         chat_store,
         settings_store,
+        tool_selection,
         model_store,
         permission_store,
         file_store,

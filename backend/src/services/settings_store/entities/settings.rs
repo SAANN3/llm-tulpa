@@ -34,8 +34,8 @@ pub struct Model {
     pub auto_confirm: bool,
     /// Whether old thinking traces in a long chat are shortened to their tail at the compaction trigger.
     pub trim_old_thinking: bool,
-    /// Whether a new chat sends the model its tools.
-    pub use_tools: bool,
+    /// `blacklist` or `whitelist`: the tool selection a new chat copies when the request does not name one.
+    pub tool_mode: String,
     /// Whether the model suggests, after a reply, what the user might write next.
     pub suggest_next: bool,
     /// How many model calls one turn may make before it is stopped; `NULL` for no limit.

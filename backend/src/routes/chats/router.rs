@@ -6,6 +6,7 @@ use axum::{
 };
 use utoipa::OpenApi;
 
+use crate::services::tool_selection_store::ToolMode;
 use crate::state::AppState;
 
 use super::context::*;
@@ -26,6 +27,8 @@ use super::set_folder::*;
 use super::set_model::*;
 use super::set_profile::*;
 use super::set_seen::*;
+use super::available_tools::*;
+use super::get_tools::*;
 use super::set_tools::*;
 use super::unseen::*;
 
@@ -37,7 +40,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/model", post(set_model))
         .route("/profile", post(set_profile))
         .route("/seen", post(set_seen))
-        .route("/tools", post(set_tools))
+        .route("/tools", get(get_tools).post(set_tools))
+        .route("/available_tools", get(available_tools))
         .route("/folder", post(set_folder))
         .route("/messages", get(get_messages))
         .route("/search", get(search_messages))
@@ -53,8 +57,9 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, set_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models, chat_context, edit_facts, edit_summary, edit_notes, unseen_chats),
+    paths(get_chats, create_chat, delete_chat, rename_chat, rewind_chat, set_model, set_profile, set_seen, get_tools, set_tools, available_tools, set_folder, get_messages, search_messages, find_chats, export_chat, recent_models, chat_context, edit_facts, edit_summary, edit_notes, unseen_chats),
     components(schemas(
+        ToolMode,
         ChatOut,
         ChatListOut,
         GetChatsResponse,
@@ -65,6 +70,9 @@ pub fn router() -> Router<Arc<AppState>> {
         SetModelRequest,
         SetProfileRequest,
         SetToolsRequest,
+        ToolChoiceOut,
+        AvailableToolOut,
+        AvailableToolsOut,
         SetSeenRequest,
         SetFolderRequest,
         MessageToolCallOut,

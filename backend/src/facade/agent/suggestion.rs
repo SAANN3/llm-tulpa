@@ -17,6 +17,7 @@ use super::model_call::ModelCall;
 use super::prompts;
 use super::turn::Turn;
 use crate::services::chat_store::ChatStore;
+use crate::services::tool_selection_store::ToolSelectionStore;
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{EventBus, ServerEvent};
 use crate::services::llm::{ChatMessage, ThinkChoice};
@@ -36,6 +37,7 @@ const SUGGESTION_CHARS: usize = 200;
 #[derive(Clone)]
 pub(super) struct Suggestion {
     chat_store: Arc<ChatStore>,
+    tool_selection: Arc<ToolSelectionStore>,
     settings_store: Arc<SettingsStore>,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
@@ -48,13 +50,14 @@ pub(super) struct Suggestion {
 impl Suggestion {
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
+        tool_selection: Arc<ToolSelectionStore>,
         settings_store: Arc<SettingsStore>,
         tools: Arc<ToolService>,
         events: Arc<EventBus>,
         history: History,
         model: ModelCall,
     ) -> Self {
-        Self { chat_store, settings_store, tools, events, history, model, running: Arc::new(Mutex::new(HashMap::new())) }
+        Self { chat_store, tool_selection, settings_store, tools, events, history, model, running: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Starts writing the suggestion for the reply a run has just ended with, in the background.
@@ -103,13 +106,14 @@ impl Suggestion {
             return Ok(());
         }
 
-        let mut messages = self.history.for_chat(chat_id).await?;
-        let system_prompt = self.history.system_prompt(&chat, &mut messages).await?;
+        let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+        let mut messages = self.history.for_chat(chat_id, has_tools).await?;
+        let system_prompt = self.history.system_prompt(&chat, &mut messages, has_tools).await?;
         let mut request = vec![ChatMessage::system(system_prompt)];
         request.extend(messages);
         request.push(ChatMessage::user(prompts::SUGGEST_NEXT.to_string()));
 
-        let tools = Turn::tools_for(&chat, self.tools.snapshot_tools(chat.user_id).await);
+        let tools = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
         let tools: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let mut params = self.model.params(&chat).await?;
         params.max_reply_tokens = Some(SUGGESTION_TOKENS);

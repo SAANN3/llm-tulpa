@@ -24,6 +24,7 @@ use crate::plugins::events::{PluginEvent, PluginEventKind, PluginEvents};
 use crate::services::folder_store::{FolderStore, FolderStoreErrors};
 use crate::services::launch_store::{LaunchStore, LaunchStoreErrors};
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
+use crate::services::tool_selection_store::ToolMode;
 use crate::services::user_store::{UserStore, UserStoreErrors};
 
 /// Owns chat/message persistence, scoped per user. SeaORM entities are private to this
@@ -230,7 +231,7 @@ impl ChatStore {
                     .get(&row.model_id)
                     .cloned()
                     .ok_or(ChatStoreErrors::NotFound)?;
-                Ok(Self::build_chat(row, model))
+                Self::build_chat(row, model)
             })
             .collect()
     }
@@ -239,8 +240,8 @@ impl ChatStore {
         Ok(self.to_chats(vec![row]).await?.remove(0))
     }
 
-    fn build_chat(row: chats::Model, model: ModelRef) -> Chat {
-        Chat {
+    fn build_chat(row: chats::Model, model: ModelRef) -> Result<Chat, ChatStoreErrors> {
+        Ok(Chat {
             id: row.id,
             user_id: row.user_id,
             name: row.name,
@@ -260,11 +261,11 @@ impl ChatStore {
             notes_pending: row.notes_pending,
             cleared_up_to_message_id: row.cleared_up_to_message_id,
             thinking_trimmed_up_to_message_id: row.thinking_trimmed_up_to_message_id,
-            tools_enabled: row.tools_enabled,
+            tool_mode: ToolMode::try_from(row.tool_mode.as_str()).map_err(|_| ChatStoreErrors::CorruptToolMode)?,
             unseen_end: row.unseen_end,
             think_level: row.think_level,
             memory_snapshot: row.memory_snapshot,
-        }
+        })
     }
 
     /// Messages for a chat, newest first (`skip` counts from the newest end). Each message
@@ -661,20 +662,20 @@ impl ChatStore {
     /// Creates an ordinary (non-plugin) chat owned by `user_id`, on their default model (see
     /// `binding_for_new_chat`), with or without tools. Errs `Model(NoModel)` when no model exists at all — a
     /// chat can't be created without one.
-    pub async fn create_chat(&self, user_id: i64, name: String, tools_enabled: bool) -> Result<Chat, ChatStoreErrors> {
+    pub async fn create_chat(&self, user_id: i64, name: String, tool_mode: ToolMode) -> Result<Chat, ChatStoreErrors> {
         let (model, launch_profile_id) = self.binding_for_new_chat(user_id).await?;
         let row = chats::ActiveModel {
             user_id: Set(user_id),
             name: Set(name),
             model_id: Set(model.id),
             launch_profile_id: Set(launch_profile_id),
-            tools_enabled: Set(tools_enabled),
+            tool_mode: Set(tool_mode.to_string()),
             ..Default::default()
         }
         .insert(&self.db)
         .await?;
 
-        let chat = Self::build_chat(row, model);
+        let chat = Self::build_chat(row, model)?;
         self.plugin_events.fire(PluginEvent::ChatCreated { user_id, chat_id: chat.id, state: &chat }).await;
         Ok(chat)
     }
@@ -691,6 +692,7 @@ impl ChatStore {
             folder_id: Set(parent.folder_id),
             parent_chat_id: Set(Some(parent.id)),
             launch_profile_id: Set(parent.launch_profile_id),
+            tool_mode: Set(parent.tool_mode.to_string()),
             ..Default::default()
         }
         .insert(&self.db)
@@ -701,12 +703,11 @@ impl ChatStore {
         Ok(chat)
     }
 
-    /// Sets whether the model is sent its tools in a chat, from the chat's next request on. Ownership is
-    /// the caller's responsibility.
-    pub async fn set_tools_enabled(&self, chat_id: i64, tools_enabled: bool) -> Result<(), ChatStoreErrors> {
+    /// Sets a chat's tool mode. The names it lists are `ToolSelectionStore`'s. The measured prompt size no
+    /// longer describes the next request. Ownership is the caller's responsibility.
+    pub async fn set_tool_mode(&self, chat_id: i64, mode: ToolMode) -> Result<(), ChatStoreErrors> {
         self.chat(chat_id).await?;
-        // The measured prompt size (which has the tool definitions in it or not) no longer describes the next request
-        chats::ActiveModel { id: Set(chat_id), tools_enabled: Set(tools_enabled), last_prompt_tokens: Set(None), ..Default::default() }
+        chats::ActiveModel { id: Set(chat_id), tool_mode: Set(mode.to_string()), last_prompt_tokens: Set(None), ..Default::default() }
             .update(&self.db)
             .await?;
         Ok(())
@@ -948,7 +949,7 @@ impl ChatStore {
         .insert(&self.db)
         .await?;
 
-        let chat = Self::build_chat(chat, model);
+        let chat = Self::build_chat(chat, model)?;
         self.plugin_events.fire(PluginEvent::ChatCreated { user_id: owner, chat_id: chat.id, state: &chat }).await;
         Ok(chat)
     }
@@ -1442,8 +1443,8 @@ pub struct Chat {
     /// Thinking traces up to and including this message id are replayed as their tail only (see
     /// `facade::clearing`); NULL when none are.
     pub thinking_trimmed_up_to_message_id: Option<i64>,
-    /// Whether the model is sent its tools in this chat (see `chats.tools_enabled`).
-    pub tools_enabled: bool,
+    /// Which tools this chat sends. The names that mode lists live in `ToolSelectionStore`.
+    pub tool_mode: ToolMode,
     /// How the last run ended, until the user has looked at the chat (see `chats.unseen_end`).
     pub unseen_end: Option<String>,
     /// The part of the system prompt the user's memory made when the chat started or last folded (see
@@ -1739,6 +1740,8 @@ pub enum ChatStoreErrors {
     Launch(LaunchStoreErrors),
     /// The request can't be carried out in the chat's current state; the text says why
     Conflict(String),
+    /// `chats.tool_mode` is neither mode. The column's check should make this unreachable.
+    CorruptToolMode,
 }
 
 impl From<UserStoreErrors> for ChatStoreErrors {
@@ -1784,6 +1787,7 @@ impl From<ChatStoreErrors> for ErrorService {
             ChatStoreErrors::Launch(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
             ChatStoreErrors::Conflict(why) => ErrorService::new(StatusCode::CONFLICT, why),
+            ChatStoreErrors::CorruptToolMode => ErrorService::internal("a chat's tool mode is neither blacklist nor whitelist"),
         }
     }
 }

@@ -8,7 +8,7 @@ use sea_orm::prelude::DateTimeUtc;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::ErrorService, services::tool_selection_store::ToolMode, state::AppState};
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct GetChatsQuery {
@@ -48,8 +48,8 @@ pub(crate) struct ChatOut {
     /// The launch profile this chat runs on (which implies its model), or `null` for a chat on a
     /// model that has none.
     pub(crate) launch_profile_id: Option<i64>,
-    /// Whether the model is sent its tools in this chat.
-    pub(crate) tools_enabled: bool,
+    /// Which tools this chat sends. The names that mode lists are `GET /api/chats/tools`.
+    pub(crate) tool_mode: ToolMode,
     /// How the last run on this chat ended, until the chat is opened (`POST /api/chats/seen`): `answered`,
     /// `waiting_for_permission`, `failed` or `step_limit`. `null` when there is nothing new.
     pub(crate) unseen_end: Option<String>,
@@ -113,7 +113,7 @@ pub async fn get_chats(
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
-            tools_enabled: chat.tools_enabled,
+            tool_mode: chat.tool_mode,
             unseen_end: chat.unseen_end,
             think_level: chat.think_level,
             suggestion,
@@ -141,7 +141,7 @@ pub async fn get_chats(
             folder_id: chat.folder_id,
             parent_chat_id: chat.parent_chat_id,
             launch_profile_id: chat.launch_profile_id,
-            tools_enabled: chat.tools_enabled,
+            tool_mode: chat.tool_mode,
             unseen_end: chat.unseen_end,
             think_level: chat.think_level,
             suggestion: None,

@@ -494,7 +494,7 @@ impl TurnRunner {
         self.store_user_message(chat_id, prompt, images, vec![]).await?;
         self.turn.make_room(chat_id, think.clone(), 0, None).await;
         let notices = self.notices.flush_job_notices(chat_id).await?;
-        let messages = self.history.for_chat(chat_id).await?;
+        let messages = self.history.for_chat(chat_id, self.turn.prompt_has_tools(chat_id).await?).await?;
         let step = Step { chat_id, messages, think, notices, can_auto_continue: true, step_limit: None, run: RunTracker::new() };
         self.turn.step(step).await?.into_reply()
     }
@@ -753,7 +753,7 @@ impl TurnRunner {
             if !notices.is_empty() {
                 self.events.publish(ServerEvent::MessagesChanged { chat_id });
             }
-            let mut messages = self.history.for_chat(chat_id).await?;
+            let mut messages = self.history.for_chat(chat_id, self.turn.prompt_has_tools(chat_id).await?).await?;
             if replace.is_some() {
                 // The reply being replaced is still stored; the model must not see it
                 messages.pop();

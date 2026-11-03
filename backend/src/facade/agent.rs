@@ -19,6 +19,7 @@ use crate::services::{
     preset_store::PresetStore,
     settings_store::SettingsStore,
     stt::SttService,
+    tool_selection_store::ToolSelectionStore,
     tools::ToolService,
 };
 use crate::facade::launch::LaunchFacade;
@@ -86,6 +87,8 @@ pub struct Agent {
     context: ContextReader,
     /// Per-user settings: auto-confirm for a sub-agent's run.
     settings_store: Arc<SettingsStore>,
+    /// Copies a parent chat's listed tool names onto the sub-agent's chat.
+    tool_selection: Arc<ToolSelectionStore>,
     /// One permit: sub-agents run one at a time. They all use the same model on the same GPU, and
     /// two of them taking turns would each evict the other's cached prompt on every call — slower
     /// for both than running back to back.
@@ -107,6 +110,7 @@ impl Agent {
         stt: Arc<SttService>,
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
+        tool_selection: Arc<ToolSelectionStore>,
         presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
         plugins: Option<Arc<PluginRegistry>>,
@@ -133,9 +137,10 @@ impl Agent {
             };
         let history = History::new(chat_store.clone(), settings_store.clone(), plugins, memory_store.clone());
         let model = ModelCall::new(providers.clone(), presets, launch, context_length);
-        let context = ContextReader::new(chat_store.clone(), tools.clone(), history.clone(), model.clone());
+        let context = ContextReader::new(chat_store.clone(), tool_selection.clone(), tools.clone(), history.clone(), model.clone());
         let compaction = Compaction::new(
             chat_store.clone(),
+            tool_selection.clone(),
             settings_store.clone(),
             memory_store,
             tools.clone(),
@@ -147,6 +152,7 @@ impl Agent {
         let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
         let turn = Turn::new(
             chat_store.clone(),
+            tool_selection.clone(),
             tools.clone(),
             tool_context.events.clone(),
             history.clone(),
@@ -161,6 +167,7 @@ impl Agent {
         );
         let suggestion = Suggestion::new(
             chat_store.clone(),
+            tool_selection.clone(),
             settings_store.clone(),
             tools.clone(),
             tool_context.events.clone(),
@@ -187,6 +194,7 @@ impl Agent {
             tool_context,
             context,
             settings_store,
+            tool_selection,
             subagent_slot: Arc::new(Semaphore::new(1)),
         }
     }

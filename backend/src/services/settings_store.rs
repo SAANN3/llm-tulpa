@@ -8,6 +8,7 @@ use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, SqlErr};
 
 use crate::services::error::ErrorService;
 use crate::services::model_store::{ModelRef, ModelStore, ModelStoreErrors};
+use crate::services::tool_selection_store::ToolMode;
 
 /// The provider reported for a user who hasn't picked a model yet.
 const DEFAULT_PROVIDER: &str = "llama-cpp";
@@ -88,7 +89,7 @@ impl SettingsStore {
             language: row.language,
             auto_confirm: row.auto_confirm,
             trim_old_thinking: row.trim_old_thinking,
-            use_tools: row.use_tools,
+            tool_mode: ToolMode::try_from(row.tool_mode.as_str()).map_err(|_| SettingsStoreErrors::CorruptToolMode)?,
             suggest_next: row.suggest_next,
             max_turn_steps: row.max_turn_steps,
             memory_enabled: row.memory_enabled,
@@ -173,8 +174,8 @@ impl SettingsStore {
         if let Some(trim) = update.trim_old_thinking {
             model.trim_old_thinking = Set(trim);
         }
-        if let Some(use_tools) = update.use_tools {
-            model.use_tools = Set(use_tools);
+        if let Some(tool_mode) = update.tool_mode {
+            model.tool_mode = Set(tool_mode.to_string());
         }
         if let Some(suggest_next) = update.suggest_next {
             model.suggest_next = Set(suggest_next);
@@ -246,9 +247,10 @@ impl SettingsStore {
         Ok(self.row(user_id).await?.trim_old_thinking)
     }
 
-    /// Whether a new chat of this user sends the model its tools.
-    pub async fn use_tools(&self, user_id: i64) -> Result<bool, SettingsStoreErrors> {
-        Ok(self.row(user_id).await?.use_tools)
+    /// The tool mode a new chat copies. The names it lists are `ToolSelectionStore`'s.
+    pub async fn tool_mode(&self, user_id: i64) -> Result<ToolMode, SettingsStoreErrors> {
+        let raw = self.row(user_id).await?.tool_mode;
+        ToolMode::try_from(raw.as_str()).map_err(|_| SettingsStoreErrors::CorruptToolMode)
     }
 
     /// Whether the model suggests, after each reply in this user's chats, what they might write next.
@@ -319,9 +321,8 @@ pub struct Settings {
     /// In a long chat, thinking traces from earlier turns are shortened to their tail when the
     /// context nears its limit, and the newest traces are replayed in more of their length.
     pub trim_old_thinking: bool,
-    /// New chats send the model its tools. Off for a model too small for them, or a window they would
-    /// mostly fill; a chat keeps the value it was created with and has its own switch.
-    pub use_tools: bool,
+    /// The tool mode a new chat copies when the request does not name one.
+    pub tool_mode: ToolMode,
     /// After a reply, the model writes one line of what the user might send next, shown in the empty message box.
     pub suggest_next: bool,
     /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
@@ -356,7 +357,7 @@ pub struct SettingsUpdate {
     pub language: Option<String>,
     pub auto_confirm: Option<bool>,
     pub trim_old_thinking: Option<bool>,
-    pub use_tools: Option<bool>,
+    pub tool_mode: Option<ToolMode>,
     pub suggest_next: Option<bool>,
     /// The turn step limit, 0 for none
     pub max_turn_steps: Option<i32>,
@@ -416,6 +417,8 @@ pub enum SettingsStoreErrors {
     InvalidTurnSteps(i32),
     /// A memory limit outside its range: what it counts, the value, the range.
     InvalidMemoryLimit(&'static str, i32, std::ops::RangeInclusive<i32>),
+    /// `user_settings.tool_mode` is neither mode. The column's check should make this unreachable.
+    CorruptToolMode,
 }
 
 impl From<DbErr> for SettingsStoreErrors {
@@ -457,6 +460,7 @@ impl From<SettingsStoreErrors> for ErrorService {
                 StatusCode::BAD_REQUEST,
                 format!("a custom system prompt may be at most {max} characters"),
             ),
+            SettingsStoreErrors::CorruptToolMode => ErrorService::internal("the tool mode is neither blacklist nor whitelist"),
         }
     }
 }
