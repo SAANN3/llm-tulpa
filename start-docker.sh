@@ -60,7 +60,27 @@ ADDRESSES="$(ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cu
 TLS_NAMES="localhost,127.0.0.1,$(hostname 2>/dev/null),$ADDRESSES"
 export TLS_NAMES="$(echo "$TLS_NAMES" | tr -s ',' | sed 's/^,//;s/,$//')"
 
+# Buildx treats a host-network build as a privilege and refuses it unless the
+# build command grants it. Compose's `up --build` has no way to pass that, so
+# the build goes through bake. A Buildx without `--allow` still builds the old way.
+compose_build() {
+  if docker buildx bake --help 2>&1 | grep -q -- '--allow'; then
+    bake=$(mktemp)
+    # shellcheck disable=SC2086
+    # --print on a terminal otherwise dies with "failed to get console".
+    docker compose --progress plain "$@" --print > "$bake"
+    # tty progress asks the terminal for a console and fails when it is not one.
+    docker buildx bake --progress=plain --allow network.host -f "$bake"
+    rm -f "$bake"
+  else
+    # shellcheck disable=SC2086
+    docker compose "$@"
+  fi
+}
+
 # --build is cheap when nothing changed — Docker's layer cache skips every step
 # whose inputs haven't changed, so this only actually rebuilds what you edited.
 # shellcheck disable=SC2086
-HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose $FILES up -d --build --remove-orphans
+HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") compose_build $FILES build
+# shellcheck disable=SC2086
+HOST_UID=$(id -u) HOST_GID=$(id -g "$(whoami)") docker compose $FILES up -d --no-build --remove-orphans

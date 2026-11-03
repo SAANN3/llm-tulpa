@@ -51,6 +51,22 @@ ln -sfn ../../data-native "$LINK"
 command -v cargo >/dev/null 2>&1 || { echo "cargo isn't installed: https://rustup.rs" >&2; exit 1; }
 
 export HOST_UID="$(id -u)" HOST_GID="$(id -g "$(whoami)")"
+
+# Buildx treats a host-network build as a privilege and refuses it unless the
+# build command grants it. Compose's `up --build` has no way to pass that, so
+# the build goes through bake. A Buildx without `--allow` still builds the old way.
+compose_build() {
+  if docker buildx bake --help 2>&1 | grep -q -- '--allow'; then
+    bake=$(mktemp)
+    # --print on a terminal otherwise dies with "failed to get console".
+    docker compose --progress plain "$@" --print > "$bake"
+    # tty progress asks the terminal for a console and fails when it is not one.
+    docker buildx bake --progress=plain --allow network.host -f "$bake"
+    rm -f "$bake"
+  else
+    docker compose "$@"
+  fi
+}
 # The https certificate of the frontend container (voice input needs a secure page): its folder, which the backend
 # also reads and writes (its `tls_dir` defaults to the same place), made here so Docker doesn't create it as root, and
 # the names the self-signed certificate is made for: this machine's, so the address you open it by is on it.
@@ -64,7 +80,8 @@ export TLS_NAMES="$(echo "$TLS_NAMES" | tr -s ',' | sed 's/^,//;s/,$//')"
 docker compose stop backend 2>/dev/null || true
 docker compose up -d postgres searxng searxng-nginx
 # --no-deps: the frontend would otherwise start the backend container too
-docker compose up -d --build --no-deps frontend
+compose_build build frontend
+docker compose up -d --no-build --no-deps frontend
 
 cd backend
 exec cargo run --release
