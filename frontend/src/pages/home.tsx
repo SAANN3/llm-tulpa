@@ -3,6 +3,8 @@ import {useEffect, useRef, useState} from 'react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/home.scss'
 import type {ThinkChoice} from '../api/agent/types'
+import type {ToolChoice} from '../api/settings/types.ts'
+import {ChatToolsPopup} from '../components/popups/chat-tools-popup.tsx'
 import {Mark} from '../components/mark.tsx'
 import {Div, Label} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
@@ -29,6 +31,9 @@ const Home = () => {
     // A model picked for the chat about to be started, instead of the user's default: the default in the settings
     // is not touched
     const [startOn, setStartOn] = useState<ModelChoice | null>(null)
+    // Null copies the user's tool selection. A value is only for the chat about to be started.
+    const [toolStart, setToolStart] = useState<ToolChoice | null>(null)
+    const [toolsOpen, setToolsOpen] = useState(false)
 
     // A prompt handed over in the link as /?prompt=..., already percent-decoded
     const launchPrompt = searchParams.get('prompt')?.trim() || null
@@ -38,9 +43,10 @@ const Home = () => {
         setCreating(true)
         try {
             const name = await chatName(prompt, images)
-            const chat = await createChat(name, startOn
-                ? (startOn.profileId != null ? {launchProfileId: startOn.profileId} : {model: startOn.model, provider: startOn.provider})
-                : undefined)
+            const chat = await createChat(name, {
+                ...(startOn ? (startOn.profileId != null ? {launchProfileId: startOn.profileId} : {model: startOn.model, provider: startOn.provider}) : {}),
+                ...(toolStart ? {toolMode: toolStart.mode, tools: toolStart.tools} : {}),
+            })
             setPendingPrompt(chat.id, prompt, think, images, fileIds)
             navigate(`/chat?id=${chat.id}`, {replace})
         } finally {
@@ -125,7 +131,12 @@ const Home = () => {
                         onModelPicked={(choice) => setStartOn(defaultChoice && sameChoice(choice, defaultChoice) ? null : choice)}
                         onUseDefault={startOn ? () => setStartOn(null) : undefined}
                         defaultChoice={defaultChoice}
+                        onTools={() => setToolsOpen(true)}
+                        toolsCustom={toolStart != null}
                     />
+                    <ChatToolsPopup open={toolsOpen} initial={toolStart} onClose={() => setToolsOpen(false)}
+                                    onUse={(choice) => { setToolStart(choice); setToolsOpen(false) }}
+                                    onUseDefault={() => { setToolStart(null); setToolsOpen(false) }}/>
                 </Div>
             </Div>
         </Div>

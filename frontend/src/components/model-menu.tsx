@@ -37,6 +37,10 @@ export interface ModelMenuProps {
     onThinking: (level: string) => void
     /** The level this model starts on for the user, when they chose one */
     defaultLevel?: string | null
+    /** Opens the tool selection for a chat that does not exist yet */
+    onTools?: () => void
+    /** The new chat's tools differ from the user's default */
+    toolsCustom?: boolean
     /** Makes a level the model's default, or (null) takes the choice away; without it the menu offers neither */
     onDefaultLevel?: (level: string | null) => void
     disabled?: boolean
@@ -54,7 +58,7 @@ const thinkingText = (thinking: ThinkingLevels): string => {
 
 /** The composer's model button: the model's short name and its thinking level. Its menu lists the thinking levels
  * and the recently used models; every other model is in the Choose model popup behind "All models…". */
-export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinking, onThinking, defaultLevel, onDefaultLevel, disabled}: ModelMenuProps) => {
+export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinking, onThinking, defaultLevel, onDefaultLevel, onTools, toolsCustom, disabled}: ModelMenuProps) => {
     const {models, profiles} = useProfileCatalog()
     const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
     const [recent, setRecent] = useState<RecentModelOut[]>([])
@@ -141,6 +145,21 @@ export const ModelMenu = ({current, onPick, onUseDefault, defaultChoice, thinkin
             </Button>
             <Popup open={menuAt != null} onClose={() => setMenuAt(null)} position={menuAt ?? {x: 0, y: 0}} corner={corner} className="model-menu__popup">
                 <Div className="model-menu__panel">
+                    {onTools ? (
+                        <>
+                            <Label variant="secondary" className="model-menu__section" text="Tools"/>
+                            <Div className="model-menu__item" onClick={() => {
+                                setMenuAt(null)
+                                onTools()
+                            }}>
+                                <span className="model-menu__entry-name">
+                                    <Label text="Tools"/>
+                                    {toolsCustom ? <span className="model-menu__mark">*</span> : null}
+                                </span>
+                            </Div>
+                            <Div className="model-menu__divider"/>
+                        </>
+                    ) : null}
                     <Label variant="secondary" className="model-menu__section" text="Thinking"/>
                     {thinking ? thinking.levels.map((level) => (
                         <Div key={level}

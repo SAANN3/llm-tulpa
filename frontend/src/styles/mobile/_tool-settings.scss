@@ -1,0 +1,34 @@
+@use '../tokens' as *;
+
+@media (max-width: $mobile-max) {
+  .page.tool-settings {
+    padding: $space-2 $space-3 !important;
+    gap: $space-2 !important;
+  }
+
+  .tool-settings__header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .tool-settings__spacer {
+    display: none !important;
+  }
+
+  .tool-choice__bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .tool-settings__actions,
+  .tool-choice__folds {
+    width: 100% !important;
+  }
+
+  .tool-settings__actions > button,
+  .tool-choice__folds > button {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    justify-content: center !important;
+  }
+}

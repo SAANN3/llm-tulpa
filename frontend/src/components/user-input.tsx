@@ -48,6 +48,9 @@ export interface UserInputProps {
     defaultChoice?: ModelChoice | null
     /** For a chat that doesn't exist yet (the home page): the model picked for it, whose thinking options are offered instead of the default model's */
     startModel?: ThinkingModel | null
+    /** For a new chat: opens the tool selection. Set when that selection is not the user's default, so the button is marked. */
+    onTools?: () => void
+    toolsCustom?: boolean
 }
 
 const DEFAULT_PLACEHOLDER = 'Message...'
@@ -96,6 +99,8 @@ export const UserInput = ({
     onUseDefault,
     defaultChoice,
     startModel,
+    onTools,
+    toolsCustom,
     editing,
     onCancelEdit,
 }: UserInputProps) => {
@@ -139,6 +144,7 @@ export const UserInput = ({
         if (voiceError) setVoiceHint({kind: 'error', message: voiceError})
     }, [voiceError])
     const onMicrophone = () => {
+        if (blocked) return
         if (voiceHintNow) return setVoiceHint(voiceHintNow)
         if (voice.state === 'idle') spokenFrom.current = value
         voice.toggle()
@@ -426,9 +432,10 @@ export const UserInput = ({
                     {onModelPicked ? (
                         <ModelMenu current={modelChoice ?? null} onPick={onModelPicked} onUseDefault={onUseDefault} defaultChoice={defaultChoice}
                                    thinking={thinking} onThinking={chooseThinking}
-                                   defaultLevel={defaultLevel} onDefaultLevel={chooseDefault} disabled={blocked}/>
+                                   defaultLevel={defaultLevel} onDefaultLevel={chooseDefault}
+                                   onTools={onTools} toolsCustom={toolsCustom} disabled={blocked}/>
                     ) : null}
-                    <MicrophoneButton state={voice.state} level={voice.level} unavailable={voiceHintNow != null} onClicked={onMicrophone}/>
+                    <MicrophoneButton state={voice.state} level={voice.level} unavailable={voiceHintNow != null} disabled={blocked} onClicked={onMicrophone}/>
                     <Button className="composer__send" text="Send" onClicked={send} disabled={blocked || !canSend}/>
                 </Div>
             </Div>

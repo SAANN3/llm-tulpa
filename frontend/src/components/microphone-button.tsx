@@ -10,6 +10,8 @@ export interface MicrophoneButtonProps {
     /** Voice input can't be used now (no secure page, no model): the button looks dimmed but still answers a press,
      * with what to do about it */
     unavailable: boolean
+    /** A run is going: the button does nothing until it ends */
+    disabled?: boolean
     onClicked: () => void
 }
 
@@ -22,12 +24,12 @@ const TITLES: Record<SpeechInputState, string> = {
 
 /** The microphone button of the message box: press to speak, press again to finish; the text appears in the box as it is
  * understood */
-export const MicrophoneButton = ({state, level, unavailable, onClicked}: MicrophoneButtonProps) => (
+export const MicrophoneButton = ({state, level, unavailable, disabled, onClicked}: MicrophoneButtonProps) => (
     <Button
-        className={['composer__icon-button', 'composer__mic', state === 'listening' && 'composer__mic--listening', unavailable && 'composer__mic--unavailable'].filter(Boolean).join(' ')}
+        className={['composer__icon-button', 'composer__mic', state === 'listening' && 'composer__mic--listening', unavailable && !disabled && 'composer__mic--unavailable'].filter(Boolean).join(' ')}
         style={{'--mic-level': level} as CSSProperties}
-        title={unavailable ? 'Voice input is not available: press to see why' : TITLES[state]}
-        disabled={state === 'starting' || state === 'finishing'}
+        title={unavailable && !disabled ? 'Voice input is not available: press to see why' : TITLES[state]}
+        disabled={disabled || state === 'starting' || state === 'finishing'}
         onClicked={onClicked}
     >
         <Mic width={20} height={20}/>

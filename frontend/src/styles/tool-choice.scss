@@ -1,0 +1,78 @@
+@use 'tokens' as *;
+
+.tool-choice {
+  gap: $space-4;
+  min-height: 0;
+  flex: 1;
+}
+
+.tool-choice__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $space-4;
+}
+
+.tool-choice__folds {
+  display: flex;
+  align-self: flex-start;
+  align-items: stretch;
+  gap: $space-2;
+  flex-shrink: 0;
+
+  // The mode switch is much taller because each option has a line of help; these two stay one line and share a height
+  button {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.tool-choice__list {
+  gap: $space-4;
+  overflow: auto;
+  min-height: 0;
+}
+
+.tool-choice__domain {
+  gap: $space-1;
+  border-bottom: $line-border dashed var(--color-border);
+  padding-bottom: $space-2;
+}
+
+.tool-choice__domain-row,
+.tool-choice__tool {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+}
+
+.tool-choice__domain-name {
+  flex: 1;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tool-choice__domain-controls {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  flex-shrink: 0;
+}
+
+.tool-choice__tool {
+  padding: $space-2 0 $space-2 $space-5;
+}
+
+.tool-choice__tool-main {
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-choice__desc {
+  font-size: 12px;
+  opacity: 0.7;
+}

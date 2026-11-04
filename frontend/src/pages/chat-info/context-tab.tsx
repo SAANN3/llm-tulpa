@@ -109,7 +109,7 @@ export const ContextTab = ({chat, context}: { chat: ChatOut, context: ChatContex
                 <Div className="chat-info__pane-title"><span>Details</span></Div>
                 <Div className="chat-info__details">
                     <Label variant="secondary" text="Model"/><span>{chat.model}</span>
-                    <Label variant="secondary" text="Tools"/><span>{chat.tools_enabled ? 'on' : 'off'}</span>
+                    <Label variant="secondary" text="Tools"/><span>{chat.tool_mode === 'whitelist' ? 'Whitelist' : 'Blacklist'}</span>
                     <Label variant="secondary" text="Started"/><span>{when(chat.created_at)}</span>
                     <Label variant="secondary" text="Last active"/><span>{when(chat.updated_at)}</span>
                     <Label variant="secondary" text="Messages"/>

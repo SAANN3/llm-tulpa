@@ -226,14 +226,6 @@ export const SuggestNextField = ({enabled, onToggle}: SwitchFieldProps) => (
     </SettingsRow>
 );
 
-/** Whether new chats send the model its tools — each chat has its own switch afterwards */
-export const UseToolsField = ({enabled, onToggle}: SwitchFieldProps) => (
-    <SettingsRow label="Use tools in new chats" accent={!enabled}
-                 help="Tools let the model read and write files, run commands and look things up. Their definitions take about 9,000 tokens of every request, so a small model or a small context window does better without them. Only new chats take this; a chat has its own switch in its menu.">
-        <ToggleSwitch toggled={enabled} onToggled={onToggle}/>
-    </SettingsRow>
-);
-
 /** Whether the model learns things about the user from their chats: saved with the rest of the user's settings */
 export const MemoryEnabledField = ({enabled, onToggle}: SwitchFieldProps) => (
     <SettingsRow label="Remember things about me"

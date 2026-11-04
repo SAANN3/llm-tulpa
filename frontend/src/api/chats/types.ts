@@ -15,8 +15,8 @@ export interface ChatOut {
     parent_chat_id: number | null
     /** The launch profile this chat runs its model under, or null for a model with none (an Ollama model). */
     launch_profile_id: number | null
-    /** Whether the model is sent its tools in this chat. */
-    tools_enabled: boolean
+    /** `blacklist` sends every tool except the listed names. `whitelist` sends only those names. The names are a separate read. */
+    tool_mode: 'blacklist' | 'whitelist'
     /** How the chat's last run ended, until the chat is opened; null when there is nothing new. */
     unseen_end: UnseenEnd | null
     /** The thinking level the chat was last sent with (`off`, `on` or one of its model's levels); null until a turn names one. */

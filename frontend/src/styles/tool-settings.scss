@@ -1,0 +1,30 @@
+@use 'tokens' as *;
+@use 'mobile/tool-settings';
+
+.tool-settings {
+  gap: $space-4;
+  padding: $space-5;
+  box-sizing: border-box;
+  min-height: 0;
+}
+
+.tool-settings__header {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.tool-settings__header-bar,
+.tool-settings__actions {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+}
+
+.tool-settings__spacer {
+  flex: 1;
+}
+
+.tool-settings__status {
+  font-size: 12px;
+}

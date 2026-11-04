@@ -104,7 +104,6 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const [chatModel, setChatModel] = useState<string | null>(null)
     const [chatProvider, setChatProvider] = useState('ollama')
     const [chatProfileId, setChatProfileId] = useState<number | null>(null)
-    const [chatToolsEnabled, setChatToolsEnabled] = useState(true)
     const [chatThinkLevel, setChatThinkLevel] = useState<string | null>(null)
     const [chatSuggestion, setChatSuggestion] = useState<string | null>(null)
     const [contextUsed, setContextUsed] = useState<number | null>(null)
@@ -145,7 +144,6 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 setChatModel(result.model)
                 setChatProvider(result.provider)
                 setChatProfileId(result.launch_profile_id)
-                setChatToolsEnabled(result.tools_enabled)
                 setChatThinkLevel(result.think_level)
                 setChatSuggestion(result.suggestion)
                 setContextUsed(result.last_prompt_tokens)
@@ -374,10 +372,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                             parentChatId={parentChatId ?? null}
                             onSelectSearchResult={jumpToMessage}
                             hasActiveHighlight={searchHighlight != null}
-                            onClearHighlight={() => setSearchHighlight(null)}
-                            toolsEnabled={chatToolsEnabled}
-                            onToolsChanged={setChatToolsEnabled}
-                            runActive={busy}/>
+                            onClearHighlight={() => setSearchHighlight(null)}/>
                 <LazyList ref={lazyListRef} className="chat__list" threshold={LOAD_MORE_THRESHOLD}
                           onTopReached={loadOlder}>
                     {messages.map((m, i) => {

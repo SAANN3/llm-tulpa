@@ -7,7 +7,6 @@ export interface SettingsDraft {
     notifications: boolean
     autoConfirm: boolean
     trimOldThinking: boolean
-    useTools: boolean
     suggestNext: boolean
     maxTurnStepsText: string
     memoryEnabled: boolean
@@ -28,7 +27,6 @@ export const draftOf = (settings: Settings | null): SettingsDraft => ({
     notifications: settings?.notifications_enabled ?? false,
     autoConfirm: settings?.auto_confirm ?? false,
     trimOldThinking: settings?.trim_old_thinking ?? false,
-    useTools: settings?.use_tools ?? true,
     suggestNext: settings?.suggest_next ?? false,
     maxTurnStepsText: settings?.max_turn_steps != null ? String(settings.max_turn_steps) : '',
     memoryEnabled: settings?.memory_enabled ?? true,

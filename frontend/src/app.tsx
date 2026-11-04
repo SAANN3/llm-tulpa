@@ -23,6 +23,7 @@ import Models from './pages/models.tsx'
 import Plugins from './pages/plugins.tsx'
 import Settings from './pages/settings.tsx'
 import SystemPrompt from './pages/settings/system-prompt.tsx'
+import ToolsSettings from './pages/settings/tools.tsx'
 import Setup from './pages/setup/setup.tsx'
 import Stats from './pages/stats.tsx'
 import Users from './pages/users.tsx'
@@ -115,6 +116,7 @@ const App = () => (
                                         <Route path="/folders/:id" element={<Folder/>}/>
                                         <Route path="/settings/:tab?" element={<Settings/>}/>
                                         <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>
+                                        <Route path="/settings/tools" element={<ToolsSettings/>}/>
                                         <Route path="/stats/:tab?/:range?" element={<Stats/>}/>
                                         <Route path="/models/log" element={<ModelLog/>}/>
                                         <Route path="/models/:tab?" element={<Models/>}/>

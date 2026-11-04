@@ -6,7 +6,6 @@ import '../styles/chat-header.scss'
 import {deleteChat} from '../api/chats/delete'
 import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
-import {setChatTools} from '../api/chats/set-tools'
 import type {MessageSearchOut} from '../api/chats/types'
 import {getFolders} from '../api/folders/get'
 import {formatTokenCount} from '../utils/format.ts'
@@ -36,15 +35,10 @@ export interface ChatHeaderProps {
     hasActiveHighlight: boolean
     /** Turns off the current search highlight */
     onClearHighlight: () => void
-    /** Whether the model is sent its tools in this chat */
-    toolsEnabled: boolean
-    onToolsChanged: (enabled: boolean) => void
-    /** The chat has a run going on: its tools can't be switched until it ends */
-    runActive: boolean
 }
 
 /** The bar above a chat's messages: its name, which opens the chat's menu (search, rename, export, tools, folder,
- * delete), and the context gauge */
+ * delete), and the context gauge. Tools opens the chat's own selection. */
 export const ChatHeader = ({
     chatId,
     name,
@@ -56,9 +50,6 @@ export const ChatHeader = ({
     onSelectSearchResult,
     hasActiveHighlight,
     onClearHighlight,
-    toolsEnabled,
-    onToolsChanged,
-    runActive,
 }: ChatHeaderProps) => {
     const navigate = useNavigate()
     const [folderOpen, setFolderOpen] = useState(false)
@@ -90,11 +81,6 @@ export const ChatHeader = ({
         setFolderOpen(false)
     }
 
-    const toggleTools = async () => {
-        await setChatTools(chatId, !toolsEnabled)
-        onToolsChanged(!toolsEnabled)
-    }
-
     // The chat list follows by itself (`chat_deleted`); this page has nothing left to show
     const doDelete = async () => {
         await deleteChat(chatId)
@@ -118,9 +104,8 @@ export const ChatHeader = ({
         {label: 'Export', icon: <Share width={16} height={16}/>, onSelect: () => setExportOpen(true)},
         // A sub-agent's chat has the tools its parent gave it
         ...(parentChatId == null ? [{
-            label: runActive ? 'Tools (after this run)' : 'Tools', icon: <Tools width={16} height={16}/>, toggled: toolsEnabled,
-            // Switched only between runs: a run keeps the tools it started with
-            disabled: runActive, onSelect: () => void toggleTools(),
+            label: 'Tools', icon: <Tools width={16} height={16}/>,
+            onSelect: () => navigate(`/chat/${chatId}/info/tools`),
         }] : []),
         {label: folderId != null ? `Folder: ${folderName ?? '…'}` : 'Move to folder', icon: <Folder width={16} height={16}/>, onSelect: () => setFolderOpen(true)},
         ...(folderId != null ? [{label: 'Open the folder', icon: <ExternalLink width={16} height={16}/>, onSelect: () => navigate(`/folders/${folderId}`)}] : []),

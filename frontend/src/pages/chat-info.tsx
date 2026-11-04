@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useState} from 'react'
+import {useCallback, useEffect, useRef, useState} from 'react'
 import {Navigate, useNavigate, useParams} from 'react-router-dom'
 import '../styles/chat-info.scss'
 import {getChatContext} from '../api/chats/context.ts'
@@ -15,8 +15,9 @@ import {useGoBack} from '../hooks/use-go-back.ts'
 import {errorReason} from '../utils/error-reason.ts'
 import {ContextTab} from './chat-info/context-tab.tsx'
 import {MemoryTab, type MemoryDraft} from './chat-info/memory-tab.tsx'
+import {ToolsTab} from './chat-info/tools-tab.tsx'
 
-const TABS = [{id: 'context', label: 'Context'}, {id: 'memory', label: 'Memory'}]
+const TABS = [{id: 'context', label: 'Context'}, {id: 'memory', label: 'Memory'}, {id: 'tools', label: 'Tools'}]
 
 const draftOf = (context: ChatContextResponse): MemoryDraft => ({
     facts: context.memory.facts,
@@ -49,6 +50,8 @@ const ChatInfoView = ({chatId, tab}: { chatId: number, tab: string }) => {
     const [draft, setDraft] = useState<MemoryDraft | null>(null)
     const [saving, setSaving] = useState(false)
     const [status, setStatus] = useState<string | null>(null)
+    const [toolsDirty, setToolsDirty] = useState(false)
+    const toolsSave = useRef<(() => Promise<void>) | null>(null)
 
     const load = useCallback(async () => {
         const [chats, next] = await Promise.all([getChats({id: chatId}), getChatContext(chatId)])
@@ -70,18 +73,22 @@ const ChatInfoView = ({chatId, tab}: { chatId: number, tab: string }) => {
         if (!running && context && draft && !isDirty(context, draft)) void load().catch(() => undefined)
     }
 
-    const dirty = context != null && draft != null && isDirty(context, draft)
+    const memoryDirty = context != null && draft != null && isDirty(context, draft)
+    const dirty = tab === 'tools' ? toolsDirty : memoryDirty
 
     const save = async () => {
-        if (!context || !draft) return
         setSaving(true)
         setStatus(null)
         try {
-            const memory = context.memory
-            if (!sameFacts(draft.facts, memory.facts)) await editChatFacts(chatId, draft.facts)
-            if (draft.summary !== (memory.summary ?? '')) await editChatSummary(chatId, draft.summary)
-            if (draft.notes !== (memory.notes ?? '')) await editChatNotes(chatId, draft.notes)
-            await load()
+            if (tab === 'tools') {
+                await toolsSave.current?.()
+            } else if (context && draft) {
+                const memory = context.memory
+                if (!sameFacts(draft.facts, memory.facts)) await editChatFacts(chatId, draft.facts)
+                if (draft.summary !== (memory.summary ?? '')) await editChatSummary(chatId, draft.summary)
+                if (draft.notes !== (memory.notes ?? '')) await editChatNotes(chatId, draft.notes)
+                await load()
+            }
             setStatus('Saved; the model gets it from its next turn')
         } catch (e) {
             setStatus(errorReason(e, 'Saving failed.'))
@@ -106,7 +113,8 @@ const ChatInfoView = ({chatId, tab}: { chatId: number, tab: string }) => {
             <Frame className="chat-info__panel" bodyClassName="chat-info__body" tabs={TABS} activeTab={tab} onTab={showTab}
                    actions={tab === 'memory' ? [{keys: [], shown: 'esc', label: 'leave a text field'}] : []}
                    onEscape={goBack} escapeLabel="back">
-                {context && chat && draft ? (
+                {tab === 'tools' ? <ToolsTab chatId={chatId} readOnly={running || saving} dirtyRef={toolsSave} onDirty={setToolsDirty} onStatus={setStatus}/> : null}
+                {context && chat && draft && tab !== 'tools' ? (
                     tab === 'memory'
                         ? <MemoryTab memory={context.memory} folded_messages={context.folded_messages} draft={draft}
                                      onDraft={setDraft} readOnly={running || saving}/>
