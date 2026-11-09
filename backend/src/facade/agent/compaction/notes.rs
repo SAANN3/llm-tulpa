@@ -73,7 +73,9 @@ impl Compaction {
                 // A sub-agent's chat ends with its result; nobody reads its notes later
                 return Ok(Asked::Not("a sub-agent's chat"));
             }
-            let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+            let (names, _) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+            let tools_snapshot = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
+            let has_tools = !tools_snapshot.is_empty();
             if !has_tools {
                 // Notes are part of working with tools; a chat without them is a plain conversation, and the
                 // model it runs on is often too small to keep notes worth their cost
@@ -90,7 +92,6 @@ impl Compaction {
             let provider = self.model.provider(&chat)?;
             let params = self.model.params(&chat).await?;
             // The same list the live request sends, so the server still holds this prompt
-            let tools_snapshot = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
             let tools: Vec<&dyn Tool> = tools_snapshot.iter().map(|t| t.as_ref()).collect();
             let mut history = self.history.for_chat(chat_id, has_tools).await?;
             let system_prompt = self.history.system_prompt(&chat, &mut history, has_tools).await?;

@@ -167,11 +167,13 @@ impl Turn {
         Self { chat_store, tool_selection, tools, events, history, model, compaction, tool_calls }
     }
 
-    /// Whether `chat_id`'s prompt is the one that talks about tools. A run reads this before it asks history to build that prompt.
+    /// Whether this request actually sends any tools. Empty whitelist, a blacklist that leaves none, and a
+    /// sub-agent with none available all use the short prompt.
     pub(super) async fn prompt_has_tools(&self, chat_id: i64) -> Result<bool, ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
-        let (_, has_tools) = self.tool_selection.listed(chat_id, chat.tool_mode).await?;
-        Ok(has_tools)
+        let (names, _) = self.tool_selection.listed(chat_id, chat.tool_mode).await?;
+        let all = self.tools.snapshot_tools(chat.user_id).await;
+        Ok(!Self::tools_for(&chat, &names, all).is_empty())
     }
 
     /// Lets go of the claim a turn has on the model server: the run is over.
@@ -267,8 +269,9 @@ impl Turn {
         // between turns, and changes only at a fold
         self.history.start_memory(&mut chat, messages.len()).await?;
 
-        let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+        let (names, _) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
         let tools = Self::tools_for(&chat, &names, tools_snapshot);
+        let has_tools = !tools.is_empty();
         let provider = self.model.provider(&chat)?;
         let params = self.model.params(&chat).await?;
         let loaded_ms = self.model.hold(&chat, provider.as_ref(), params.launch.as_ref()).await?;

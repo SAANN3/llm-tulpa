@@ -61,7 +61,7 @@ impl Plugin for McpPlugin {
         self.runtime.forget_user(user_id).await;
     }
 
-    /// Names only. The tools themselves are already in the model's tool list; this says how to add another server.
+    /// Names of connected servers only. How to add or change one is in the tool definitions on this request, if those tools are sent.
     async fn prompt_section(&self, user_id: i64, tools: bool) -> Option<String> {
         if !tools {
             return None;
@@ -70,7 +70,7 @@ impl Plugin for McpPlugin {
         let connected: Vec<&str> = servers.iter().filter(|s| s.enabled).map(|s| s.name.as_str()).collect();
         let list = if connected.is_empty() { "none".to_string() } else { connected.join(", ") };
         Some(format!(
-            "MCP servers for this user: {list}. When the user asks to connect an external tool server, install or start it yourself, then add it with mcp.add_server (http or stdio). Its tools then stay available. mcp.list_servers shows what is already connected; mcp.remove_server and mcp.set_enabled change that list."
+            "MCP servers for this user: {list}. When the user asks to connect an external tool server, install or start it yourself, then check whether a tool in this request can add it (http or stdio). Its tools then stay available. Check whether a tool in this request can list the connected servers, remove one, or enable or disable one."
         ))
     }
 }

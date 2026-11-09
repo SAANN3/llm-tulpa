@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+### Changed
+- A request that sends no tools at all (an empty whitelist, or a blacklist that leaves none) uses the short built-in system prompt and skips the notes request, the same as an empty whitelist already did. The built-in tools prompt, and the Skills and MCP plugin prompt sections, no longer name individual tools: the definitions on that request are the set.
+
 ## [0.4.0] - 2026-11-04
 ### Added
 - A choice of which tools a chat sends. Settings → Behaviour → Tools in new chats (`/settings/tools`) is the default a new chat copies: blacklist (every tool except the ones switched off; the default, and an empty list sends every tool, including one a plugin adds later) or whitelist (only the ones switched on; none on means no tools). Tools are grouped by domain, a domain switch turns its tools all off when any is on and all on when none is, and domains fold (open to start). The chat's menu → Chat info → Tools is that chat's own choice, saved with the page's Save; Reset copies the user's default. On the home page the model menu's Tools item (under a Tools heading, at the top) sets the choice for the chat about to start; leaving it alone copies the default. A run that is going refuses the change. `GET /api/chats/available_tools` lists the tools; `GET` and `POST /api/settings/tools` and `/api/chats/tools` read and replace a selection (`mode` and `tools`). Schema version 27 adds `tool_mode` on chats and user settings and the `tool_names` table, and drops `tools_enabled` and `use_tools`. A chat or user that had tools off becomes an empty whitelist; everyone else an empty blacklist.

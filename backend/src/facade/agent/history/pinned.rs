@@ -38,13 +38,13 @@ pub(super) fn latest_ask(messages: &[(i64, String)]) -> String {
 /// stays cached in between.
 ///
 /// Each entry is `(message id, text)`. A cut message, and the latest of the ones left out, say which
-/// ids to read with `chat.get_messages`, so nothing the user wrote is out of reach. In a chat without
+/// ids so a tool in this request that reads a message by id can still reach them. In a chat without
 /// tools (`tools` false) there is nothing to read them with, so the block only says that they are not shown.
 fn pin_user_messages(messages: &[(i64, String)], tools: bool) -> Option<String> {
     let cut = |id: i64, text: &str| -> String {
         let text = text.trim();
         match text.char_indices().nth(PINNED_MESSAGE_CHARS) {
-            Some((end, _)) if tools => format!("{}… [cut; the whole message: chat.get_messages id {id}]", &text[..end]),
+            Some((end, _)) if tools => format!("{}… [cut; the whole message is id {id}]", &text[..end]),
             Some((end, _)) => format!("{}… [cut]", &text[..end]),
             None => text.to_string(),
         }
@@ -74,7 +74,7 @@ fn pin_user_messages(messages: &[(i64, String)], tools: bool) -> Option<String> 
         if tools {
             let ids: Vec<String> = latest.iter().map(|(id, _)| id.to_string()).collect();
             lines.push(format!(
-                "- [{} earlier message(s) not shown{} ids {}; chat.get_messages reads them, chat.list_messages lists them]",
+                "- [{} earlier message(s) not shown{} ids {}; a tool in this request that reads a message by id can fetch them]",
                 skipped.len(),
                 if skipped.len() > latest.len() { ", the latest of them" } else { "," },
                 ids.join(", "),
@@ -113,7 +113,7 @@ mod tests {
         assert!(block.contains("39:") && !block.contains("\n- 0:") && !block.starts_with("- 0:"), "{block}");
         // 6,000 characters of ~500 each: 11 kept, 29 left out, the latest ten of those named (119..=128)
         assert!(block.starts_with("- [29 earlier message(s) not shown, the latest of them ids 119, 120"), "{block}");
-        assert!(block.contains("128; chat.get_messages"), "{block}");
+        assert!(block.contains("128; a tool in this request that reads a message by id"), "{block}");
         assert!(!block.contains("ids 100"), "{block}");
         assert!(block.chars().count() <= PINNED_USER_CHARS + 400);
         // Same input, same bytes: the prefix must not shift between turns.
@@ -126,7 +126,7 @@ mod tests {
         let block = pin_user_messages(&short, true).unwrap();
         assert_eq!(block.lines().count(), 61, "60 messages and the line for the rest");
         let long = vec![(77, "z".repeat(5_000))];
-        assert!(pin_user_messages(&long, true).unwrap().ends_with("[cut; the whole message: chat.get_messages id 77]"));
+        assert!(pin_user_messages(&long, true).unwrap().ends_with("[cut; the whole message is id 77]"));
     }
 
     #[test]

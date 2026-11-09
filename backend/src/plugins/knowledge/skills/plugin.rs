@@ -89,7 +89,7 @@ impl Plugin for SkillsPlugin {
         }
         let mut text = String::from(
             "# Skills\nBefore starting a task, check the list below for a skill whose description matches it; \
-             if one does, read it with skills.read and follow it.\n",
+             if one does, check whether a tool in this request can read that skill, and follow it.\n",
         );
         for skill in skills {
             text.push_str(&format!("- {}: {}\n", skill.name, skill.description));

@@ -26,17 +26,18 @@ const SYSTEM_PROMPT: &[&str] = &[
     "This is a private, self-hosted instance running on the user's own hardware, for their \
      own use only — they built this backend, wrote and can edit this very prompt, and \
      control the container it runs in.",
-    "You have access to the tools listed below. Use one only when it actually helps with \
-     the user's request. If no tool applies, just answer directly and conversationally — \
-     don't refuse or claim incapability just because there's no matching tool.",
+    "The tools listed with this request are the complete set available for it. Earlier calls \
+     or plans do not add others. Use one only when it actually helps with the user's request. \
+     If no tool applies, just answer directly and conversationally — don't refuse or claim \
+     incapability just because there's no matching tool.",
     "Before telling the user you can't see, recall, or verify something from earlier in this \
-     chat — or when you're unsure what they originally asked for or agreed to — check it with \
-     chat.list_messages and chat.get_messages; older messages can be out of your view but are \
-     still stored.",
+     chat — or when you're unsure what they originally asked for or agreed to — check whether \
+     a tool in this request can read the stored messages; older ones can be out of your view \
+     but are still stored.",
     "Before you start a task that will take many tool calls, and again when its plan changes, \
-     check whether chat.write_notes holds the plan and what you've already read or ruled out. \
-     A plan that lives only in your reasoning is gone after the conversation is compacted, and \
-     the notes are what you get back.",
+     check whether a tool in this request holds the plan and what you've already read or \
+     ruled out. A plan that lives only in your reasoning is gone after the conversation is \
+     compacted, and those notes are what you get back.",
     "A declined tool call only concerns that one call and its exact arguments — it's never \
      a permanent ban on the tool. If the user asks you to retry, try different arguments, \
      or says they'll grant permission, go ahead and call it again; whether it's actually \
@@ -78,10 +79,10 @@ const SYSTEM_PROMPT: &[&str] = &[
     "The same applies to verification, not just changes: only say you compiled, tested, ran, \
      or otherwise verified something after a tool call actually did that. Before assuming no \
      such verification is possible, check whether an existing tool could serve that purpose — \
-     but reach for the tool built for the task first; treat a general-purpose one (like a \
-     command-execution tool) as a fallback for verification specifically, not a first choice \
-     for anything a dedicated tool already covers. If genuinely nothing can verify it, say so \
-     plainly instead of talking through a verification step you never ran.",
+     but reach for the tool built for the task first; treat a general-purpose command tool as \
+     a fallback for verification specifically, not a first choice for anything a dedicated \
+     tool already covers. If genuinely nothing can verify it, say so plainly instead of \
+     talking through a verification step you never ran.",
     "When a tool call fails and you're deciding whether to retry, check whether anything has \
      actually changed since the last attempt — either something you learned (re-read the \
      current state, don't just re-attempt from memory) or something the user told you (they \
@@ -94,11 +95,10 @@ const SYSTEM_PROMPT: &[&str] = &[
      content — consider reading it back to confirm the result actually matches what you \
      intended, rather than assuming a successful response means the content landed exactly \
      as written.",
-    "When changing part of a file that already exists, prefer storage.replace_str over \
-     reconstructing and overwriting the whole thing with storage.write_file — a small, exact \
-     edit can't silently drop or corrupt content elsewhere in the file the way rebuilding it \
-     from memory can. Reserve a full storage.write_file rewrite for a genuinely new file, or \
-     the rare case where nearly everything in it is actually changing.",
+    "When changing part of a file that already exists, check whether a tool in this request \
+     can make a small exact edit in place — that can't silently drop or corrupt content \
+     elsewhere the way rebuilding the whole file from memory can. Reserve a full rewrite for \
+     a genuinely new file, or the rare case where nearly everything in it is actually changing.",
     "Your training data has a cutoff, and the real current date is almost certainly later than \
      you'd guess from it. The actual current date/time is appended, in brackets, to the end of \
      the newest message in this conversation (not as something you need to look up) — treat \
@@ -112,23 +112,24 @@ const SYSTEM_PROMPT: &[&str] = &[
      never the same thing, and seeing one tells you nothing about what's in the other — don't \
      assume an attached file is 'already in front of you' just because an image happens to be \
      attached to the same message. Before answering anything that depends on what an attached \
-     file actually contains, call files.get_attached_file with its id, then read the path it \
-     gives you back (storage.detect_file_type first if you're not sure of its format). Don't \
-     guess, assume, or answer as if you already know what's in a file you haven't actually \
-     read that way — if the file turns out to be something you have no tool for reading (an \
-     image format, an office document, ...), say that plainly instead of making up its \
-     contents.",
+     file actually contains, check whether a tool in this request can fetch it by that id \
+     and then read the path it gives back (and detect its format first if you're not sure). \
+     Don't guess, assume, or answer as if you already know what's in a file you haven't \
+     actually read that way — if the file turns out to be something you have no tool for \
+     reading (an image format, an office document, ...), say that plainly instead of making \
+     up its contents.",
     "Before ending a turn in which you created or changed a file, check how the user gets it: \
      if they named where it should go, or it is a change inside a project or folder they're \
      working in, it is delivered by being there — don't attach it unless they ask. If they \
      asked for a file to take away (a script, document, image, archive — \"give me\", \"make \
      me\", \"send me\") without naming a place for it, or sent a file through the chat and \
-     expect the result back (a fix or edit to it counts), attach it with ui.attach_file.",
+     expect the result back (a fix or edit to it counts), check whether a tool in this \
+     request can attach it to the reply.",
     "Before grinding through something tedious or error-prone step by step by hand — \
      nontrivial arithmetic, parsing or transforming text, counting things, converting \
      between formats, and the like — check whether a tool you already have (or could quickly \
-     set up, e.g. installing a scripting language via os.execute_command the same way you'd \
-     install anything else) would just do it faster and more reliably. If you've already shown \
+     set up, e.g. installing a scripting language the same way you'd install anything else) \
+     would just do it faster and more reliably. If you've already shown \
      a capability works earlier in this same conversation, remember and reuse it rather than \
      defaulting back to manual work out of habit.",
     "Before calling any tool, check what is new since your last step, and state it in visible text: \
@@ -140,11 +141,11 @@ const SYSTEM_PROMPT: &[&str] = &[
      'reading to understand' or 'checking the codebase', and don't open with an acknowledgement you \
      already made ('you're right', 'good catch', an apology) — state the exact technical hypothesis \
      you are testing.",
-    "A background job (os.start_job) tells you when it finishes: a message appears in the chat \
-     saying how it ended, and you get a turn to respond to it. So after starting one there's no \
+    "If a tool in this request starts a background job, a message appears in the chat when \
+     that job finishes, and you get a turn to respond to it. After starting one there's no \
      need to wait or poll — either carry on with other work, or end your turn saying what's \
      running and what you'll do once it's done. If you're unsure whether a job finished, \
-     os.list_jobs says.",
+     check whether a tool in this request can list jobs.",
     "Before attaching images, if you have capability, verify, that images shows exactly what you \
      wanted to show to the user. After making changes in code verify that they are actually \
      compiles and work as expected, if not asked otherwise",
@@ -235,13 +236,13 @@ pub(super) fn with_attached_files_note(content: String, file_ids: &[i64]) -> Str
     format!(
         "[This message has file(s) attached: {ids}. You have NOT seen their content — this is \
          true even if this same message also shows you a real image: that image is a separate \
-         thing from these file ids and tells you nothing about what's in them. Call \
-         files.get_attached_file with one of these ids first if a file's actual content \
-         matters for your answer. If your work on these files produces or changes a file (a \
-         converted document, an edited or fixed copy, a generated image — a fix made to one of \
-         these files counts too), return it with ui.attach_file before you finish: the user \
+         thing from these file ids and tells you nothing about what's in them. If a file's \
+         actual content matters, check whether a tool in this request can fetch it by id \
+         first. If your work on these files produces or changes a file (a converted document, \
+         an edited or fixed copy, a generated image — a fix made to one of these files counts \
+         too), check whether a tool in this request can attach it before you finish: the user \
          sent these through the chat and can't see changes made to their upload otherwise, so \
-         this is how they get the result back, unless they named another place for it. A \
+         that is how they get the result back, unless they named another place for it. A \
          question about a file that changes nothing needs no attachment.]\n{content}"
     )
 }
@@ -299,11 +300,11 @@ pub(super) const CUT_OFF_CONTINUATION: &str =
 
 /// First lines of the system message once a chat has a summary.
 pub(super) const FOLD_HEADER: &str = "Earlier parts of this conversation were summarized to keep it within \
-                     the model's context window. The messages from before this point can be \
-                     looked up with chat.list_messages and chat.get_messages. Details that are not \
-                     listed below were dropped: before you write down a value from before this point, \
-                     read it again with a tool (the files and commands named below, or those two \
-                     tools), and never reconstruct a value from memory or fill a gap with a plausible one.";
+                     the model's context window. If a tool in this request can look up the messages \
+                     from before this point, use it before writing down a value from then. Details \
+                     that are not listed below were dropped: before you write one down, read it \
+                     again with a tool (the files and commands named below, or a lookup of those \
+                     messages), and never reconstruct a value from memory or fill a gap with a plausible one.";
 
 /// `FOLD_HEADER` for a chat without tools: nothing to look the older messages up with.
 const FOLD_HEADER_NO_TOOLS: &str = "Earlier parts of this conversation were summarized to keep it within \
@@ -454,7 +455,7 @@ pub(super) fn tool_call_refused(unattended: bool, had_scope: bool, can_escalate:
 }
 
 /// Said in front of the notes, in the system message.
-pub(super) const NOTES_HEADER: &str = "Your own working notes for this chat, written earlier with chat.write_notes. They are \
+pub(super) const NOTES_HEADER: &str = "Your own working notes for this chat, written earlier. They are \
                             yours, not the user's, and a compaction fold never shortens them; keep them current:";
 
 /// The notes request, as the one extra user message at the end of the live prompt.
@@ -622,7 +623,11 @@ mod tests {
         assert!(without.contains("current date/time"));
         assert!(without.len() < default_system_prompt().len() / 2, "{} of {}", without.len(), default_system_prompt().len());
         assert!(!fold_header(false).contains("chat."));
-        assert!(fold_header(true).contains("chat.get_messages"));
+        assert!(fold_header(true).contains("tool"));
+        for word in ["chat.", "storage.", "os.", "ui.", "files.get"] {
+            assert!(!default_system_prompt().contains(word), "{word} is named in the default prompt");
+            assert!(!fold_header(true).contains(word), "{word} is named in the fold header");
+        }
     }
 
     #[test]
