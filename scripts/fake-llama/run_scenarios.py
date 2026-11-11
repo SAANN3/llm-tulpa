@@ -323,6 +323,24 @@ def permission_waits_and_answers_continue():
 
 
 @scenario
+def a_question_returns_as_soon_as_it_is_shown():
+    settings(auto_confirm=True)
+    chat = new_chat("ask")
+    ask = {"name": "ui.ask_question", "arguments": {
+        "question": "Which port?",
+        "options": [{"id": "a", "label": "8080"}, {"id": "b", "label": "3000"}],
+    }}
+    script({"tool_calls": [ask]}, {"text": "Pick one."})
+    s = turn(chat, "pick a port")
+    eq(s["status"], "idle", "the question does not hold the run")
+    eq(s["last_end"]["reason"], "answered", "run end")
+    tool = [m for m in messages(chat) if m["role"] == "tool"][0]
+    has(str(tool["content"]), "Which port?", "the result names the question")
+    has(str(tool["content"]), "next user message", "and says the pick comes later")
+    settings()
+
+
+@scenario
 def every_command_of_a_shell_line_needs_approval_and_allow_once_adds_to_the_chats_grants():
     settings(auto_confirm=False)
     chat = new_chat("shell-grants")

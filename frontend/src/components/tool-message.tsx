@@ -89,7 +89,7 @@ export const ToolMessage = ({
     expanded,
     onToggle,
     preserveScrollFor,
-    highlightQuery
+    highlightQuery,
 }: ToolMessageProps) => {
     const formatTime = useFormatTime()
     const contentText = typeof content === 'string' ? content : JSON.stringify(content, null, 2)

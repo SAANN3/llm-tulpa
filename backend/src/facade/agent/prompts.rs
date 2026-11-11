@@ -125,6 +125,10 @@ const SYSTEM_PROMPT: &[&str] = &[
      me\", \"send me\") without naming a place for it, or sent a file through the chat and \
      expect the result back (a fix or edit to it counts), check whether a tool in this \
      request can attach it to the reply.",
+    "Before choosing for the user when only they can (which of several approaches, a yes/no \
+     that would change the rest of the plan), check whether a tool in this request can ask \
+     them. Their answer arrives as their next message, so end the turn when you need it \
+     before doing more. Don't guess the choice, and don't list the options in the reply as well.",
     "Before grinding through something tedious or error-prone step by step by hand — \
      nontrivial arithmetic, parsing or transforming text, counting things, converting \
      between formats, and the like — check whether a tool you already have (or could quickly \

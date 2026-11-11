@@ -35,6 +35,7 @@ mod history;
 mod live;
 mod model_call;
 mod notices;
+mod pending;
 mod prompts;
 mod run_tracker;
 mod runner;
@@ -51,7 +52,8 @@ use notices::Notices;
 use tool_calls::ToolCalls;
 use suggestion::Suggestion;
 use turn::Turn;
-pub use runner::{Allowance, Decision, ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
+pub use pending::{AgentScopeGrant, AgentToolCall, AgentToolPermission, Allowance, Decision};
+pub use runner::{ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
 use runner::TurnRunner;
 use model_call::ModelCall;
 pub use prompts::default_system_prompt;
@@ -328,42 +330,6 @@ impl Agent {
             }
         });
     }
-}
-
-/// `Agent`'s outputs (this one included) derive `Serialize` and go straight out as JSON
-/// from route handlers, unlike service-layer types — `Agent` *is* the app's public API
-/// shape already (that's what a facade is), so there's nothing upstream-specific left to
-/// strip before a route can return it, unlike `ChatMessage` et al.
-#[derive(Serialize, ToSchema)]
-pub struct AgentToolCall {
-    pub permission: AgentToolPermission,
-    pub name: String,
-    #[schema(value_type = Object)]
-    pub arguments: Value,
-}
-
-/// Facade-owned mirror of `tools::base::ToolPermission` — kept as a separate type
-/// (rather than deriving `Serialize`/`ToSchema` on the original and reusing it
-/// directly) for the same reason `ChatMessage` never goes straight out over our
-/// API: the tools layer's internal shape shouldn't be what callers of `Agent` end up
-/// depending on.
-#[derive(Serialize, ToSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum AgentToolPermission {
-    Allowed,
-    Denied {
-        reason: String,
-        escalation: Option<AgentScopeGrant>,
-    },
-}
-
-/// Facade-owned mirror of `tools::base::ScopeGrant` — see `AgentToolPermission` for
-/// why this isn't the original type reused directly.
-#[derive(Serialize, ToSchema)]
-pub struct AgentScopeGrant {
-    #[schema(value_type = Object)]
-    pub scope: Value,
-    pub ui_message: String,
 }
 
 #[derive(Serialize, ToSchema)]

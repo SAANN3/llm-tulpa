@@ -1,0 +1,21 @@
+@use 'tokens' as *;
+
+.question-prompt__options {
+  gap: $space-2;
+}
+
+.question-prompt__option {
+  justify-content: flex-start;
+  text-align: left;
+  width: 100%;
+}
+
+.question-prompt__custom {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
+}
+
+.question-prompt__input {
+  flex: 1;
+}

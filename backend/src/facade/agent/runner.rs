@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
@@ -24,7 +24,8 @@ use super::suggestion::Suggestion;
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
-use super::{AgentToolCall, AgentToolPermission, ChatOut};
+use super::pending::{AgentToolCall, Allowance, Decision};
+use super::ChatOut;
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallStatus, EventBus, RunEndReason, ServerEvent, StepList};
@@ -37,25 +38,6 @@ use crate::tools::llm::return_agent::ReturnAgentTool;
 /// without ever answering would otherwise run for as long as the model keeps going, holding the
 /// only GPU while the chat that delegated to it waits.
 const SUBAGENT_MAX_MODEL_CALLS: u32 = 100;
-
-/// How a user answers a permission prompt for one pending tool call.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Allowance {
-    /// Grant what the call asked for, now and for later calls in this chat.
-    Permanent,
-    /// Let this one call through with what it asked for.
-    OnlyNow,
-    /// Refuse it: the model is told the call was denied.
-    Deny,
-}
-
-/// The answer to one pending tool call: `index` is its position in `TurnState::pending`.
-#[derive(Clone, Copy, Debug, Deserialize, ToSchema)]
-pub struct Decision {
-    pub index: usize,
-    pub allowance: Allowance,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -104,8 +86,8 @@ pub struct TurnState {
     pub running_tool: Option<String>,
     #[schema(value_type = Option<String>, format = "date-time")]
     pub tool_started_at: Option<DateTimeUtc>,
-    /// While waiting for permission: the tool calls the model asked for that are not run yet, in
-    /// order, with what each needs. `Decision::index` points into this list.
+    /// While waiting for the user: the tool calls the model asked for that are not run yet, in
+    /// order. `Decision::index` points into this list.
     pub pending: Vec<AgentToolCall>,
     pub last_end: Option<RunEnded>,
     /// What the model call in flight has written so far, while it writes; the `reply_piece` events numbered after
@@ -373,13 +355,9 @@ impl TurnRunner {
             let call = pending.get(decision.index).ok_or_else(|| {
                 ErrorService::new(StatusCode::BAD_REQUEST, format!("there is no pending tool call number {}", decision.index))
             })?;
-            let can_grant = matches!(call.permission, AgentToolPermission::Denied { escalation: Some(_), .. });
-            if decision.allowance != Allowance::Deny && !can_grant {
-                return Err(ErrorService::new(
-                    StatusCode::BAD_REQUEST,
-                    format!("pending tool call number {} offers nothing that could be granted", decision.index),
-                ));
-            }
+            call.check_decision(decision).map_err(|e| {
+                ErrorService::new(StatusCode::BAD_REQUEST, format!("pending tool call number {}: {e}", decision.index))
+            })?;
         }
         self.spawn(slot, think, Start::Answer { decisions }, Policy::Attended);
         Ok(())
@@ -832,7 +810,7 @@ impl TurnRunner {
 
     /// Whether any of these calls is refused for want of a permission the user could give.
     fn needs_permission(pending: &[AgentToolCall]) -> bool {
-        pending.iter().any(|call| matches!(call.permission, AgentToolPermission::Denied { escalation: Some(_), .. }))
+        pending.iter().any(|call| call.offered_grant().is_some())
     }
 
     async fn waiting_for_permission(&self, chat_id: i64) -> Result<bool, ErrorService> {
@@ -866,17 +844,15 @@ impl TurnRunner {
         match decisions {
             Some(decisions) => {
                 for decision in decisions {
-                    let Some(AgentToolPermission::Denied { escalation: Some(grant), .. }) =
-                        views.get(decision.index).map(|view| &view.permission)
-                    else {
+                    let Some(scope) = views.get(decision.index).and_then(|view| view.offered_grant()).map(|grant| grant.scope.clone()) else {
                         continue;
                     };
                     match decision.allowance {
                         Allowance::Permanent => {
-                            self.tool_calls.allow_scope(chat_id, views[decision.index].name.clone(), grant.scope.clone()).await?;
+                            self.tool_calls.allow_scope(chat_id, views[decision.index].name.clone(), scope).await?;
                         }
                         Allowance::OnlyNow => {
-                            one_time.insert(decision.index, grant.scope.clone());
+                            one_time.insert(decision.index, scope);
                         }
                         Allowance::Deny => {}
                     }
@@ -888,10 +864,10 @@ impl TurnRunner {
                         self.tool_calls.grant_what_is_offered(chat_id, view).await?;
                     }
                 } else if matches!(policy, Policy::Attended) {
-                    // The calls before the first one that needs permission run now, in the order they were asked,
+                    // The calls before the first one that needs the user run now, in the order they were asked,
                     // and the run waits there: pausing before them would leave them pending, and a read of the
                     // chat would take them for calls a crash had cut short
-                    stop_before = views.iter().position(|view| matches!(view.permission, AgentToolPermission::Denied { escalation: Some(_), .. }));
+                    stop_before = views.iter().position(|view| view.offered_grant().is_some());
                 }
             }
             None => {}
@@ -991,11 +967,11 @@ impl TurnRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facade::agent::AgentScopeGrant;
+    use crate::facade::agent::{AgentScopeGrant, AgentToolPermission};
     use serde_json::json;
 
-    fn call(permission: AgentToolPermission) -> AgentToolCall {
-        AgentToolCall { permission, name: "storage.write_file".to_string(), arguments: json!({}) }
+    fn call(name: &str, permission: AgentToolPermission) -> AgentToolCall {
+        AgentToolCall { permission, name: name.to_string(), arguments: json!({}) }
     }
 
     fn denied(escalation: bool) -> AgentToolPermission {
@@ -1008,9 +984,9 @@ mod tests {
     #[test]
     fn only_a_refusal_the_user_could_lift_makes_a_run_wait() {
         assert!(!TurnRunner::needs_permission(&[]));
-        assert!(!TurnRunner::needs_permission(&[call(AgentToolPermission::Allowed)]));
+        assert!(!TurnRunner::needs_permission(&[call("storage.write_file", AgentToolPermission::Allowed)]));
         // A hard refusal is recorded for the model, nobody is asked
-        assert!(!TurnRunner::needs_permission(&[call(denied(false))]));
-        assert!(TurnRunner::needs_permission(&[call(AgentToolPermission::Allowed), call(denied(true))]));
+        assert!(!TurnRunner::needs_permission(&[call("storage.write_file", denied(false))]));
+        assert!(TurnRunner::needs_permission(&[call("storage.write_file", AgentToolPermission::Allowed), call("storage.write_file", denied(true))]));
     }
 }

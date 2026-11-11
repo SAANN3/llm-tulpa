@@ -1,3 +1,4 @@
+pub mod ask_question;
 pub mod attach_file;
 
 use super::base::Tool;
@@ -7,5 +8,8 @@ use super::base::Tool;
 /// tools, which act on the real filesystem/host/network and return data for the model
 /// itself. For `main.rs` to register alongside every other domain's `collect()`.
 pub fn collect() -> Vec<Box<dyn Tool>> {
-    vec![Box::new(attach_file::AttachFileTool)]
+    vec![
+        Box::new(attach_file::AttachFileTool),
+        Box::new(ask_question::AskQuestionTool),
+    ]
 }

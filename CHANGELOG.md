@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+### Added
+- The model can ask the user a question (`ui.ask_question`): two to six options and an optional typed answer. The call returns once the question is on screen. Several questions since your last message are answered one at a time above the composer, and the picks go out together as your next message. A sub-agent is not offered the tool.
+
 ### Changed
 - A request that sends no tools at all (an empty whitelist, or a blacklist that leaves none) uses the short built-in system prompt and skips the notes request, the same as an empty whitelist already did. The built-in tools prompt, and the Skills and MCP plugin prompt sections, no longer name individual tools: the definitions on that request are the set.
 

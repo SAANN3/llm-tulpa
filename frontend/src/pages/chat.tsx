@@ -21,6 +21,7 @@ import {NoticeMessage} from '../components/notice-message.tsx'
 import {Button, Div, Label} from '../components/primitives'
 import {RunStatus} from '../components/run-status.tsx'
 import {Sidebar} from '../components/sidebar.tsx'
+import {QuestionPrompt} from '../components/question-prompt.tsx'
 import {ToolConfirmation} from '../components/tool-confirmation.tsx'
 import {ToolMessage} from '../components/tool-message.tsx'
 import {UserInput} from '../components/user-input.tsx'
@@ -97,6 +98,12 @@ const ChatView = ({chatId}: { chatId: number }) => {
     }, [messages])
     // A run is going on, or waits for the user: the composer and the edit controls are off
     const busy = turn.status !== 'idle'
+    // Questions the model asked after the user's last message. A click answers the batch, so these are the ones still open.
+    const lastUserAt = messages.reduce((at, message, index) => message.role === 'user' ? index : at, -1)
+    const openQuestions = messages.slice(lastUserAt + 1).flatMap((message, index) =>
+        message.role === 'tool' && message.tool_name === 'ui.ask_question'
+            ? [{key: message.id ?? lastUserAt + 1 + index, args: message.arguments}]
+            : [])
     // How the last run ended, for one that ended without an answer (an answered run has nothing to say)
     const endLine = !busy && turn.lastEnd ? describeRunEnd(turn.lastEnd, settings?.max_turn_steps ?? null) : null
 
@@ -443,6 +450,9 @@ const ChatView = ({chatId}: { chatId: number }) => {
                 <ModelStateBanner watching={turn.status === 'running'}/>
                 {turn.status === 'waiting_for_permission' ? (
                     <ToolConfirmation key={turn.lastEnd?.ended_at} pending={turn.pending} onConfirm={handleConfirm}/>
+                ) : openQuestions.length > 0 && !busy && parentChatId == null ? (
+                    <QuestionPrompt key={openQuestions.map((q) => q.key).join('-')} questions={openQuestions}
+                                    onAnswer={(text) => void handleSend(text)}/>
                 ) : null}
                 {turnError ? (
                     <Div className="chat__error">
