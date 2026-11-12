@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod definition;
 pub mod validation;
 
@@ -11,11 +12,24 @@ use std::sync::Arc;
 
 pub struct BlueprintFacade {
     store: Arc<BlueprintStore>,
+    validation: validation::Validation,
 }
 
 impl BlueprintFacade {
-    pub fn new(store: Arc<BlueprintStore>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<BlueprintStore>, validation: validation::Validation) -> Self {
+        Self { store, validation }
+    }
+
+    pub fn catalog(&self) -> Vec<catalog::NodeDescriptor> {
+        catalog::NodeType::builtins()
+    }
+
+    pub async fn validate(
+        &self,
+        user_id: i64,
+        workflow: &Workflow,
+    ) -> Result<validation::report::ValidationReport, ErrorService> {
+        self.validation.check(user_id, workflow).await
     }
 
     pub async fn list(
@@ -108,7 +122,7 @@ fn invalid(message: impl Into<String>) -> ErrorService {
 }
 
 fn encode(workflow: &Workflow) -> Result<Vec<u8>, ErrorService> {
-    validation::document(workflow).map_err(invalid)?;
+    validation::document(workflow).map_err(|diagnostic| invalid(diagnostic.message))?;
     let bytes = serde_json::to_vec_pretty(workflow)
         .map_err(|e| invalid(format!("invalid workflow: {e}")))?;
     if bytes.len() > validation::MAX_DOCUMENT_BYTES {

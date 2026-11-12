@@ -1,3 +1,5 @@
+mod catalog;
+mod validate;
 mod create;
 mod delete;
 mod get;

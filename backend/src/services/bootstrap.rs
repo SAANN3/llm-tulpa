@@ -253,7 +253,7 @@ pub async fn bootstrap(
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
-    let blueprints = Arc::new(BlueprintFacade::new(Arc::new(crate::services::blueprint_store::BlueprintStore::new(db.clone(), blueprints_dir))));
+    let blueprints = Arc::new(BlueprintFacade::new(Arc::new(crate::services::blueprint_store::BlueprintStore::new(db.clone(), blueprints_dir)), crate::facade::blueprint::validation::Validation::new(tools.clone(), model_store.clone(), launch_store.clone())));
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone(), plugin_events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 

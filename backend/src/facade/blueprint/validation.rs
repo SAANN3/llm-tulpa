@@ -1,6 +1,14 @@
+mod graph;
+mod readiness;
+pub mod report;
+mod values;
+
+pub use readiness::Validation;
+
 use std::collections::HashSet;
 
 use super::definition::*;
+use report::Diagnostic;
 
 pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 const MAX_NODES: usize = 1000;
@@ -36,45 +44,68 @@ fn identifier(value: &str) -> bool {
 }
 
 /// Draft validation only: missing tools, models, entry nodes or incomplete branches do not prevent editing.
-pub fn document(workflow: &Workflow) -> Result<(), String> {
+pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
     if workflow.schema_version != SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported workflow schema_version {}; expected {SCHEMA_VERSION}",
-            workflow.schema_version
+        return Err(Diagnostic::draft(
+            None,
+            "schema_version",
+            format!(
+                "unsupported workflow schema_version {}; expected {SCHEMA_VERSION}",
+                workflow.schema_version
+            ),
         ));
     }
     if workflow.nodes.len() > MAX_NODES || workflow.edges.len() > MAX_EDGES {
-        return Err(format!(
-            "at most {MAX_NODES} nodes and {MAX_EDGES} edges are allowed"
+        return Err(Diagnostic::draft(
+            None,
+            "nodes",
+            format!("at most {MAX_NODES} nodes and {MAX_EDGES} edges are allowed"),
         ));
     }
     let mut nodes = HashSet::new();
     for node in &workflow.nodes {
         if !identifier(&node.id) || !nodes.insert(node.id.as_str()) {
-            return Err(format!("invalid or duplicate node id '{}'", node.id));
+            return Err(Diagnostic::draft(
+                Some(&node.id),
+                "id",
+                "invalid or duplicate node id",
+            ));
         }
         if node.name.trim().is_empty()
             || node.name.chars().count() > 160
             || !node.position.x.is_finite()
             || !node.position.y.is_finite()
         {
-            return Err(format!("node '{}': invalid name or position", node.id));
+            return Err(Diagnostic::draft(
+                Some(&node.id),
+                "name",
+                "invalid name or position",
+            ));
         }
     }
     let mut edges = HashSet::new();
-    for edge in &workflow.edges {
+    for (edge_index, edge) in workflow.edges.iter().enumerate() {
         if !identifier(&edge.id) || !edges.insert(edge.id.as_str()) || !identifier(&edge.port) {
-            return Err(format!("invalid or duplicate edge '{}'", edge.id));
+            return Err(Diagnostic::draft(
+                Some(&edge.from),
+                &format!("edges[{edge_index}]"),
+                "invalid or duplicate edge",
+            ));
         }
         if !nodes.contains(edge.from.as_str()) || !nodes.contains(edge.to.as_str()) {
-            return Err(format!("edge '{}': unknown node", edge.id));
+            return Err(Diagnostic::draft(
+                Some(&edge.from),
+                &format!("edges[{edge_index}]"),
+                "edge references unknown node",
+            ));
         }
     }
     for node in &workflow.nodes {
         let inputs: Vec<&Input> = match &node.kind {
             NodeKind::Entry => vec![],
             NodeKind::Generate { model, prompt, .. } => {
-                model_choice(model)?;
+                model_choice(model)
+                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.model", message))?;
                 vec![prompt]
             }
             NodeKind::Agent {
@@ -84,9 +115,14 @@ pub fn document(workflow: &Workflow) -> Result<(), String> {
                 tools,
                 ..
             } => {
-                model_choice(model)?;
+                model_choice(model)
+                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.model", message))?;
                 if tools.names.iter().any(|n| !identifier(n)) {
-                    return Err(format!("node '{}': invalid tool name", node.id));
+                    return Err(Diagnostic::draft(
+                        Some(&node.id),
+                        "kind",
+                        "invalid tool name",
+                    ));
                 }
                 std::iter::once(prompt)
                     .chain(system_prompt.iter())
@@ -94,7 +130,11 @@ pub fn document(workflow: &Workflow) -> Result<(), String> {
             }
             NodeKind::Tool { name, arguments } => {
                 if !identifier(name) {
-                    return Err(format!("node '{}': invalid tool name", node.id));
+                    return Err(Diagnostic::draft(
+                        Some(&node.id),
+                        "kind",
+                        "invalid tool name",
+                    ));
                 }
                 arguments.values().collect()
             }
@@ -107,9 +147,10 @@ pub fn document(workflow: &Workflow) -> Result<(), String> {
                         || case.port == "default"
                         || !ports.insert(&case.port)
                     {
-                        return Err(format!(
-                            "node '{}': invalid or duplicate switch port",
-                            node.id
+                        return Err(Diagnostic::draft(
+                            Some(&node.id),
+                            "kind.cases",
+                            "invalid or duplicate switch port",
                         ));
                     }
                 }
@@ -129,13 +170,18 @@ pub fn document(workflow: &Workflow) -> Result<(), String> {
                     || !identifier(node_type)
                     || *version == 0
                 {
-                    return Err(format!("node '{}': invalid plugin node identity", node.id));
+                    return Err(Diagnostic::draft(
+                        Some(&node.id),
+                        "kind",
+                        "invalid plugin node identity",
+                    ));
                 }
                 arguments.values().collect()
             }
         };
         for value in inputs {
-            input(value, &nodes, 0)?;
+            input(value, &nodes, 0)
+                .map_err(|message| Diagnostic::draft(Some(&node.id), "kind", message))?;
         }
     }
     Ok(())

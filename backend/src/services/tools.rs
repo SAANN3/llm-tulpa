@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{
     services::error::ErrorService,
-    tools::base::{Tool, ToolContext, ToolError},
+    tools::base::{PropertyInfo, Tool, ToolContext, ToolError},
 };
 
 static NEXT_LEASE: AtomicU64 = AtomicU64::new(1);
@@ -85,12 +85,12 @@ impl ToolService {
         tool.call_untyped(data, ctx).await
     }
 
-    /// Every tool this user can be sent: the name, then the description the model sees. Already in name order.
-    pub async fn catalog(&self, user_id: i64) -> Vec<(String, String)> {
+    /// Every tool this user can be sent, with the same argument schema the model sees. Already in name order.
+    pub async fn catalog(&self, user_id: i64) -> Vec<ToolCatalogEntry> {
         self.snapshot_tools(user_id)
             .await
             .into_iter()
-            .map(|tool| (tool.function_name().to_string(), tool.description().to_string()))
+            .map(|tool| ToolCatalogEntry { name: tool.function_name().to_string(), description: tool.description().to_string(), properties: tool.required_properties() })
             .collect()
     }
 
@@ -225,4 +225,12 @@ impl From<ToolError> for ErrorService {
     fn from(err: ToolError) -> Self {
         ErrorService::internal(err.to_string())
     }
+}
+
+/// The same user-scoped definitions used by chat selection and workflow validation.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct ToolCatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub properties: Vec<PropertyInfo>,
 }

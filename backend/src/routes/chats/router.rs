@@ -7,6 +7,7 @@ use axum::{
 use utoipa::OpenApi;
 
 use crate::services::tool_selection_store::ToolMode;
+use crate::services::tools::ToolCatalogEntry;
 use crate::state::AppState;
 
 use super::context::*;
@@ -71,7 +72,7 @@ pub fn router() -> Router<Arc<AppState>> {
         SetProfileRequest,
         SetToolsRequest,
         ToolChoiceOut,
-        AvailableToolOut,
+        ToolCatalogEntry,
         AvailableToolsOut,
         SetSeenRequest,
         SetFolderRequest,

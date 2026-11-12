@@ -1,8 +1,13 @@
 export type PropertyType = 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object'
 
-export interface PropertyInfo {
-    name: string
+export interface PropertySchema {
     property_type: PropertyType
+    items?: PropertyType | PropertySchema
+    properties?: PropertyInfo[]
+}
+
+export interface PropertyInfo extends PropertySchema {
+    name: string
     description: string
     required: boolean
 }

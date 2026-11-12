@@ -136,7 +136,53 @@ There are no variable, arithmetic or loop nodes yet.
 Draft validation rejects unknown schema versions, duplicate/invalid IDs, dangling node references,
 invalid settings and oversized documents (1 MiB, 1000 nodes, 4000 edges; binding depth at most 32).
 It deliberately does not require a complete executable graph. Tools/models/plugins need not be
-currently installed to save a draft. Port types, reachability, cycles, argument compatibility,
-permission handling and executable readiness belong to the next validation/execution batches.
+currently installed to save a draft. Static readiness is checked separately by the validation API below. Permission handling and
+execution remain separate from saving and validating drafts.
 A `plugin` node here is a stored identity and typed bindings, not plugin registration or a new RPC
 contract; neither SDK has changed in this batch.
+
+## Catalog and static validation
+
+`GET /api/blueprints/catalog` returns the built-in node kinds, their control/data ports and data
+value types. Switch case ports come from the saved configuration. Plugin nodes are not included: there is no plugin-node registration contract
+yet. Saving such a draft is allowed, but validation reports `plugin_node_unavailable`.
+
+Tools use the existing `GET /api/chats/available_tools`, not a blueprint-specific tool list. Each
+entry contains `name`, `description`, and `properties` (the existing recursive `PropertyInfo`
+contract used by tools and plugin settings). This catalog includes the user's currently published
+global and private tools. A tool's publication is independent of chat/default whitelist selection.
+
+`POST /api/blueprints/validate` accepts `{workflow}` without saving or executing it. The authenticated
+user determines tool visibility and the default model. The result is `{valid, diagnostics}`.
+Each diagnostic has `severity` (`error`/`warning`), nullable `node_id`, `field`, `code`, and `message`.
+Field paths are relative to the node, except `edges[index]` and document-wide fields. Malformed
+JSON is rejected by axum; a well-shaped but invalid graph returns HTTP 200 with `valid: false`.
+Database failures remain HTTP errors. Structural errors stop deeper validation; readiness checks
+collect multiple diagnostics.
+
+Checks cover one entry, reachability, control ports, cycles, multiple incoming edges, data output
+ports and availability, required/unknown arguments, recursive input types, registered models,
+launch-profile ownership by model, and agent tool selection. An unavailable whitelist tool is an
+error; a stale blacklist exclusion is a warning. No provider calls, model loading, permission
+approval or tool execution happen during validation. Model registration is checked, not remote
+provider health or existence of the model's files. Execution must check dependencies and permissions
+again and must validate actual values before calling tools.
+
+Control edges use ordered, depth-first sequential branches. A leaf (including Return) finishes its
+branch; pending sibling branches still follow. Earlier unconditional branches can supply values to
+later ones. A value produced only on one If/Switch outcome is not guaranteed available after that
+conditional branch. Empty conditional outcomes finish without producing branch-specific values.
+Multiple incoming edges and cycles are rejected until explicit Merge/Join/loop semantics exist.
+
+Generate, Agent and Format publish a `text` string. Tool publishes `result`, whose schema is unknown:
+the Tool interface declares argument schemas only. A binding to that output gets a
+`runtime_type_check` warning, including when selecting a field/index. `valid: true` with that warning
+means no statically known error, not a proof of runtime type safety. No implicit string/number/boolean
+coercions happen. Integers are accepted where a number is required. Open object schemas accept
+arbitrary keys; declared object fields are recursively checked.
+
+Numeric ordering compares numbers; Contains compares strings. Equal/NotEqual and Switch require
+compatible operand types. Sleep requires a nonnegative numeric duration (dynamic values still need
+runtime range checks). Format uses named `{argument}` placeholders and `{{`/`}}` for literal braces.
+Every placeholder requires an argument binding. Bindings retain their types; rendering their values
+as text belongs to the Format node's eventual executor.

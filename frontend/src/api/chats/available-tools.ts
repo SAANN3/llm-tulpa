@@ -1,10 +1,12 @@
 import axios from 'axios'
+import type {PropertyInfo} from '../plugins/types'
 import {BACKEND_URL} from '../../config'
 
 export interface AvailableTool {
     name: string
     /** The description the model is sent for this tool */
     description: string
+    properties: PropertyInfo[]
 }
 
 /** Every tool this user can be sent */

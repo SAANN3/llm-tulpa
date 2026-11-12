@@ -1,0 +1,129 @@
+use serde::Serialize;
+use utoipa::ToSchema;
+
+use super::definition::NodeKind;
+
+/// Data ports and control ports are separate: an output value does not schedule a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueType {
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    String,
+    Array,
+    Object,
+    Dynamic,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct OutputPort {
+    pub name: &'static str,
+    pub value_type: ValueType,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct NodeDescriptor {
+    pub kind: NodeType,
+    pub title: &'static str,
+    pub control_outputs: Vec<&'static str>,
+    pub outputs: Vec<OutputPort>,
+    pub dynamic_control_outputs: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeType {
+    Entry,
+    Generate,
+    Agent,
+    Tool,
+    Sleep,
+    If,
+    Switch,
+    Format,
+    Return,
+    Plugin,
+}
+
+impl NodeType {
+    pub fn builtins() -> Vec<NodeDescriptor> {
+        [
+            Self::Entry,
+            Self::Generate,
+            Self::Agent,
+            Self::Tool,
+            Self::Sleep,
+            Self::If,
+            Self::Switch,
+            Self::Format,
+            Self::Return,
+        ]
+        .into_iter()
+        .map(Self::descriptor)
+        .collect()
+    }
+
+    pub(super) fn kind(node: &NodeKind) -> Self {
+        match node {
+            NodeKind::Entry => Self::Entry,
+            NodeKind::Generate { .. } => Self::Generate,
+            NodeKind::Agent { .. } => Self::Agent,
+            NodeKind::Tool { .. } => Self::Tool,
+            NodeKind::Sleep { .. } => Self::Sleep,
+            NodeKind::If { .. } => Self::If,
+            NodeKind::Switch { .. } => Self::Switch,
+            NodeKind::Format { .. } => Self::Format,
+            NodeKind::Return { .. } => Self::Return,
+            NodeKind::Plugin { .. } => Self::Plugin,
+        }
+    }
+
+    pub(super) fn descriptor(self) -> NodeDescriptor {
+        let (title, control_outputs, output) = match self {
+            Self::Entry => ("Start", vec!["out"], None),
+            Self::Generate => ("Generate", vec!["out"], Some(("text", ValueType::String))),
+            Self::Agent => ("Agent", vec!["out"], Some(("text", ValueType::String))),
+            Self::Tool => ("Tool", vec!["out"], Some(("result", ValueType::Dynamic))),
+            Self::Sleep => ("Sleep", vec!["out"], None),
+            Self::If => ("If", vec!["true", "false"], None),
+            Self::Switch => ("Switch", vec!["default"], None),
+            Self::Format => ("Format", vec!["out"], Some(("text", ValueType::String))),
+            Self::Return => ("Return", vec![], None),
+            Self::Plugin => ("Plugin", vec![], None),
+        };
+        NodeDescriptor {
+            kind: self,
+            title,
+            control_outputs,
+            outputs: output
+                .into_iter()
+                .map(|(name, value_type)| OutputPort { name, value_type })
+                .collect(),
+            dynamic_control_outputs: self == Self::Switch,
+        }
+    }
+
+    pub(super) fn control_ports(node: &NodeKind) -> Vec<String> {
+        let mut ports: Vec<_> = Self::kind(node)
+            .descriptor()
+            .control_outputs
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        if let NodeKind::Switch { cases, .. } = node {
+            ports.extend(cases.iter().map(|case| case.port.clone()));
+        }
+        ports
+    }
+
+    pub(super) fn output(node: &NodeKind, port: &str) -> Option<ValueType> {
+        Self::kind(node)
+            .descriptor()
+            .outputs
+            .into_iter()
+            .find(|p| p.name == port)
+            .map(|p| p.value_type)
+    }
+}
