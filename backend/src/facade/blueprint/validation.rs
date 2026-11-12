@@ -1,0 +1,175 @@
+use std::collections::HashSet;
+
+use super::definition::*;
+
+pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
+const MAX_NODES: usize = 1000;
+const MAX_EDGES: usize = 4000;
+
+pub fn settings(name: &str, schedule: &Schedule) -> Result<(), String> {
+    if name.trim().is_empty() || name.chars().count() > 160 {
+        return Err("a blueprint needs a name of up to 160 characters".into());
+    }
+    match schedule {
+        Schedule::Interval { seconds: 0 } => {
+            return Err("the interval must be at least one second".into());
+        }
+        Schedule::Daily { time, timezone } => {
+            if time.len() != 5 || chrono::NaiveTime::parse_from_str(time, "%H:%M").is_err() {
+                return Err("daily time must be HH:MM".into());
+            }
+            timezone
+                .parse::<chrono_tz::Tz>()
+                .map_err(|_| "unknown IANA timezone".to_string())?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+}
+
+/// Draft validation only: missing tools, models, entry nodes or incomplete branches do not prevent editing.
+pub fn document(workflow: &Workflow) -> Result<(), String> {
+    if workflow.schema_version != SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported workflow schema_version {}; expected {SCHEMA_VERSION}",
+            workflow.schema_version
+        ));
+    }
+    if workflow.nodes.len() > MAX_NODES || workflow.edges.len() > MAX_EDGES {
+        return Err(format!(
+            "at most {MAX_NODES} nodes and {MAX_EDGES} edges are allowed"
+        ));
+    }
+    let mut nodes = HashSet::new();
+    for node in &workflow.nodes {
+        if !identifier(&node.id) || !nodes.insert(node.id.as_str()) {
+            return Err(format!("invalid or duplicate node id '{}'", node.id));
+        }
+        if node.name.trim().is_empty()
+            || node.name.chars().count() > 160
+            || !node.position.x.is_finite()
+            || !node.position.y.is_finite()
+        {
+            return Err(format!("node '{}': invalid name or position", node.id));
+        }
+    }
+    let mut edges = HashSet::new();
+    for edge in &workflow.edges {
+        if !identifier(&edge.id) || !edges.insert(edge.id.as_str()) || !identifier(&edge.port) {
+            return Err(format!("invalid or duplicate edge '{}'", edge.id));
+        }
+        if !nodes.contains(edge.from.as_str()) || !nodes.contains(edge.to.as_str()) {
+            return Err(format!("edge '{}': unknown node", edge.id));
+        }
+    }
+    for node in &workflow.nodes {
+        let inputs: Vec<&Input> = match &node.kind {
+            NodeKind::Entry => vec![],
+            NodeKind::Generate { model, prompt, .. } => {
+                model_choice(model)?;
+                vec![prompt]
+            }
+            NodeKind::Agent {
+                model,
+                prompt,
+                system_prompt,
+                tools,
+                ..
+            } => {
+                model_choice(model)?;
+                if tools.names.iter().any(|n| !identifier(n)) {
+                    return Err(format!("node '{}': invalid tool name", node.id));
+                }
+                std::iter::once(prompt)
+                    .chain(system_prompt.iter())
+                    .collect()
+            }
+            NodeKind::Tool { name, arguments } => {
+                if !identifier(name) {
+                    return Err(format!("node '{}': invalid tool name", node.id));
+                }
+                arguments.values().collect()
+            }
+            NodeKind::Sleep { seconds } => vec![seconds],
+            NodeKind::If { left, right, .. } => vec![left, right],
+            NodeKind::Switch { value, cases } => {
+                let mut ports = HashSet::new();
+                for case in cases {
+                    if !identifier(&case.port)
+                        || case.port == "default"
+                        || !ports.insert(&case.port)
+                    {
+                        return Err(format!(
+                            "node '{}': invalid or duplicate switch port",
+                            node.id
+                        ));
+                    }
+                }
+                vec![value]
+            }
+            NodeKind::Format { arguments, .. } => arguments.values().collect(),
+            NodeKind::Return { values } => values.values().collect(),
+            NodeKind::Plugin {
+                plugin_name,
+                plugin_subname,
+                node_type,
+                version,
+                arguments,
+            } => {
+                if !identifier(plugin_name)
+                    || !identifier(plugin_subname)
+                    || !identifier(node_type)
+                    || *version == 0
+                {
+                    return Err(format!("node '{}': invalid plugin node identity", node.id));
+                }
+                arguments.values().collect()
+            }
+        };
+        for value in inputs {
+            input(value, &nodes, 0)?;
+        }
+    }
+    Ok(())
+}
+
+fn model_choice(model: &ModelChoice) -> Result<(), String> {
+    if matches!(model, ModelChoice::Model { id, launch_profile_id } if *id <= 0 || launch_profile_id.is_some_and(|id| id <= 0))
+    {
+        return Err("model and launch profile ids must be positive".into());
+    }
+    Ok(())
+}
+
+fn input(value: &Input, nodes: &HashSet<&str>, depth: usize) -> Result<(), String> {
+    if depth > 32 {
+        return Err("input nesting is too deep".into());
+    }
+    match value {
+        Input::Output { node_id, port, .. } => {
+            if !nodes.contains(node_id.as_str()) || !identifier(port) {
+                return Err(format!("invalid output reference '{node_id}.{port}'"));
+            }
+        }
+        Input::Array { items } => {
+            for item in items {
+                input(item, nodes, depth + 1)?;
+            }
+        }
+        Input::Object { fields } => {
+            for item in fields.values() {
+                input(item, nodes, depth + 1)?;
+            }
+        }
+        Input::Literal { .. } => {}
+    }
+    Ok(())
+}

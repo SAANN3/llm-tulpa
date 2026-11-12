@@ -1,3 +1,4 @@
+pub mod blueprint_store;
 pub mod auth;
 pub mod bootstrap;
 pub mod chat_store;

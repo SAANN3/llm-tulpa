@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
+use crate::facade::{blueprint::BlueprintFacade, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
@@ -43,6 +43,7 @@ pub struct AppServices {
     pub model_store: Arc<ModelStore>,
     pub permission_store: Arc<PermissionStore>,
     pub file_store: Arc<FileStore>,
+    pub blueprints: Arc<BlueprintFacade>,
     pub folder_store: Arc<FolderStore>,
     pub job_store: Arc<JobStore>,
     pub launch_store: Arc<LaunchStore>,
@@ -175,6 +176,7 @@ pub async fn bootstrap(
     db_base_url: &str,
     db_name: &str,
     files_dir: PathBuf,
+    blueprints_dir: PathBuf,
     plugins_dir: PathBuf,
     external_plugins_dir: PathBuf,
     jobs_dir: PathBuf,
@@ -251,6 +253,7 @@ pub async fn bootstrap(
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
+    let blueprints = Arc::new(BlueprintFacade::new(Arc::new(crate::services::blueprint_store::BlueprintStore::new(db.clone(), blueprints_dir))));
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone(), plugin_events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
@@ -345,6 +348,7 @@ pub async fn bootstrap(
         model_store,
         permission_store,
         file_store,
+        blueprints,
         folder_store,
         job_store,
         launch_store,

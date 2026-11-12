@@ -180,6 +180,9 @@ pub struct AppConfig {
     /// Where uploaded files are stored. Defaults to `~/.llm-tulpa/files`.
     #[serde(default)]
     pub files_dir: Option<PathBuf>,
+    /// Where versioned blueprint documents are stored. Defaults to `~/.llm-tulpa/blueprints`.
+    #[serde(default)]
+    pub blueprints_dir: Option<PathBuf>,
     /// Where background jobs (`os.start_job`) write their log files. Defaults to `~/.llm-tulpa/jobs`.
     #[serde(default)]
     pub jobs_dir: Option<PathBuf>,
@@ -254,6 +257,7 @@ impl AppConfig {
             ollama: OllamaConfig::default(),
             llama_cpp: LlamaCppConfig::default(),
             files_dir: None,
+            blueprints_dir: None,
             jobs_dir: None,
             stt_dir: None,
             plugins_dir: None,
@@ -275,6 +279,14 @@ impl AppConfig {
             dirs::home_dir()
                 .unwrap_or_else(|| panic!("could not determine home directory; set `files_dir` in settings.json"))
                 .join(".llm-tulpa/files")
+        })
+    }
+
+    pub fn resolved_blueprints_dir(&self) -> PathBuf {
+        self.blueprints_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| panic!("could not determine home directory; set `blueprints_dir` in settings.json"))
+                .join(".llm-tulpa/blueprints")
         })
     }
 

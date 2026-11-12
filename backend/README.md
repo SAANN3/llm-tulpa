@@ -32,6 +32,7 @@ The setup wizard writes the `database` block and the app generates `jwt_secret` 
 | `llama_cpp.external_url` | unset | Use a `llama-server` already running at this URL instead of starting one; the backend then neither starts nor stops it, so the model can't be switched from the UI. |
 | `ollama.context_length` | `32768` | Must match Ollama's own context window (`OLLAMA_CONTEXT_LENGTH` in the root `.env` — see `llm/README.md`) — drives the per-request `num_predict` cap (sized from what is left of the window after the prompt) and the history-compaction thresholds. The two live in different files, so change them together. |
 | `files_dir` | `~/.llm-tulpa/files` | Where uploaded files are stored. |
+| `blueprints_dir` | `~/.llm-tulpa/blueprints` | Versioned workflow documents, separated by user and blueprint; metadata and schedule settings are in the database. See [Blueprint documents](./BLUEPRINTS.md). |
 | `jobs_dir` | `~/.llm-tulpa/jobs` | Where `os.start_job`'s background jobs write their log files. |
 | `stt_dir` | `~/.llm-tulpa/stt` | Where the speech-to-text models for voice input are stored (Settings, Voice). |
 | `plugins_dir` | `~/.llm-tulpa/plugins` | Where plugins keep their files. Each plugin gets a folder of its own inside, `<plugin name>/<plugin subname>`, and lays it out as it likes (the skills plugin keeps one folder per user and per skill, each holding a `SKILL.md` and whatever else the skill brings). |
