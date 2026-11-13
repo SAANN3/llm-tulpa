@@ -1,4 +1,5 @@
 use super::definition::{Literal, Workflow};
+use crate::facade::agent::{AgentToolCall, Allowance};
 use chrono::{DateTime, Utc};
 use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,8 @@ pub enum RunStatus {
     Queued,
     #[sea_orm(string_value = "running")]
     Running,
+    #[sea_orm(string_value = "waiting_for_permission")]
+    WaitingForPermission,
     #[sea_orm(string_value = "stopping")]
     Stopping,
     #[sea_orm(string_value = "completed")]
@@ -40,6 +43,7 @@ pub enum RunStatus {
 #[serde(rename_all = "snake_case")]
 pub enum NodeStatus {
     Pending,
+    WaitingForPermission,
     Running,
     Completed,
     Failed,
@@ -56,7 +60,17 @@ pub struct NodeProgress {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct PendingTool {
+    pub request_id: String,
+    pub node_id: String,
+    pub call: AgentToolCall,
+    pub answer: Option<Allowance>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunState {
+    #[serde(default)]
+    pub pending_tool: Option<PendingTool>,
     pub nodes: BTreeMap<String, NodeProgress>,
     pub current_node: Option<String>,
     pub error: Option<String>,
@@ -64,6 +78,7 @@ pub struct RunState {
 impl RunState {
     pub fn new(workflow: &Workflow) -> Self {
         Self {
+            pending_tool: None,
             nodes: workflow
                 .nodes
                 .iter()
@@ -107,11 +122,12 @@ impl RunState {
     }
     pub fn terminate(&mut self, status: NodeStatus) {
         for node in self.nodes.values_mut() {
-            if matches!(node.status, NodeStatus::Pending | NodeStatus::Running) {
+            if matches!(node.status, NodeStatus::Pending | NodeStatus::Running | NodeStatus::WaitingForPermission) {
                 node.status = status;
             }
         }
         self.current_node = None;
+        self.pending_tool = None;
     }
 }
 
@@ -140,6 +156,7 @@ pub struct RunSummary {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RunDetail {
+    pub chat_id: Option<i64>,
     pub run: RunSummary,
     pub workflow: Workflow,
     pub state: RunState,

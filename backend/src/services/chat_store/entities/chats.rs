@@ -11,6 +11,7 @@ pub struct Model {
     /// The model this chat is bound to (`llm_models.id`) — never null.
     pub model_id: i64,
     pub is_deleted: bool,
+    pub is_service: bool,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
     pub summary: Option<String>,

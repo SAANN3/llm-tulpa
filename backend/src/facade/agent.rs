@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, Semaphore};
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::ChatStore,
+    chat_store::{ChatStore, ToolCallOut},
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
@@ -308,6 +308,40 @@ impl Agent {
         self.runner.reply_once(chat_id, prompt, images, think).await
     }
 
+    /// The same permission preview used by a model-requested tool call, without starting a turn.
+    pub async fn inspect_tool_call(
+        &self,
+        chat_id: i64,
+        name: String,
+        arguments: Value,
+        scopes: &[Value],
+    ) -> Result<AgentToolCall, ErrorService> {
+        self.tool_calls
+            .inspect_explicit(chat_id, name, arguments, scopes)
+            .await
+    }
+
+    pub async fn allow_tool_scope(
+        &self,
+        chat_id: i64,
+        name: String,
+        scope: Value,
+    ) -> Result<(), ErrorService> {
+        self.tool_calls.allow_scope(chat_id, name, scope).await
+    }
+
+    /// Records an explicit call and uses the ordinary tool pipeline; no model turn is started.
+    pub async fn call_tool(
+        &self,
+        chat_id: i64,
+        call: ToolCallOut,
+        scopes: &[Value],
+        auto_confirm: bool,
+    ) -> Result<UseToolOut, ErrorService> {
+        self.tool_calls
+            .run_explicit(chat_id, call, scopes, auto_confirm)
+            .await
+    }
     /// Makes a finished background job (or sub-agent) start a run on its chat by itself, with no browser
     /// open: its notice reaches the model and the model answers. Called once, for the agent whose chats
     /// are the users' own (the messaging plugins' agent has no tools and so no jobs).

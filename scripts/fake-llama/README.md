@@ -30,3 +30,8 @@ Write a function in `run_scenarios.py` with `@scenario`: `script(...)` the repli
 then check `messages(chat)`, `state(chat)` and `calls()` (what the fake was sent: kind `main`, `memory`, `summary`, `facts` or `notes`, whether it carried
 tools, the messages). A reply item is documented in the header of `fake_llama.py`; `match` ties a reply to a request by its system message, so a
 parent chat and its sub-agent can share one script.
+
+
+`blueprint_tools_use_shared_permissions_without_model_calls` also drives explicit Tool nodes:
+default approval, manual scopes/denial, stop during a permission wait, service-chat visibility and
+output bindings. It asserts that these nodes make no model calls. It uses only temporary files.

@@ -13,7 +13,7 @@ use super::{CanUseTool, UseToolOut};
 use super::model_call::ModelCall;
 use super::prompts::{self, INTERRUPTED_TOOL_MESSAGE};
 use crate::plugins::events::{PluginEvent, PluginEvents};
-use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage, ToolCallOut};
+use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, NewToolCall, ToolCallOut};
 use crate::services::error::ErrorService;
 use crate::services::permission_store::{PermissionStore, PermissionStoreErrors};
 use crate::services::tools::ToolService;
@@ -226,37 +226,125 @@ impl ToolCalls {
     pub(super) async fn run_next_tool(&self, chat_id: i64, scope: Option<Value>, unattended: bool) -> Result<UseToolOut, ErrorService> {
         let _running = self.mark_running(chat_id)?;
         let chat = self.chat_store.chat(chat_id).await?;
-        let is_subagent = chat.parent_chat_id.is_some();
         let mut pending = self.pending_tool_calls(chat_id).await?.into_iter();
         let call = pending
             .next()
             .ok_or_else(|| ErrorService::new(StatusCode::BAD_REQUEST, "no pending tool call to run"))?;
 
-        let stored_scope = self.stored_scope(chat_id, chat.user_id, &call.tool_name).await?;
-        let had_scope = scope.is_some() || stored_scope.own.is_some() || !stored_scope.shared.is_empty();
+        let mut result = self.run_call(chat, call, scope, unattended).await?;
+        for later in pending {
+            result.tools.push(self.to_agent_tool_call(chat_id, later.tool_name, later.arguments).await?);
+        }
+        Ok(result)
+    }
+
+    /// An explicit caller has the same execution slot and audit trail as model-requested calls.
+    pub(super) async fn run_explicit(
+        &self,
+        chat_id: i64,
+        call: ToolCallOut,
+        scopes: &[Value],
+        auto_confirm: bool,
+    ) -> Result<UseToolOut, ErrorService> {
+        let _running = self.mark_running(chat_id)?;
+        let chat = self.chat_store.chat(chat_id).await?;
+        if auto_confirm {
+            let view = self
+                .to_agent_tool_call(chat_id, call.tool_name.clone(), call.arguments.clone())
+                .await?;
+            self.grant_what_is_offered(chat_id, &view).await?;
+        }
+        self.chat_store
+            .new_message(NewMessage {
+                chat_id,
+                role: "assistant".into(),
+                content: String::new(),
+                tool_name: None,
+                thinking: None,
+                thought_duration_ms: None,
+                tool_success: None,
+                tool_denied: false,
+                tool_calls: vec![NewToolCall {
+                    tool_name: call.tool_name.clone(),
+                    arguments: call.arguments.clone(),
+                }],
+                images: vec![],
+                file_ids: vec![],
+                prompt_tokens: None,
+                eval_tokens: None,
+                timings: MessageTimings::default(),
+            })
+            .await?;
+        let scope = self
+            .combine_scopes(chat.user_id, &call.tool_name, scopes)
+            .await;
+        self.run_call(chat, call, scope, true).await
+    }
+
+    async fn run_call(
+        &self,
+        chat: Chat,
+        call: ToolCallOut,
+        scope: Option<Value>,
+        unattended: bool,
+    ) -> Result<UseToolOut, ErrorService> {
+        let chat_id = chat.id;
+        let is_subagent = chat.parent_chat_id.is_some();
+        let stored_scope = self
+            .stored_scope(chat_id, chat.user_id, &call.tool_name)
+            .await?;
+        let had_scope =
+            scope.is_some() || stored_scope.own.is_some() || !stored_scope.shared.is_empty();
         // A one-time grant adds to what the chat already has, the way a permanent one would: it holds only
         // what was missing (one more command of a shell line, the folder of a download whose host is already
         // approved), so on its own it would refuse the very call it was meant to let through
         let effective_scope = match scope {
             Some(scope) => match self.tools.get_tool(chat.user_id, &call.tool_name).await {
-                Some(tool) => with_one_time_grant(stored_scope, resolved_scope_from_json(tool.as_ref(), scope)),
+                Some(tool) => with_one_time_grant(
+                    stored_scope,
+                    resolved_scope_from_json(tool.as_ref(), scope),
+                ),
                 None => ResolvedScope::default(),
             },
             None => stored_scope,
         };
         let permission = self
-            .tool_permission(&call.tool_name, call.arguments.clone(), effective_scope, chat.user_id, is_subagent)
+            .tool_permission(
+                &call.tool_name,
+                call.arguments.clone(),
+                effective_scope,
+                chat.user_id,
+                is_subagent,
+            )
             .await;
 
         let result_cap = Self::result_cap_chars(self.model.context_of(&chat).await?);
-        let started = ToolCallOut { tool_name: call.tool_name.clone(), arguments: call.arguments.clone() };
-        self.plugin_events.fire(PluginEvent::ToolStarted { user_id: chat.user_id, chat_id, call: &started }).await;
+        let started = ToolCallOut {
+            tool_name: call.tool_name.clone(),
+            arguments: call.arguments.clone(),
+        };
+        self.plugin_events
+            .fire(PluginEvent::ToolStarted {
+                user_id: chat.user_id,
+                chat_id,
+                call: &started,
+            })
+            .await;
 
         let mut images = Vec::new();
         let (success, denied, err, content) = match permission {
             AgentToolPermission::Allowed => {
-                let ctx = self.tool_context.copy_with_chat_id(chat_id, chat.user_id, chat.provider.clone(), chat.model.clone());
-                match self.tools.call_tool(&call.tool_name, call.arguments.clone(), &ctx).await {
+                let ctx = self.tool_context.copy_with_chat_id(
+                    chat_id,
+                    chat.user_id,
+                    chat.provider.clone(),
+                    chat.model.clone(),
+                );
+                match self
+                    .tools
+                    .call_tool(&call.tool_name, call.arguments.clone(), &ctx)
+                    .await
+                {
                     Ok(mut value) => {
                         images = Self::take_images(&mut value);
                         (true, false, None, value)
@@ -268,7 +356,13 @@ impl ToolCalls {
                 }
             }
             AgentToolPermission::Denied { reason, escalation } => {
-                let message = prompts::tool_call_refused(unattended, had_scope, escalation.is_some(), &call.tool_name, &reason);
+                let message = prompts::tool_call_refused(
+                    unattended,
+                    had_scope,
+                    escalation.is_some(),
+                    &call.tool_name,
+                    &reason,
+                );
                 (false, true, Some(message.clone()), Value::String(message))
             }
         };
@@ -292,12 +386,14 @@ impl ToolCalls {
                 timings: MessageTimings::default(),
             })
             .await?;
-        self.plugin_events.fire(PluginEvent::ToolFinished { user_id: chat.user_id, chat_id, call: &started, result: &stored }).await;
-
-        let mut tools = Vec::with_capacity(pending.len());
-        for later in pending.by_ref() {
-            tools.push(self.to_agent_tool_call(chat_id, later.tool_name, later.arguments).await?);
-        }
+        self.plugin_events
+            .fire(PluginEvent::ToolFinished {
+                user_id: chat.user_id,
+                chat_id,
+                call: &started,
+                result: &stored,
+            })
+            .await;
 
         Ok(UseToolOut {
             id: stored.id,
@@ -307,10 +403,9 @@ impl ToolCalls {
             err,
             content,
             created_at: stored.created_at,
-            tools,
+            tools: vec![],
         })
     }
-
     /// Persists a scope grant for a tool within a chat, so future calls to that tool (or
     /// any other tool sharing one of its buckets — see `Tool::shared_buckets`) can be
     /// `Allowed` without asking again. `scope` is the envelope `resolved_scope_to_json`
@@ -483,12 +578,57 @@ impl ToolCalls {
         name: String,
         arguments: Value,
     ) -> Result<AgentToolCall, ErrorService> {
-        let chat = self.chat_store.chat(chat_id).await?;
-        let scope = self.stored_scope(chat_id, chat.user_id, &name).await?;
-        let permission = self.tool_permission(&name, arguments.clone(), scope, chat.user_id, chat.parent_chat_id.is_some()).await;
-
-        Ok(AgentToolCall { permission, name, arguments })
+        self.inspect_explicit(chat_id, name, arguments, &[]).await
     }
+
+    pub(super) async fn inspect_explicit(
+        &self,
+        chat_id: i64,
+        name: String,
+        arguments: Value,
+        scopes: &[Value],
+    ) -> Result<AgentToolCall, ErrorService> {
+        let chat = self.chat_store.chat(chat_id).await?;
+        let mut scope = self.stored_scope(chat_id, chat.user_id, &name).await?;
+        if let Some(tool) = self.tools.get_tool(chat.user_id, &name).await {
+            for grant in scopes {
+                scope = with_one_time_grant(
+                    scope,
+                    resolved_scope_from_json(tool.as_ref(), grant.clone()),
+                );
+            }
+        }
+        let permission = self
+            .tool_permission(
+                &name,
+                arguments.clone(),
+                scope,
+                chat.user_id,
+                chat.parent_chat_id.is_some(),
+            )
+            .await;
+        Ok(AgentToolCall {
+            permission,
+            name,
+            arguments,
+        })
+    }
+
+    async fn combine_scopes(&self, user_id: i64, name: &str, scopes: &[Value]) -> Option<Value> {
+        if scopes.is_empty() {
+            return None;
+        }
+        let tool = self.tools.get_tool(user_id, name).await?;
+        let mut merged = ResolvedScope::default();
+        for scope in scopes {
+            merged = with_one_time_grant(
+                merged,
+                resolved_scope_from_json(tool.as_ref(), scope.clone()),
+            );
+        }
+        Some(resolved_scope_to_json(merged))
+    }
+
 }
 
 /// Serializes a `ResolvedScope` into the flat JSON value that crosses the HTTP boundary

@@ -259,12 +259,6 @@ pub async fn bootstrap(
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
-    let blueprints = Arc::new(BlueprintFacade::new(
-        Arc::new(BlueprintStore::new(db.clone(), blueprints_dir)),
-        Validation::new(tools.clone(), model_store.clone(), launch_store.clone()),
-        events.clone(),
-        shutdown,
-    ));
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone(), plugin_events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
@@ -316,7 +310,7 @@ pub async fn bootstrap(
         Arc::new(ToolService::new(vec![])),
         file_store.clone(),
         job_store.clone(),
-        events,
+        events.clone(),
         plugin_events.clone(),
         stt,
         permission_store.clone(),
@@ -349,6 +343,16 @@ pub async fn bootstrap(
     external_plugins.start_all().await;
     // The plugin tools were made with the tool list, before there was a database; they reach the plugins through this
     crate::tools::plugins::install(external_plugins.clone(), user_store.clone());
+
+    let blueprints = Arc::new(BlueprintFacade::new(
+        Arc::new(BlueprintStore::new(db.clone(), blueprints_dir)),
+        Validation::new(tools.clone(), model_store.clone(), launch_store.clone()),
+        events.clone(),
+        shutdown,
+        agent.clone(),
+        chat_store.clone(),
+        tools.clone(),
+    ));
 
     blueprints.initialize().await.map_err(BootstrapError::Blueprints)?;
 

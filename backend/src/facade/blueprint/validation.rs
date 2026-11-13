@@ -1,13 +1,15 @@
 mod graph;
+mod properties;
 mod readiness;
 pub mod report;
 mod values;
 
 pub use readiness::Validation;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use crate::tools::base::PropertyInfo;
 
-use super::definition::{Input, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
+use super::definition::{Input, Literal, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
 use graph::Graph;
 use report::{Diagnostic, ValidationReport};
 
@@ -129,7 +131,7 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
                     .chain(system_prompt.iter())
                     .collect()
             }
-            NodeKind::Tool { name, arguments } => {
+            NodeKind::Tool { name, arguments, .. } => {
                 if !identifier(name) {
                     return Err(Diagnostic::draft(
                         Some(&node.id),
@@ -228,5 +230,12 @@ pub(super) fn graph_errors(workflow: &Workflow) -> ValidationReport {
     } else {
         Graph::inspect(workflow, &mut report);
     }
+    report.finish()
+}
+
+pub(super) fn tool_arguments(fields: &BTreeMap<String, Literal>, properties: &[PropertyInfo]) -> ValidationReport {
+    let mut report = ValidationReport::default();
+    let fields = fields.iter().map(|(name, value)| (name.clone(), values::Shape::literal(value))).collect();
+    properties::Properties { report: &mut report, node_id: None }.properties(&fields, properties, "arguments");
     report.finish()
 }

@@ -167,7 +167,7 @@ impl Validation {
                         }
                     }
                 }
-                NodeKind::Tool { name, arguments } => {
+                NodeKind::Tool { name, arguments, .. } => {
                     let fields: BTreeMap<_, _> = arguments
                         .iter()
                         .map(|(k, v)| (k.clone(), values.infer(v, &format!("kind.arguments.{k}"))))

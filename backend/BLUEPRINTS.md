@@ -2,7 +2,7 @@
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
 versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
-Agent/tool execution and schedule ticking are not implemented yet.
+Agent/generation execution and schedule ticking are not implemented yet.
 
 ## Storage and ownership
 
@@ -106,7 +106,7 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | `entry` | No timer; the execution entry point |
 | `generate` | model, prompt, optional think |
 | `agent` | model, prompt, optional system_prompt/think, tools, reuse_chat, write_notes, write_memory |
-| `tool` | name, arguments keyed by the tool's argument names |
+| `tool` | name, arguments keyed by the tool's argument names, require_confirmation (default false) |
 | `sleep` | seconds as an input binding |
 | `if` | left, operator, right |
 | `switch` | value, cases (`port`, literal `value`); `default` is reserved |
@@ -194,7 +194,7 @@ Each user has one sequential queue shared by all of their blueprints. Only one r
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
 by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
-Switch, Format and Return; starting a graph with Tool, Generate, Agent or Plugin returns 400.
+Switch, Format, Return and Tool; starting a graph with Generate, Agent or Plugin returns 400.
 Static validation can still describe those draft nodes without an executor.
 
 | Method | Path | Request / result |
@@ -213,8 +213,8 @@ membership is checked under the same user-row lock used when claiming a run. Del
 blueprint with running or queued work returns 409. Stop its active run if needed and clear
 waiting work through the shared queue endpoint; clearing affects every queued blueprint of that user.
 
-Run statuses: `queued`, `running`, `stopping`, `completed`, `failed`, `cancelled`, `interrupted`.
-Node statuses: `pending`, `running`, `completed`, `failed`, `skipped`, `cancelled`, `interrupted`.
+Run statuses: `queued`, `running`, `waiting_for_permission`, `stopping`, `completed`, `failed`, `cancelled`, `interrupted`.
+Node statuses: `pending`, `running`, `waiting_for_permission`, `completed`, `failed`, `skipped`, `cancelled`, `interrupted`.
 A node error fails its run and cancels the remaining nodes; the next queued run may start.
 Sleep is cancellable. Return ends its branch, leaving ordered sibling branches to execute.
 Unselected If/Switch branches are skipped. Numeric comparison preserves integer precision;
@@ -239,3 +239,53 @@ from the total once the condition is evaluated, so the estimate can change durin
 It measures node count, not elapsed time; a long Sleep and a Format each count once. Total and
 percent are nullable for future executors whose remaining work cannot be counted. There are no
 loop or merge nodes in the current executor.
+
+
+## Tool nodes
+
+Tool nodes resolve their bindings, validate the resulting values against the current user's tool
+schema and use the ordinary agent tool pipeline: permission scopes, owner restrictions, plugin
+hooks, tool context and recorded call/result messages. The workflow executor does not start a
+parent model turn; a tool that itself uses a model or starts a sub-agent keeps that behavior. The output
+port `result` contains the tool's JSON result as a typed workflow value; references can select its
+fields/array elements. A failed or refused call fails the node/run. Results larger than 1 MiB fail
+the node; execution does not retry actions whose outcome might already have taken effect.
+
+`require_confirmation` defaults to false. Placing the call in the workflow authorizes the normal
+auto-confirm scope grants for that call, independently of the ordinary chat auto-confirm setting.
+Hard refusals (including owner-only tool restrictions) remain refusals. With
+`require_confirmation: true`, an offered grant pauses the run and occupies the user's active
+queue slot. Other users' queues continue independently. A tool already allowed by the context's
+grants needs no extra prompt.
+
+Each run lazily creates one service chat when its first Tool node executes. It uses the user's
+current default registered model/profile at that point; creation fails clearly when no model is
+registered. This binding supplies tools that need a model, but running an ordinary file tool does
+not load or query it. The chat is hidden from the normal chat list and search. Its `chat_id` is
+included in the run detail for auditing, files and jobs. Runs do not inherit permission grants
+from earlier runs. Service chats do not automatically wake an agent when a background job finishes.
+A tool explicitly starting a background job returns that job; the job's lifecycle remains managed
+by the existing job tools and is not the lifetime of the blueprint node.
+
+`GET /api/blueprints/{id}/runs/{run_id}` includes `state.pending_tool` (null unless waiting):
+`request_id`, `node_id`, the existing `AgentToolCall` view (`name`, `arguments`, `permission`),
+and a nullable `answer`. Answer with:
+
+```http
+POST /api/blueprints/{id}/runs/{run_id}/answer
+Content-Type: application/json
+
+{"request_id":"the currently pending id","allowance":"only_now"}
+```
+
+The response is 202. The accepted allowances are the existing `only_now`, `permanent` and `deny`.
+Permanent grants last within this run's chat; only-now grants affect this invocation only. Calls
+needing several scope facts may publish another pending request after an answer. Deny fails the
+node without calling the tool. Missing/foreign runs return 404; stale, already answered or stopped
+requests return 409. After answering, fetch the current run state or react to BlueprintEvent hints.
+After a restart, permission waits become interrupted with the other unfinished active runs; they
+are not replayed.
+
+Stop cancels Sleep and permission waits promptly. As with ordinary agent tools, a tool that has
+already started finishes before the run is reported cancelled; completed external/file actions
+are not rolled back. No subsequent node starts after the stop.

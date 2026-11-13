@@ -2231,6 +2231,63 @@ def another_user_cannot_use_the_plugin_tools():
         settings()
 
 
+@scenario
+def blueprint_tools_use_shared_permissions_without_model_calls():
+    import tempfile
+    settings(auto_confirm=False)
+    with tempfile.TemporaryDirectory(prefix="tulpa-blueprint-tools-") as directory:
+        def blueprint(path, confirmation=False):
+            nodes = [
+                {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                {"id": "write", "name": "Write", "kind": {"type": "tool", "name": "storage.write_file",
+                    "require_confirmation": confirmation,
+                    "arguments": {"path": {"source": "literal", "value": path}, "content": {"source": "literal", "value": "blueprint fixture"}}}},
+                {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                    "bytes": {"source": "output", "node_id": "write", "port": "result", "path": ["bytes_written"]}}}},
+            ]
+            return ok("/api/blueprints", {"name": "Tool fixture", "workflow": {"schema_version": 1, "nodes": nodes,
+                "edges": [{"id": "e1", "from": "start", "port": "out", "to": "write"},
+                          {"id": "e2", "from": "write", "port": "out", "to": "result"}]}})["id"]
+        def start(blueprint_id):
+            return ok(f"/api/blueprints/{blueprint_id}/runs", {"expected_revision": 1})["id"]
+        def detail(blueprint_id, run):
+            return ok(f"/api/blueprints/{blueprint_id}/runs/{run}")
+        def wait(blueprint_id, run, status):
+            wait_for(lambda: detail(blueprint_id, run)["run"]["status"] == status, what=f"blueprint {status}")
+            return detail(blueprint_id, run)
+        path = os.path.join(directory, "default.txt")
+        b = blueprint(path)
+        r = start(b)
+        d = wait(b, r, "completed")
+        eq(open(path).read(), "blueprint fixture", "explicit node is approved by default")
+        eq(d["state"]["nodes"]["result"]["outputs"]["bytes"], 17, "typed tool output binding")
+        assert d["chat_id"] not in [c["id"] for c in ok("/api/chats?limit=100")["chats"]], "service chat is hidden"
+        eq(roles(d["chat_id"]), ["assistant", "tool"], "ordinary audit messages")
+        for allowance, expected in [("only_now", "completed"), ("permanent", "completed"), ("deny", "failed")]:
+            path = os.path.join(directory, allowance + ".txt")
+            b = blueprint(path, True)
+            r = start(b)
+            d = wait(b, r, "waiting_for_permission")
+            assert not os.path.exists(path), "waiting has no side effect"
+            pending = d["state"]["pending_tool"]
+            eq(ok("/api/blueprints/queue")["running"]["id"], r, "permission wait holds the active slot")
+            url = f"/api/blueprints/{b}/runs/{r}/answer"
+            eq(api(url, {"request_id": "stale", "allowance": allowance})[0], 409, "stale confirmation")
+            eq(api(url, {"request_id": pending["request_id"], "allowance": allowance})[0], 202, "answer")
+            d = wait(b, r, expected)
+            eq(os.path.exists(path), allowance != "deny", "side effect follows decision")
+            eq(api(url, {"request_id": pending["request_id"], "allowance": allowance})[0], 409, "no duplicate answer")
+        path = os.path.join(directory, "stopped.txt")
+        b = blueprint(path, True)
+        r = start(b)
+        wait(b, r, "waiting_for_permission")
+        ok("/api/blueprints/queue/stop", {})
+        wait(b, r, "cancelled")
+        assert not os.path.exists(path), "stop never executes a pending tool"
+        eq(calls(), [], "Tool nodes do not call the model")
+    settings()
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0

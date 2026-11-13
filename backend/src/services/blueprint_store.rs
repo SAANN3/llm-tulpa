@@ -217,6 +217,7 @@ impl BlueprintStore {
             .filter(blueprint_runs::Column::Status.is_in([
                 RunStatus::Queued,
                 RunStatus::Running,
+                RunStatus::WaitingForPermission,
                 RunStatus::Stopping,
             ])).one(&txn).await?.is_some() {
             return Err(BlueprintStoreError::Busy);
@@ -308,6 +309,7 @@ pub enum BlueprintStoreError {
     NotFound,
     Conflict,
     QueueChanged,
+    ConfirmationChanged,
     Busy,
     Database(DbErr),
     Io(std::io::Error),
@@ -337,6 +339,7 @@ impl From<BlueprintStoreError> for ErrorService {
                 StatusCode::CONFLICT,
                 "blueprint changed; reload before saving or deleting",
             ),
+            BlueprintStoreError::ConfirmationChanged => Self::new(StatusCode::CONFLICT, "tool confirmation changed; reload the run before answering"),
             BlueprintStoreError::QueueChanged => Self::new(StatusCode::CONFLICT, "queue changed; reload before reordering"),
             BlueprintStoreError::Busy => Self::new(StatusCode::CONFLICT, "stop the current run and clear the queue before deleting this blueprint"),
             BlueprintStoreError::Database(e) => {

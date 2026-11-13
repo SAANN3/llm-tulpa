@@ -8,6 +8,7 @@ pub struct Model {
     pub id: i64,
     pub blueprint_id: i64,
     pub user_id: i64,
+    pub chat_id: Option<i64>,
     pub revision: i64,
     pub workflow: Json,
     pub state: Json,

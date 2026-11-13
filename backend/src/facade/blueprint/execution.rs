@@ -6,7 +6,7 @@ use super::{
 use std::{cmp::Ordering, collections::BTreeMap, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-const MAX_VALUE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_STATE_BYTES: usize = 4 * MAX_VALUE_BYTES;
 
 pub(super) struct Outcome {
@@ -18,6 +18,7 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::Entry
+            | NodeKind::Tool { .. }
             | NodeKind::Sleep { .. }
             | NodeKind::If { .. }
             | NodeKind::Switch { .. }
@@ -138,12 +139,20 @@ pub(super) async fn execute(
     Ok(result)
 }
 
-struct Values<'a> {
-    state: &'a RunState,
-    remaining: usize,
+pub(super) struct Values<'a> {
+    pub state: &'a RunState,
+    pub remaining: usize,
 }
 impl Values<'_> {
-    fn resolve(&mut self, input: &Input, depth: usize) -> Result<Literal, String> {
+    pub fn fields(&mut self, fields: &BTreeMap<String, Input>, depth: usize) -> Result<BTreeMap<String, Literal>, String> {
+        let mut result = BTreeMap::new();
+        for (name, input) in fields {
+            spend(&mut self.remaining, name.len(), depth)?;
+            result.insert(name.clone(), self.resolve(input, depth + 1)?);
+        }
+        Ok(result)
+    }
+    pub fn resolve(&mut self, input: &Input, depth: usize) -> Result<Literal, String> {
         spend(&mut self.remaining, 1, depth)?;
         match input {
             Input::Literal { value } => copy_value(value, &mut self.remaining, depth + 1),
@@ -153,14 +162,7 @@ impl Values<'_> {
                     .map(|v| self.resolve(v, depth + 1))
                     .collect::<Result<_, _>>()?,
             )),
-            Input::Object { fields } => {
-                let mut result = BTreeMap::new();
-                for (name, input) in fields {
-                    spend(&mut self.remaining, name.len(), depth)?;
-                    result.insert(name.clone(), self.resolve(input, depth + 1)?);
-                }
-                Ok(Literal::Object(result))
-            }
+            Input::Object { fields } => Ok(Literal::Object(self.fields(fields, depth)?)),
             Input::Output {
                 node_id,
                 port,

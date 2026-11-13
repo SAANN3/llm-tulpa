@@ -5,9 +5,12 @@ mod execution;
 mod runner;
 pub mod runs;
 mod template;
+mod tool_nodes;
 pub mod validation;
 
+use crate::facade::agent::{Agent, Allowance};
 use crate::services::{
+    chat_store::ChatStore, tools::ToolService,
     blueprint_store::{BlueprintRecord, BlueprintStore, BlueprintStoreError},
     error::ErrorService,
     event_bus::EventBus,
@@ -16,6 +19,7 @@ use axum::http::StatusCode;
 use catalog::{NodeDescriptor, NodeType};
 use definition::{Schedule, Workflow};
 use runner::Runner;
+use tool_nodes::ToolNodes;
 use runs::{QueueState, RunDetail, RunSummary};
 use validation::{
     Validation,
@@ -36,8 +40,12 @@ impl BlueprintFacade {
         validation: Validation,
         events: Arc<EventBus>,
         shutdown: CancellationToken,
+        agent: Arc<Agent>,
+        chats: Arc<ChatStore>,
+        tools: Arc<ToolService>,
     ) -> Self {
-        let runner = Runner::new(store.clone(), events, shutdown);
+        let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, events.clone());
+        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes);
         Self {
             store,
             validation,
@@ -110,6 +118,9 @@ impl BlueprintFacade {
     }
     pub async fn stop(&self, user_id: i64) -> Result<Option<i64>, ErrorService> {
         Ok(self.runner.stop(user_id).await?)
+    }
+    pub async fn answer_tool(&self, user_id: i64, id: i64, run_id: i64, request_id: &str, allowance: Allowance) -> Result<(), ErrorService> {
+        Ok(self.runner.answer_tool(user_id, id, run_id, request_id, allowance).await?)
     }
     pub async fn user_deleted(&self, user_id: i64) {
         self.runner.user_deleted(user_id).await;

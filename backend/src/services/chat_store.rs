@@ -115,6 +115,7 @@ impl ChatStore {
         chats::Entity::find()
             .filter(chats::Column::UserId.eq(user_id))
             .filter(chats::Column::IsDeleted.eq(false))
+            .filter(chats::Column::IsService.eq(false))
             .filter(chats::Column::ParentChatId.is_null())
             .filter(chats::Column::Id.not_in_subquery(
                 plugin_chats::Entity::find()
@@ -244,6 +245,7 @@ impl ChatStore {
         Ok(Chat {
             id: row.id,
             user_id: row.user_id,
+            is_service: row.is_service,
             name: row.name,
             model_id: model.id,
             provider: model.provider,
@@ -663,6 +665,14 @@ impl ChatStore {
     /// `binding_for_new_chat`), with or without tools. Errs `Model(NoModel)` when no model exists at all — a
     /// chat can't be created without one.
     pub async fn create_chat(&self, user_id: i64, name: String, tool_mode: ToolMode) -> Result<Chat, ChatStoreErrors> {
+        self.create_chat_with_visibility(user_id, name, tool_mode, false).await
+    }
+
+    pub async fn create_service_chat(&self, user_id: i64, name: String) -> Result<Chat, ChatStoreErrors> {
+        self.create_chat_with_visibility(user_id, name, ToolMode::Blacklist, true).await
+    }
+
+    async fn create_chat_with_visibility(&self, user_id: i64, name: String, tool_mode: ToolMode, is_service: bool) -> Result<Chat, ChatStoreErrors> {
         let (model, launch_profile_id) = self.binding_for_new_chat(user_id).await?;
         let row = chats::ActiveModel {
             user_id: Set(user_id),
@@ -670,6 +680,7 @@ impl ChatStore {
             model_id: Set(model.id),
             launch_profile_id: Set(launch_profile_id),
             tool_mode: Set(tool_mode.to_string()),
+            is_service: Set(is_service),
             ..Default::default()
         }
         .insert(&self.db)
@@ -1409,6 +1420,7 @@ impl ChatStore {
 
 #[derive(Clone, Serialize)]
 pub struct Chat {
+    pub is_service: bool,
     pub id: i64,
     pub user_id: i64,
     pub name: String,

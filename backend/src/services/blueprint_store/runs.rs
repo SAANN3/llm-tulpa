@@ -7,6 +7,7 @@ use crate::facade::blueprint::{
     runs::{NodeStatus, QueueState, RunDetail, RunState, RunStatus, RunSummary},
 };
 use chrono::Utc;
+use crate::facade::agent::{Allowance, Decision};
 use sea_orm::{
     ActiveValue::Set, DatabaseTransaction, QueryOrder, QuerySelect, Select, TransactionTrait, prelude::*,
 };
@@ -30,6 +31,7 @@ fn summary(row: &runs::Model, state: &RunState) -> RunSummary {
 fn detail(row: runs::Model) -> Result<RunDetail, BlueprintStoreError> {
     let state = serde_json::from_value::<RunState>(row.state.clone())?;
     Ok(RunDetail {
+        chat_id: row.chat_id,
         run: summary(&row, &state),
         workflow: serde_json::from_value(row.workflow)?,
         state,
@@ -114,6 +116,7 @@ impl BlueprintStore {
             .filter(runs::Column::Status.is_in([
                 RunStatus::Queued,
                 RunStatus::Running,
+                RunStatus::WaitingForPermission,
                 RunStatus::Stopping,
             ]))
             .order_by_asc(runs::Column::QueuePosition)
@@ -236,7 +239,7 @@ impl BlueprintStore {
         self.lock_queue(&txn, user_id).await?;
         if runs::Entity::find()
             .filter(runs::Column::UserId.eq(user_id))
-            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::Stopping]))
+            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::WaitingForPermission, RunStatus::Stopping]))
             .one(&txn)
             .await?
             .is_some()
@@ -271,7 +274,7 @@ impl BlueprintStore {
         self.lock_queue(&txn, user_id).await?;
         let row = runs::Entity::find()
             .filter(runs::Column::UserId.eq(user_id))
-            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::Stopping]))
+            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::WaitingForPermission, RunStatus::Stopping]))
             .one(&txn)
             .await?;
         let result = if let Some(row) = row {
@@ -326,7 +329,7 @@ impl BlueprintStore {
             .one(&txn)
             .await?
             .ok_or(BlueprintStoreError::NotFound)?;
-        if !matches!(row.status, RunStatus::Running | RunStatus::Stopping) {
+        if !matches!(row.status, RunStatus::Running | RunStatus::WaitingForPermission | RunStatus::Stopping) {
             return Err(BlueprintStoreError::Conflict);
         }
         let status = if row.status == RunStatus::Stopping {
@@ -353,7 +356,7 @@ impl BlueprintStore {
     pub async fn recover_runs(&self) -> Result<Vec<i64>, BlueprintStoreError> {
         let txn = self.db.begin().await?;
         for row in runs::Entity::find()
-            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::Stopping]))
+            .filter(runs::Column::Status.is_in([RunStatus::Running, RunStatus::WaitingForPermission, RunStatus::Stopping]))
             .all(&txn)
             .await?
         {
@@ -375,5 +378,120 @@ impl BlueprintStore {
             .collect();
         txn.commit().await?;
         Ok(owners.into_iter().collect())
+    }
+}
+
+impl BlueprintStore {
+    pub async fn attach_run_chat(
+        &self,
+        user_id: i64,
+        id: i64,
+        run_id: i64,
+        chat_id: i64,
+    ) -> Result<bool, BlueprintStoreError> {
+        let txn = self.db.begin().await?;
+        self.lock_queue(&txn, user_id).await?;
+        self.lock_blueprint(&txn, user_id, id).await?;
+        let row = run_query(id, run_id)
+            .one(&txn)
+            .await?
+            .ok_or(BlueprintStoreError::NotFound)?;
+        if row.status != RunStatus::Running {
+            return Ok(false);
+        }
+        let mut row: runs::ActiveModel = row.into();
+        row.chat_id = Set(Some(chat_id));
+        row.update(&txn).await?;
+        txn.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn wait_for_permission(
+        &self,
+        user_id: i64,
+        id: i64,
+        run_id: i64,
+        state: &RunState,
+    ) -> Result<bool, BlueprintStoreError> {
+        let txn = self.db.begin().await?;
+        self.lock_queue(&txn, user_id).await?;
+        self.lock_blueprint(&txn, user_id, id).await?;
+        let row = run_query(id, run_id)
+            .one(&txn)
+            .await?
+            .ok_or(BlueprintStoreError::NotFound)?;
+        if row.status != RunStatus::Running {
+            return Ok(false);
+        }
+        let mut row: runs::ActiveModel = row.into();
+        row.status = Set(RunStatus::WaitingForPermission);
+        row.state = Set(serde_json::to_value(state)?);
+        row.update(&txn).await?;
+        txn.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn answer_tool(
+        &self,
+        user_id: i64,
+        id: i64,
+        run_id: i64,
+        request_id: &str,
+        allowance: Allowance,
+    ) -> Result<(), BlueprintStoreError> {
+        let txn = self.db.begin().await?;
+        self.lock_queue(&txn, user_id).await?;
+        self.lock_blueprint(&txn, user_id, id).await?;
+        let row = run_query(id, run_id)
+            .one(&txn)
+            .await?
+            .ok_or(BlueprintStoreError::NotFound)?;
+        let mut state: RunState = serde_json::from_value(row.state.clone())?;
+        let pending = state
+            .pending_tool
+            .as_mut()
+            .filter(|p| p.request_id == request_id && p.answer.is_none())
+            .ok_or(BlueprintStoreError::ConfirmationChanged)?;
+        if row.status != RunStatus::WaitingForPermission {
+            return Err(BlueprintStoreError::ConfirmationChanged);
+        }
+        pending
+            .call
+            .check_decision(&Decision {
+                index: 0,
+                allowance,
+            })
+            .map_err(BlueprintStoreError::Corrupt)?;
+        pending.answer = Some(allowance);
+        let mut row: runs::ActiveModel = row.into();
+        row.state = Set(serde_json::to_value(state)?);
+        row.update(&txn).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    pub async fn resume_tool(
+        &self,
+        user_id: i64,
+        id: i64,
+        run_id: i64,
+        state: &RunState,
+    ) -> Result<bool, BlueprintStoreError> {
+        let txn = self.db.begin().await?;
+        self.lock_queue(&txn, user_id).await?;
+        self.lock_blueprint(&txn, user_id, id).await?;
+        let row = run_query(id, run_id)
+            .one(&txn)
+            .await?
+            .ok_or(BlueprintStoreError::NotFound)?;
+        if row.status != RunStatus::WaitingForPermission {
+            return Ok(false);
+        }
+        let mut row: runs::ActiveModel = row.into();
+        row.status = Set(RunStatus::Running);
+        row.state = Set(serde_json::to_value(state)?);
+        row.update(&txn).await?;
+        txn.commit().await?;
+        Ok(true)
     }
 }

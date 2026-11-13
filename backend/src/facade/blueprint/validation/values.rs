@@ -7,7 +7,8 @@ use super::{
     graph::Graph,
     report::{Severity, ValidationReport},
 };
-use crate::tools::base::{PropertyInfo, PropertyType};
+use super::properties::Properties;
+use crate::tools::base::PropertyInfo;
 use std::collections::BTreeMap;
 
 pub(super) struct Shape {
@@ -130,59 +131,19 @@ impl Values<'_, '_> {
             );
         }
     }
-    pub fn property(&mut self, shape: &Shape, expected: &PropertyType, field: &str) {
-        if shape.kind == ValueType::Dynamic {
-            return;
-        }
-        let kind = match expected {
-            PropertyType::String => ValueType::String,
-            PropertyType::Number => ValueType::Number,
-            PropertyType::Integer => ValueType::Integer,
-            PropertyType::Boolean => ValueType::Boolean,
-            PropertyType::Array { .. } => ValueType::Array,
-            PropertyType::Object { .. } => ValueType::Object,
-        };
-        self.expect(shape, kind, field);
-        match expected {
-            PropertyType::Array { items } if shape.kind == ValueType::Array => {
-                for (i, item) in shape.items.iter().enumerate() {
-                    self.property(item, items, &format!("{field}[{i}]"));
-                }
-            }
-            PropertyType::Object { properties } if shape.kind == ValueType::Object => {
-                self.properties(&shape.fields, properties, field)
-            }
-            _ => {}
-        }
-    }
     pub fn properties(
         &mut self,
         fields: &BTreeMap<String, Shape>,
         properties: &[PropertyInfo],
         field: &str,
     ) {
-        for property in properties {
-            let path = format!("{field}.{}", property.name);
-            if let Some(value) = fields.get(&property.name) {
-                self.property(value, &property.property_type, &path);
-            } else if property.required {
-                self.error(&path, "missing_argument", "required argument is missing");
-            }
+        Properties {
+            report: self.report,
+            node_id: Some(&self.graph.workflow.nodes[self.node].id),
         }
-        // An empty object schema describes an open map in the existing tool schema contract.
-        if !properties.is_empty() {
-            for name in fields
-                .keys()
-                .filter(|name| !properties.iter().any(|p| p.name == **name))
-            {
-                self.error(
-                    &format!("{field}.{name}"),
-                    "unknown_argument",
-                    "argument is not in the current tool schema",
-                );
-            }
-        }
+        .properties(fields, properties, field);
     }
+
 }
 
 pub(super) fn compatible(actual: ValueType, expected: ValueType) -> bool {

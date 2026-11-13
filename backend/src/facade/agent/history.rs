@@ -621,6 +621,7 @@ mod tests {
 
     fn chat() -> Chat {
         Chat {
+            is_service: false,
             id: 1,
             user_id: 1,
             name: "c".into(),

@@ -2,9 +2,11 @@ use super::{
     definition::{NodeKind, Workflow},
     events::BlueprintEvent,
     execution,
+    tool_nodes::ToolNodes,
     runs::{NodeStatus, RunDetail, RunState, RunStatus},
     validation::{self, report::Severity},
 };
+use crate::facade::agent::Allowance;
 use crate::services::{
     blueprint_store::{BlueprintStore, BlueprintStoreError},
     event_bus::{EventBus, ServerEvent},
@@ -13,19 +15,21 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Runner {
     store: Arc<BlueprintStore>,
     events: Arc<EventBus>,
     shutdown: CancellationToken,
+    tools: ToolNodes,
     workers: Mutex<HashSet<i64>>,
     active: Mutex<HashMap<i64, ActiveRun>>,
 }
 struct ActiveRun {
     user_id: i64,
     cancel: CancellationToken,
+    notify: Arc<Notify>,
 }
 
 impl Runner {
@@ -33,11 +37,13 @@ impl Runner {
         store: Arc<BlueprintStore>,
         events: Arc<EventBus>,
         shutdown: CancellationToken,
+        tools: ToolNodes,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
             events,
             shutdown,
+            tools,
             workers: Mutex::default(),
             active: Mutex::default(),
         })
@@ -72,6 +78,11 @@ impl Runner {
             Ok(None)
         }
     }
+    pub async fn answer_tool(&self, user_id: i64, id: i64, run_id: i64, request_id: &str, allowance: Allowance) -> Result<(), BlueprintStoreError> {
+        self.store.answer_tool(user_id, id, run_id, request_id, allowance).await?;
+        if let Some(active) = self.active.lock().await.get(&run_id) { active.notify.notify_one(); }
+        Ok(())
+    }
     pub async fn user_deleted(&self, user_id: i64) {
         for active in self
             .active
@@ -91,18 +102,7 @@ impl Runner {
 
     fn emit(&self, user_id: i64, run: &RunDetail, node_id: Option<&str>) {
         self.events.publish(ServerEvent::Blueprint {
-            event: BlueprintEvent::RunChanged {
-                user_id,
-                blueprint_id: run.run.blueprint_id,
-                run_id: run.run.id,
-                status: run.run.status,
-                current_node: run.state.current_node.clone(),
-                node_id: node_id.map(str::to_owned),
-                node_status: node_id
-                    .and_then(|id| run.state.nodes.get(id))
-                    .map(|n| n.status),
-                progress: run.state.progress(),
-            },
+            event: BlueprintEvent::run_changed(user_id, run, node_id),
         });
     }
     async fn drain(self: Arc<Self>, user_id: i64) {
@@ -131,15 +131,17 @@ impl Runner {
             self.queue_changed(user_id);
             let run_id = run.run.id;
             let cancel = self.shutdown.child_token();
+            let notify = Arc::new(Notify::new());
             self.active.lock().await.insert(
                 run_id,
                 ActiveRun {
                     user_id,
                     cancel: cancel.clone(),
+                    notify: notify.clone(),
                 },
             );
             // A stop before token registration is remembered in the row, checked by save_progress.
-            if let Err(error) = self.run(user_id, run, &cancel).await {
+            if let Err(error) = self.run(user_id, run, &notify, &cancel).await {
                 tracing::error!(
                     user_id,
                     run_id,
@@ -172,6 +174,7 @@ impl Runner {
         &self,
         user_id: i64,
         mut run: RunDetail,
+        notify: &Notify,
         cancel: &CancellationToken,
     ) -> Result<(), BlueprintStoreError> {
         let graph_error = validation::graph_errors(&run.workflow)
@@ -231,7 +234,10 @@ impl Runner {
                 status = RunStatus::Cancelled;
                 break;
             }
-            let outcome = execution::execute(&kind, &run.state, cancel).await;
+            let outcome = match &kind {
+                NodeKind::Tool { name, arguments, require_confirmation } => self.tools.execute(user_id, &mut run, &node_id, name, arguments, *require_confirmation, notify, cancel).await,
+                _ => execution::execute(&kind, &run.state, cancel).await,
+            };
             if cancel.is_cancelled() {
                 status = RunStatus::Cancelled;
                 break;

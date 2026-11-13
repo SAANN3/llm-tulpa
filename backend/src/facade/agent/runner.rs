@@ -263,7 +263,7 @@ impl TurnRunner {
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
     ) -> Result<StartedTurn, ErrorService> {
-        self.refuse_plugin_chat(chat_id).await?;
+        self.refuse_managed_chat(chat_id).await?;
         let slot = self.claim(chat_id)?;
         // A call a crash cut short gets its result before this message, so the history stays in order
         self.tool_calls.settle_interrupted(chat_id).await?;
@@ -303,6 +303,9 @@ impl TurnRunner {
         let chat = self.chat_store.chat(chat_id).await?;
         // A sub-agent's chat is driven by the backend, and a plugin's reply has already gone out to
         // the messaging app, where a replacement here would never arrive.
+        if chat.is_service {
+            return Err(not_regenerable("a service chat is driven by its own runtime"));
+        }
         if chat.parent_chat_id.is_some() {
             return Err(not_regenerable("a sub-agent's chat runs on its own"));
         }
@@ -328,10 +331,13 @@ impl TurnRunner {
         Ok(())
     }
 
-    /// A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
+    /// Service chats are driven by their owning runtime. A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
     /// back to the messaging app: a run started here would run beside that agent's, with tools, and its reply would
     /// never reach the app.
-    async fn refuse_plugin_chat(&self, chat_id: i64) -> Result<(), ErrorService> {
+    async fn refuse_managed_chat(&self, chat_id: i64) -> Result<(), ErrorService> {
+        if self.chat_store.chat(chat_id).await?.is_service {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "this service chat is driven by its own runtime"));
+        }
         if self.chat_store.is_plugin_chat(chat_id).await? {
             return Err(ErrorService::new(StatusCode::CONFLICT, "this chat belongs to a messaging plugin: write to it from the messaging app"));
         }
@@ -345,7 +351,7 @@ impl TurnRunner {
         decisions: Vec<Decision>,
         think: Option<ThinkChoice>,
     ) -> Result<(), ErrorService> {
-        self.refuse_plugin_chat(chat_id).await?;
+        self.refuse_managed_chat(chat_id).await?;
         let slot = self.claim(chat_id)?;
         let pending = self.tool_calls.can_use(chat_id).await?.tools;
         if pending.is_empty() {
@@ -368,8 +374,8 @@ impl TurnRunner {
     /// its notice waits for the user's answer instead).
     pub(super) async fn wake(&self, chat_id: i64) -> Result<(), ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
-        // A sub-agent's chat is driven by its own run, and a messaging plugin's reply would reach nobody
-        if chat.parent_chat_id.is_some() || self.chat_store.is_plugin_chat(chat_id).await? {
+        // Service and sub-agent chats are driven by their own runtime; a messaging plugin's reply would reach nobody
+        if chat.is_service || chat.parent_chat_id.is_some() || self.chat_store.is_plugin_chat(chat_id).await? {
             return Ok(());
         }
         // Nothing to report: not worth taking the chat from a prompt that arrives at the same moment

@@ -70,6 +70,8 @@ pub enum NodeKind {
     Tool {
         name: String,
         arguments: BTreeMap<String, Input>,
+        #[serde(default)]
+        require_confirmation: bool,
     },
     Sleep {
         seconds: Input,

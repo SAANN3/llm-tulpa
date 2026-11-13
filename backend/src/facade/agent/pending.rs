@@ -5,7 +5,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 /// Facade-owned mirror of `tools::base::ScopeGrant` — the tools layer's type is not the HTTP shape.
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct AgentScopeGrant {
     #[schema(value_type = Object)]
     pub scope: Value,
@@ -13,7 +13,7 @@ pub struct AgentScopeGrant {
 }
 
 /// Whether this call is allowed to run under the chat's grants.
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum AgentToolPermission {
     Allowed,
@@ -23,7 +23,7 @@ pub enum AgentToolPermission {
     },
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct AgentToolCall {
     pub permission: AgentToolPermission,
     pub name: String,
@@ -49,7 +49,7 @@ impl AgentToolCall {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Allowance {
     Permanent,
@@ -58,7 +58,7 @@ pub enum Allowance {
 }
 
 /// The answer to one pending tool call: `index` is its position in `TurnState::pending`.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Decision {
     pub index: usize,
     pub allowance: Allowance,
