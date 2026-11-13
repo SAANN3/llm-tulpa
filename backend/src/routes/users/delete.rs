@@ -39,6 +39,7 @@ pub async fn delete_user(
     }
     let services = state.services().await?;
     services.user_store.delete_user(query.id).await?;
+    services.blueprints.user_deleted(query.id).await;
     services.plugin_registry.user_deleted(query.id).await;
     Ok(StatusCode::NO_CONTENT)
 }

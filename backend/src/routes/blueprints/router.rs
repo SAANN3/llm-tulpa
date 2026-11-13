@@ -1,4 +1,7 @@
-use super::{catalog, create, delete, get as read, list, update, validate};
+use super::{
+    catalog, clear_queue, create, delete, get as read, history, list, queue, reorder, run, start,
+    stop, update, validate,
+};
 use crate::state::AppState;
 use axum::{
     Router,
@@ -9,6 +12,15 @@ use utoipa::OpenApi;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/{id}/runs", get(history::history).post(start::start))
+        .route("/{id}/runs/{run_id}", get(run::get_run))
+        .route(
+            "/queue",
+            get(queue::queue)
+                .put(reorder::reorder)
+                .delete(clear_queue::clear_queue),
+        )
+        .route("/queue/stop", post(stop::stop))
         .route("/catalog", get(catalog::catalog))
         .route("/validate", post(validate::validate))
         .route("/", get(list::list).post(create::create))
@@ -21,6 +33,13 @@ pub fn router() -> Router<Arc<AppState>> {
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        start::start,
+        run::get_run,
+        history::history,
+        queue::queue,
+        reorder::reorder,
+        clear_queue::clear_queue,
+        stop::stop,
         catalog::catalog,
         validate::validate,
         create::create,

@@ -1,4 +1,4 @@
-use super::super::{
+use crate::facade::blueprint::{
     catalog::NodeType,
     definition::{NodeKind, Workflow},
 };

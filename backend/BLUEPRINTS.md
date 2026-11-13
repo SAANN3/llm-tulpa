@@ -1,8 +1,8 @@
 # Blueprint documents
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
-versioned JSON files; an editor sends a complete workflow when saving the graph. This API does
-not execute graphs, create chats, start schedules or publish blueprint SSE events.
+versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
+Agent/tool execution and schedule ticking are not implemented yet.
 
 ## Storage and ownership
 
@@ -130,7 +130,7 @@ Inputs are another typed enum:
   structures whose individual values can be bound independently.
 
 Edges control execution; bindings control data dependencies. The order in the edges array defines
-the order of edges leaving the same port. This batch preserves that order but does not traverse it.
+the order of edges leaving the same port. Execution traverses that order depth-first.
 There are no variable, arithmetic or loop nodes yet.
 
 Draft validation rejects unknown schema versions, duplicate/invalid IDs, dangling node references,
@@ -185,4 +185,57 @@ Numeric ordering compares numbers; Contains compares strings. Equal/NotEqual and
 compatible operand types. Sleep requires a nonnegative numeric duration (dynamic values still need
 runtime range checks). Format uses named `{argument}` placeholders and `{{`/`}}` for literal braces.
 Every placeholder requires an argument binding. Bindings retain their types; rendering their values
-as text belongs to the Format node's eventual executor.
+as text is explicit in Format: strings are used directly, other values render as JSON.
+
+
+## Manual runs and queue
+
+Each user has one sequential queue shared by all of their blueprints. Only one run per user
+is active; different users can run independently. A start
+validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
+by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
+Switch, Format and Return; starting a graph with Tool, Generate, Agent or Plugin returns 400.
+Static validation can still describe those draft nodes without an executor.
+
+| Method | Path | Request / result |
+|---|---|---|
+| POST | `/api/blueprints/{id}/runs` | `{expected_revision}`; 202 with queued run summary |
+| GET | `/api/blueprints/{id}/runs` | `offset=0`, `limit=20` (1–50); `{items,total,offset,limit}`, newest first |
+| GET | `/api/blueprints/{id}/runs/{run_id}` | `{run,workflow,state}` with snapshot and per-node outputs/status/error |
+| GET | `/api/blueprints/queue` | `{running,queued}`; queued items in execution order |
+| PUT | `/api/blueprints/queue` | `{run_ids:[...]}` containing every currently queued id once; returns queue |
+| DELETE | `/api/blueprints/queue` | `{cancelled:N}`; cancels waiting runs, preserving history and current execution |
+| POST | `/api/blueprints/queue/stop` | 202 `{run_id}` (null if idle); stops current run, preserving waiting runs |
+
+Reordering sends the full desired order, so moving an item up/down is one atomic operation.
+Missing, duplicated, foreign or already-started ids return 409 without changing the queue. Queue
+membership is checked under the same user-row lock used when claiming a run. Deleting a
+blueprint with running or queued work returns 409. Stop its active run if needed and clear
+waiting work through the shared queue endpoint; clearing affects every queued blueprint of that user.
+
+Run statuses: `queued`, `running`, `stopping`, `completed`, `failed`, `cancelled`, `interrupted`.
+Node statuses: `pending`, `running`, `completed`, `failed`, `skipped`, `cancelled`, `interrupted`.
+A node error fails its run and cancels the remaining nodes; the next queued run may start.
+Sleep is cancellable. Return ends its branch, leaving ordered sibling branches to execute.
+Unselected If/Switch branches are skipped. Numeric comparison preserves integer precision;
+there is no implicit string/number conversion. Input resolution and formatted text are bounded
+at 1 MiB per node, and persisted run state at 4 MiB, to bound expansion through references.
+
+The runtime assumes one backend process per database. At startup, unfinished active runs become
+`interrupted`; their actions are never replayed. Persisted queued snapshots resume in order.
+A database error during execution stops that user's queue worker rather than risking replay; a backend
+restart recovers the unfinished run and resumes the waiting queue. Schedules remain stored
+configuration: this batch does not produce timer ticks.
+
+The existing `/api/live` stream carries one `ServerEvent::Blueprint` wrapper containing a typed
+`BlueprintEvent`. Its JSON is `{"type":"blueprint","event":{"type":"queue_changed","user_id":1}}`
+or an inner `run_changed` event. Both carry `user_id` and are filtered to their owner before
+delivery, without an ownership DB lookup per event. Run events also include `blueprint_id`,
+`run_id`, status, current node, changed node/status and progress. They are refresh hints, not a replay log; clients fetch queue/run state
+on reconnect. Node outputs are available through the run endpoint, not broadcast.
+
+Progress reports completed/skipped node counts, total and percent. Untaken branches are excluded
+from the total once the condition is evaluated, so the estimate can change during execution.
+It measures node count, not elapsed time; a long Sleep and a Format each count once. Total and
+percent are nullable for future executors whose remaining work cannot be counted. There are no
+loop or merge nodes in the current executor.

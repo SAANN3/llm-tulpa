@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{blueprint::BlueprintFacade, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
+use crate::facade::{blueprint::{BlueprintFacade, validation::Validation}, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
@@ -21,6 +22,7 @@ use crate::plugins::messaging::vk::VkProvider;
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::schema::PluginSchema;
 use crate::services::{
+    blueprint_store::{BlueprintStore, BlueprintStoreError},
     chat_store::ChatStore, error::ErrorService, event_bus::EventBus, external_plugin_store::ExternalPluginStore, file_store::FileStore,
     folder_store::FolderStore, job_store::JobStore, launch_store::LaunchStore,
     llama_runtime::LlamaRuntime, llm::LlmProviders, memory_store::MemoryStore, migrate::run_migrations, preset_store::PresetStore,
@@ -122,6 +124,7 @@ pub enum BootstrapError {
     CreateDatabase(DbErr),
     Migration(DbErr),
     Plugins(PluginError),
+    Blueprints(BlueprintStoreError),
 }
 
 impl BootstrapError {
@@ -131,6 +134,7 @@ impl BootstrapError {
             Self::Connect(_) | Self::CreateDatabase(_) => "could not connect to the database with those details",
             Self::Migration(_) => "the database could not be migrated to the current schema",
             Self::Plugins(_) => "the plugins could not be started",
+            Self::Blueprints(_) => "blueprint runs could not be recovered",
         }
     }
 }
@@ -143,6 +147,7 @@ impl std::fmt::Display for BootstrapError {
             Self::CreateDatabase(e) => write!(f, "could not create the database: {e}"),
             Self::Migration(e) => write!(f, "migration failed: {e}"),
             Self::Plugins(e) => write!(f, "registering plugin builders failed: {e:?}"),
+            Self::Blueprints(e) => write!(f, "recovering blueprint runs failed: {e:?}"),
         }
     }
 }
@@ -151,7 +156,7 @@ impl From<BootstrapError> for ErrorService {
     fn from(err: BootstrapError) -> Self {
         tracing::warn!("bootstrap failed: {err}");
         let status = match err {
-            BootstrapError::Migration(_) | BootstrapError::Plugins(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            BootstrapError::Migration(_) | BootstrapError::Plugins(_) | BootstrapError::Blueprints(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::BAD_REQUEST,
         };
         ErrorService::new(status, err.public_message())
@@ -184,6 +189,7 @@ pub async fn bootstrap(
     providers: LlmProviders,
     tools: Arc<ToolService>,
     events: Arc<EventBus>,
+    shutdown: CancellationToken,
     stt: Arc<SttService>,
     ollama_context_length: u64,
     model_dir: Arc<ModelFolder>,
@@ -253,7 +259,12 @@ pub async fn bootstrap(
     let memory_store = Arc::new(MemoryStore::new(db.clone()));
     let permission_store = Arc::new(PermissionStore::new(db.clone()));
     let file_store = Arc::new(FileStore::new(db.clone(), files_dir).await);
-    let blueprints = Arc::new(BlueprintFacade::new(Arc::new(crate::services::blueprint_store::BlueprintStore::new(db.clone(), blueprints_dir)), crate::facade::blueprint::validation::Validation::new(tools.clone(), model_store.clone(), launch_store.clone())));
+    let blueprints = Arc::new(BlueprintFacade::new(
+        Arc::new(BlueprintStore::new(db.clone(), blueprints_dir)),
+        Validation::new(tools.clone(), model_store.clone(), launch_store.clone()),
+        events.clone(),
+        shutdown,
+    ));
     let job_store = Arc::new(JobStore::new(db.clone(), jobs_dir, job_log_retention_days, events.clone(), plugin_events.clone()).await);
     let plugin_settings_store = Arc::new(PluginSettingsStore::new(db.clone(), user_store.clone()));
 
@@ -338,6 +349,8 @@ pub async fn bootstrap(
     external_plugins.start_all().await;
     // The plugin tools were made with the tool list, before there was a database; they reach the plugins through this
     crate::tools::plugins::install(external_plugins.clone(), user_store.clone());
+
+    blueprints.initialize().await.map_err(BootstrapError::Blueprints)?;
 
     let services = AppServices {
         db,

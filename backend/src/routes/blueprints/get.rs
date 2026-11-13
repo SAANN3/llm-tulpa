@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{
     facade::blueprint::definition::{Schedule, Workflow},
     routes::auth::AuthUser,
-    services::{blueprint_store::BlueprintRecord, error::ErrorService},
+    services::{blueprint_store::BlueprintRecord, error::{ErrorBody, ErrorService}},
     state::AppState,
 };
 use chrono::{DateTime, Utc};
@@ -45,7 +45,7 @@ pub(crate) struct BlueprintDocumentOut {
 }
 
 #[utoipa::path(get, path = "/api/blueprints/{id}", tag = "blueprints", params(("id" = i64, Path)),
-    responses((status = 200, body = BlueprintDocumentOut), (status = 404, body = crate::services::error::ErrorBody)))]
+    responses((status = 200, body = BlueprintDocumentOut), (status = 404, body = ErrorBody)))]
 pub async fn get(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

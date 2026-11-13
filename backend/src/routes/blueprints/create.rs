@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::{
     facade::blueprint::definition::{Schedule, Workflow},
     routes::auth::AuthUser,
-    services::error::ErrorService,
+    services::error::{ErrorBody, ErrorService},
     state::AppState,
 };
 use serde::Deserialize;
@@ -21,7 +21,7 @@ pub(crate) struct CreateBlueprintIn {
 }
 
 #[utoipa::path(post, path = "/api/blueprints", tag = "blueprints", request_body = CreateBlueprintIn,
-    responses((status = 201, body = BlueprintOut), (status = 400, body = crate::services::error::ErrorBody)))]
+    responses((status = 201, body = BlueprintOut), (status = 400, body = ErrorBody)))]
 pub async fn create(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

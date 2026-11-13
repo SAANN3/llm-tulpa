@@ -1,4 +1,4 @@
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::{ErrorBody, ErrorService}, state::AppState};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -13,7 +13,7 @@ pub(crate) struct DeleteQuery {
 }
 
 #[utoipa::path(delete, path = "/api/blueprints/{id}", tag = "blueprints", params(("id" = i64, Path), DeleteQuery),
-    responses((status = 204), (status = 404, body = crate::services::error::ErrorBody), (status = 409, body = crate::services::error::ErrorBody)))]
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

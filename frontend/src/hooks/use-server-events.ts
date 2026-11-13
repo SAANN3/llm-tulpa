@@ -4,7 +4,15 @@ import type {CallStatus, RunEndReason, StepList} from '../api/agent/types'
 import {getToken} from '../utils/auth-token'
 import {debugLog, isDebug} from '../utils/debug.ts'
 
+export type BlueprintRunStatus = 'queued' | 'running' | 'stopping' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+export type BlueprintNodeStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+
+export type BlueprintEvent =
+    | { type: 'queue_changed'; user_id: number }
+    | { type: 'run_changed'; user_id: number; blueprint_id: number; run_id: number; status: BlueprintRunStatus; current_node: string | null; node_id: string | null; node_status: BlueprintNodeStatus | null; progress: { completed: number; skipped: number; total: number | null; percent: number | null } }
+
 export type ServerEvent =
+    | { type: 'blueprint'; event: BlueprintEvent }
     | { type: 'job_finished'; chat_id: number; job_id: number }
     | { type: 'turn_progress'; chat_id: number; eval_tokens: number; prompt_tokens: number | null; step: number }
     | { type: 'stream_open' }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::{
     facade::blueprint::definition::{Schedule, Workflow},
     routes::auth::AuthUser,
-    services::error::ErrorService,
+    services::error::{ErrorBody, ErrorService},
     state::AppState,
 };
 use serde::Deserialize;
@@ -25,8 +25,8 @@ pub(crate) struct UpdateBlueprintIn {
 }
 
 #[utoipa::path(put, path = "/api/blueprints/{id}", tag = "blueprints", params(("id" = i64, Path)), request_body = UpdateBlueprintIn,
-    responses((status = 200, body = BlueprintOut), (status = 400, body = crate::services::error::ErrorBody),
-        (status = 404, body = crate::services::error::ErrorBody), (status = 409, body = crate::services::error::ErrorBody)))]
+    responses((status = 200, body = BlueprintOut), (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 pub async fn update(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,

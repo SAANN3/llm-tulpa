@@ -1,34 +1,149 @@
 pub mod catalog;
 pub mod definition;
+pub mod events;
+mod execution;
+mod runner;
+pub mod runs;
+mod template;
 pub mod validation;
 
 use crate::services::{
-    blueprint_store::{BlueprintRecord, BlueprintStore},
+    blueprint_store::{BlueprintRecord, BlueprintStore, BlueprintStoreError},
     error::ErrorService,
+    event_bus::EventBus,
 };
 use axum::http::StatusCode;
+use catalog::{NodeDescriptor, NodeType};
 use definition::{Schedule, Workflow};
+use runner::Runner;
+use runs::{QueueState, RunDetail, RunSummary};
+use validation::{
+    Validation,
+    report::{Severity, ValidationReport},
+};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 pub struct BlueprintFacade {
     store: Arc<BlueprintStore>,
-    validation: validation::Validation,
+    validation: Validation,
+    runner: Arc<Runner>,
 }
 
 impl BlueprintFacade {
-    pub fn new(store: Arc<BlueprintStore>, validation: validation::Validation) -> Self {
-        Self { store, validation }
+    pub fn new(
+        store: Arc<BlueprintStore>,
+        validation: Validation,
+        events: Arc<EventBus>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        let runner = Runner::new(store.clone(), events, shutdown);
+        Self {
+            store,
+            validation,
+            runner,
+        }
     }
 
-    pub fn catalog(&self) -> Vec<catalog::NodeDescriptor> {
-        catalog::NodeType::builtins()
+    pub async fn initialize(
+        &self,
+    ) -> Result<(), BlueprintStoreError> {
+        self.runner.initialize().await
+    }
+
+    pub async fn start(
+        &self,
+        user_id: i64,
+        id: i64,
+        expected_revision: i64,
+    ) -> Result<RunSummary, ErrorService> {
+        let (record, workflow) = self.get(user_id, id).await?;
+        if record.revision != expected_revision {
+            return Err(BlueprintStoreError::Conflict.into());
+        }
+        let report = self.validation.check(user_id, &workflow).await?;
+        if !report.valid {
+            return Err(invalid(
+                report
+                    .diagnostics
+                    .into_iter()
+                    .find(|d| d.severity == Severity::Error)
+                    .map(|d| d.message)
+                    .unwrap_or_else(|| "invalid workflow".into()),
+            ));
+        }
+        if let Some(node) = workflow
+            .nodes
+            .iter()
+            .find(|n| !execution::supported(&n.kind))
+        {
+            return Err(invalid(format!(
+                "node '{}': this node does not have an executor yet",
+                node.id
+            )));
+        }
+        let run = self
+            .store
+            .enqueue(user_id, id, expected_revision, &workflow)
+            .await?;
+        self.runner.queue_changed(user_id);
+        self.runner.wake(user_id).await;
+        Ok(run.run)
+    }
+
+    pub async fn queue(&self, user_id: i64) -> Result<QueueState, ErrorService> {
+        Ok(self.store.queue(user_id).await?)
+    }
+    pub async fn reorder_queue(
+        &self,
+        user_id: i64,
+        ids: &[i64],
+    ) -> Result<QueueState, ErrorService> {
+        self.store.reorder_queue(user_id, ids).await?;
+        self.runner.queue_changed(user_id);
+        Ok(self.store.queue(user_id).await?)
+    }
+    pub async fn clear_queue(&self, user_id: i64) -> Result<u64, ErrorService> {
+        let count = self.store.clear_queue(user_id).await?;
+        self.runner.queue_changed(user_id);
+        Ok(count)
+    }
+    pub async fn stop(&self, user_id: i64) -> Result<Option<i64>, ErrorService> {
+        Ok(self.runner.stop(user_id).await?)
+    }
+    pub async fn user_deleted(&self, user_id: i64) {
+        self.runner.user_deleted(user_id).await;
+    }
+    pub async fn get_run(
+        &self,
+        user_id: i64,
+        id: i64,
+        run_id: i64,
+    ) -> Result<RunDetail, ErrorService> {
+        Ok(self.store.get_run(user_id, id, run_id).await?)
+    }
+    pub async fn list_runs(
+        &self,
+        user_id: i64,
+        id: i64,
+        offset: u64,
+        limit: u64,
+    ) -> Result<(Vec<RunSummary>, u64), ErrorService> {
+        if !(1..=50).contains(&limit) || offset > i64::MAX as u64 {
+            return Err(invalid("limit must be 1..50 and offset must fit i64"));
+        }
+        Ok(self.store.list_runs(user_id, id, offset, limit).await?)
+    }
+
+    pub fn catalog(&self) -> Vec<NodeDescriptor> {
+        NodeType::builtins()
     }
 
     pub async fn validate(
         &self,
         user_id: i64,
         workflow: &Workflow,
-    ) -> Result<validation::report::ValidationReport, ErrorService> {
+    ) -> Result<ValidationReport, ErrorService> {
         self.validation.check(user_id, workflow).await
     }
 

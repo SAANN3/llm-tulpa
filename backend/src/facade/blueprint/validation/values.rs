@@ -1,6 +1,7 @@
-use super::super::{
+use crate::facade::blueprint::{
     catalog::{NodeType, ValueType},
     definition::{Input, Literal, PathPart},
+    template::{self, Part},
 };
 use super::{
     graph::Graph,
@@ -191,44 +192,12 @@ pub(super) fn compatible(actual: ValueType, expected: ValueType) -> bool {
         || actual == ValueType::Integer && expected == ValueType::Number
 }
 
-/// The runner can reuse this parser; braces are escaped as {{ and }}.
 pub(super) fn placeholders(template: &str) -> Result<Vec<String>, String> {
-    let mut names = Vec::new();
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            if chars.peek() == Some(&'{') {
-                chars.next();
-                continue;
-            }
-            let mut name = String::new();
-            let mut closed = false;
-            for next in chars.by_ref() {
-                if next == '}' {
-                    closed = true;
-                    break;
-                }
-                name.push(next);
-            }
-            if !closed
-                || name.is_empty()
-                || !name
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
-            {
-                return Err(
-                    "expected a named placeholder such as {name}; escape braces as {{ and }}"
-                        .into(),
-                );
-            }
-            names.push(name);
-        } else if c == '}' {
-            if chars.peek() == Some(&'}') {
-                chars.next();
-            } else {
-                return Err("unmatched closing brace".into());
-            }
-        }
-    }
-    Ok(names)
+    Ok(template::parse(template)?
+        .into_iter()
+        .filter_map(|part| match part {
+            Part::Argument(name) => Some(name.to_owned()),
+            Part::Text(_) => None,
+        })
+        .collect())
 }

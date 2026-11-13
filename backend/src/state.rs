@@ -164,6 +164,7 @@ impl AppState {
             self.providers.clone(),
             self.tools.clone(),
             self.events.clone(),
+            self.shutdown.clone(),
             self.stt.clone(),
             config.ollama.context_length,
             self.model_folder.clone(),

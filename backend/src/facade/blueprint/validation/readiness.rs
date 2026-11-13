@@ -1,5 +1,9 @@
-use super::super::{catalog::ValueType, definition::*};
+use crate::facade::blueprint::{
+    catalog::ValueType,
+    definition::{Comparison, Input, Literal, ModelChoice, NodeKind, Workflow},
+};
 use super::{
+    document, MAX_DOCUMENT_BYTES,
     graph::Graph,
     report::{Severity, ValidationReport},
     values::{Shape, Values, compatible, placeholders},
@@ -34,13 +38,13 @@ impl Validation {
         workflow: &Workflow,
     ) -> Result<ValidationReport, ErrorService> {
         let mut report = ValidationReport::default();
-        if let Err(diagnostic) = super::document(workflow) {
+        if let Err(diagnostic) = document(workflow) {
             report.diagnostics.push(diagnostic);
             return Ok(report.finish());
         }
         let bytes = serde_json::to_vec_pretty(workflow)
             .map_err(|_| ErrorService::internal("could not serialize workflow for validation"))?;
-        if bytes.len() > super::MAX_DOCUMENT_BYTES {
+        if bytes.len() > MAX_DOCUMENT_BYTES {
             report.error(
                 None,
                 "workflow",

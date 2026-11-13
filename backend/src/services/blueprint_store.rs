@@ -1,17 +1,18 @@
 mod entities;
+mod runs;
 
 use std::path::{Path, PathBuf};
 
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveValue::Set, DatabaseConnection, QueryOrder, QuerySelect, TransactionTrait, prelude::*,
+    ActiveValue::Set, DatabaseConnection, QueryOrder, QuerySelect, Select, TransactionTrait, prelude::*,
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::facade::blueprint::{definition::Schedule, validation::MAX_DOCUMENT_BYTES};
+use crate::facade::blueprint::{definition::Schedule, runs::RunStatus, validation::MAX_DOCUMENT_BYTES};
 use crate::services::error::ErrorService;
-use entities::blueprints as entity;
+use entities::{blueprint_runs, blueprints as entity};
 
 pub struct BlueprintStore {
     db: DatabaseConnection,
@@ -48,7 +49,7 @@ impl BlueprintStore {
         Self { db, root }
     }
 
-    fn owned(user_id: i64, id: i64) -> sea_orm::Select<entity::Entity> {
+    fn owned(user_id: i64, id: i64) -> Select<entity::Entity> {
         entity::Entity::find_by_id(id).filter(entity::Column::UserId.eq(user_id))
     }
 
@@ -211,6 +212,15 @@ impl BlueprintStore {
         if row.revision != expected_revision {
             return Err(BlueprintStoreError::Conflict);
         }
+        if blueprint_runs::Entity::find()
+            .filter(blueprint_runs::Column::BlueprintId.eq(id))
+            .filter(blueprint_runs::Column::Status.is_in([
+                RunStatus::Queued,
+                RunStatus::Running,
+                RunStatus::Stopping,
+            ])).one(&txn).await?.is_some() {
+            return Err(BlueprintStoreError::Busy);
+        }
         entity::Entity::delete_by_id(id).exec(&txn).await?;
         txn.commit().await?;
         // The row is already gone. A cleanup failure must not turn a completed delete into a retry.
@@ -297,6 +307,8 @@ impl BlueprintStore {
 pub enum BlueprintStoreError {
     NotFound,
     Conflict,
+    QueueChanged,
+    Busy,
     Database(DbErr),
     Io(std::io::Error),
     Json(serde_json::Error),
@@ -325,6 +337,8 @@ impl From<BlueprintStoreError> for ErrorService {
                 StatusCode::CONFLICT,
                 "blueprint changed; reload before saving or deleting",
             ),
+            BlueprintStoreError::QueueChanged => Self::new(StatusCode::CONFLICT, "queue changed; reload before reordering"),
+            BlueprintStoreError::Busy => Self::new(StatusCode::CONFLICT, "stop the current run and clear the queue before deleting this blueprint"),
             BlueprintStoreError::Database(e) => {
                 tracing::error!(?e, "blueprint database operation failed");
                 Self::internal("blueprint database operation failed")

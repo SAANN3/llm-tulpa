@@ -17,9 +17,7 @@ use crate::{
 };
 
 /// A long-lived Server-Sent Events stream of everything the backend wants to tell the signed-in
-/// user's frontend about outside any request it was asked to answer — today just
-/// `job_finished` (`{"type": "job_finished", "chat_id": .., "job_id": ..}`) when a
-/// background job ends. Every event is an unnamed SSE message whose JSON `data` carries
+/// user's frontend about outside any request it was asked to answer. Every event is an unnamed SSE message whose JSON `data` carries
 /// its `type`, so a client needs a single listener however many event types exist.
 /// One-way, server to client: a frontend
 /// reacts by making the normal API calls it always makes. Each event is only a hint
@@ -28,7 +26,7 @@ use crate::{
 /// a client that connects late.
 ///
 /// The event bus is shared by every user, so each subscriber only receives the events about
-/// chats it owns (one ownership lookup per event, and events are rare).
+/// chats it owns, events explicitly addressed to it, and global model-state events.
 #[utoipa::path(
     get,
     path = "/api/live",
@@ -51,7 +49,7 @@ pub async fn stream(
     Ok(Sse::new(events).keep_alive(KeepAlive::default()))
 }
 
-/// The bus's events that concern chats `user_id` owns. A subscriber that falls too far behind gets
+/// The bus's events visible to `user_id`. A subscriber that falls too far behind gets
 /// a `Lagged` error in place of the events it missed — skipped here, since each event is only a
 /// hint (see `stream`). Whose a chat is is asked once per chat for the stream's whole life: a chat
 /// never changes owner, and a reply being written sends several events a second about the same chat,
@@ -67,7 +65,8 @@ fn events_for(
         let owned = owned.clone();
         async move {
             let event = received.ok()?;
-            // An event about no chat in particular (the model server's state) is everyone's
+            if event.user_id().is_some_and(|owner| owner != user_id) { return None; }
+            // Explicit user-scoped events were filtered above; chat events use the cached ownership lookup.
             if let Some(chat_id) = event.chat_id() {
                 let known = owned.lock().unwrap().get(&chat_id).copied();
                 let mine = match known {

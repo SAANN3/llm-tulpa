@@ -7,8 +7,9 @@ pub use readiness::Validation;
 
 use std::collections::HashSet;
 
-use super::definition::*;
-use report::Diagnostic;
+use super::definition::{Input, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
+use graph::Graph;
+use report::{Diagnostic, ValidationReport};
 
 pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 const MAX_NODES: usize = 1000;
@@ -218,4 +219,14 @@ fn input(value: &Input, nodes: &HashSet<&str>, depth: usize) -> Result<(), Strin
         Input::Literal { .. } => {}
     }
     Ok(())
+}
+
+pub(super) fn graph_errors(workflow: &Workflow) -> ValidationReport {
+    let mut report = ValidationReport::default();
+    if let Err(error) = document(workflow) {
+        report.diagnostics.push(error);
+    } else {
+        Graph::inspect(workflow, &mut report);
+    }
+    report.finish()
 }

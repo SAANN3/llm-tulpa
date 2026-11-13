@@ -1,5 +1,5 @@
 use super::get::BlueprintOut;
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{routes::auth::AuthUser, services::error::{ErrorBody, ErrorService}, state::AppState};
 use axum::{
     Json,
     extract::{Query, State},
@@ -40,7 +40,7 @@ pub(crate) struct BlueprintListOut {
 }
 
 #[utoipa::path(get, path = "/api/blueprints", tag = "blueprints", params(ListQuery),
-    responses((status = 200, body = BlueprintListOut), (status = 400, body = crate::services::error::ErrorBody)))]
+    responses((status = 200, body = BlueprintListOut), (status = 400, body = ErrorBody)))]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
