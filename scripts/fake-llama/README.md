@@ -46,3 +46,6 @@ stopping waits/generation and mandatory compaction with notes/memory writes disa
 
 `stop_closes_a_permission_wait_without_running_the_tool` checks ordinary chat Stop during a
 permission pause, pending-call cleanup and continuing that chat without replaying the cancelled write.
+
+`blueprint_schedules_use_the_queue_and_record_readiness_failures` checks interval ticks, disabling,
+manual starts, immutable workflow content and failed readiness without model calls.

@@ -184,7 +184,7 @@ pub enum Literal {
 }
 
 /// Stored in the blueprint row, never in the workflow document or a timer node.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Schedule {
     #[default]

@@ -6,6 +6,7 @@ pub(crate) mod agent_nodes;
 mod permissions;
 pub(crate) mod generation;
 mod runner;
+mod scheduler;
 pub mod runs;
 mod template;
 mod tool_nodes;
@@ -14,7 +15,7 @@ pub mod validation;
 use crate::facade::agent::{Agent, Allowance};
 use crate::services::{
     chat_store::ChatStore, tools::ToolService,
-    blueprint_store::{BlueprintRecord, BlueprintStore, BlueprintStoreError},
+    blueprint_store::{BlueprintRecord, BlueprintStore, BlueprintStoreError, ScheduledTick},
     error::ErrorService,
     event_bus::EventBus,
 };
@@ -22,6 +23,7 @@ use axum::http::StatusCode;
 use catalog::{NodeDescriptor, NodeType};
 use definition::{Schedule, Workflow};
 use runner::Runner;
+use scheduler::Scheduler;
 use generation::Generation;
 use tool_nodes::ToolNodes;
 use agent_nodes::AgentNodes;
@@ -38,6 +40,7 @@ pub struct BlueprintFacade {
     store: Arc<BlueprintStore>,
     validation: Validation,
     runner: Arc<Runner>,
+    scheduler: Scheduler,
 }
 
 impl BlueprintFacade {
@@ -54,18 +57,22 @@ impl BlueprintFacade {
     ) -> Self {
         let permissions = Permissions::new(store.clone(), events.clone());
         let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, permissions.clone());
-        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes, generation, agent_nodes, permissions);
+        let runner = Runner::new(store.clone(), events, shutdown.clone(), tool_nodes, generation, agent_nodes, permissions);
         Self {
             store,
             validation,
             runner,
+            scheduler: Scheduler::new(shutdown),
         }
     }
 
     pub async fn initialize(
-        &self,
+        self: &Arc<Self>,
     ) -> Result<(), BlueprintStoreError> {
-        self.runner.initialize().await
+        self.store.initialize_schedules().await?;
+        self.runner.initialize().await?;
+        Scheduler::start(self.clone());
+        Ok(())
     }
 
     pub async fn start(
@@ -74,11 +81,38 @@ impl BlueprintFacade {
         id: i64,
         expected_revision: i64,
     ) -> Result<RunSummary, ErrorService> {
-        let (record, workflow) = self.get(user_id, id).await?;
-        if record.revision != expected_revision {
-            return Err(BlueprintStoreError::Conflict.into());
-        }
-        let report = self.validation.check(user_id, &workflow).await?;
+        self.enqueue(user_id, id, expected_revision, None).await
+    }
+
+    async fn enqueue(
+        &self, user_id: i64, id: i64, expected_revision: i64, scheduled: Option<ScheduledTick>,
+    ) -> Result<RunSummary, ErrorService> {
+        let (workflow, readiness) = match self.get(user_id, id).await {
+            Ok((record, workflow)) => {
+                if record.revision != expected_revision { return Err(BlueprintStoreError::Conflict.into()); }
+                let ready = self.ready(user_id, &workflow).await;
+                (workflow, ready)
+            }
+            Err(error) if scheduled.is_some() => {
+                // There is no usable snapshot when loading fails. The failed run still records the occurrence and cause.
+                (Workflow { schema_version: definition::SCHEMA_VERSION, nodes: vec![], edges: vec![] }, Err(error))
+            }
+            Err(error) => return Err(error),
+        };
+        let error = match readiness {
+            Ok(()) => None,
+            Err(error) if scheduled.is_some() => Some(error.message.unwrap_or_else(|| "could not prepare scheduled run".into())),
+            Err(error) => return Err(error),
+        };
+        let run = self.store.enqueue(user_id, id, expected_revision, &workflow, scheduled.as_ref(), error).await?;
+        self.runner.queue_changed(user_id);
+        self.runner.emit(user_id, &run, None);
+        self.runner.wake(user_id).await;
+        Ok(run.run)
+    }
+
+    async fn ready(&self, user_id: i64, workflow: &Workflow) -> Result<(), ErrorService> {
+        let report = self.validation.check(user_id, workflow).await?;
         if !report.valid {
             return Err(invalid(
                 report
@@ -99,13 +133,7 @@ impl BlueprintFacade {
                 node.id
             )));
         }
-        let run = self
-            .store
-            .enqueue(user_id, id, expected_revision, &workflow)
-            .await?;
-        self.runner.queue_changed(user_id);
-        self.runner.wake(user_id).await;
-        Ok(run.run)
+        Ok(())
     }
 
     pub async fn queue(&self, user_id: i64) -> Result<QueueState, ErrorService> {
@@ -212,10 +240,9 @@ impl BlueprintFacade {
     ) -> Result<BlueprintRecord, ErrorService> {
         validation::settings(name, schedule).map_err(invalid)?;
         let bytes = encode(workflow)?;
-        Ok(self
-            .store
-            .create(user_id, name.trim(), schedule, &bytes)
-            .await?)
+        let record = self.store.create(user_id, name.trim(), schedule, &bytes).await?;
+        self.scheduler.changed();
+        Ok(record)
     }
 
     pub async fn update(
@@ -229,17 +256,16 @@ impl BlueprintFacade {
     ) -> Result<BlueprintRecord, ErrorService> {
         validation::settings(name, schedule).map_err(invalid)?;
         let bytes = workflow.map(encode).transpose()?;
-        Ok(self
-            .store
-            .update(
-                user_id,
-                id,
-                expected_revision,
-                name.trim(),
-                schedule,
-                bytes.as_deref(),
-            )
-            .await?)
+        let record = self.store.update(
+            user_id,
+            id,
+            expected_revision,
+            name.trim(),
+            schedule,
+            bytes.as_deref(),
+        ).await?;
+        self.scheduler.changed();
+        Ok(record)
     }
 
     pub async fn delete(
@@ -248,7 +274,9 @@ impl BlueprintFacade {
         id: i64,
         expected_revision: i64,
     ) -> Result<(), ErrorService> {
-        Ok(self.store.delete(user_id, id, expected_revision).await?)
+        self.store.delete(user_id, id, expected_revision).await?;
+        self.scheduler.changed();
+        Ok(())
     }
 }
 

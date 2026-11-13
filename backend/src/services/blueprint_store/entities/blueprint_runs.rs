@@ -10,6 +10,7 @@ pub struct Model {
     pub user_id: i64,
     pub chat_id: Option<i64>,
     pub revision: i64,
+    pub scheduled_for: Option<DateTimeUtc>,
     pub workflow: Json,
     pub state: Json,
     pub status: RunStatus,

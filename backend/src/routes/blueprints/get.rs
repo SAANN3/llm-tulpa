@@ -21,6 +21,7 @@ pub(crate) struct BlueprintOut {
     pub name: String,
     pub revision: i64,
     pub schedule: Schedule,
+    pub next_due_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -32,6 +33,7 @@ impl From<BlueprintRecord> for BlueprintOut {
             name: r.name,
             revision: r.revision,
             schedule: r.schedule,
+            next_due_at: r.next_due_at,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }

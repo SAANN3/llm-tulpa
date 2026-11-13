@@ -147,6 +147,7 @@ pub struct RunSummary {
     pub id: i64,
     pub blueprint_id: i64,
     pub revision: i64,
+    pub scheduled_for: Option<DateTime<Utc>>,
     pub status: RunStatus,
     pub queue_position: Option<i64>,
     pub created_at: DateTime<Utc>,

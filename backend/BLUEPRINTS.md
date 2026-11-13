@@ -2,12 +2,12 @@
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
 versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
-Schedule ticking and plugin-node execution are not implemented yet.
+Plugin-node execution is not implemented yet.
 
 ## Storage and ownership
 
 `BlueprintStore` owns the `blueprints` table: id, user_id, name, revision, workflow_path,
-schedule, created_at and updated_at. `blueprints_dir` in settings.json defaults to
+schedule, next_due_at, created_at and updated_at. `blueprints_dir` in settings.json defaults to
 `~/.llm-tulpa/blueprints`. A document lives at:
 
 ```text
@@ -39,8 +39,8 @@ Schedule configuration is stored in the row, outside the workflow:
 {"type":"daily","time":"09:00","timezone":"Asia/Yekaterinburg"}
 ```
 
-Daily times use HH:MM and a validated IANA timezone. These are stored settings, not an active
-scheduler. Runtime queue state and ticks will not rewrite workflow documents.
+Daily times use HH:MM and a validated IANA timezone. `next_due_at` is the persisted UTC due time,
+or null for manual scheduling. Runtime queue state and ticks do not rewrite workflow documents.
 
 ## API
 
@@ -355,3 +355,40 @@ Service chats do not produce input suggestions or wake themselves after a backgr
 explicitly started by an agent remains managed by the existing job tools; its later completion
 does not restart a finished blueprint node. Hidden chats and old bindings for removed node ids
 are retained; this batch does not add history garbage collection or crash resume.
+
+
+## Scheduling
+
+One scheduler loop serves all users and sleeps until the earliest due time or a settings change.
+It starts with the backend, requires no open UI, and uses the same readiness checks, snapshot
+creation, per-user queue and runner as manual starts. A scheduled occurrence carries its UTC
+`scheduled_for` in run/history responses; manual runs carry null.
+
+Enabling or changing an interval schedules the first run one interval from the save. Daily
+scheduling uses the next strictly future HH:MM in the chosen IANA timezone. Changing only the
+name or workflow preserves the pending due time. Setting `schedule` to manual disables future
+ticks, retaining already queued snapshots. Queue Stop/clear/reorder have their existing meanings;
+they do not disable schedules. Deletion retains the existing guard against queued/active runs.
+
+An overdue schedule creates one catch-up run, even after several missed intervals/days. Its
+`scheduled_for` is the oldest outstanding due time; intermediate missed occurrences are coalesced.
+The next interval remains aligned with the original cadence, independent of execution duration.
+Daily schedules resume at the next future local time. A nonexistent local time during a DST gap
+has no occurrence; an overlapping local time uses its first occurrence only.
+
+Next due time and the run insertion commit in one transaction, using the existing user-queue and
+blueprint locks. Revision/due-time checks reject stale preparation. A unique database index on
+(blueprint_id, scheduled_for) prevents duplicate occurrences. Restart recovers queued snapshots
+through the ordinary runner; active runs retain the existing interrupted/no-replay behavior.
+Persisted due times survive downtime. Existing saved schedules are initialized from their saved
+updated_at, allowing one catch-up after upgrade. This runtime supports one backend per database.
+
+Unavailable tools/models or invalid workflows produce a finished `failed` run with an error and
+no queue position; no graph node is executed. The next occurrence remains scheduled. If the
+workflow cannot be loaded, this failed run has an empty document snapshot and the loading error.
+Failures to commit leave the occurrence pending for retry; no external action is repeated by the
+scheduler. Failed preparation emits the existing run-change event. Scheduling state does not
+advance the blueprint's editing revision or updated_at.
+
+The loop rechecks wall time at least every 30 seconds to notice clock adjustments; database
+failures retry after five seconds. The scheduler does not wait for a run to finish; execution belongs to the existing queue worker.

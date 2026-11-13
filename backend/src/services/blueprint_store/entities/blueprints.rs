@@ -10,6 +10,7 @@ pub struct Model {
     pub revision: i64,
     pub workflow_path: String,
     pub schedule: Json,
+    pub next_due_at: Option<DateTimeUtc>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

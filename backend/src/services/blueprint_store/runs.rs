@@ -1,5 +1,5 @@
 use super::{
-    BlueprintStore, BlueprintStoreError,
+    BlueprintStore, BlueprintStoreError, ScheduledTick,
     entities::{blueprint_runs as runs, blueprints, users},
 };
 use crate::facade::blueprint::{
@@ -18,6 +18,7 @@ fn summary(row: &runs::Model, state: &RunState) -> RunSummary {
         id: row.id,
         blueprint_id: row.blueprint_id,
         revision: row.revision,
+        scheduled_for: row.scheduled_for,
         status: row.status,
         queue_position: row.queue_position,
         created_at: row.created_at,
@@ -74,6 +75,8 @@ impl BlueprintStore {
         id: i64,
         revision: i64,
         workflow: &Workflow,
+        scheduled: Option<&ScheduledTick>,
+        error: Option<String>,
     ) -> Result<RunDetail, BlueprintStoreError> {
         let txn = self.db.begin().await?;
         self.lock_queue(&txn, user_id).await?;
@@ -81,25 +84,39 @@ impl BlueprintStore {
         if blueprint.revision != revision {
             return Err(BlueprintStoreError::Conflict);
         }
-        let last = runs::Entity::find()
-            .filter(runs::Column::UserId.eq(user_id))
-            .filter(runs::Column::Status.eq(RunStatus::Queued))
-            .order_by_desc(runs::Column::QueuePosition)
-            .one(&txn)
-            .await?;
-        let position = last
-            .and_then(|r| r.queue_position)
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| BlueprintStoreError::Corrupt("queue position overflow".into()))?;
+        if let Some(tick) = scheduled {
+            if blueprint.next_due_at != Some(tick.due_at) {
+                return Err(BlueprintStoreError::Conflict);
+            }
+            blueprints::ActiveModel {
+                id: Set(id), next_due_at: Set(Some(tick.next_due_at)), ..Default::default()
+            }.update(&txn).await?;
+        }
+        let mut state = RunState::new(workflow);
+        let failed = error.is_some();
+        if failed { state.terminate(NodeStatus::Skipped); }
+        state.error = error;
+        let position = if failed {
+            None
+        } else {
+            let last = runs::Entity::find()
+                .filter(runs::Column::UserId.eq(user_id))
+                .filter(runs::Column::Status.eq(RunStatus::Queued))
+                .order_by_desc(runs::Column::QueuePosition)
+                .one(&txn).await?;
+            Some(last.and_then(|r| r.queue_position).unwrap_or(0).checked_add(1)
+                .ok_or_else(|| BlueprintStoreError::Corrupt("queue position overflow".into()))?)
+        };
         let row = runs::ActiveModel {
             blueprint_id: Set(id),
             user_id: Set(user_id),
             revision: Set(revision),
+            scheduled_for: Set(scheduled.map(|t| t.due_at)),
             workflow: Set(serde_json::to_value(workflow)?),
-            state: Set(serde_json::to_value(RunState::new(workflow))?),
-            status: Set(RunStatus::Queued),
-            queue_position: Set(Some(position)),
+            state: Set(serde_json::to_value(state)?),
+            status: Set(if failed { RunStatus::Failed } else { RunStatus::Queued }),
+            queue_position: Set(position),
+            finished_at: Set(failed.then(Utc::now)),
             ..Default::default()
         }
         .insert(&txn)

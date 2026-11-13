@@ -1,6 +1,8 @@
 mod entities;
 mod runs;
 mod agent_chats;
+mod schedules;
+pub use schedules::ScheduledTick;
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +28,7 @@ pub struct BlueprintRecord {
     pub name: String,
     pub revision: i64,
     pub schedule: Schedule,
+    pub next_due_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -39,6 +42,7 @@ impl TryFrom<entity::Model> for BlueprintRecord {
             name: row.name,
             revision: row.revision,
             schedule: serde_json::from_value(row.schedule)?,
+            next_due_at: row.next_due_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -145,6 +149,7 @@ impl BlueprintStore {
             revision: Set(1),
             workflow_path: Set(String::new()),
             schedule: Set(serde_json::to_value(schedule)?),
+            next_due_at: Set(schedule.next_after(Utc::now()).map_err(BlueprintStoreError::Corrupt)?),
             ..Default::default()
         }
         .insert(&txn)
@@ -187,7 +192,13 @@ impl BlueprintStore {
         } else {
             row.workflow_path.clone()
         };
+        let next_due = if serde_json::from_value::<Schedule>(row.schedule.clone())? == *schedule {
+            row.next_due_at
+        } else {
+            schedule.next_after(Utc::now()).map_err(BlueprintStoreError::Corrupt)?
+        };
         let mut row: entity::ActiveModel = row.into();
+        row.next_due_at = Set(next_due);
         row.name = Set(name.to_string());
         row.schedule = Set(serde_json::to_value(schedule)?);
         row.revision = Set(revision);

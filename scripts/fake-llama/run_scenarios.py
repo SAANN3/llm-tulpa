@@ -2483,6 +2483,51 @@ def blueprint_agent_uses_the_turn_runner_reuses_chat_and_obeys_permissions():
     settings()
 
 
+@scenario
+def blueprint_schedules_use_the_queue_and_record_readiness_failures():
+    workflow = {"schema_version": 1,
+        "nodes": [{"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                  {"id": "end", "name": "End", "kind": {"type": "return", "values": {}}}],
+        "edges": [{"id": "e", "from": "start", "port": "out", "to": "end"}]}
+    def history(b):
+        return ok(f"/api/blueprints/{b}/runs")["items"]
+    def disable(b):
+        doc = ok(f"/api/blueprints/{b}")
+        return ok(f"/api/blueprints/{b}", {"expected_revision": doc["blueprint"]["revision"],
+            "name": doc["blueprint"]["name"], "schedule": {"type": "manual"}}, "PUT")
+    script()
+    b = ok("/api/blueprints", {"name": "Scheduled control", "schedule": {"type": "interval", "seconds": 2}, "workflow": workflow})["id"]
+    saved_workflow = ok(f"/api/blueprints/{b}")["workflow"]
+    try:
+        assert ok(f"/api/blueprints/{b}")["blueprint"]["next_due_at"], "first due time is exposed"
+        eq(history(b), [], "enabling does not immediately run")
+        wait_for(lambda: any(r["status"] == "completed" for r in history(b)), what="scheduled completion")
+    finally:
+        eq(disable(b)["next_due_at"], None, "manual disables future ticks")
+    count = len(history(b))
+    time.sleep(2.2)
+    eq(len(history(b)), count, "disabled schedule does not tick")
+    eq(ok(f"/api/blueprints/{b}")["workflow"], saved_workflow, "ticks leave the workflow intact")
+    assert all(r["scheduled_for"] for r in history(b)), "scheduled occurrences are visible"
+    manual = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 2})
+    eq(manual["scheduled_for"], None, "manual starts retain their meaning")
+
+    invalid = json.loads(json.dumps(workflow))
+    invalid["nodes"][1]["kind"] = {"type": "tool", "name": "missing.scheduler_fixture", "arguments": {}}
+    b = ok("/api/blueprints", {"name": "Scheduled missing tool", "schedule": {"type": "interval", "seconds": 2}, "workflow": invalid})["id"]
+    try:
+        eq(api(f"/api/blueprints/{b}/runs", {"expected_revision": 1})[0], 400, "manual invalid graph is rejected")
+        wait_for(lambda: bool(history(b)), what="failed scheduled occurrence")
+        run = history(b)[0]
+        eq(run["status"], "failed", "readiness aborts execution")
+        assert run["error"] and run["finished_at"] and run["scheduled_for"]
+        eq(run["queue_position"], None, "failed preparation holds no queue slot")
+        assert ok(f"/api/blueprints/{b}")["blueprint"]["next_due_at"], "next tick remains scheduled"
+    finally:
+        disable(b)
+    eq(calls("main"), [], "control nodes and readiness failures make no model requests")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0

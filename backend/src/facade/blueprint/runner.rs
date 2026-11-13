@@ -112,7 +112,7 @@ impl Runner {
         });
     }
 
-    fn emit(&self, user_id: i64, run: &RunDetail, node_id: Option<&str>) {
+    pub(super) fn emit(&self, user_id: i64, run: &RunDetail, node_id: Option<&str>) {
         self.events.publish(ServerEvent::Blueprint {
             event: BlueprintEvent::run_changed(user_id, run, node_id),
         });
