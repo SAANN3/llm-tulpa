@@ -16,7 +16,6 @@ use crate::services::{
     job_store::JobStore,
     llm::{LlmProviders, ThinkChoice},
     permission_store::PermissionStore,
-    preset_store::PresetStore,
     settings_store::SettingsStore,
     stt::SttService,
     tool_selection_store::ToolSelectionStore,
@@ -113,7 +112,6 @@ impl Agent {
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
         tool_selection: Arc<ToolSelectionStore>,
-        presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
         plugins: Option<Arc<PluginRegistry>>,
         memory_store: Option<Arc<MemoryStore>>,
@@ -138,7 +136,7 @@ impl Agent {
                 subagents: Arc::new(SubagentHandle::new()),
             };
         let history = History::new(chat_store.clone(), settings_store.clone(), plugins, memory_store.clone());
-        let model = ModelCall::new(providers.clone(), presets, launch, context_length);
+        let model = ModelCall::new(providers.clone(), launch, context_length);
         let context = ContextReader::new(chat_store.clone(), tool_selection.clone(), tools.clone(), history.clone(), model.clone());
         let compaction = Compaction::new(
             chat_store.clone(),

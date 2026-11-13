@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod definition;
 pub mod events;
 mod execution;
+pub(crate) mod generation;
 mod runner;
 pub mod runs;
 mod template;
@@ -19,6 +20,7 @@ use axum::http::StatusCode;
 use catalog::{NodeDescriptor, NodeType};
 use definition::{Schedule, Workflow};
 use runner::Runner;
+use generation::Generation;
 use tool_nodes::ToolNodes;
 use runs::{QueueState, RunDetail, RunSummary};
 use validation::{
@@ -43,9 +45,10 @@ impl BlueprintFacade {
         agent: Arc<Agent>,
         chats: Arc<ChatStore>,
         tools: Arc<ToolService>,
+        generation: Generation,
     ) -> Self {
         let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, events.clone());
-        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes);
+        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes, generation);
         Self {
             store,
             validation,

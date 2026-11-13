@@ -16,6 +16,7 @@ use crate::services::{
     llm::{CallParams, ChatMessage, LaunchRequest, LlmProviders, ThinkChoice},
     model_store::{ModelRef, ModelStore},
     user_store::UserStore,
+    preset_store::PresetStore,
 };
 
 /// The provider whose server the backend starts itself.
@@ -27,6 +28,7 @@ pub struct LaunchFacade {
     launch: Arc<LaunchStore>,
     models: Arc<ModelStore>,
     users: Arc<UserStore>,
+    presets: Arc<PresetStore>,
     model_dir: Arc<ModelFolder>,
 }
 
@@ -37,9 +39,10 @@ impl LaunchFacade {
         launch: Arc<LaunchStore>,
         models: Arc<ModelStore>,
         users: Arc<UserStore>,
+        presets: Arc<PresetStore>,
         model_dir: Arc<ModelFolder>,
     ) -> Self {
-        Self { providers, runtime, launch, models, users, model_dir }
+        Self { providers, runtime, launch, models, users, presets, model_dir }
     }
 
     /// What `user_id` needs running to use `model_id` under `profile_id` (the model's default profile
@@ -63,6 +66,15 @@ impl LaunchFacade {
         // Said in the other user's "in use by ..." message, so a missing user is no reason to fail.
         let holder = self.users.get(user_id).await.ok().flatten().map(|u| u.username).unwrap_or_else(|| format!("user {user_id}"));
         Ok(Some(LaunchRequest { model_file: dir.join(&model.name), model_root: dir.clone(), profile, holder }))
+    }
+
+    /// The launch profile's context window and the user's sampling choice for a model.
+    /// Absent overrides leave the provider's defaults in effect.
+    pub async fn call_params(&self, user_id: i64, model_id: i64, profile_id: Option<i64>) -> Result<CallParams, ErrorService> {
+        let launch = self.request_for(user_id, model_id, profile_id).await?;
+        let context_length = launch.as_ref().and_then(|l| l.profile.context_length).map(|c| c as u64);
+        let sampling = self.presets.effective_sampling(user_id, model_id).await?;
+        Ok(CallParams { launch, context_length, sampling, max_reply_tokens: None })
     }
 
     /// The request for running `profile_id` on behalf of `user_id`.

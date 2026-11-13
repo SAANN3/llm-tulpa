@@ -172,6 +172,7 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             CALLS.append({
                 "n": len(CALLS) + 1, "kind": kind, "has_tools": bool(body.get("tools")), "tool_names": [t["function"]["name"] for t in body.get("tools") or []],
+                "model": body.get("model"), "temperature": body.get("temperature"),
                 "max_tokens": body.get("max_tokens"), "messages": messages, "scripted": bool(item), "at": time.time(),
                 "chat_template_kwargs": body.get("chat_template_kwargs"), "stream": bool(body.get("stream")),
             })

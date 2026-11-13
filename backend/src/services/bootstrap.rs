@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{blueprint::{BlueprintFacade, validation::Validation}, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
+use crate::facade::{blueprint::{BlueprintFacade, generation::Generation, validation::Validation}, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
@@ -267,7 +267,7 @@ pub async fn bootstrap(
     let plugin_schema = Arc::new(PluginSchema::new(db.clone()));
     let plugin_registry = Arc::new(PluginRegistry::new(plugin_settings_store, tools.clone(), plugin_schema));
 
-    let launches = Arc::new(LaunchFacade::new(providers.clone(), runtime.clone(), launch_store.clone(), model_store.clone(), user_store.clone(), model_dir));
+    let launches = Arc::new(LaunchFacade::new(providers.clone(), runtime.clone(), launch_store.clone(), model_store.clone(), user_store.clone(), preset_store.clone(), model_dir));
 
     let agent = Arc::new(Agent::new(
         providers.clone(),
@@ -281,7 +281,6 @@ pub async fn bootstrap(
         permission_store.clone(),
         settings_store.clone(),
         tool_selection.clone(),
-        preset_store.clone(),
         launches.clone(),
         Some(plugin_registry.clone()),
         Some(memory_store.clone()),
@@ -316,7 +315,6 @@ pub async fn bootstrap(
         permission_store.clone(),
         settings_store.clone(),
         tool_selection.clone(),
-        preset_store.clone(),
         launches.clone(),
         None,
         None,
@@ -352,6 +350,7 @@ pub async fn bootstrap(
         agent.clone(),
         chat_store.clone(),
         tools.clone(),
+        Generation::new(model_store.clone(), launch_store.clone(), launches.clone(), providers.clone()),
     ));
 
     blueprints.initialize().await.map_err(BootstrapError::Blueprints)?;

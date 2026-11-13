@@ -19,6 +19,7 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
         kind,
         NodeKind::Entry
             | NodeKind::Tool { .. }
+            | NodeKind::Generate { .. }
             | NodeKind::Sleep { .. }
             | NodeKind::If { .. }
             | NodeKind::Switch { .. }

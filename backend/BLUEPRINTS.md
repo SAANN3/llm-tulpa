@@ -2,7 +2,7 @@
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
 versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
-Agent/generation execution and schedule ticking are not implemented yet.
+Agent execution and schedule ticking are not implemented yet.
 
 ## Storage and ownership
 
@@ -194,7 +194,7 @@ Each user has one sequential queue shared by all of their blueprints. Only one r
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
 by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
-Switch, Format, Return and Tool; starting a graph with Generate, Agent or Plugin returns 400.
+Switch, Format, Return, Tool and Generate; starting a graph with Agent or Plugin returns 400.
 Static validation can still describe those draft nodes without an executor.
 
 | Method | Path | Request / result |
@@ -289,3 +289,23 @@ are not replayed.
 Stop cancels Sleep and permission waits promptly. As with ordinary agent tools, a tool that has
 already started finishes before the run is reported cancelled; completed external/file actions
 are not rolled back. No subsequent node starts after the stop.
+
+## Generate execution
+
+A Generate node makes one chat completion with its resolved string `prompt` as a user message,
+without history, implicit system instructions or tools. Its `text` output contains only the response
+content; reasoning is not included. Empty text remains a valid string. A structured tool call in the
+response fails the node and does not execute anything.
+
+`model: {"type":"user_default"}` resolves the user's current model and launch profile at execution.
+An explicit `{"type":"model","id":N,"launch_profile_id":P}` uses that registered model and profile;
+a missing model/profile or a profile belonging to another model fails. Omitting the explicit profile
+uses the model's default launch profile. Sampling follows the user's existing preset for that model,
+and `think` is passed through, including named effort levels. Launch, context length and sampling
+are prepared by the same `LaunchFacade::call_params` method used by ordinary agent turns. The existing
+provider claim protects the call from model switching. No service chat is created for Generate.
+
+Stop cancels preparation, waiting for the provider and the completion itself, releases the claim,
+and prevents later nodes from running. Provider errors fail the node without automatic retries;
+the user's queue continues. Resolved inputs and output text have the usual 1 MiB limit, and the
+persisted run state is limited to 4 MiB.

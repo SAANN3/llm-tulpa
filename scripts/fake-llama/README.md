@@ -35,3 +35,7 @@ parent chat and its sub-agent can share one script.
 `blueprint_tools_use_shared_permissions_without_model_calls` also drives explicit Tool nodes:
 default approval, manual scopes/denial, stop during a permission wait, service-chat visibility and
 output bindings. It asserts that these nodes make no model calls. It uses only temporary files.
+
+`blueprint_generate_binds_text_and_cancels_without_a_chat` checks a single tool-free completion,
+text output bindings, model/sampling/effort parameters, provider errors and output limits,
+unexpected tool calls, cancellation and queue continuation without creating a chat.

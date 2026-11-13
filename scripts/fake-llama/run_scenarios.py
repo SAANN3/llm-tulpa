@@ -2288,6 +2288,80 @@ def blueprint_tools_use_shared_permissions_without_model_calls():
     settings()
 
 
+@scenario
+def blueprint_generate_binds_text_and_cancels_without_a_chat():
+    settings()
+    before = ok("/api/chats?limit=100")["total"]
+    def create(prompt="Generate fixture", choice=None, think=False):
+        nodes = [
+            {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+            {"id": "generate", "name": "Generate", "kind": {"type": "generate",
+                "model": choice or {"type": "user_default"},
+                "prompt": {"source": "literal", "value": prompt}, "think": think}},
+            {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                "answer": {"source": "output", "node_id": "generate", "port": "text", "path": []}}}},
+        ]
+        return ok("/api/blueprints", {"name": "Generate fixture", "workflow": {"schema_version": 1,
+            "nodes": nodes, "edges": [{"id": "e1", "from": "start", "port": "out", "to": "generate"},
+                                      {"id": "e2", "from": "generate", "port": "out", "to": "result"}]}})["id"]
+    def start(b):
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        return f"/api/blueprints/{b}/runs/{r}"
+    def wait(url, status):
+        wait_for(lambda: ok(url)["run"]["status"] == status, what=f"Generate {status}")
+        return ok(url)
+    script({"text": "generated text", "thinking": "private reasoning"})
+    d = wait(start(create()), "completed")
+    eq(d["state"]["nodes"]["result"]["outputs"]["answer"], "generated text", "only content is bound")
+    eq(d["chat_id"], None, "Generate needs no chat")
+    eq(len(calls()), 1, "one completion")
+    call = calls()[0]
+    eq(call["has_tools"], False, "no tools")
+    eq(call["messages"], [{"role": "user", "content": "Generate fixture"}], "no history or implicit system prompt")
+    eq(call["chat_template_kwargs"]["enable_thinking"], False, "thinking option")
+    eq(ok("/api/chats?limit=100")["total"], before, "no visible chat created")
+
+    profile = next(p for p in ok("/api/profiles")["profiles"] if p["id"] == PROFILE)
+    choice = {"type": "model", "id": profile["model_id"], "launch_profile_id": PROFILE}
+    preset = ok("/api/presets", {"name": "Blueprint Generate fixture " + str(time.time_ns()),
+        "model_id": profile["model_id"], "temperature": 0.23})
+    ok("/api/presets/choose", {"model_id": profile["model_id"], "preset_id": preset["id"]})
+    script({"text": "explicit model"})
+    wait(start(create("Explicit selection", choice, "low")), "completed")
+    eq(calls()[-1]["model"], profile["model"], "selected registered model")
+    eq(calls()[-1]["chat_template_kwargs"]["reasoning_effort"], "low", "named effort survives")
+    assert abs(calls()[-1]["temperature"] - 0.23) < 0.001, "existing sampling preset applies"
+    script({"text": "ordinary agent sampling"})
+    chat = new_chat("Blueprint sampling regression")
+    turn(chat, "Reply briefly")
+    assert abs(calls("main")[-1]["temperature"] - 0.23) < 0.001, "the ordinary agent uses the same sampling policy"
+    ok("/api/presets/choose", {"model_id": profile["model_id"], "preset_id": None})
+
+    script({"status": 500, "body": {"error": {"message": "scripted failure"}}}, {"text": "queue continues"})
+    failed = start(create("Failure"))
+    following = start(create("After failure"))
+    d = wait(failed, "failed")
+    assert d["run"]["error"], "provider error is recorded"
+    wait(following, "completed")
+
+    for reply, error in [({"text": "x" * (1024 * 1024 + 1)}, "exceeds 1 MiB"),
+                         ({"tool_calls": [{"name": "storage.write_file", "arguments": {}}]}, "tool call")]:
+        script(reply)
+        d = wait(start(create("Invalid completion")), "failed")
+        assert error in d["run"]["error"], d["run"]["error"]
+
+    script({"text": "too late", "delay": 10}, {"text": "after stop"})
+    stopped = start(create("Slow completion"))
+    wait_for(lambda: any(c["messages"][-1].get("content") == "Slow completion" for c in calls()), what="in-flight Generate")
+    following = start(create("After stop"))
+    t0 = time.time()
+    ok("/api/blueprints/queue/stop", {})
+    d = wait(stopped, "cancelled")
+    wait(following, "completed")
+    assert time.time() - t0 < 5, "Stop drops the model call instead of waiting for its answer"
+    eq(d["state"]["nodes"]["result"]["status"], "cancelled", "stop does not run the next node")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0

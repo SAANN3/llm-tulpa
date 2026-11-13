@@ -2,6 +2,7 @@ use super::{
     definition::{NodeKind, Workflow},
     events::BlueprintEvent,
     execution,
+    generation::Generation,
     tool_nodes::ToolNodes,
     runs::{NodeStatus, RunDetail, RunState, RunStatus},
     validation::{self, report::Severity},
@@ -23,6 +24,7 @@ pub(super) struct Runner {
     events: Arc<EventBus>,
     shutdown: CancellationToken,
     tools: ToolNodes,
+    generation: Generation,
     workers: Mutex<HashSet<i64>>,
     active: Mutex<HashMap<i64, ActiveRun>>,
 }
@@ -38,12 +40,14 @@ impl Runner {
         events: Arc<EventBus>,
         shutdown: CancellationToken,
         tools: ToolNodes,
+        generation: Generation,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
             events,
             shutdown,
             tools,
+            generation,
             workers: Mutex::default(),
             active: Mutex::default(),
         })
@@ -236,6 +240,7 @@ impl Runner {
             }
             let outcome = match &kind {
                 NodeKind::Tool { name, arguments, require_confirmation } => self.tools.execute(user_id, &mut run, &node_id, name, arguments, *require_confirmation, notify, cancel).await,
+                NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
                 _ => execution::execute(&kind, &run.state, cancel).await,
             };
             if cancel.is_cancelled() {
