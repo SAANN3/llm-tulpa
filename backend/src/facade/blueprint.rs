@@ -2,6 +2,8 @@ pub mod catalog;
 pub mod definition;
 pub mod events;
 mod execution;
+pub(crate) mod agent_nodes;
+mod permissions;
 pub(crate) mod generation;
 mod runner;
 pub mod runs;
@@ -22,6 +24,8 @@ use definition::{Schedule, Workflow};
 use runner::Runner;
 use generation::Generation;
 use tool_nodes::ToolNodes;
+use agent_nodes::AgentNodes;
+use permissions::Permissions;
 use runs::{QueueState, RunDetail, RunSummary};
 use validation::{
     Validation,
@@ -46,9 +50,11 @@ impl BlueprintFacade {
         chats: Arc<ChatStore>,
         tools: Arc<ToolService>,
         generation: Generation,
+        agent_nodes: AgentNodes,
     ) -> Self {
-        let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, events.clone());
-        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes, generation);
+        let permissions = Permissions::new(store.clone(), events.clone());
+        let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, permissions.clone());
+        let runner = Runner::new(store.clone(), events, shutdown, tool_nodes, generation, agent_nodes, permissions);
         Self {
             store,
             validation,

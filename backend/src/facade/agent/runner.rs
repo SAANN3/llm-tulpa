@@ -19,13 +19,14 @@ use utoipa::ToSchema;
 
 use super::notices::Notices;
 use super::prompts;
-use super::run_tracker::RunTracker;
+use super::run_tracker::{RunHandle, RunTracker};
 use super::suggestion::Suggestion;
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
 use super::pending::{AgentToolCall, Allowance, Decision};
 use super::ChatOut;
+use tokio::sync::oneshot;
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallStatus, EventBus, RunEndReason, ServerEvent, StepList};
@@ -111,13 +112,16 @@ pub struct ReplySoFarOut {
 /// What `start_prompt` returns at once: the run goes on in the background.
 pub struct StartedTurn {
     pub user_message_id: i64,
+    pub run: RunHandle,
 }
 
 /// Who a run is for, which decides what happens at a tool call that needs permission.
 #[derive(Clone, Copy)]
-pub(super) enum Policy {
+pub enum Policy {
     /// A user's chat: the run ends and waits for the user's answer, unless they have auto-confirm on.
     Attended,
+    /// A configured service chat: the caller drives continuations, without suggestions or job wake-ups.
+    Service,
     /// A sub-agent's chat: nobody can be asked, so what the escalation offers is granted with auto-confirm
     /// and the call is refused without it. The run also ends at `llm.return_agent`.
     Subagent,
@@ -262,11 +266,16 @@ impl TurnRunner {
         images: Vec<String>,
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
+        policy: Policy,
     ) -> Result<StartedTurn, ErrorService> {
-        self.refuse_managed_chat(chat_id).await?;
+        self.check_chat_policy(chat_id, policy).await?;
         let slot = self.claim(chat_id)?;
         // A call a crash cut short gets its result before this message, so the history stays in order
-        self.tool_calls.settle_interrupted(chat_id).await?;
+        if matches!(policy, Policy::Service) {
+            self.tool_calls.cancel_pending(chat_id).await?;
+        } else {
+            self.tool_calls.settle_interrupted(chat_id).await?;
+        }
 
         // A file can be uploaded before any chat exists to attach it to (the home page's case): this is the
         // moment it becomes this chat's. A no-op for a file already uploaded with a real `chat_id`.
@@ -275,8 +284,8 @@ impl TurnRunner {
         }
         let stored = self.store_user_message(chat_id, prompt, images, file_ids).await?;
 
-        self.spawn(slot, think, Start::Prompt, Policy::Attended);
-        Ok(StartedTurn { user_message_id: stored })
+        let run = self.spawn(slot, think, Start::Prompt, policy);
+        Ok(StartedTurn { user_message_id: stored, run })
     }
 
     /// Has the model answer again where it answered last, and replaces that answer with the new one. Only a
@@ -334,9 +343,11 @@ impl TurnRunner {
     /// Service chats are driven by their owning runtime. A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
     /// back to the messaging app: a run started here would run beside that agent's, with tools, and its reply would
     /// never reach the app.
-    async fn refuse_managed_chat(&self, chat_id: i64) -> Result<(), ErrorService> {
-        if self.chat_store.chat(chat_id).await?.is_service {
-            return Err(ErrorService::new(StatusCode::CONFLICT, "this service chat is driven by its own runtime"));
+    async fn check_chat_policy(&self, chat_id: i64, policy: Policy) -> Result<(), ErrorService> {
+        let chat = self.chat_store.chat(chat_id).await?;
+        let service = matches!(policy, Policy::Service);
+        if chat.is_service != service || (service && chat.agent_policy.is_none()) {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "this chat is driven by a different runtime"));
         }
         if self.chat_store.is_plugin_chat(chat_id).await? {
             return Err(ErrorService::new(StatusCode::CONFLICT, "this chat belongs to a messaging plugin: write to it from the messaging app"));
@@ -350,8 +361,9 @@ impl TurnRunner {
         chat_id: i64,
         decisions: Vec<Decision>,
         think: Option<ThinkChoice>,
-    ) -> Result<(), ErrorService> {
-        self.refuse_managed_chat(chat_id).await?;
+        policy: Policy,
+    ) -> Result<RunHandle, ErrorService> {
+        self.check_chat_policy(chat_id, policy).await?;
         let slot = self.claim(chat_id)?;
         let pending = self.tool_calls.can_use(chat_id).await?.tools;
         if pending.is_empty() {
@@ -365,8 +377,7 @@ impl TurnRunner {
                 ErrorService::new(StatusCode::BAD_REQUEST, format!("pending tool call number {}: {e}", decision.index))
             })?;
         }
-        self.spawn(slot, think, Start::Answer { decisions }, Policy::Attended);
-        Ok(())
+        Ok(self.spawn(slot, think, Start::Answer { decisions }, policy))
     }
 
     /// Starts a run because a background job (or sub-agent) of the chat finished, when nothing else is
@@ -404,15 +415,24 @@ impl TurnRunner {
 
     /// Stops the chat's run: the model call in flight is dropped and nothing of it is stored. A tool that is
     /// already running finishes.
-    pub(super) fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+    pub(super) async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
         let run = self.runs.lock().unwrap().get(&chat_id).cloned();
-        match run {
-            Some(run) => {
-                run.stop();
-                Ok(())
-            }
-            None => Err(ErrorService::new(StatusCode::CONFLICT, "the chat has no run to stop")),
+        if let Some(run) = run {
+            run.stop();
+            return Ok(());
         }
+        // A permission pause has no active run, but still owns pending calls and a model claim.
+        let slot = self.claim(chat_id)?;
+        if self.tool_calls.pending_tool_calls(chat_id).await?.is_empty() {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has no run to stop"));
+        }
+        self.turn.release(chat_id);
+        self.tool_calls.cancel_pending(chat_id).await?;
+        self.chat_store.clear_unseen_end(chat_id).await?;
+        self.last_ends.lock().unwrap().remove(&chat_id);
+        slot.run.mark_ended();
+        self.events.publish(ServerEvent::MessagesChanged { chat_id });
+        Ok(())
     }
 
     /// What the chat's turn is doing.
@@ -498,7 +518,7 @@ impl TurnRunner {
         // A page that has the sub-agent's chat open follows it like any run
         self.announce_start(chat_id, &run).await;
         let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run.clone()).await;
-        self.finish(chat_id, &end, &run).await;
+        let _ = self.finish(chat_id, &end, &run).await;
         drop(slot);
         match end {
             RunEnd::Subagent(result) => Ok(result),
@@ -524,7 +544,8 @@ impl TurnRunner {
         Ok(RunSlot { runs: self.runs.clone(), chat_id, run })
     }
 
-    fn spawn(&self, slot: RunSlot, think: Option<ThinkChoice>, start: Start, policy: Policy) {
+    fn spawn(&self, slot: RunSlot, think: Option<ThinkChoice>, start: Start, policy: Policy) -> RunHandle {
+        let (sender, completion) = oneshot::channel();
         let runner = self.clone();
         let chat_id = slot.chat_id;
         self.thinks.lock().unwrap().insert(chat_id, think.clone());
@@ -558,18 +579,20 @@ impl TurnRunner {
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
             // The end is recorded and told before the chat is free, so a new run's start can't come first; the state
             // already says idle (the run is marked ended), which is what a page asking on `RunEnded` needs
-            runner.finish(chat_id, &end, &run).await;
+            let ended = runner.finish(chat_id, &end, &run).await;
             // After a user's run that answered, not a stop, a failure or a sub-agent's run
             if matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered) {
                 runner.suggestion.start(chat_id);
             }
             drop(slot);
+            if let Some(ended) = ended { let _ = sender.send(ended); }
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
                 }
             }
         });
+        RunHandle { completion }
     }
 
     async fn run_user_run(&self, chat_id: i64, think: Option<ThinkChoice>, start: Start, policy: Policy, run: RunTracker) -> RunEnd {
@@ -580,14 +603,14 @@ impl TurnRunner {
         run.set_user_id(user_id);
         let auto_confirm = self.settings_store.auto_confirm(user_id).await.unwrap_or(false);
         let max_steps = self.settings_store.max_turn_steps(user_id).await.unwrap_or(None);
-        if matches!(policy, Policy::Attended) {
+        if !matches!(policy, Policy::Subagent) {
             run.set_step_limit(max_steps);
         }
         self.run(chat_id, think, start, policy, auto_confirm, max_steps, run).await
     }
 
     /// Records how a run ended and tells whoever is watching.
-    async fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) {
+    async fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) -> Option<RunEnded> {
         // Only a wait for permission keeps the turn going (its claim on the model server and its step count)
         if !matches!(end, RunEnd::WaitingForPermission) {
             self.turn.release(chat_id);
@@ -613,7 +636,7 @@ impl TurnRunner {
             // Nothing happened, so there is nothing to report
             RunEnd::NothingToDo => {
                 run.mark_ended();
-                return;
+                return None;
             }
         };
         let run = {
@@ -628,6 +651,7 @@ impl TurnRunner {
             self.plugin_events.fire(PluginEvent::RunFinished { user_id, chat_id, state: &ended }).await;
         }
         self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens, status });
+        Some(ended)
     }
 
     /// Notes how a run ended for the chat's owner to find (`chats.unseen_end`). A run the user stopped has nothing to
@@ -744,7 +768,7 @@ impl TurnRunner {
             }
 
             let step_limit = match policy {
-                Policy::Attended => max_steps.filter(|limit| steps + 1 >= *limit),
+                Policy::Attended | Policy::Service => max_steps.filter(|limit| steps + 1 >= *limit),
                 Policy::Subagent => None,
             };
             run.set_step(steps + 1);
@@ -869,7 +893,7 @@ impl TurnRunner {
                     for view in &views {
                         self.tool_calls.grant_what_is_offered(chat_id, view).await?;
                     }
-                } else if matches!(policy, Policy::Attended) {
+                } else if !matches!(policy, Policy::Subagent) {
                     // The calls before the first one that needs the user run now, in the order they were asked,
                     // and the run waits there: pausing before them would leave them pending, and a read of the
                     // chat would take them for calls a crash had cut short

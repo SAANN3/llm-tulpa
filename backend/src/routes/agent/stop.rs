@@ -13,7 +13,8 @@ pub(crate) struct StopRequest {
 
 /// Stops the run on `chat_id`: the model call in flight is dropped (the server stops generating) and nothing of it
 /// is stored; a tool that is already running finishes and its result is stored. The chat is left as of its last
-/// stored message, and `run_ended` with the reason `stopped` follows.
+/// stored message, and `run_ended` with the reason `stopped` follows. A permission pause has already
+/// ended its run; Stop closes its pending calls without executing them or starting another run.
 #[utoipa::path(
     post,
     path = "/api/agent/stop",
@@ -32,6 +33,6 @@ pub async fn stop(
 ) -> Result<StatusCode, ErrorService> {
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, body.chat_id).await?;
-    services.agent.stop(body.chat_id)?;
+    services.agent.stop(body.chat_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

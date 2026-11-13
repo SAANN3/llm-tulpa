@@ -5,7 +5,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::{
-    facade::agent::Decision, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState,
+    facade::agent::{Decision, RunPolicy}, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState,
 };
 
 #[derive(Deserialize, ToSchema)]
@@ -41,6 +41,6 @@ pub async fn answer(
 ) -> Result<StatusCode, ErrorService> {
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, body.chat_id).await?;
-    services.agent.answer(body.chat_id, body.decisions, body.think).await?;
+    services.agent.answer(body.chat_id, body.decisions, body.think, RunPolicy::Attended).await?;
     Ok(StatusCode::ACCEPTED)
 }

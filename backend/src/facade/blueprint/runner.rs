@@ -2,6 +2,8 @@ use super::{
     definition::{NodeKind, Workflow},
     events::BlueprintEvent,
     execution,
+    agent_nodes::AgentNodes,
+    permissions::Permissions,
     generation::Generation,
     tool_nodes::ToolNodes,
     runs::{NodeStatus, RunDetail, RunState, RunStatus},
@@ -25,6 +27,8 @@ pub(super) struct Runner {
     shutdown: CancellationToken,
     tools: ToolNodes,
     generation: Generation,
+    agents: AgentNodes,
+    permissions: Permissions,
     workers: Mutex<HashSet<i64>>,
     active: Mutex<HashMap<i64, ActiveRun>>,
 }
@@ -41,6 +45,8 @@ impl Runner {
         shutdown: CancellationToken,
         tools: ToolNodes,
         generation: Generation,
+        agents: AgentNodes,
+        permissions: Permissions,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -48,6 +54,8 @@ impl Runner {
             shutdown,
             tools,
             generation,
+            agents,
+            permissions,
             workers: Mutex::default(),
             active: Mutex::default(),
         })
@@ -241,6 +249,7 @@ impl Runner {
             let outcome = match &kind {
                 NodeKind::Tool { name, arguments, require_confirmation } => self.tools.execute(user_id, &mut run, &node_id, name, arguments, *require_confirmation, notify, cancel).await,
                 NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
+                NodeKind::Agent { .. } => self.agents.execute(user_id, &mut run, &node_id, &kind, &self.permissions, notify, cancel).await,
                 _ => execution::execute(&kind, &run.state, cancel).await,
             };
             if cancel.is_cancelled() {

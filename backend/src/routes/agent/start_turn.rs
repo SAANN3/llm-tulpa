@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
+use crate::{facade::agent::RunPolicy, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct StartTurnRequest {
@@ -62,6 +62,7 @@ pub async fn start_turn(
             body.images.unwrap_or_default(),
             body.file_ids.unwrap_or_default(),
             body.think,
+            RunPolicy::Attended,
         )
         .await?;
 

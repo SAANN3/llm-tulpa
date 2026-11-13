@@ -221,7 +221,11 @@ impl Turn {
     }
 
     async fn step_once(&self, step: Step) -> Result<StepOut, ErrorService> {
-        let request = self.prepare(&step).await?;
+        let request = tokio::select! {
+            biased;
+            _ = step.run.stopped() => return Ok(StepOut::Stopped),
+            result = self.prepare(&step) => result?,
+        };
         // Times the whole model call, regenerations included: that is how long the reply really took
         let started_at = Instant::now();
         let asked = self.ask(&step, &request).await?;
@@ -248,7 +252,8 @@ impl Turn {
         }
         let is_subagent = chat.parent_chat_id.is_some();
         all.into_iter()
-            .filter(|tool| subagent::available_to(tool.function_name(), is_subagent) && chat.tool_mode.allows(names, tool.function_name()))
+            .filter(|tool| subagent::available_to(tool.function_name(), is_subagent) && chat.tool_mode.allows(names, tool.function_name())
+                && chat.agent_policy.as_ref().is_none_or(|p| p.allows_tool(tool.function_name())))
             .collect()
     }
 

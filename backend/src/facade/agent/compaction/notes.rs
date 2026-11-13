@@ -67,8 +67,13 @@ impl Compaction {
         known_prompt_tokens: Option<u64>,
         report: Option<&StepsReport>,
     ) {
+        let mut writes_notes = true;
         let outcome: Result<Asked, ErrorService> = async {
             let chat = self.chat_store.chat(chat_id).await?;
+            writes_notes = chat.agent_policy.as_ref().is_none_or(|p| p.write_notes);
+            if !writes_notes {
+                return Ok(Asked::Not("notes writing is disabled for this chat"));
+            }
             if chat.parent_chat_id.is_some() {
                 // A sub-agent's chat ends with its result; nobody reads its notes later
                 return Ok(Asked::Not("a sub-agent's chat"));
@@ -136,7 +141,7 @@ impl Compaction {
         // What the model wrote with `chat.write_notes` since the last compaction joins the prompt
         // now: the prompt is rewritten right after this anyway, and the request above has
         // already read the old one (a no-op when that request just replaced the notes)
-        if let Err(e) = self.chat_store.apply_pending_notes(chat_id).await {
+        if writes_notes && let Err(e) = self.chat_store.apply_pending_notes(chat_id).await {
             tracing::warn!(chat_id, "couldn't apply the pending notes: {e:?}");
         }
     }

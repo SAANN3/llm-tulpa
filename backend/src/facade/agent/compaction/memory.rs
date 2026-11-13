@@ -119,6 +119,9 @@ impl Compaction {
                 return Ok(Asked::Not("not asked in a messaging plugin's chat"));
             };
             let chat = self.chat_store.chat(chat_id).await?;
+            if chat.agent_policy.as_ref().is_some_and(|p| !p.write_memory) {
+                return Ok(Asked::Not("memory writing is disabled for this chat"));
+            }
             if chat.parent_chat_id.is_some() {
                 // A sub-agent works for the chat that handed it a task; what it learns about the user is that chat's business
                 return Ok(Asked::Not("a sub-agent's chat"));

@@ -55,7 +55,7 @@ impl BlueprintStore {
         Ok(())
     }
 
-    async fn lock_blueprint(
+    pub(super) async fn lock_blueprint(
         &self,
         txn: &DatabaseTransaction,
         user_id: i64,

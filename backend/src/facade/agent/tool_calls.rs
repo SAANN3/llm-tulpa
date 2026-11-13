@@ -15,6 +15,7 @@ use super::prompts::{self, INTERRUPTED_TOOL_MESSAGE};
 use crate::plugins::events::{PluginEvent, PluginEvents};
 use crate::services::chat_store::{Chat, ChatStore, MessageTimings, NewMessage, NewToolCall, ToolCallOut};
 use crate::services::error::ErrorService;
+use crate::services::tool_selection_store::ToolSelectionStore;
 use crate::services::permission_store::{PermissionStore, PermissionStoreErrors};
 use crate::services::tools::ToolService;
 use crate::tools::base::{ResolvedScope, Tool, ToolContext, ToolPermission, ATTACHED_IMAGES_KEY};
@@ -60,6 +61,7 @@ impl Drop for RunningToolGuard {
 pub(super) struct ToolCalls {
     chat_store: Arc<ChatStore>,
     tools: Arc<ToolService>,
+    tool_selection: Arc<ToolSelectionStore>,
     /// Per-chat tool-permission grants — what scope each tool has already been given
     /// within a given chat, if any. Consulted by `to_agent_tool_call`/`run_next_tool` to
     /// decide whether a call is `Allowed` outright or needs the caller to confirm.
@@ -83,6 +85,7 @@ impl ToolCalls {
     pub(super) fn new(
         chat_store: Arc<ChatStore>,
         tools: Arc<ToolService>,
+        tool_selection: Arc<ToolSelectionStore>,
         permission_store: Arc<PermissionStore>,
         tool_context: ToolContext,
         model: ModelCall,
@@ -91,6 +94,7 @@ impl ToolCalls {
         Self {
             chat_store,
             tools,
+            tool_selection,
             permission_store,
             tool_context,
             model,
@@ -161,15 +165,23 @@ impl ToolCalls {
     /// user's confirmation is different and stays as it is; so does everything queued after it,
     /// since results are recorded in the order the model asked.
     pub(super) async fn settle_interrupted(&self, chat_id: i64) -> Result<(), ErrorService> {
+        self.settle_pending(chat_id, false).await
+    }
+    pub(super) async fn cancel_pending(&self, chat_id: i64) -> Result<(), ErrorService> {
+        self.settle_pending(chat_id, true).await
+    }
+    async fn settle_pending(&self, chat_id: i64, cancel_unapproved: bool) -> Result<(), ErrorService> {
         if self.is_running(chat_id) {
             return Ok(());
         }
 
         for call in self.pending_tool_calls(chat_id).await? {
             let name = call.tool_name.clone();
-            let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
-            if !matches!(view.permission, AgentToolPermission::Allowed) {
-                break;
+            if !cancel_unapproved {
+                let view = self.to_agent_tool_call(chat_id, call.tool_name, call.arguments).await?;
+                if !matches!(view.permission, AgentToolPermission::Allowed) {
+                    break;
+                }
             }
 
             self.chat_store
@@ -289,7 +301,6 @@ impl ToolCalls {
         unattended: bool,
     ) -> Result<UseToolOut, ErrorService> {
         let chat_id = chat.id;
-        let is_subagent = chat.parent_chat_id.is_some();
         let stored_scope = self
             .stored_scope(chat_id, chat.user_id, &call.tool_name)
             .await?;
@@ -313,8 +324,7 @@ impl ToolCalls {
                 &call.tool_name,
                 call.arguments.clone(),
                 effective_scope,
-                chat.user_id,
-                is_subagent,
+                &chat,
             )
             .await;
 
@@ -509,9 +519,17 @@ impl ToolCalls {
         tool_name: &str,
         data: Value,
         scope: ResolvedScope,
-        user_id: i64,
-        is_subagent: bool,
+        chat: &Chat,
     ) -> AgentToolPermission {
+        let user_id = chat.user_id;
+        let is_subagent = chat.parent_chat_id.is_some();
+        if let Some(policy) = &chat.agent_policy {
+            let allowed = self.tool_selection.names_for_chat(chat.id).await
+                .map(|names| chat.tool_mode.allows(&names, tool_name)).unwrap_or(false);
+            if !allowed || !policy.allows_tool(tool_name) {
+                return AgentToolPermission::Denied { reason: format!("'{tool_name}' isn't enabled for this agent"), escalation: None };
+            }
+        }
         if !subagent::available_to(tool_name, is_subagent) {
             return AgentToolPermission::Denied {
                 reason: format!("'{tool_name}' isn't available in this chat"),
@@ -603,8 +621,7 @@ impl ToolCalls {
                 &name,
                 arguments.clone(),
                 scope,
-                chat.user_id,
-                chat.parent_chat_id.is_some(),
+                &chat,
             )
             .await;
         Ok(AgentToolCall {

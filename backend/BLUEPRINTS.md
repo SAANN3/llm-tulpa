@@ -2,7 +2,7 @@
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
 versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
-Agent execution and schedule ticking are not implemented yet.
+Schedule ticking and plugin-node execution are not implemented yet.
 
 ## Storage and ownership
 
@@ -194,7 +194,7 @@ Each user has one sequential queue shared by all of their blueprints. Only one r
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
 by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
-Switch, Format, Return, Tool and Generate; starting a graph with Agent or Plugin returns 400.
+Switch, Format, Return, Tool, Generate and Agent; starting a graph with Plugin returns 400.
 Static validation can still describe those draft nodes without an executor.
 
 | Method | Path | Request / result |
@@ -309,3 +309,49 @@ Stop cancels preparation, waiting for the provider and the completion itself, re
 and prevents later nodes from running. Provider errors fail the node without automatic retries;
 the user's queue continues. Resolved inputs and output text have the usual 1 MiB limit, and the
 persisted run state is limited to 4 MiB.
+
+
+## Agent execution
+
+Agent uses the same `start_turn`, `answer` and `stop` methods and turn runner as ordinary chats: model requests, tool results and further model requests until
+a final answer. The `text` output is that final message, without reasoning. A provider failure or
+the user's step limit fails the node. Stop cancels model preparation/generation and waits for an
+already executing tool to finish before freeing the user's blueprint queue slot.
+
+Each Agent node uses its own hidden service chat. `state.nodes[node_id].chat_id` identifies the
+chat used by that snapshot; the run-level `chat_id` remains the shared context for explicit Tool
+nodes. These chats are hidden from normal list/search and cannot be driven through ordinary
+agent turn/answer/regenerate endpoints. Each start/answer returns a completion handle carrying the existing `RunEnded` record. HTTP callers
+can drop the handle and leave their background run running; blueprint execution awaits it.
+
+With `reuse_chat: false` (default), each execution creates a fresh chat. With `true`, a durable
+`(blueprint_id, node_id)` binding reuses the chat, including history, summaries and permission
+grants. Changing model/profile continues that same chat on the new selection. Switching reuse
+off clears the binding without deleting history; switching it back on creates a new reusable chat.
+Renaming a node creates a separate binding. Missing/deleted reuse chats fail clearly. Deleting a
+blueprint drops its bindings, retaining the hidden chats referenced by prior run snapshots.
+
+The node's model/profile, tool selection and system prompt are applied from the queued workflow
+snapshot. `system_prompt`, when supplied, replaces the base prompt for that chat; memory snapshots
+and compaction context are composed through the existing history builder. It never rewrites the
+user's global prompt or memory. Reading global memory follows the user's memory setting.
+
+`write_notes` and `write_memory` default to false. They control working-notes writes and automatic
+learning into global memory; summary/key facts/context maintenance remain active. Notes writes
+are filtered from definitions and refused at execution when disabled. Subagent chats inherit
+these restrictions. Explicitly selected tools retain their other effects; these flags are not a
+sandbox for arbitrary shell/plugin actions. Enabling either flag permits the existing corresponding
+agent behavior; global memory still requires the user's memory feature to be enabled.
+
+Tools selected by the model follow the user's `auto_confirm` setting, unlike explicit Tool nodes'
+`require_confirmation` default. A manual permission wait keeps the blueprint active and publishes
+the same `state.pending_tool` and answer endpoint documented above. Multiple pending calls are
+presented one at a time before the turn resumes. Denial is delivered to the agent as an ordinary
+refused tool result; the model may then finish or choose another action. A stale answer returns 409.
+Stopping a wait settles its pending calls without executing them and releases the provider claim.
+Restart interrupts active runs; starting another execution does not replay their pending calls.
+
+Service chats do not produce input suggestions or wake themselves after a background job. A job
+explicitly started by an agent remains managed by the existing job tools; its later completion
+does not restart a finished blueprint node. Hidden chats and old bindings for removed node ids
+are retained; this batch does not add history garbage collection or crash resume.

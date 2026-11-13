@@ -1,5 +1,6 @@
 mod entities;
 mod runs;
+mod agent_chats;
 
 use std::path::{Path, PathBuf};
 

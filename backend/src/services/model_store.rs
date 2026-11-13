@@ -9,6 +9,7 @@ use sea_orm::{
 };
 
 use crate::services::error::ErrorService;
+use crate::services::launch_store::{LaunchStore, LaunchStoreErrors};
 
 /// Owns the `llm_providers`/`llm_models` tables — which backends exist and which models
 /// the app knows about. Chats and user settings reference a model by id; anything that
@@ -279,6 +280,30 @@ impl ModelStore {
         Ok(())
     }
 
+    /// Shares binding selection between chat creation and model calls without a chat.
+    pub async fn resolve_binding(
+        &self, user_id: i64, model_id: Option<i64>, profile_id: Option<i64>, profiles: &LaunchStore,
+    ) -> Result<Option<(ModelRef, Option<i64>)>, ModelStoreErrors> {
+        let (model, chosen) = match model_id {
+            Some(id) => {
+                let model = self.get_many(&[id]).await?.remove(&id).ok_or(ModelStoreErrors::NoModel)?;
+                if let Some(profile) = profile_id {
+                    if profiles.get(profile).await?.model_id != id {
+                        return Err(ModelStoreErrors::InvalidBinding("launch profile belongs to another model".into()));
+                    }
+                    return Ok(Some((model, Some(profile))));
+                }
+                (model, None)
+            }
+            None => {
+                let Some(model) = self.default_for_user(user_id).await? else { return Ok(None) };
+                (model, self.chosen_profile(user_id).await?)
+            }
+        };
+        let profile = profiles.start_profile(model.id, chosen).await?.map(|p| p.id);
+        Ok(Some((model, profile)))
+    }
+
     /// `default_for_user`, erroring `NoModel` when nothing has been picked yet.
     pub async fn resolve_default(&self, user_id: i64) -> Result<ModelRef, ModelStoreErrors> {
         self.default_for_user(user_id).await?.ok_or(ModelStoreErrors::NoModel)
@@ -290,6 +315,12 @@ pub enum ModelStoreErrors {
     QueryFailed(DbErr),
     UnknownProvider(String),
     NoModel,
+    Launch(LaunchStoreErrors),
+    InvalidBinding(String),
+}
+
+impl From<LaunchStoreErrors> for ModelStoreErrors {
+    fn from(error: LaunchStoreErrors) -> Self { Self::Launch(error) }
 }
 
 impl From<DbErr> for ModelStoreErrors {
@@ -308,6 +339,8 @@ impl From<ModelStoreErrors> for ErrorService {
             ModelStoreErrors::UnknownProvider(provider) => {
                 ErrorService::new(StatusCode::BAD_REQUEST, format!("unknown LLM provider '{provider}'"))
             }
+            ModelStoreErrors::Launch(error) => error.into(),
+            ModelStoreErrors::InvalidBinding(message) => ErrorService::new(StatusCode::CONFLICT, message),
             ModelStoreErrors::NoModel => {
                 ErrorService::new(StatusCode::CONFLICT, "no model is selected yet — pick one in Settings")
             }

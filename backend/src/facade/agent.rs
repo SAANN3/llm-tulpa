@@ -52,7 +52,8 @@ use tool_calls::ToolCalls;
 use suggestion::Suggestion;
 use turn::Turn;
 pub use pending::{AgentScopeGrant, AgentToolCall, AgentToolPermission, Allowance, Decision};
-pub use runner::{ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
+pub use runner::{ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus, Policy as RunPolicy};
+pub use run_tracker::RunHandle;
 use runner::TurnRunner;
 use model_call::ModelCall;
 pub use prompts::default_system_prompt;
@@ -149,7 +150,7 @@ impl Agent {
             OneShot::new(providers),
             plugin_events.clone(),
         );
-        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
+        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), tool_selection.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
         let turn = Turn::new(
             chat_store.clone(),
             tool_selection.clone(),
@@ -211,9 +212,10 @@ impl Agent {
         images: Vec<String>,
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
+        policy: RunPolicy,
     ) -> Result<StartedTurn, ErrorService> {
         self.remember_think(chat_id, think.as_ref()).await;
-        self.runner.start_prompt(chat_id, prompt, images, file_ids, think).await
+        self.runner.start_prompt(chat_id, prompt, images, file_ids, think, policy).await
     }
 
     /// Keeps the level a turn was asked with on the chat, so the composer offers it again next time. Best-effort: a turn
@@ -235,13 +237,13 @@ impl Agent {
     }
 
     /// Answers the permission prompt a chat is waiting at and continues its turn in the background.
-    pub async fn answer(&self, chat_id: i64, decisions: Vec<Decision>, think: Option<ThinkChoice>) -> Result<(), ErrorService> {
-        self.runner.start_answer(chat_id, decisions, think).await
+    pub async fn answer(&self, chat_id: i64, decisions: Vec<Decision>, think: Option<ThinkChoice>, policy: RunPolicy) -> Result<RunHandle, ErrorService> {
+        self.runner.start_answer(chat_id, decisions, think, policy).await
     }
 
     /// Stops the chat's run: the model call in flight is dropped. A tool already running finishes.
-    pub fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
-        self.runner.stop(chat_id)
+    pub async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+        self.runner.stop(chat_id).await
     }
 
     /// Whether the chat has a run going on.

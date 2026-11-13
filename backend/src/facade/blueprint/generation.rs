@@ -7,30 +7,24 @@ use crate::{
     facade::{launch::LaunchFacade, one_shot::OneShot},
     services::{
         error::ErrorService,
-        launch_store::LaunchStore,
         llm::{ChatMessage, LlmProviders, ThinkChoice},
-        model_store::ModelStore,
     },
 };
 use std::{collections::BTreeMap, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) struct Generation {
-    models: Arc<ModelStore>,
-    profiles: Arc<LaunchStore>,
     launch: Arc<LaunchFacade>,
     providers: LlmProviders,
     one_shot: OneShot,
 }
 impl Generation {
     pub fn new(
-        models: Arc<ModelStore>,
-        profiles: Arc<LaunchStore>,
         launch: Arc<LaunchFacade>,
         providers: LlmProviders,
     ) -> Self {
         let one_shot = OneShot::new(providers.clone());
-        Self { models, profiles, launch, providers, one_shot }
+        Self { launch, providers, one_shot }
     }
 
     pub(super) async fn execute(
@@ -63,24 +57,11 @@ impl Generation {
         prompt: String,
         think: Option<ThinkChoice>,
     ) -> Result<Outcome, ErrorService> {
-        let (model, profile_id) = match choice {
-            ModelChoice::UserDefault => {
-                let model = self.models.resolve_default(user_id).await?;
-                let profile = self.profiles.start_profile(model.id, self.models.chosen_profile(user_id).await?).await?;
-                (model, profile.map(|p| p.id))
-            }
-            ModelChoice::Model { id, launch_profile_id } => {
-                let model = self.models.get_many(&[*id]).await?.remove(id)
-                    .ok_or_else(|| ErrorService::internal("generation model is no longer registered"))?;
-                if let Some(id) = launch_profile_id {
-                    let profile = self.profiles.get(*id).await?;
-                    if profile.model_id != model.id {
-                        return Err(ErrorService::internal("launch profile belongs to another model"));
-                    }
-                }
-                (model, *launch_profile_id)
-            }
+        let (model_id, profile_id) = match choice {
+            ModelChoice::UserDefault => (None, None),
+            ModelChoice::Model { id, launch_profile_id } => (Some(*id), *launch_profile_id),
         };
+        let (model, profile_id) = self.launch.model_for_call(user_id, model_id, profile_id).await?;
         let params = self.launch.call_params(user_id, model.id, profile_id).await?;
         let provider = self.providers.get(&model.provider)?;
         let _guard = provider.acquire(params.launch.as_ref()).await?;

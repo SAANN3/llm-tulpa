@@ -3,6 +3,8 @@ mod export;
 mod find;
 mod rewind;
 mod stats;
+mod policy;
+pub use policy::AgentPolicy;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -246,6 +248,7 @@ impl ChatStore {
             id: row.id,
             user_id: row.user_id,
             is_service: row.is_service,
+            agent_policy: row.agent_policy.map(serde_json::from_value).transpose().map_err(|_| ChatStoreErrors::CorruptAgentPolicy)?,
             name: row.name,
             model_id: model.id,
             provider: model.provider,
@@ -655,10 +658,8 @@ impl ChatStore {
     /// what it runs on, whatever the user later switches it to, and the default is untouched. Errs
     /// `Model(NoModel)` when no model exists at all.
     async fn binding_for_new_chat(&self, user_id: i64) -> Result<(ModelRef, Option<i64>), ChatStoreErrors> {
-        let model = self.models.resolve_default(user_id).await?;
-        let chosen = self.models.chosen_profile(user_id).await?;
-        let profile = self.launch.start_profile(model.id, chosen).await?.map(|p| p.id);
-        Ok((model, profile))
+        self.models.resolve_binding(user_id, None, None, &self.launch).await?
+            .ok_or(ChatStoreErrors::Model(ModelStoreErrors::NoModel))
     }
 
     /// Creates an ordinary (non-plugin) chat owned by `user_id`, on their default model (see
@@ -691,6 +692,20 @@ impl ChatStore {
         Ok(chat)
     }
 
+    pub async fn configure_service_agent(
+        &self, user_id: i64, chat_id: i64, model_id: i64, profile_id: Option<i64>,
+        tool_mode: ToolMode, policy: AgentPolicy,
+    ) -> Result<(), ChatStoreErrors> {
+        let chat = self.owned_chat(user_id, chat_id).await?;
+        if !chat.is_service { return Err(ChatStoreErrors::Conflict("not a service chat".into())); }
+        let mut row = chats::ActiveModel { id: Set(chat_id), model_id: Set(model_id), launch_profile_id: Set(profile_id),
+            tool_mode: Set(tool_mode.to_string()), agent_policy: Set(Some(serde_json::to_value(policy).map_err(|_| ChatStoreErrors::CorruptAgentPolicy)?)),
+            ..Default::default() };
+        row.updated_at = Set(chrono::Utc::now());
+        row.update(&self.db).await?;
+        Ok(())
+    }
+
     /// Creates the chat a sub-agent runs in: owned by the parent's user, in the parent's folder,
     /// and bound to the parent's model (not the user's default, which may have changed since —
     /// the sub-agent must run on the model the parent is already using), pointing back at the
@@ -702,6 +717,7 @@ impl ChatStore {
             model_id: Set(parent.model_id),
             folder_id: Set(parent.folder_id),
             parent_chat_id: Set(Some(parent.id)),
+            agent_policy: Set(parent.agent_policy.as_ref().map(serde_json::to_value).transpose().map_err(|_| ChatStoreErrors::CorruptAgentPolicy)?),
             launch_profile_id: Set(parent.launch_profile_id),
             tool_mode: Set(parent.tool_mode.to_string()),
             ..Default::default()
@@ -940,12 +956,12 @@ impl ChatStore {
         plugin_chat_id: String,
     ) -> Result<Chat, ChatStoreErrors> {
         let owner = self.owner_id().await?;
-        let model = self.models.resolve_default(owner).await?;
+        let (model, profile) = self.binding_for_new_chat(owner).await?;
         let chat = chats::ActiveModel {
             user_id: Set(owner),
             name: Set(name),
             model_id: Set(model.id),
-            launch_profile_id: Set(self.launch.start_profile(model.id, self.models.chosen_profile(owner).await?).await?.map(|p| p.id)),
+            launch_profile_id: Set(profile),
             ..Default::default()
         }
         .insert(&self.db)
@@ -1421,6 +1437,7 @@ impl ChatStore {
 #[derive(Clone, Serialize)]
 pub struct Chat {
     pub is_service: bool,
+    pub agent_policy: Option<AgentPolicy>,
     pub id: i64,
     pub user_id: i64,
     pub name: String,
@@ -1754,6 +1771,7 @@ pub enum ChatStoreErrors {
     Conflict(String),
     /// `chats.tool_mode` is neither mode. The column's check should make this unreachable.
     CorruptToolMode,
+    CorruptAgentPolicy,
 }
 
 impl From<UserStoreErrors> for ChatStoreErrors {
@@ -1799,6 +1817,7 @@ impl From<ChatStoreErrors> for ErrorService {
             ChatStoreErrors::Launch(e) => e.into(),
             ChatStoreErrors::NotFound => ErrorService::new(StatusCode::NOT_FOUND, "chat not found"),
             ChatStoreErrors::Conflict(why) => ErrorService::new(StatusCode::CONFLICT, why),
+            ChatStoreErrors::CorruptAgentPolicy => ErrorService::internal("invalid stored agent policy"),
             ChatStoreErrors::CorruptToolMode => ErrorService::internal("a chat's tool mode is neither blacklist nor whitelist"),
         }
     }

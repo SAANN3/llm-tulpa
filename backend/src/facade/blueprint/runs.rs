@@ -54,6 +54,8 @@ pub enum NodeStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodeProgress {
+    #[serde(default)]
+    pub chat_id: Option<i64>,
     pub status: NodeStatus,
     pub outputs: BTreeMap<String, Literal>,
     pub error: Option<String>,
@@ -86,6 +88,7 @@ impl RunState {
                     (
                         n.id.clone(),
                         NodeProgress {
+                            chat_id: None,
                             status: NodeStatus::Pending,
                             outputs: BTreeMap::new(),
                             error: None,

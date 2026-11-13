@@ -1,8 +1,8 @@
 use super::{
     definition::{Input, Literal},
-    events::BlueprintEvent,
-    execution::{MAX_STATE_BYTES, MAX_VALUE_BYTES, Outcome, Values},
-    runs::{NodeStatus, PendingTool, RunDetail, RunStatus},
+    execution::{MAX_VALUE_BYTES, Outcome, Values},
+    runs::RunDetail,
+    permissions::Permissions,
     validation,
 };
 use crate::{
@@ -11,7 +11,6 @@ use crate::{
         blueprint_store::BlueprintStore,
         chat_store::{ChatStore, ToolCallOut},
         error::ErrorService,
-        event_bus::{EventBus, ServerEvent},
         tools::ToolService,
     },
 };
@@ -24,7 +23,7 @@ pub(super) struct ToolNodes {
     agent: Arc<Agent>,
     chats: Arc<ChatStore>,
     tools: Arc<ToolService>,
-    events: Arc<EventBus>,
+    permissions: Permissions,
 }
 impl ToolNodes {
     pub fn new(
@@ -32,14 +31,14 @@ impl ToolNodes {
         agent: Arc<Agent>,
         chats: Arc<ChatStore>,
         tools: Arc<ToolService>,
-        events: Arc<EventBus>,
+        permissions: Permissions,
     ) -> Self {
         Self {
             store,
             agent,
             chats,
             tools,
-            events,
+            permissions,
         }
     }
     pub async fn execute(
@@ -111,64 +110,7 @@ impl ToolNodes {
                 let Some(grant) = view.offered_grant().cloned() else {
                     break;
                 };
-                let request_id = format!("{:032x}", rand::random::<u128>());
-                run.state.pending_tool = Some(PendingTool {
-                    request_id: request_id.clone(),
-                    node_id: node_id.into(),
-                    call: view,
-                    answer: None,
-                });
-                run.state.nodes.get_mut(node_id).unwrap().status = NodeStatus::WaitingForPermission;
-                if serde_json::to_vec(&run.state)
-                    .map_err(|_| "could not serialize permission state")?
-                    .len()
-                    > MAX_STATE_BYTES
-                {
-                    run.state.pending_tool = None;
-                    return Err("run state exceeds 4 MiB".into());
-                }
-                if !self
-                    .store
-                    .wait_for_permission(user_id, run.run.blueprint_id, run.run.id, &run.state)
-                    .await
-                    .map_err(message)?
-                {
-                    return Err("run was stopped".into());
-                }
-                run.run.status = RunStatus::WaitingForPermission;
-                self.emit(user_id, run, node_id);
-                let allowance = loop {
-                    let current = self
-                        .store
-                        .get_run(user_id, run.run.blueprint_id, run.run.id)
-                        .await
-                        .map_err(message)?;
-                    if let Some(answer) = current
-                        .state
-                        .pending_tool
-                        .as_ref()
-                        .filter(|p| p.request_id == request_id)
-                        .and_then(|p| p.answer)
-                    {
-                        break answer;
-                    }
-                    tokio::select! {
-                        _ = cancel.cancelled() => return Err("run was stopped".into()),
-                        _ = notify.notified() => {}
-                    }
-                };
-                run.state.pending_tool = None;
-                run.state.nodes.get_mut(node_id).unwrap().status = NodeStatus::Running;
-                if !self
-                    .store
-                    .resume_tool(user_id, run.run.blueprint_id, run.run.id, &run.state)
-                    .await
-                    .map_err(message)?
-                {
-                    return Err("run was stopped".into());
-                }
-                run.run.status = RunStatus::Running;
-                self.emit(user_id, run, node_id);
+                let allowance = self.permissions.wait(user_id, run, node_id, view, notify, cancel).await?;
                 match allowance {
                     Allowance::Deny => return Err("tool call was denied".into()),
                     Allowance::Permanent => self
@@ -213,11 +155,6 @@ impl ToolNodes {
             port: Some("out".into()),
             outputs: BTreeMap::from([("result".into(), value)]),
         })
-    }
-    fn emit(&self, user_id: i64, run: &RunDetail, node_id: &str) {
-        self.events.publish(ServerEvent::Blueprint {
-            event: BlueprintEvent::run_changed(user_id, run, Some(node_id)),
-        });
     }
 }
 fn message(error: impl Into<ErrorService>) -> String {

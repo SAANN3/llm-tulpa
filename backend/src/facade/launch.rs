@@ -14,7 +14,7 @@ use crate::services::{
     launch_store::LaunchStore,
     llama_runtime::LlamaRuntime,
     llm::{CallParams, ChatMessage, LaunchRequest, LlmProviders, ThinkChoice},
-    model_store::{ModelRef, ModelStore},
+    model_store::{ModelRef, ModelStore, ModelStoreErrors},
     user_store::UserStore,
     preset_store::PresetStore,
 };
@@ -66,6 +66,12 @@ impl LaunchFacade {
         // Said in the other user's "in use by ..." message, so a missing user is no reason to fail.
         let holder = self.users.get(user_id).await.ok().flatten().map(|u| u.username).unwrap_or_else(|| format!("user {user_id}"));
         Ok(Some(LaunchRequest { model_file: dir.join(&model.name), model_root: dir.clone(), profile, holder }))
+    }
+
+    /// Resolves an explicit model/profile, or the user's default binding when model_id is absent.
+    pub async fn model_for_call(&self, user_id: i64, model_id: Option<i64>, profile_id: Option<i64>) -> Result<(ModelRef, Option<i64>), ErrorService> {
+        self.models.resolve_binding(user_id, model_id, profile_id, &self.launch).await?
+            .ok_or_else(|| ModelStoreErrors::NoModel.into())
     }
 
     /// The launch profile's context window and the user's sampling choice for a model.
@@ -150,9 +156,7 @@ impl LaunchFacade {
 
     /// What `user_id`'s default model would run under.
     pub async fn default_request_for(&self, user_id: i64) -> Result<Option<LaunchRequest>, ErrorService> {
-        let Some(model) = self.models.default_for_user(user_id).await? else { return Ok(None) };
-        let chosen = self.models.chosen_profile(user_id).await?;
-        let profile = self.launch.start_profile(model.id, chosen).await?.map(|p| p.id);
+        let Some((model, profile)) = self.models.resolve_binding(user_id, None, None, &self.launch).await? else { return Ok(None) };
         self.request_for_model(user_id, &model, profile).await
     }
 }

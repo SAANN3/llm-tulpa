@@ -39,3 +39,10 @@ output bindings. It asserts that these nodes make no model calls. It uses only t
 `blueprint_generate_binds_text_and_cancels_without_a_chat` checks a single tool-free completion,
 text output bindings, model/sampling/effort parameters, provider errors and output limits,
 unexpected tool calls, cancellation and queue continuation without creating a chat.
+
+`blueprint_agent_uses_the_turn_runner_reuses_chat_and_obeys_permissions` drives Agent nodes
+through ordinary tool rounds, fresh/reused hidden chats, model switching, manual decisions,
+stopping waits/generation and mandatory compaction with notes/memory writes disabled.
+
+`stop_closes_a_permission_wait_without_running_the_tool` checks ordinary chat Stop during a
+permission pause, pending-call cleanup and continuing that chat without replaying the cancelled write.

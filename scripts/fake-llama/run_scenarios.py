@@ -323,6 +323,26 @@ def permission_waits_and_answers_continue():
 
 
 @scenario
+def stop_closes_a_permission_wait_without_running_the_tool():
+    settings(auto_confirm=False)
+    chat = new_chat("stop-permission")
+    path = "/tmp/fake_stop_permission_%d.txt" % os.getpid()
+    script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": path, "content": "must not write"}}]})
+    eq(turn(chat, "write it")["status"], "waiting_for_permission", "permission pause")
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 204, "stop the pause")
+    s = state(chat)
+    eq(s["status"], "idle", "pause is closed")
+    eq(s["pending"], [], "no pending calls")
+    assert not os.path.exists(path), "Stop must not execute the pending write"
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 409, "nothing remains to stop")
+    script({"text": "Continued safely."})
+    eq(turn(chat, "continue with text")["last_end"]["reason"], "answered", "the same chat can continue")
+    eq(len(calls("main")), 2, "one model call per prompt, without replaying the old write")
+    assert not os.path.exists(path)
+    settings()
+
+
+@scenario
 def a_question_returns_as_soon_as_it_is_shown():
     settings(auto_confirm=True)
     chat = new_chat("ask")
@@ -2360,6 +2380,107 @@ def blueprint_generate_binds_text_and_cancels_without_a_chat():
     wait(following, "completed")
     assert time.time() - t0 < 5, "Stop drops the model call instead of waiting for its answer"
     eq(d["state"]["nodes"]["result"]["status"], "cancelled", "stop does not run the next node")
+
+
+@scenario
+def blueprint_agent_uses_the_turn_runner_reuses_chat_and_obeys_permissions():
+    import tempfile
+    settings()
+    def create(reuse=False, names=None, prompt="Agent fixture", notes=False, memory=False):
+        kind = {"type": "agent", "model": {"type": "user_default"}, "prompt": {"source": "literal", "value": prompt},
+            "system_prompt": {"source": "literal", "value": "Blueprint agent fixture instructions"},
+            "tools": {"mode": "whitelist", "names": names or ["storage.read_file"]}, "reuse_chat": reuse,
+            "write_notes": notes, "write_memory": memory, "think": False}
+        return ok("/api/blueprints", {"name": "Agent fixture", "workflow": {"schema_version": 1,
+            "nodes": [{"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                {"id": "agent", "name": "Agent", "kind": kind},
+                {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                    "answer": {"source": "output", "node_id": "agent", "port": "text", "path": []}}}}],
+            "edges": [{"id": "e1", "from": "start", "port": "out", "to": "agent"},
+                      {"id": "e2", "from": "agent", "port": "out", "to": "result"}]}})["id"]
+    def start(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+        return f"/api/blueprints/{b}/runs/{r}"
+    def wait(url, status="completed"):
+        wait_for(lambda: ok(url)["run"]["status"] == status, what=f"Agent {status}")
+        return ok(url)
+    def chat(d):
+        return d["state"]["nodes"]["agent"]["chat_id"]
+    with tempfile.TemporaryDirectory(prefix="tulpa-blueprint-agent-") as directory:
+        path = os.path.join(directory, "read.txt")
+        with open(path, "w") as f: f.write("fixture content")
+        script({"tool_calls": [{"name": "storage.read_file", "arguments": {"path": path}}]}, {"text": "read complete"})
+        b = create()
+        d = wait(start(b))
+        eq(d["state"]["nodes"]["result"]["outputs"]["answer"], "read complete", "final agent output binding")
+        eq(roles(chat(d)), ["user", "assistant", "tool", "assistant"], "uses the ordinary tool round")
+        has(calls("main")[-1]["messages"][0]["content"], "Blueprint agent fixture instructions", "scoped system prompt")
+        eq(calls("main")[-1]["tool_names"], ["storage.read_file"], "node tool selection")
+        assert chat(d) not in [c["id"] for c in ok("/api/chats?limit=100")["chats"]], "hidden chat"
+        eq(api("/api/agent/turn", {"chat_id": chat(d), "prompt": "outside"})[0], 409, "ordinary turn cannot drive a service chat")
+        script({"text": "fresh run"})
+        eq(chat(wait(start(b))) != chat(d), True, "fresh by default")
+
+        b = create(reuse=True)
+        script({"text": "reuse first"}, {"text": "reuse second"})
+        first = wait(start(b))
+        data = ok(f"/api/blueprints/{b}")
+        second_profile = next(p for p in ok("/api/profiles")["profiles"] if p["id"] != PROFILE)
+        data["workflow"]["nodes"][1]["kind"]["model"] = {"type": "model", "id": second_profile["model_id"], "launch_profile_id": second_profile["id"]}
+        ok(f"/api/blueprints/{b}", {"expected_revision": data["blueprint"]["revision"], "name": "Agent fixture", "schedule": {"type": "manual"}, "workflow": data["workflow"]}, "PUT")
+        second = wait(start(b))
+        eq(chat(first), chat(second), "model switch retains the reuse chat")
+        eq(calls("main")[-1]["model"], second_profile["model"], "model switch applies")
+        assert any(m.get("content") == "reuse first" for m in calls("main")[-1]["messages"]), "reuse preserves history"
+
+        settings(auto_confirm=False)
+        for allowance in ("only_now", "deny"):
+            target = os.path.join(directory, allowance + ".txt")
+            script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": target, "content": "approved"}}]}, {"text": "permission handled"})
+            b = create(names=["storage.write_file"])
+            url = start(b)
+            d = wait(url, "waiting_for_permission")
+            pending = d["state"]["pending_tool"]
+            eq(api(url + "/answer", {"request_id": "stale", "allowance": allowance})[0], 409, "stale answer")
+            ok(url + "/answer", {"request_id": pending["request_id"], "allowance": allowance})
+            wait(url)
+            eq(os.path.exists(target), allowance == "only_now", "agent follows the ordinary permission decision")
+
+        target = os.path.join(directory, "stopped.txt")
+        script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": target, "content": "no"}}]})
+        url = start(create(names=["storage.write_file"]))
+        d = wait(url, "waiting_for_permission")
+        ok("/api/blueprints/queue/stop", {})
+        wait(url, "cancelled")
+        assert not os.path.exists(target), "stopping permission wait never executes the call"
+        eq(state(chat(d))["pending"], [], "stopped pending calls are settled")
+
+        settings()
+        script({"tool_calls": [{"name": "chat.write_notes", "arguments": {"notes": "must not persist"}}]}, {"text": "notes disabled"})
+        d = wait(start(create(names=["chat.write_notes", "storage.read_file"])))
+        assert "chat.write_notes" not in calls("main")[-1]["tool_names"], "disabled notes tool is not published"
+        eq(ok(f"/api/chats/context?chat_id={chat(d)}")["memory"]["notes"], None, "invented notes call is denied at execution")
+
+        fake("/__reset", {})
+        b = create(reuse=True, prompt="Long task " + BIG)
+        script({"text": "part one", "prompt_tokens": 25000}, {"text": "part two", "prompt_tokens": 25000}, {"text": "part three", "prompt_tokens": 25000})
+        for _ in range(3): d = wait(start(b))
+        kinds = [c["kind"] for c in calls()]
+        assert "summary" in kinds and "facts" in kinds, kinds
+        assert "notes" not in kinds and "memory" not in kinds, kinds
+        eq(ok(f"/api/chats/context?chat_id={chat(d)}")["memory"]["folded"], True, "fold remains mandatory with notes and memory writes disabled")
+
+        script({"text": "slow", "delay": 10}, {"text": "queue continued"})
+        url = start(create(prompt="Slow agent"))
+        wait_for(lambda: any("Slow agent" in json.dumps(c["messages"]) for c in calls("main")), what="agent in flight")
+        following = start(create(prompt="Following agent"))
+        t0 = time.time()
+        ok("/api/blueprints/queue/stop", {})
+        wait(url, "cancelled")
+        wait(following)
+        assert time.time() - t0 < 5, "stop cancels the call and continues the queue"
+    settings()
 
 
 def main():

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::cache::user_cache::UserCacheService;
-use crate::facade::{blueprint::{BlueprintFacade, generation::Generation, validation::Validation}, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
+use crate::facade::{blueprint::{BlueprintFacade, agent_nodes::AgentNodes, generation::Generation, validation::Validation}, agent::Agent, export::ExportFacade, launch::LaunchFacade, prompt::PromptFacade, stats::StatsFacade};
 use crate::plugins::base::{PluginBuilder, PluginError};
 use crate::plugins::coding::signatures::builder::SignaturesBuilder;
 use crate::plugins::env::PluginHost;
@@ -342,15 +342,18 @@ pub async fn bootstrap(
     // The plugin tools were made with the tool list, before there was a database; they reach the plugins through this
     crate::tools::plugins::install(external_plugins.clone(), user_store.clone());
 
+    let blueprint_store = Arc::new(BlueprintStore::new(db.clone(), blueprints_dir));
+    let agent_nodes = AgentNodes::new(blueprint_store.clone(), agent.clone(), chat_store.clone(), tool_selection.clone(), launches.clone());
     let blueprints = Arc::new(BlueprintFacade::new(
-        Arc::new(BlueprintStore::new(db.clone(), blueprints_dir)),
+        blueprint_store,
         Validation::new(tools.clone(), model_store.clone(), launch_store.clone()),
         events.clone(),
         shutdown,
         agent.clone(),
         chat_store.clone(),
         tools.clone(),
-        Generation::new(model_store.clone(), launch_store.clone(), launches.clone(), providers.clone()),
+        Generation::new(launches.clone(), providers.clone()),
+        agent_nodes,
     ));
 
     blueprints.initialize().await.map_err(BootstrapError::Blueprints)?;
