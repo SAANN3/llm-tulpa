@@ -4,6 +4,7 @@ use super::{
     execution,
     agent_nodes::AgentNodes,
     permissions::Permissions,
+    plugin_nodes::PluginNodes,
     generation::Generation,
     tool_nodes::ToolNodes,
     runs::{NodeStatus, RunDetail, RunState, RunStatus},
@@ -29,6 +30,7 @@ pub(super) struct Runner {
     generation: Generation,
     agents: AgentNodes,
     permissions: Permissions,
+    plugins: PluginNodes,
     workers: Mutex<HashSet<i64>>,
     active: Mutex<HashMap<i64, ActiveRun>>,
 }
@@ -47,6 +49,7 @@ impl Runner {
         generation: Generation,
         agents: AgentNodes,
         permissions: Permissions,
+        plugins: PluginNodes,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -56,6 +59,7 @@ impl Runner {
             generation,
             agents,
             permissions,
+            plugins,
             workers: Mutex::default(),
             active: Mutex::default(),
         })
@@ -189,7 +193,7 @@ impl Runner {
         notify: &Notify,
         cancel: &CancellationToken,
     ) -> Result<(), BlueprintStoreError> {
-        let graph_error = validation::graph_errors(&run.workflow)
+        let graph_error = validation::graph_errors(&run.workflow, &self.plugins.catalog().await)
             .diagnostics
             .into_iter()
             .find(|d| d.severity == Severity::Error)
@@ -249,6 +253,7 @@ impl Runner {
             let outcome = match &kind {
                 NodeKind::Tool { name, arguments, require_confirmation } => self.tools.execute(user_id, &mut run, &node_id, name, arguments, *require_confirmation, notify, cancel).await,
                 NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
+                NodeKind::Plugin { .. } => self.plugins.execute(user_id, &run, &node_id, &kind, cancel).await,
                 NodeKind::Agent { .. } => self.agents.execute(user_id, &mut run, &node_id, &kind, &self.permissions, notify, cancel).await,
                 _ => execution::execute(&kind, &run.state, cancel).await,
             };

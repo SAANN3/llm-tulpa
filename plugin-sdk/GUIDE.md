@@ -68,3 +68,11 @@ Pack the folder into a `.tulpa` file with `python3 plugin-sdk/python/pack.py not
 - `examples/telegram`: a plugin with a loop that runs while it is on, which answers messages with the plugin's agent (`host.agent_reply`).
 - `examples/skills`: a plugin with a database, uploads and folder approvals (in Rust).
 - `scripts/verify-examples` runs them all against a disposable backend, and is how you test a plugin of your own the same way.
+
+## Blueprint nodes
+
+For an explicit graph action, implement `blueprint_nodes` and `execute_blueprint_node`.
+Use `NodeSpec` with the existing `Param` schemas, `NodeContext` for the owning user/run and
+`NodeResult` for output values plus the selected control port. Both hello-world examples declare
+`greet` version 1 and return its `text` through `out`; their model tools continue to work independently.
+See [the node contract](PROTOCOL.md#blueprint-nodes) for versions, limits and Stop behavior.

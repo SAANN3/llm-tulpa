@@ -3,17 +3,19 @@ use crate::facade::blueprint::{
     definition::{NodeKind, Workflow},
 };
 use super::report::ValidationReport;
+use crate::plugins::blueprint::NodeRegistration;
 use std::collections::{HashMap, HashSet};
 
 pub(super) struct Graph<'a> {
     pub workflow: &'a Workflow,
+    pub plugins: &'a [NodeRegistration],
     pub indices: HashMap<&'a str, usize>,
     /// Nodes guaranteed to have finished before a node, including earlier unconditional branches.
     pub available: Vec<HashSet<usize>>,
 }
 
 impl<'a> Graph<'a> {
-    pub fn inspect(workflow: &'a Workflow, report: &mut ValidationReport) -> Self {
+    pub fn inspect(workflow: &'a Workflow, plugins: &'a [NodeRegistration], report: &mut ValidationReport) -> Self {
         let indices: HashMap<_, _> = workflow
             .nodes
             .iter()
@@ -23,6 +25,7 @@ impl<'a> Graph<'a> {
         let n = workflow.nodes.len();
         let mut graph = Self {
             workflow,
+            plugins,
             indices,
             available: vec![HashSet::new(); n],
         };
@@ -32,7 +35,7 @@ impl<'a> Graph<'a> {
         for (i, edge) in workflow.edges.iter().enumerate() {
             let from = graph.indices[edge.from.as_str()];
             let to = graph.indices[edge.to.as_str()];
-            if !NodeType::control_ports(&workflow.nodes[from].kind).contains(&edge.port) {
+            if !NodeType::control_ports(&workflow.nodes[from].kind, plugins).contains(&edge.port) {
                 report.error(
                     Some(&edge.from),
                     &format!("edges[{i}].port"),
@@ -136,12 +139,12 @@ impl<'a> Graph<'a> {
             available.insert(i);
             if matches!(
                 self.workflow.nodes[i].kind,
-                NodeKind::If { .. } | NodeKind::Switch { .. }
+                NodeKind::If { .. } | NodeKind::Switch { .. } | NodeKind::Plugin { .. }
             ) {
                 // Without merges, distinct outcomes cannot guarantee any shared descendant.
                 // Each outcome starts with the same available values and restores them afterwards.
                 pending.push(Step::Restore(available.clone()));
-                for port in NodeType::control_ports(&self.workflow.nodes[i].kind)
+                for port in NodeType::control_ports(&self.workflow.nodes[i].kind, self.plugins)
                     .into_iter()
                     .rev()
                 {

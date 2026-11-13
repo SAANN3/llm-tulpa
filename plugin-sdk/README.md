@@ -54,3 +54,10 @@ Param::array("rows", ParamType::Object { properties: vec![
 ```
 
 Use `ParamType::Array { items: Box::new(element_type) }` for a nested array. Primitive `Param::array` calls retain their wire format. Code constructing the former unit variants `ParamType::Array` or `ParamType::Object` must provide their contents; use an empty property list for an opaque object.
+
+### Blueprint nodes
+
+Both SDKs expose `NodeSpec`, `NodeContext`, `NodeResult` and the hooks `blueprint_nodes` /
+`execute_blueprint_node`. Declarations reuse `Param` schemas, and executions carry the owning
+user and graph run. Both hello-world examples declare the same `greet` node. See
+[the versioned node contract](PROTOCOL.md#blueprint-nodes).

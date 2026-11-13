@@ -21,6 +21,7 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
             | NodeKind::Tool { .. }
             | NodeKind::Generate { .. }
             | NodeKind::Agent { .. }
+            | NodeKind::Plugin { .. }
             | NodeKind::Sleep { .. }
             | NodeKind::If { .. }
             | NodeKind::Switch { .. }

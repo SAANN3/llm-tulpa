@@ -49,3 +49,6 @@ permission pause, pending-call cleanup and continuing that chat without replayin
 
 `blueprint_schedules_use_the_queue_and_record_readiness_failures` checks interval ticks, disabling,
 manual starts, immutable workflow content and failed readiness without model calls.
+
+`blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings` uses the two hello examples
+to check exact versions, input/output references, enabling/disabling and tool-free graph execution.

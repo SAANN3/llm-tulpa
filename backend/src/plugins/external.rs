@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod builder;
+mod blueprint;
 pub mod db;
 pub mod export;
 pub mod http;

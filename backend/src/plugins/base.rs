@@ -11,6 +11,9 @@ use crate::services::tools::ToolServiceError;
 use crate::tools::base::{PropertyInfo, Tool};
 
 use super::env::PluginEnv;
+use super::blueprint::{NodeContext, NodeDefinition, NodeResult};
+use crate::facade::blueprint::definition::Literal;
+use std::collections::BTreeMap;
 use super::events::PluginEvent;
 use super::tab::{TabFile, TabInfo, TabLayout};
 
@@ -57,6 +60,13 @@ pub trait Plugin: Send + Sync {
     /// Defaults to an empty list.
     fn tools(&self) -> Vec<Box<dyn Tool>> {
         vec![]
+    }
+
+    /// The complete versioned node catalog of this instance, published while it is enabled.
+    fn blueprint_nodes(&self) -> Vec<NodeDefinition> { vec![] }
+
+    async fn execute_blueprint_node(&self, _node_type: &str, _version: u32, _arguments: BTreeMap<String, Literal>, _ctx: NodeContext) -> Result<NodeResult, PluginError> {
+        Err(PluginError::NotFound("this plugin has no blueprint node handler".into()))
     }
 
     /// Observes an event this plugin subscribed to, after the operation has succeeded.

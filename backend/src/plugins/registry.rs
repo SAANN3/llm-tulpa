@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use tower::ServiceExt;
 use utoipa::ToSchema;
 
+use super::blueprint::{NodeRegistration, check_definitions};
 use super::base::{Plugin, PluginBuilder, PluginError};
 use super::env::{PluginEnv, PluginHost};
 use super::schema::{self, PluginSchema};
@@ -18,6 +19,7 @@ use super::tab::{valid_tab_id, PluginTab, TabFile, TabLayout, RESERVED_TAB_IDS};
 use crate::services::error::ErrorService;
 use crate::services::plugin_settings_store::{PluginSettingsStore, PluginSettingsStoreErrors};
 use crate::services::tools::ToolService;
+use crate::facade::blueprint::definition::NodeKind;
 
 /// Identifies one plugin instance: (plugin_name, plugin_subname) — e.g.
 /// ("messaging", "vk"). `plugin_name` groups instances that share an API shape and
@@ -111,6 +113,52 @@ fn join_sections(mut sections: Vec<(PluginKey, String)>) -> Option<String> {
 }
 
 impl PluginRegistry {
+    async fn rollback_activation(plugin: &Arc<dyn Plugin>, env: &PluginEnv) {
+        // Preserve the activation error; teardown is best effort, but published state must be revoked.
+        let _ = plugin.on_disabled().await;
+        env.tools.end_instance().await;
+        env.events.end_instance().await;
+    }
+
+    async fn activate(plugin: &Arc<dyn Plugin>, env: &PluginEnv) -> Result<(), PluginError> {
+        env.events.attach(plugin);
+        if let Err(error) = plugin.on_enabled().await {
+            Self::rollback_activation(plugin, env).await;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn publish(env: &PluginEnv, plugin: &Arc<dyn Plugin>) -> Result<(), PluginError> {
+        let result = async {
+            check_definitions(&plugin.blueprint_nodes()).map_err(PluginError::InvalidState)?;
+            env.tools.replace_global(plugin.tools()).await.map_err(PluginError::from)
+        }.await;
+        if result.is_err() { Self::rollback_activation(plugin, env).await; }
+        result
+    }
+
+    pub async fn blueprint_nodes(&self) -> Vec<NodeRegistration> {
+        let entries = self.entries.read().await;
+        let mut nodes: Vec<_> = entries.iter().filter(|(_, e)| e.enabled).flat_map(|((name, subname), entry)| {
+            entry.plugin.iter().flat_map(|plugin| plugin.blueprint_nodes()).map(|definition| NodeRegistration {
+                plugin_name: name.clone(), plugin_subname: subname.clone(), definition,
+            })
+        }).collect();
+        nodes.sort_by(|a,b| (&a.plugin_name,&a.plugin_subname,&a.definition.node_type,a.definition.version).cmp(&(&b.plugin_name,&b.plugin_subname,&b.definition.node_type,b.definition.version)));
+        nodes
+    }
+
+    pub async fn blueprint_handler(&self, node: &NodeKind) -> Option<(Arc<dyn Plugin>, NodeRegistration)> {
+        let NodeKind::Plugin { plugin_name, plugin_subname, .. } = node else { return None };
+        let entries = self.entries.read().await;
+        let plugin = entries.get(&Self::key(plugin_name, plugin_subname)).filter(|e| e.enabled)?.plugin.clone()?;
+        let registration = plugin.blueprint_nodes().into_iter().map(|definition| NodeRegistration {
+            plugin_name: plugin_name.clone(), plugin_subname: plugin_subname.clone(), definition,
+        }).find(|r| r.matches(node))?;
+        Some((plugin, registration))
+    }
+
     pub fn new(store: Arc<PluginSettingsStore>, tools: Arc<ToolService>, schema: Arc<PluginSchema>) -> Self {
         Self { entries: RwLock::new(HashMap::new()), store, tools, schema, host: OnceLock::new() }
     }
@@ -202,8 +250,7 @@ impl PluginRegistry {
 
         if enabled {
             if let Some(plugin) = &plugin {
-                env.events.attach(&plugin);
-                if let Err(e) = plugin.on_enabled().await {
+                if let Err(e) = Self::activate(plugin, &env).await {
                     tracing::error!("plugin {plugin_name}/{plugin_subname} could not be switched on again: {e}; leaving it off");
                     enabled = false;
                     left_off = true;
@@ -215,14 +262,10 @@ impl PluginRegistry {
                 // Register this plugin's tools in the shared ToolService.
                 // If there's a collision (another plugin or built-in already owns that name),
                 // undo on_enabled and leave this plugin disabled rather than crashing.
-                let tools = env.tools.clone();
-                if let Err(e) = tools.replace_global(plugin.tools()).await {
+                if let Err(e) = Self::publish(&env, plugin).await {
                     tracing::warn!(
                         "could not register tools for {plugin_name}/{plugin_subname}: {e}; disabling plugin"
                     );
-                    let _ = plugin.on_disabled().await;
-                    tools.end_instance().await;
-                    env.events.end_instance().await;
                     let enabled = false;
                     if let Some(settings) = initial_settings.filter(|_| !restore_failed) {
                         let _ = self.store.set(&plugin_name, &plugin_subname, settings, enabled).await;
@@ -416,11 +459,9 @@ impl PluginRegistry {
         entry.plugin = Some(plugin.clone());
 
         if was_enabled {
-            entry.env.events.attach(&plugin);
-            plugin.on_enabled().await?;
-            // Register the freshly-built plugin's tools.
-            let tools = entry.env.tools.clone();
-            tools.replace_global(plugin.tools()).await.map_err(PluginError::from)?;
+            Self::activate(&plugin, &entry.env).await?;
+            // Register the freshly-built plugin's tools and node definitions.
+            Self::publish(&entry.env, &plugin).await?;
             entry.enabled = true;
         }
 
@@ -540,15 +581,10 @@ impl PluginRegistry {
 
         if let Some(plugin) = &entry.plugin {
             if enabled {
-                entry.env.events.attach(&plugin);
-            plugin.on_enabled().await?;
+                Self::activate(plugin, &entry.env).await?;
                 // Validate + register tools atomically. On collision: undo on_enabled
                 // and surface the error — the plugin stays disabled.
-                let tools = entry.env.tools.clone();
-                if let Err(e) = tools.replace_global(plugin.tools()).await {
-                    let _ = plugin.on_disabled().await;
-                    return Err(PluginError::from(e));
-                }
+                Self::publish(&entry.env, plugin).await?;
             } else {
                 plugin.on_disabled().await?;
                 entry.env.tools.end_instance().await;

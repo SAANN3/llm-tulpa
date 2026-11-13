@@ -1,5 +1,6 @@
 use crate::{
-    facade::blueprint::catalog::NodeDescriptor, routes::auth::AuthUser,
+    facade::blueprint::catalog::NodeDescriptor,
+    plugins::blueprint::NodeRegistration, routes::auth::AuthUser,
     services::error::ErrorService, state::AppState,
 };
 use axum::{Json, extract::State};
@@ -10,6 +11,7 @@ use utoipa::ToSchema;
 #[derive(Serialize, ToSchema)]
 pub(crate) struct CatalogOut {
     pub nodes: Vec<NodeDescriptor>,
+    pub plugin_nodes: Vec<NodeRegistration>,
 }
 
 #[utoipa::path(get, path = "/api/blueprints/catalog", tag = "blueprints",
@@ -18,7 +20,6 @@ pub async fn catalog(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<CatalogOut>, ErrorService> {
-    Ok(Json(CatalogOut {
-        nodes: state.services().await?.blueprints.catalog(),
-    }))
+    let (nodes, plugin_nodes) = state.services().await?.blueprints.catalog().await;
+    Ok(Json(CatalogOut { nodes, plugin_nodes }))
 }

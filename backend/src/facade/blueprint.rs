@@ -7,11 +7,14 @@ mod permissions;
 pub(crate) mod generation;
 mod runner;
 mod scheduler;
+mod plugin_nodes;
 pub mod runs;
 mod template;
 mod tool_nodes;
 pub mod validation;
 
+use crate::plugins::{registry::PluginRegistry, blueprint::NodeRegistration};
+use plugin_nodes::PluginNodes;
 use crate::facade::agent::{Agent, Allowance};
 use crate::services::{
     chat_store::ChatStore, tools::ToolService,
@@ -41,6 +44,7 @@ pub struct BlueprintFacade {
     validation: Validation,
     runner: Arc<Runner>,
     scheduler: Scheduler,
+    plugins: Arc<PluginRegistry>,
 }
 
 impl BlueprintFacade {
@@ -54,15 +58,17 @@ impl BlueprintFacade {
         tools: Arc<ToolService>,
         generation: Generation,
         agent_nodes: AgentNodes,
+        plugins: Arc<PluginRegistry>,
     ) -> Self {
         let permissions = Permissions::new(store.clone(), events.clone());
         let tool_nodes = ToolNodes::new(store.clone(), agent, chats, tools, permissions.clone());
-        let runner = Runner::new(store.clone(), events, shutdown.clone(), tool_nodes, generation, agent_nodes, permissions);
+        let runner = Runner::new(store.clone(), events, shutdown.clone(), tool_nodes, generation, agent_nodes, permissions, PluginNodes::new(plugins.clone()));
         Self {
             store,
             validation,
             runner,
             scheduler: Scheduler::new(shutdown),
+            plugins,
         }
     }
 
@@ -183,8 +189,8 @@ impl BlueprintFacade {
         Ok(self.store.list_runs(user_id, id, offset, limit).await?)
     }
 
-    pub fn catalog(&self) -> Vec<NodeDescriptor> {
-        NodeType::builtins()
+    pub async fn catalog(&self) -> (Vec<NodeDescriptor>, Vec<NodeRegistration>) {
+        (NodeType::builtins(), self.plugins.blueprint_nodes().await)
     }
 
     pub async fn validate(

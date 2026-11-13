@@ -14,7 +14,10 @@ use crate::services::{
 };
 use std::{collections::BTreeMap, sync::Arc};
 
+use crate::plugins::registry::PluginRegistry;
+
 pub struct Validation {
+    plugins: Arc<PluginRegistry>,
     tools: Arc<ToolService>,
     models: Arc<ModelStore>,
     profiles: Arc<LaunchStore>,
@@ -24,8 +27,10 @@ impl Validation {
         tools: Arc<ToolService>,
         models: Arc<ModelStore>,
         profiles: Arc<LaunchStore>,
+        plugins: Arc<PluginRegistry>,
     ) -> Self {
         Self {
+            plugins,
             tools,
             models,
             profiles,
@@ -53,7 +58,8 @@ impl Validation {
             );
             return Ok(report.finish());
         }
-        let graph = Graph::inspect(workflow, &mut report);
+        let plugins = self.plugins.blueprint_nodes().await;
+        let graph = Graph::inspect(workflow, &plugins, &mut report);
         let tools = self.tools.catalog(user_id).await;
         let choices: Vec<_> = workflow
             .nodes
@@ -269,24 +275,18 @@ impl Validation {
                         Err(message) => values.error("kind.template", "invalid_template", message),
                     }
                 }
-                NodeKind::Return { values: inputs }
-                | NodeKind::Plugin {
-                    arguments: inputs, ..
-                } => {
-                    let field = if matches!(node.kind, NodeKind::Return { .. }) {
-                        "kind.values"
+                NodeKind::Return { values: inputs } => {
+                    for (name, input) in inputs { values.infer(input, &format!("kind.values.{name}")); }
+                }
+                NodeKind::Plugin { arguments, .. } => {
+                    let fields = arguments.iter().map(|(name,input)| (name.clone(), values.infer(input, &format!("kind.arguments.{name}")))).collect();
+                    if let Some(registration) = plugins.iter().find(|r| r.matches(&node.kind)) {
+                        values.properties(&fields, &registration.definition.inputs, "kind.arguments");
+                        for name in arguments.keys().filter(|name| !registration.definition.inputs.iter().any(|p| &p.name == *name)) {
+                            values.error(&format!("kind.arguments.{name}"), "unknown_argument", "argument is not declared by the plugin node");
+                        }
                     } else {
-                        "kind.arguments"
-                    };
-                    for (name, input) in inputs {
-                        values.infer(input, &format!("{field}.{name}"));
-                    }
-                    if matches!(node.kind, NodeKind::Plugin { .. }) {
-                        values.error(
-                            "kind",
-                            "plugin_node_unavailable",
-                            "plugin node registration is not implemented yet",
-                        );
+                        values.error("kind", "plugin_node_unavailable", "plugin node/version is not available from an enabled plugin");
                     }
                 }
                 NodeKind::Entry => {}

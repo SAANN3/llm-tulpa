@@ -2,6 +2,8 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::definition::NodeKind;
+use crate::plugins::blueprint::NodeRegistration;
+use crate::tools::base::PropertyType;
 
 /// Data ports and control ports are separate: an output value does not schedule a node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
@@ -105,7 +107,10 @@ impl NodeType {
         }
     }
 
-    pub(super) fn control_ports(node: &NodeKind) -> Vec<String> {
+    pub(super) fn control_ports(node: &NodeKind, plugins: &[NodeRegistration]) -> Vec<String> {
+        if matches!(node, NodeKind::Plugin { .. }) {
+            return plugins.iter().find(|r| r.matches(node)).map(|r| r.definition.control_outputs.clone()).unwrap_or_default();
+        }
         let mut ports: Vec<_> = Self::kind(node)
             .descriptor()
             .control_outputs
@@ -125,5 +130,18 @@ impl NodeType {
             .into_iter()
             .find(|p| p.name == port)
             .map(|p| p.value_type)
+    }
+}
+
+impl From<&PropertyType> for ValueType {
+    fn from(value: &PropertyType) -> Self {
+        match value {
+            PropertyType::String => Self::String,
+            PropertyType::Number => Self::Number,
+            PropertyType::Integer => Self::Integer,
+            PropertyType::Boolean => Self::Boolean,
+            PropertyType::Array { .. } => Self::Array,
+            PropertyType::Object { .. } => Self::Object,
+        }
     }
 }

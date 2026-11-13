@@ -74,3 +74,8 @@ Then `python3 pack.py <the plugin's folder>` makes the `.tulpa` file (a zip with
 
 `python3 -m unittest discover -s tests` from this folder: the tool specs, the tab shape, and the protocol itself, by running a small plugin as a program and playing the
 backend's part.
+
+Blueprint actions use `blueprint_nodes() -> list[NodeSpec]` and
+`execute_blueprint_node(node_type, version, arguments, ctx: NodeContext) -> NodeResult`.
+Declarations use the same `Param` types as tools; `ctx.host` is the usual host handle.
+See [the contract](../PROTOCOL.md#blueprint-nodes) and `examples/hello-world-python`.

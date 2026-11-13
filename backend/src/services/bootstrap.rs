@@ -346,7 +346,7 @@ pub async fn bootstrap(
     let agent_nodes = AgentNodes::new(blueprint_store.clone(), agent.clone(), chat_store.clone(), tool_selection.clone(), launches.clone());
     let blueprints = Arc::new(BlueprintFacade::new(
         blueprint_store,
-        Validation::new(tools.clone(), model_store.clone(), launch_store.clone()),
+        Validation::new(tools.clone(), model_store.clone(), launch_store.clone(), plugin_registry.clone()),
         events.clone(),
         shutdown,
         agent.clone(),
@@ -354,6 +354,7 @@ pub async fn bootstrap(
         tools.clone(),
         Generation::new(launches.clone(), providers.clone()),
         agent_nodes,
+        plugin_registry.clone(),
     ));
 
     blueprints.initialize().await.map_err(BootstrapError::Blueprints)?;

@@ -2,7 +2,7 @@
 
 The blueprint API stores user-owned workflow drafts. The backend owns the list, metadata and
 versioned JSON files; an editor sends a complete workflow when saving the graph. Manual runs execute the basic control/data nodes and publish user-scoped SSE events.
-Plugin-node execution is not implemented yet.
+Plugin nodes are supplied by enabled plugins through their versioned declarations.
 
 ## Storage and ownership
 
@@ -138,14 +138,15 @@ invalid settings and oversized documents (1 MiB, 1000 nodes, 4000 edges; binding
 It deliberately does not require a complete executable graph. Tools/models/plugins need not be
 currently installed to save a draft. Static readiness is checked separately by the validation API below. Permission handling and
 execution remain separate from saving and validating drafts.
-A `plugin` node here is a stored identity and typed bindings, not plugin registration or a new RPC
-contract; neither SDK has changed in this batch.
+A `plugin` node stores an exact plugin/node version and typed bindings; registration and execution
+use the plugin contract described below.
 
 ## Catalog and static validation
 
 `GET /api/blueprints/catalog` returns the built-in node kinds, their control/data ports and data
-value types. Switch case ports come from the saved configuration. Plugin nodes are not included: there is no plugin-node registration contract
-yet. Saving such a draft is allowed, but validation reports `plugin_node_unavailable`.
+value types. Switch case ports come from the saved configuration. `plugin_nodes` contains the
+versioned definitions of enabled plugins. An unavailable plugin/node/version may still be saved
+as a draft; validation reports `plugin_node_unavailable`.
 
 Tools use the existing `GET /api/chats/available_tools`, not a blueprint-specific tool list. Each
 entry contains `name`, `description`, and `properties` (the existing recursive `PropertyInfo`
@@ -194,7 +195,7 @@ Each user has one sequential queue shared by all of their blueprints. Only one r
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
 by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
-Switch, Format, Return, Tool, Generate and Agent; starting a graph with Plugin returns 400.
+Switch, Format, Return, Tool, Generate and Agent; Plugin nodes execute through their enabled plugin.
 Static validation can still describe those draft nodes without an executor.
 
 | Method | Path | Request / result |
@@ -392,3 +393,22 @@ advance the blueprint's editing revision or updated_at.
 
 The loop rechecks wall time at least every 30 seconds to notice clock adjustments; database
 failures retry after five seconds. The scheduler does not wait for a run to finish; execution belongs to the existing queue worker.
+
+
+## Plugin nodes
+
+`GET /api/blueprints/catalog` includes `plugin_nodes` alongside the built-in `nodes` list. Each
+entry identifies plugin_name/plugin_subname/node_type/version and declares inputs/outputs using
+the existing PropertyInfo schemas, plus its control_outputs. Native and external plugins use the
+same PluginRegistry; disabling/unloading a plugin removes its entries. A process in restart is
+unavailable until it runs again. New node types require no changes to NodeKind or the graph runner.
+
+The saved Plugin variant carries exact identity/version and ordinary Input bindings. Validation
+uses the declared control ports, input schemas and typed data outputs; mutually exclusive control
+outputs follow the existing branch-availability rules. Runtime rechecks availability and resolved
+inputs/results against the current declaration. No different version or plugin is substituted.
+The existing result/state limits apply. A handler selects one declared control output (or null
+for a terminal node); undeclared values/ports fail the node. Explicit plugin actions have the same
+Stop behavior as Tool nodes: finish the current bounded call, then cancel downstream work.
+Errors, panics, timeout and process disconnect fail without retries. No dedicated cancellation
+RPC or side-effect rollback is implied. See [the plugin contract](../plugin-sdk/PROTOCOL.md#blueprint-nodes).

@@ -66,7 +66,10 @@ def calls(kind=None):
 
 
 def new_chat(name, tools=True):
-    return ok("/api/chats", {"name": name, "launch_profile_id": PROFILE, "tools_enabled": tools})["id"]
+    body = {"name": name, "launch_profile_id": PROFILE}
+    if not tools:
+        body.update(tool_mode="whitelist", tools=[])
+    return ok("/api/chats", body)["id"]
 
 
 def state(chat):
@@ -2526,6 +2529,41 @@ def blueprint_schedules_use_the_queue_and_record_readiness_failures():
     finally:
         disable(b)
     eq(calls("main"), [], "control nodes and readiness failures make no model requests")
+
+
+@scenario
+def blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings():
+    registered = {(p["plugin_name"], p["plugin_subname"]) for p in ok("/api/plugins")}
+    if not all(("example", sub) in registered for sub in ("hello", "hello_python")):
+        raise Skip("needs both hello-world example plugins")
+    script()
+    for sub in ("hello", "hello_python"):
+        identity = {"plugin_name": "example", "plugin_subname": sub}
+        ok("/api/plugins/settings", {**identity, "settings": {"greeting": "Hi"}})
+        ok("/api/plugins/enable", {**identity, "enabled": True})
+        assert any(n["plugin_name"] == "example" and n["plugin_subname"] == sub and n["node_type"] == "greet" for n in ok("/api/blueprints/catalog")["plugin_nodes"])
+        workflow = {"schema_version": 1, "nodes": [
+            {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+            {"id": "greet", "name": "Greet", "kind": {"type": "plugin", **identity, "node_type": "greet", "version": 1,
+                "arguments": {"name": {"source": "literal", "value": "Alice"}}}},
+            {"id": "result", "name": "Result", "kind": {"type": "return", "values": {"text": {"source": "output", "node_id": "greet", "port": "text", "path": []}}}}],
+            "edges": [{"id": "a", "from": "start", "port": "out", "to": "greet"}, {"id": "b", "from": "greet", "port": "out", "to": "result"}]}
+        assert ok("/api/blueprints/validate", {"workflow": workflow})["valid"]
+        b = ok("/api/blueprints", {"name": "Plugin " + sub, "workflow": workflow})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["status"] == "completed", what="plugin node result")
+        eq(ok(url)["state"]["nodes"]["result"]["outputs"]["text"], "Hi, Alice!", "both SDKs return bound outputs")
+        for change in ("version", "input", "output"):
+            broken = json.loads(json.dumps(workflow))
+            if change == "version": broken["nodes"][1]["kind"]["version"] = 99
+            if change == "input": broken["nodes"][1]["kind"]["arguments"]["name"]["value"] = 123
+            if change == "output": broken["nodes"][2]["kind"]["values"]["text"]["port"] = "missing"
+            eq(ok("/api/blueprints/validate", {"workflow": broken})["valid"], False, change + " is checked")
+        ok("/api/plugins/enable", {**identity, "enabled": False})
+        assert not any(n["plugin_subname"] == sub for n in ok("/api/blueprints/catalog")["plugin_nodes"])
+        eq(api(f"/api/blueprints/{b}/runs", {"expected_revision": 1})[0], 400, "disabled plugin is not executable")
+    eq(calls("main"), [], "plugin graph nodes do not call the model")
 
 
 def main():

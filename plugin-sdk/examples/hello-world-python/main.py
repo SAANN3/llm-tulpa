@@ -6,7 +6,7 @@ from typing import Annotated
 # there). In a checkout of llm-tulpa the SDK is two folders up, and is found there when no copy is next to this file.
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent / "python"))
 
-from tulpa_plugin import Block, CallContext, HttpRequest, HttpResponse, Host, NotFound, BadArgs, Plugin, Row, Section, Tab, run, tool  # noqa: E402
+from tulpa_plugin import NodeSpec, NodeContext, NodeResult, Param, Block, CallContext, HttpRequest, HttpResponse, Host, NotFound, BadArgs, Plugin, Row, Section, Tab, run, tool  # noqa: E402
 
 DEFAULT_GREETING = "Hello"
 
@@ -22,6 +22,17 @@ class Hello(Plugin):
     async def configure(self, settings: dict, host: Host) -> None:
         self.greeting = str(settings.get("greeting") or "").strip() or DEFAULT_GREETING
         self.host = host
+
+    def blueprint_nodes(self) -> list[NodeSpec]:
+        return [NodeSpec("greet", 1, "Greeting", "Formats a greeting for this user.",
+            [Param("name", "string", "Who to greet", required=True)],
+            [Param("text", "string", "Greeting", required=True)], ["out"])]
+
+    async def execute_blueprint_node(self, node_type: str, version: int, arguments: dict, ctx: NodeContext) -> NodeResult:
+        text = f"{self.greeting}, {arguments['name']}!"
+        if ctx.user_id in self.loud:
+            text = text.upper()
+        return NodeResult("out", {"text": text})
 
     @tool("hello_python.greet", "Greets a person by name. Use it when the user asks for a greeting from the hello_python plugin.")
     async def greet(self, ctx: CallContext, name: Annotated[str | None, "Who to greet"] = None) -> dict:

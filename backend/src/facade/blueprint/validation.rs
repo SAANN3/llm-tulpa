@@ -8,6 +8,7 @@ pub use readiness::Validation;
 
 use std::collections::{BTreeMap, HashSet};
 use crate::tools::base::PropertyInfo;
+use crate::plugins::blueprint::NodeRegistration;
 
 use super::definition::{Input, Literal, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
 use graph::Graph;
@@ -223,12 +224,12 @@ fn input(value: &Input, nodes: &HashSet<&str>, depth: usize) -> Result<(), Strin
     Ok(())
 }
 
-pub(super) fn graph_errors(workflow: &Workflow) -> ValidationReport {
+pub(super) fn graph_errors(workflow: &Workflow, plugins: &[NodeRegistration]) -> ValidationReport {
     let mut report = ValidationReport::default();
     if let Err(error) = document(workflow) {
         report.diagnostics.push(error);
     } else {
-        Graph::inspect(workflow, &mut report);
+        Graph::inspect(workflow, plugins, &mut report);
     }
     report.finish()
 }
@@ -238,4 +239,16 @@ pub(super) fn tool_arguments(fields: &BTreeMap<String, Literal>, properties: &[P
     let fields = fields.iter().map(|(name, value)| (name.clone(), values::Shape::literal(value))).collect();
     properties::Properties { report: &mut report, node_id: None }.properties(&fields, properties, "arguments");
     report.finish()
+}
+
+// Static and concrete plugin values use one checker; runtime values are literal shapes.
+pub(super) fn plugin_values(fields: &BTreeMap<String, Literal>, schema: &[PropertyInfo]) -> Result<(), String> {
+    if fields.keys().any(|name| !schema.iter().any(|p| &p.name == name)) {
+        return Err("plugin node returned or received an undeclared field".into());
+    }
+    let report = tool_arguments(fields, schema);
+    match report.diagnostics.into_iter().next() {
+        Some(error) => Err(error.message),
+        None => Ok(()),
+    }
 }

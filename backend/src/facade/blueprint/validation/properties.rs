@@ -27,14 +27,7 @@ impl Properties<'_> {
         if shape.kind == ValueType::Dynamic {
             return;
         }
-        let kind = match expected {
-            PropertyType::String => ValueType::String,
-            PropertyType::Number => ValueType::Number,
-            PropertyType::Integer => ValueType::Integer,
-            PropertyType::Boolean => ValueType::Boolean,
-            PropertyType::Array { .. } => ValueType::Array,
-            PropertyType::Object { .. } => ValueType::Object,
-        };
+        let kind = ValueType::from(expected);
         self.expect(shape, kind, field);
         match expected {
             PropertyType::Array { items } if shape.kind == ValueType::Array => {

@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stdio::{Input, Output};
-use crate::{CallContext, Error, Failure, FailureKind, Host, HttpRequest, Plugin, PROTOCOL, UploadedFile};
+use crate::{NodeContext, CallContext, Error, Failure, FailureKind, Host, HttpRequest, Plugin, PROTOCOL, UploadedFile};
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
@@ -118,6 +118,28 @@ async fn answer(conn: Arc<Connection>, plugin: Arc<dyn Plugin>, message: Value) 
 
 async fn dispatch(conn: &Arc<Connection>, plugin: &Arc<dyn Plugin>, method: &str, params: Value) -> Result<Value, (i64, String)> {
     match method {
+        "blueprint_nodes" => serde_json::to_value(plugin.blueprint_nodes()).map_err(|e| (INTERNAL, e.to_string())),
+        "execute_blueprint_node" => {
+            let ctx = &params["ctx"];
+            let ctx = NodeContext {
+                user_id: ctx["user_id"].as_i64().ok_or((INVALID_PARAMS, "ctx.user_id is missing".into()))?,
+                blueprint_id: ctx["blueprint_id"].as_i64().ok_or((INVALID_PARAMS, "ctx.blueprint_id is missing".into()))?,
+                run_id: ctx["run_id"].as_i64().ok_or((INVALID_PARAMS, "ctx.run_id is missing".into()))?,
+                node_id: ctx["node_id"].as_str().ok_or((INVALID_PARAMS, "ctx.node_id is missing".into()))?.into(),
+                host: Host { conn: conn.clone() },
+            };
+            let node_type = params["node_type"].as_str().ok_or((INVALID_PARAMS, "node_type is missing".into()))?.to_string();
+            let version = params["version"].as_u64().and_then(|v| u32::try_from(v).ok()).ok_or((INVALID_PARAMS, "invalid version".into()))?;
+            if !plugin.blueprint_nodes().iter().any(|n| n.node_type == node_type && n.version == version) {
+                return Err((NOT_FOUND, "blueprint node/version is not declared by this plugin".into()));
+            }
+            let arguments = params["arguments"].clone();
+            let plugin = plugin.clone();
+            match tokio::spawn(async move { plugin.execute_blueprint_node(&node_type, version, arguments, ctx).await }).await {
+                Ok(result) => serde_json::to_value(failed(result)?).map_err(|e| (INTERNAL, e.to_string())),
+                Err(_) => Err((INTERNAL, "the blueprint node panicked".into())),
+            }
+        }
         "tools" => Ok(serde_json::to_value(plugin.tools()).map_err(|e| (INTERNAL, e.to_string()))?),
         "call_tool" => {
             let tool = params["tool"].as_str().ok_or((INVALID_PARAMS, "call_tool needs a tool".to_string()))?.to_string();
@@ -194,7 +216,7 @@ fn user_id(params: &Value) -> Result<i64, (i64, String)> {
     params["user_id"].as_i64().ok_or((INVALID_PARAMS, "user_id is missing".to_string()))
 }
 
-fn failed(result: Result<Value, Failure>) -> Result<Value, (i64, String)> {
+fn failed<T>(result: Result<T, Failure>) -> Result<T, (i64, String)> {
     result.map_err(|Failure { kind, message }| {
         (
             match kind {

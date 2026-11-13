@@ -265,7 +265,7 @@ impl fmt::Display for ToolType {
 /// reads to decide what value to fill in. Also doubles as a plugin settings field's
 /// schema (see `plugins::base::PluginBuilder::settings_schema`) — same shape, same
 /// derive, reused rather than duplicated for the frontend's settings-form renderer.
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct PropertyInfo {
     pub name: String,
     #[serde(flatten)]
@@ -278,7 +278,7 @@ pub struct PropertyInfo {
 }
 
 /// Parameter types; containers own their contents so unrelated types cannot carry array or object fields.
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 #[serde(tag = "property_type", rename_all = "lowercase")]
 pub enum PropertyType {
     String,

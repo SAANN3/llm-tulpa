@@ -8,7 +8,7 @@ use super::{
     report::{Severity, ValidationReport},
 };
 use super::properties::Properties;
-use crate::tools::base::PropertyInfo;
+use crate::tools::base::{PropertyInfo, PropertyType};
 use std::collections::BTreeMap;
 
 pub(super) struct Shape {
@@ -22,6 +22,16 @@ impl Shape {
             kind,
             items: vec![],
             fields: BTreeMap::new(),
+        }
+    }
+    pub fn property(value: &PropertyType) -> Self {
+        match value {
+            PropertyType::Object { properties } if properties.is_empty() => Self::scalar(ValueType::Dynamic),
+            PropertyType::Object { properties } => Self {
+                kind: ValueType::Object, items: vec![], fields: properties.iter().map(|p| (p.name.clone(), Self::property(&p.property_type))).collect(),
+            },
+            PropertyType::Array { items } => Self { kind: ValueType::Array, items: vec![Self::property(items)], fields: BTreeMap::new() },
+            _ => Self::scalar(ValueType::from(value)),
         }
     }
     pub fn literal(value: &Literal) -> Self {
@@ -94,6 +104,26 @@ impl Values<'_, '_> {
                         "output_unavailable",
                         format!("'{node_id}' is not guaranteed to finish before this node"),
                     );
+                }
+                if let Some(registration) = self.graph.plugins.iter().find(|r| r.matches(&self.graph.workflow.nodes[source].kind)) {
+                    let mut property = registration.definition.outputs.iter().find(|p| &p.name == port).map(|p| &p.property_type);
+                    for part in path {
+                        if matches!((property, part), (Some(PropertyType::Object { properties }), PathPart::Field(_)) if properties.is_empty()) {
+                            return Shape::scalar(ValueType::Dynamic);
+                        }
+                        property = match (property, part) {
+                            (Some(PropertyType::Array { items }), PathPart::Index(_)) => Some(items),
+                            (Some(PropertyType::Object { properties }), PathPart::Field(name)) => properties.iter().find(|p| &p.name == name).map(|p| &p.property_type),
+                            _ => None,
+                        };
+                    }
+                    return match property {
+                        Some(property) => Shape::property(property),
+                        None => {
+                            self.error(field, "invalid_output_path", "plugin output port/path is not declared");
+                            Shape::scalar(ValueType::Dynamic)
+                        }
+                    };
                 }
                 let Some(kind) = NodeType::output(&self.graph.workflow.nodes[source].kind, port)
                 else {

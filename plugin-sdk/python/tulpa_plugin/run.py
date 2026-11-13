@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from .connection import Connection, ProtocolError, internal_error
-from .failure import Failure
+from .failure import Failure, NotFound
 from .host import Host
 from .plugin import Plugin
+from .blueprint import NodeContext, NodeResult
 from .tab import Tab
 from .types import CallContext, HttpRequest, HttpResponse, UploadedFile
 
@@ -49,6 +50,18 @@ async def _dispatch(plugin: Plugin, host: Host, method: str, params: dict[str, A
     if method == "configure":
         await plugin.configure(params.get("settings") or {}, host)
         return None
+    if method == "blueprint_nodes":
+        return [spec.to_json() for spec in plugin.blueprint_nodes()]
+    if method == "execute_blueprint_node":
+        context = params.get("ctx") or {}
+        ctx = NodeContext(int(context["user_id"]), int(context["blueprint_id"]), int(context["run_id"]), str(context["node_id"]), host)
+        node_type, version = str(params["node_type"]), int(params["version"])
+        if not any(n.node_type == node_type and n.version == version for n in plugin.blueprint_nodes()):
+            raise NotFound("blueprint node/version is not declared by this plugin")
+        result = await plugin.execute_blueprint_node(node_type, version, params.get("arguments") or {}, ctx)
+        if not isinstance(result, NodeResult):
+            raise Failure("execute_blueprint_node must return NodeResult")
+        return result.to_json()
     if method == "tools":
         return [spec.to_json() for spec in plugin.tools()]
     if method == "call_tool":

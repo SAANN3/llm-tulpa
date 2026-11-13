@@ -25,6 +25,8 @@
 //! other systems nothing redirects a print.
 
 mod connection;
+mod blueprint;
+pub use blueprint::{NodeSpec, NodeContext, NodeResult};
 mod http;
 mod spec;
 mod stdio;
@@ -161,6 +163,13 @@ pub trait Plugin: Send + Sync + 'static {
     /// The tools the model can call. Asked for after every `configure`, so they may depend on the settings.
     fn tools(&self) -> Vec<ToolSpec> {
         vec![]
+    }
+
+    /// Versioned blueprint nodes, listed after configure and published while enabled.
+    fn blueprint_nodes(&self) -> Vec<NodeSpec> { vec![] }
+
+    async fn execute_blueprint_node(&self, _node_type: &str, _version: u32, _arguments: Value, _ctx: NodeContext) -> Result<NodeResult, Failure> {
+        Err(Failure::not_found("this plugin has no blueprint node handler"))
     }
 
     /// Runs one tool. `tool` is one of the names `tools` listed and `args` the arguments the model gave.

@@ -45,6 +45,13 @@ PLUGIN = textwrap.dedent(
         async def bad(self) -> object:
             return object()
 
+        def blueprint_nodes(self):
+            return [NodeSpec("echo", 1, "Echo", "Echoes a value", [Param("text", "string", "Text")],
+                [Param("text", "string", "Text")], ["out"])]
+
+        async def execute_blueprint_node(self, node_type, version, arguments, ctx):
+            return NodeResult("out", {"text": f"{ctx.user_id}:{arguments['text']}"})
+
         async def enable(self):
             await self.host.subscribe("run_started")
 
@@ -136,6 +143,15 @@ class Protocol(unittest.TestCase):
         result = self.host.call("call_tool", {"tool": "probe.say", "args": {"text": "hi"}, "ctx": {"user_id": 4, "chat_id": 9, "model": "m", "provider": "p"}})["result"]
         self.assertEqual(result, {"said": "hi", "greeting": "Hej", "user": 4})
         self.assertIn(("log", {"level": "info", "message": "saying hi"}), self.host.log)
+
+    def test_blueprint_node_schema_context_and_exact_version(self):
+        nodes = self.host.call("blueprint_nodes", {})["result"]
+        self.assertEqual(nodes[0]["inputs"], [{"name": "text", "type": "string", "description": "Text", "required": True}])
+        params = {"node_type": "echo", "version": 1, "arguments": {"text": "hi"},
+                  "ctx": {"user_id": 7, "blueprint_id": 2, "run_id": 3, "node_id": "echo"}}
+        self.assertEqual(self.host.call("execute_blueprint_node", params)["result"], {"port": "out", "outputs": {"text": "7:hi"}})
+        params["version"] = 2
+        self.assertEqual(self.host.call("execute_blueprint_node", params)["error"]["code"], -32001)
 
     def test_settings_the_plugin_refuses_are_a_bad_args_error_with_its_text(self):
         error = self.host.call("configure", {"settings": {"refuse": True}})["error"]

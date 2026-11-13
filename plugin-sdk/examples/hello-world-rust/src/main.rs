@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-use tulpa_plugin::{Block, CallContext, Failure, Host, HttpRequest, HttpResponse, Level, Param, Plugin, Row, Section, Tab, ToolSpec, Value, async_trait, json};
+use tulpa_plugin::{NodeSpec, NodeContext, NodeResult, Block, CallContext, Failure, Host, HttpRequest, HttpResponse, Level, Param, Plugin, Row, Section, Tab, ToolSpec, Value, async_trait, json};
 
 const DEFAULT_GREETING: &str = "Hello";
 
@@ -40,6 +40,19 @@ impl Plugin for Hello {
         *self.greeting.lock().unwrap() = greeting.to_string();
         let _ = self.host.set(host);
         Ok(())
+    }
+
+    fn blueprint_nodes(&self) -> Vec<NodeSpec> {
+        vec![NodeSpec { node_type: "greet".into(), version: 1, title: "Greeting".into(), description: "Formats a greeting for this user.".into(),
+            inputs: vec![Param::string("name", "Who to greet")], outputs: vec![Param::string("text", "Greeting")],
+            control_outputs: vec!["out".into()], timeout_s: 30 }]
+    }
+
+    async fn execute_blueprint_node(&self, _node_type: &str, _version: u32, arguments: Value, ctx: NodeContext) -> Result<NodeResult, Failure> {
+        let name = arguments["name"].as_str().ok_or_else(|| Failure::bad_args("name must be a string"))?;
+        let text = format!("{}, {name}!", self.greeting());
+        let text = if self.is_loud(ctx.user_id) { text.to_uppercase() } else { text };
+        Ok(NodeResult { port: Some("out".into()), outputs: json!({"text": text}).as_object().unwrap().clone() })
     }
 
     fn tools(&self) -> Vec<ToolSpec> {
