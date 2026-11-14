@@ -141,6 +141,11 @@ execution remain separate from saving and validating drafts.
 A `plugin` node stores an exact plugin/node version and typed bindings; registration and execution
 use the plugin contract described below.
 
+Node execution returns `control_output` and `outputs`. `control_output` selects the outgoing
+control edges to execute; `outputs` contains named data values read through input bindings.
+A null control output ends this branch. A node's control input is its incoming edge, not a data
+argument or a separate configuration field. Only Entry starts without an incoming control edge.
+
 ## Catalog and static validation
 
 `GET /api/blueprints/catalog` returns the built-in node kinds, their control/data ports and data
@@ -407,7 +412,7 @@ The saved Plugin variant carries exact identity/version and ordinary Input bindi
 uses the declared control ports, input schemas and typed data outputs; mutually exclusive control
 outputs follow the existing branch-availability rules. Runtime rechecks availability and resolved
 inputs/results against the current declaration. No different version or plugin is substituted.
-The existing result/state limits apply. A handler selects one declared control output (or null
+The existing result/state limits apply. The result's `control_output` selects one declared control output (or null
 for a terminal node); undeclared values/ports fail the node. Explicit plugin actions have the same
 Stop behavior as Tool nodes: finish the current bounded call, then cancel downstream work.
 Errors, panics, timeout and process disconnect fail without retries. No dedicated cancellation

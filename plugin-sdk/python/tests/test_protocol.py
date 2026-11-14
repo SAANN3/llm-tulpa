@@ -50,7 +50,7 @@ PLUGIN = textwrap.dedent(
                 [Param("text", "string", "Text")], ["out"])]
 
         async def execute_blueprint_node(self, node_type, version, arguments, ctx):
-            return NodeResult("out", {"text": f"{ctx.user_id}:{arguments['text']}"})
+            return NodeResult(control_output="out", outputs={"text": f"{ctx.user_id}:{arguments['text']}"})
 
         async def enable(self):
             await self.host.subscribe("run_started")
@@ -149,7 +149,7 @@ class Protocol(unittest.TestCase):
         self.assertEqual(nodes[0]["inputs"], [{"name": "text", "type": "string", "description": "Text", "required": True}])
         params = {"node_type": "echo", "version": 1, "arguments": {"text": "hi"},
                   "ctx": {"user_id": 7, "blueprint_id": 2, "run_id": 3, "node_id": "echo"}}
-        self.assertEqual(self.host.call("execute_blueprint_node", params)["result"], {"port": "out", "outputs": {"text": "7:hi"}})
+        self.assertEqual(self.host.call("execute_blueprint_node", params)["result"], {"control_output": "out", "outputs": {"text": "7:hi"}})
         params["version"] = 2
         self.assertEqual(self.host.call("execute_blueprint_node", params)["error"]["code"], -32001)
 

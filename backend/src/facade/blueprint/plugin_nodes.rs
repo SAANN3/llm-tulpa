@@ -87,7 +87,7 @@ impl PluginNodes {
             return Err("plugin node output exceeds 1 MiB".into());
         }
         validation::plugin_values(&result.outputs, &spec.outputs)?;
-        match &result.port {
+        match &result.control_output {
             Some(port) if !spec.control_outputs.contains(port) => {
                 return Err("plugin selected an undeclared control output".into());
             }
@@ -97,7 +97,7 @@ impl PluginNodes {
             _ => {}
         }
         Ok(Outcome {
-            port: result.port,
+            control_output: result.control_output,
             outputs: result.outputs,
         })
     }

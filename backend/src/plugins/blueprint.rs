@@ -49,7 +49,7 @@ pub struct NodeContext {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeResult {
-    pub port: Option<String>,
+    pub control_output: Option<String>,
     pub outputs: BTreeMap<String, Literal>,
 }
 

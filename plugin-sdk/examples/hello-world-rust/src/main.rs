@@ -52,7 +52,7 @@ impl Plugin for Hello {
         let name = arguments["name"].as_str().ok_or_else(|| Failure::bad_args("name must be a string"))?;
         let text = format!("{}, {name}!", self.greeting());
         let text = if self.is_loud(ctx.user_id) { text.to_uppercase() } else { text };
-        Ok(NodeResult { port: Some("out".into()), outputs: json!({"text": text}).as_object().unwrap().clone() })
+        Ok(NodeResult { control_output: Some("out".into()), outputs: json!({"text": text}).as_object().unwrap().clone() })
     }
 
     fn tools(&self) -> Vec<ToolSpec> {

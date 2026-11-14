@@ -32,7 +32,7 @@ class Hello(Plugin):
         text = f"{self.greeting}, {arguments['name']}!"
         if ctx.user_id in self.loud:
             text = text.upper()
-        return NodeResult("out", {"text": text})
+        return NodeResult(control_output="out", outputs={"text": text})
 
     @tool("hello_python.greet", "Greets a person by name. Use it when the user asks for a greeting from the hello_python plugin.")
     async def greet(self, ctx: CallContext, name: Annotated[str | None, "Who to greet"] = None) -> dict:

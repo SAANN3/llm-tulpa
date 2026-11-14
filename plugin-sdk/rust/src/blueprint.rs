@@ -24,6 +24,6 @@ pub struct NodeContext {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct NodeResult {
-    pub port: Option<String>,
+    pub control_output: Option<String>,
     pub outputs: Map<String, Value>,
 }

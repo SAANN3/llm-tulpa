@@ -153,7 +153,8 @@ Tool parameter types support nested objects and arrays through the existing para
 
 `Plugin::blueprint_nodes` declares versioned graph actions; `execute_blueprint_node` executes one
 with its owning user/blueprint/run/node context. Native plugins use `NodeDefinition` with the
-existing `PropertyInfo`/`PropertyType` schemas. `PluginRegistry` validates the complete list before
+existing `PropertyInfo`/`PropertyType` schemas. The result's `control_output` selects the next
+branch; `outputs` contains data values. `PluginRegistry` validates the complete list before
 publishing the instance and supplies the same definitions to the graph catalog, validation and
 executor. No independent plugin registry or environment handle is needed. Enable/disable/settings
 rebuilds use the existing plugin lifecycle. Node definitions remain fixed for a configured instance.

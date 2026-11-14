@@ -277,13 +277,13 @@ impl Runner {
                     }
                     run.state.current_node = None;
                     for edge in run.workflow.edges.iter().filter(|e| e.from == node_id) {
-                        if outcome.port.as_deref() != Some(&edge.port) {
+                        if outcome.control_output.as_deref() != Some(&edge.port) {
                             skip_branch(&run.workflow, &mut run.state, &edge.to);
                         }
                     }
                     for edge in
                         run.workflow.edges.iter().rev().filter(|e| {
-                            e.from == node_id && outcome.port.as_deref() == Some(&e.port)
+                            e.from == node_id && outcome.control_output.as_deref() == Some(&e.port)
                         })
                     {
                         pending.push(edge.to.clone());

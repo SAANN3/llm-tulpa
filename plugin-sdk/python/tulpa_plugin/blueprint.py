@@ -34,8 +34,8 @@ class NodeContext:
 
 @dataclass
 class NodeResult:
-    port: str | None
+    control_output: str | None
     outputs: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
-        return {"port": self.port, "outputs": self.outputs}
+        return {"control_output": self.control_output, "outputs": self.outputs}

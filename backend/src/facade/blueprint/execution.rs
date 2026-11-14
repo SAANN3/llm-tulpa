@@ -10,7 +10,7 @@ pub(super) const MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_STATE_BYTES: usize = 4 * MAX_VALUE_BYTES;
 
 pub(super) struct Outcome {
-    pub port: Option<String>,
+    pub control_output: Option<String>,
     pub outputs: BTreeMap<String, Literal>,
 }
 
@@ -40,7 +40,7 @@ pub(super) async fn execute(
         remaining: MAX_VALUE_BYTES,
     };
     let mut result = Outcome {
-        port: Some("out".into()),
+        control_output: Some("out".into()),
         outputs: BTreeMap::new(),
     };
     match kind {
@@ -88,11 +88,11 @@ pub(super) async fn execute(
                     }
                 }
             };
-            result.port = Some(if condition { "true" } else { "false" }.into());
+            result.control_output = Some(if condition { "true" } else { "false" }.into());
         }
         NodeKind::Switch { value, cases } => {
             let value = values.resolve(value, 0)?;
-            result.port = Some(
+            result.control_output = Some(
                 cases
                     .iter()
                     .find(|c| equal(&value, &c.value))
@@ -135,7 +135,7 @@ pub(super) async fn execute(
                     .outputs
                     .insert(name.clone(), values.resolve(input, 0)?);
             }
-            result.port = None;
+            result.control_output = None;
         }
         _ => return Err("this node does not have an executor yet".into()),
     }

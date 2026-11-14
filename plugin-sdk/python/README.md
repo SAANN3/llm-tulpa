@@ -77,5 +77,7 @@ backend's part.
 
 Blueprint actions use `blueprint_nodes() -> list[NodeSpec]` and
 `execute_blueprint_node(node_type, version, arguments, ctx: NodeContext) -> NodeResult`.
+Return `NodeResult(control_output="out", outputs={...})`; `control_output` selects the next branch,
+while `outputs` contains the data values.
 Declarations use the same `Param` types as tools; `ctx.host` is the usual host handle.
 See [the contract](../PROTOCOL.md#blueprint-nodes) and `examples/hello-world-python`.

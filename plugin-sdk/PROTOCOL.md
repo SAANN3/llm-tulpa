@@ -126,7 +126,7 @@ A failing `check` does not stop a new plugin from being installed: it is recorde
 | `tools` | none | a list of tool specs (below) |
 | `call_tool` | `{tool, args, ctx}` | the tool's result, any JSON |
 | `blueprint_nodes` | none | versioned node specs (below), or method not found |
-| `execute_blueprint_node` | `{node_type, version, arguments, ctx}` | `{port, outputs}` (below) |
+| `execute_blueprint_node` | `{node_type, version, arguments, ctx}` | `{control_output, outputs}` (below) |
 | `enable` / `disable` | none | `null` |
 | `on_event` | one event, below | `null` |
 | `prompt_section` | `{user_id, tools}` | a string, or `null` for nothing |
@@ -306,10 +306,10 @@ configured instance; after a process restart the SDK also rejects an undeclared 
  "ctx":{"user_id":7,"blueprint_id":12,"run_id":40,"node_id":"greeting"}}
 ```
 
-It returns `{"port":"out","outputs":{"text":"Hello, Alice!"}}`. Arguments are resolved by the
+It returns `{"control_output":"out","outputs":{"text":"Hello, Alice!"}}`. Arguments are resolved by the
 existing graph bindings and checked against inputs; output fields and types are checked against
 outputs. No undeclared top-level argument/output is accepted. Choose exactly one declared control
-output; use `port: null` only if no control outputs were declared. Data outputs do not schedule a
+output; use `control_output: null` only if no control outputs were declared. Data outputs do not schedule a
 node. Each control output may connect to several sequential branches through the normal runner.
 A call's resolved inputs/results have the existing 1 MiB limit; persisted run state is 4 MiB.
 
