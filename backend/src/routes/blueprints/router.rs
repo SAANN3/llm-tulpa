@@ -1,6 +1,6 @@
 use super::{
     answer, catalog, clear_queue, create, delete, get as read, history, list, queue, reorder, run, start,
-    stop, update, validate,
+    stop, update, validate, variables, reset_variables,
 };
 use crate::state::AppState;
 use axum::{
@@ -12,6 +12,7 @@ use utoipa::OpenApi;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/{id}/variables", get(variables::variables).delete(reset_variables::reset_variables))
         .route("/{id}/runs/{run_id}/answer", post(answer::answer))
         .route("/{id}/runs", get(history::history).post(start::start))
         .route("/{id}/runs/{run_id}", get(run::get_run))
@@ -34,6 +35,8 @@ pub fn router() -> Router<Arc<AppState>> {
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        variables::variables,
+        reset_variables::reset_variables,
         answer::answer,
         start::start,
         run::get_run,

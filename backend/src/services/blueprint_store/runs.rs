@@ -12,6 +12,7 @@ use sea_orm::{
     ActiveValue::Set, DatabaseTransaction, QueryOrder, QuerySelect, Select, TransactionTrait, prelude::*,
 };
 use std::collections::HashSet;
+use crate::facade::blueprint::{definition::{Literal, NodeKind, VariableScope}, variables::Variables};
 
 fn summary(row: &runs::Model, state: &RunState) -> RunSummary {
     RunSummary {
@@ -43,7 +44,7 @@ fn run_query(blueprint_id: i64, id: i64) -> Select<runs::Entity> {
 }
 
 impl BlueprintStore {
-    async fn lock_queue(
+    pub(super) async fn lock_queue(
         &self,
         txn: &DatabaseTransaction,
         user_id: i64,
@@ -271,7 +272,16 @@ impl BlueprintStore {
             .one(&txn)
             .await?;
         let result = if let Some(row) = row {
+            let mut run = detail(row.clone())?;
+            if run.workflow.nodes.iter().any(|node| matches!(&node.kind, NodeKind::Variable { scope: VariableScope::Blueprint, .. })) {
+                self.lock_blueprint(&txn, user_id, row.blueprint_id).await?;
+                let saved = Self::saved_variables(&txn, row.blueprint_id).await?;
+                if let Err(error) = Variables::restore(&run.workflow, &mut run.state, &saved) {
+                    run.state.error = Some(error);
+                }
+            }
             let mut row: runs::ActiveModel = row.into();
+            row.state = Set(serde_json::to_value(run.state)?);
             row.status = Set(RunStatus::Running);
             row.queue_position = Set(None);
             row.started_at = Set(Some(Utc::now()));
@@ -312,6 +322,7 @@ impl BlueprintStore {
         id: i64,
         run_id: i64,
         state: &RunState,
+        variable: Option<(&str, &Literal)>,
     ) -> Result<bool, BlueprintStoreError> {
         let txn = self.db.begin().await?;
         self.lock_queue(&txn, user_id).await?;
@@ -323,6 +334,11 @@ impl BlueprintStore {
         if row.status != RunStatus::Running {
             txn.commit().await?;
             return Ok(false);
+        }
+        if let Some((node_id, value)) = variable {
+            let mut saved = Self::saved_variables(&txn, id).await?;
+            saved.insert(node_id.to_string(), value.clone());
+            Self::write_variables(&txn, id, &saved).await?;
         }
         let mut row: runs::ActiveModel = row.into();
         row.state = Set(serde_json::to_value(state)?);

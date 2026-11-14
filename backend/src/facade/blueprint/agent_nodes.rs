@@ -144,7 +144,7 @@ impl AgentNodes {
         run.state.nodes.get_mut(node_id).unwrap().chat_id = Some(chat.id);
         if !self
             .store
-            .save_progress(user_id, run.run.blueprint_id, run.run.id, &run.state)
+            .save_progress(user_id, run.run.blueprint_id, run.run.id, &run.state, None)
             .await
             .map_err(message)?
         {

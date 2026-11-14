@@ -2626,6 +2626,90 @@ def blueprint_variables_are_run_local_and_operations_use_typed_values():
 
 
 @scenario
+def blueprint_persistent_variables_are_scoped_and_committed_with_nodes():
+    def lit(value): return {"source": "literal", "value": value}
+    def var(node): return {"source": "variable", "node_id": node}
+    def out(node): return {"source": "output", "node_id": node, "port": "value"}
+    def graph(kinds):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": kinds[i][0], "port": "out", "to": kinds[i+1][0]} for i in range(len(kinds)-1)]}
+    def create(w): return ok("/api/blueprints", {"name": "Persistent fixture", "workflow": w})["id"]
+    def start(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        return ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+    def done(b, r):
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="persistent graph completion")
+        return ok(url)
+    def saved(b): return ok(f"/api/blueprints/{b}/variables")["values"]
+    def update(b, w):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        return ok(f"/api/blueprints/{b}", {"expected_revision": revision, "name": "Persistent fixture",
+            "schedule": {"type": "manual"}, "workflow": w}, "PUT")["revision"]
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "scope": "blueprint", "value_type": {"property_type": "integer"}, "initial": 0}),
+        ("local", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 11}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": var("counter"), "right": lit(1)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": out("add")}),
+        ("local_save", {"type": "set_variable", "variable_id": "local", "value": lit(12)}),
+        ("end", {"type": "return", "values": {"counter": var("counter"), "local_initial": out("local")}}),
+    ]
+    w = graph(kinds)
+    b, other = create(w), create(w)
+    eq(saved(b), {}, "defaults are not writes before execution")
+    blocker = create(graph([kinds[0], ("sleep", {"type": "sleep", "seconds": lit(60)})]))
+    blocking_run = start(blocker)
+    wait_for(lambda: ok(f"/api/blueprints/{blocker}/runs/{blocking_run}")["state"]["nodes"]["sleep"]["status"] == "running", what="queue blocker")
+    queued = [start(b) for _ in range(3)]
+    eq(len(ok("/api/blueprints/queue")["queued"]), 3, "all snapshots wait before reading persistent values")
+    ok("/api/blueprints/queue/stop", {})
+    done(blocker, blocking_run)
+    for expected, r in enumerate(queued, 1):
+        d = done(b, r)
+        eq(d["run"]["status"], "completed", "persistent graph finishes")
+        eq(d["state"]["nodes"]["end"]["outputs"], {"counter": expected, "local_initial": 11}, "queued runs read the previous committed value")
+    eq(saved(b), {"counter": 3}, "run-local variables are not stored")
+    eq(done(other, start(other))["state"]["variables"]["counter"], 1, "another blueprint has independent state")
+    changed = json.loads(json.dumps(w))
+    changed["nodes"][-1]["kind"] = {"type": "calculate", "operation": {"type": "divide", "left": lit(1), "right": lit(0)}}
+    revision = update(b, changed)
+    eq(done(b, start(b))["run"]["status"], "failed", "failure after assignment")
+    eq(saved(b), {"counter": 4}, "earlier successful assignment survives a later failure")
+    eq(api(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")[0], 409, "reset checks revision")
+    eq(saved(b), {"counter": 4}, "stale reset preserves values")
+    ok(f"/api/blueprints/{b}/variables?expected_revision={revision}&node_id=counter", method="DELETE")
+    eq(saved(b), {}, "individual reset removes saved value")
+    revision = update(b, w)
+    eq(done(b, start(b))["state"]["variables"]["counter"], 1, "reset uses initial on the next run")
+    # A compatible draft with a new variable type must not silently discard old state.
+    typed = graph([kinds[0], ("counter", {"type": "variable", "scope": "blueprint",
+        "value_type": {"property_type": "string"}, "initial": "new"})])
+    revision = update(b, typed)
+    d = done(b, start(b))
+    eq(d["run"]["status"], "failed", "incompatible saved type fails the run")
+    has(d["state"]["error"], "persistent variable 'counter'", "type failure identifies the variable")
+    eq(saved(b), {"counter": 1}, "type failure does not destroy saved state")
+    ok(f"/api/blueprints/{b}/variables?expected_revision={revision}", method="DELETE")
+    eq(done(b, start(b))["run"]["status"], "completed", "queue continues after type error and reset")
+    eq(saved(b), {"counter": "new"}, "declaration commits its initial value")
+    # Stop before an assignment and reset during an active run.
+    sleepy = graph([kinds[0], kinds[1], ("sleep", {"type": "sleep", "seconds": lit(60)}), kinds[4]])
+    sleepy["nodes"][-1]["kind"]["value"] = lit(99)
+    b = create(sleepy)
+    r = start(b)
+    url = f"/api/blueprints/{b}/runs/{r}"
+    wait_for(lambda: ok(url)["state"]["nodes"]["sleep"]["status"] == "running", what="sleep before assignment")
+    eq(api(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")[0], 409, "active state cannot be reset")
+    ok("/api/blueprints/queue/stop", {})
+    eq(done(b, r)["run"]["status"], "cancelled", "stop ends the graph")
+    eq(saved(b), {"counter": 0}, "unexecuted assignment does not change persistent state")
+    ok(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")
+    eq(calls("main"), [], "persistent variables make no model requests")
+
+
+@scenario
 def blueprint_loops_repeat_scoped_bodies_and_preserve_variables():
     def lit(value): return {"source": "literal", "value": value}
     def var(node): return {"source": "variable", "node_id": node}

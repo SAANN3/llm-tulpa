@@ -1,5 +1,6 @@
 use super::{
     definition::NodeKind,
+    variables::Variables,
     events::BlueprintEvent,
     execution,
     control_flow::{ControlFlow, MAX_EXECUTIONS},
@@ -180,7 +181,7 @@ impl Runner {
     ) -> Result<bool, BlueprintStoreError> {
         let saved = self
             .store
-            .save_progress(user_id, run.run.blueprint_id, run.run.id, &run.state)
+            .save_progress(user_id, run.run.blueprint_id, run.run.id, &run.state, node.and_then(|id| Variables::changed(&run.workflow, &run.state, id)))
             .await?;
         if saved {
             self.emit(user_id, run, node);
@@ -199,6 +200,7 @@ impl Runner {
             .into_iter()
             .find(|d| d.severity == Severity::Error)
             .map(|d| d.message)
+            .or_else(|| run.state.error.clone())
             .or_else(|| {
                 run.workflow
                     .nodes
@@ -297,10 +299,30 @@ impl Runner {
                     }
                     run.state.nodes.get_mut(&node_id).unwrap().executions += 1;
                     run.state.current_node = None;
-                    if !self.progress(user_id, &run, Some(&node_id)).await? {
-                        status = RunStatus::Cancelled;
-                        break;
+                    let error = match self.progress(user_id, &run, Some(&node_id)).await {
+                        Ok(true) => continue,
+                        Ok(false) if Variables::changed(&run.workflow, &run.state, &node_id).is_none() => {
+                            status = RunStatus::Cancelled;
+                            break;
+                        }
+                        Ok(false) => { status = RunStatus::Cancelled; None }
+                        Err(BlueprintStoreError::VariableState(error)) => { status = RunStatus::Failed; Some(error) }
+                        Err(error) => return Err(error),
+                    };
+                    // A rejected transaction must not leave an assignment applied only in the run snapshot.
+                    if let Some((id, previous)) = previous {
+                        match previous {
+                            Some(value) => { run.state.variables.insert(id, value); }
+                            None => { run.state.variables.remove(&id); }
+                        }
                     }
+                    let node = run.state.nodes.get_mut(&node_id).unwrap();
+                    node.executions -= 1;
+                    node.outputs.clear();
+                    node.status = if error.is_some() { NodeStatus::Failed } else { NodeStatus::Cancelled };
+                    node.error = error.clone();
+                    run.state.error = error;
+                    break;
                 }
                 Err(error) => {
                     let node = run.state.nodes.get_mut(&node_id).unwrap();

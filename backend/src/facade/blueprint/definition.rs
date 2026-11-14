@@ -43,6 +43,14 @@ pub struct Edge {
     pub to: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VariableScope {
+    #[default]
+    Run,
+    Blueprint,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NodeKind {
@@ -50,6 +58,8 @@ pub enum NodeKind {
     Variable {
         value_type: PropertyType,
         initial: Literal,
+        #[serde(default)]
+        scope: VariableScope,
     },
     SetVariable {
         variable_id: String,

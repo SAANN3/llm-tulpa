@@ -60,3 +60,7 @@ formatting and all arithmetic/boolean/list operations without model requests.
 `blueprint_loops_repeat_scoped_bodies_and_preserve_variables` checks While/ForEach, zero iterations,
 exact iteration limits, snapshot lists, current variables, repeated execution identities/progress
 and static rejection of escaping body results and back edges.
+
+`blueprint_persistent_variables_are_scoped_and_committed_with_nodes` checks blueprint-scoped
+values across queued runs, independent run-local defaults and other blueprints, failed runs,
+type changes, revision-checked resets and Stop before assignment without model requests.

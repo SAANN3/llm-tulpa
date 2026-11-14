@@ -53,6 +53,8 @@ All endpoints require the normal bearer authentication. There are no owner-only 
 | GET | `/api/blueprints/{id}` | Returns `{blueprint: metadata, workflow}` |
 | PUT | `/api/blueprints/{id}` | `{expected_revision, name, schedule, workflow?}`; returns updated metadata |
 | DELETE | `/api/blueprints/{id}?expected_revision=N` | Returns 204 |
+| GET | `/api/blueprints/{id}/variables` | Returns `{values: {node_id: literal}}`, including retained values of removed declarations |
+| DELETE | `/api/blueprints/{id}/variables?expected_revision=N&node_id=ID` | Resets one saved value; omit node_id to reset all; returns 204 or 409 during an active run of this blueprint |
 
 Lists are newest first, with descending id as a stable tie-breaker. Search is a case-sensitive
 literal substring of the name, including literal `%` and `_`. Lists read only the metadata table.
@@ -104,7 +106,7 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | Kind | Configuration |
 |---|---|
 | `entry` | No timer; the execution entry point |
-| `variable` | value_type (existing PropertyType), initial literal; identity is this node's id |
+| `variable` | value_type (existing PropertyType), initial literal, scope (`run` by default, or `blueprint`); identity is this node's id |
 | `set_variable` | variable_id, value as an input binding |
 | `calculate` | typed operation with named input bindings |
 | `generate` | model, prompt, optional think |
@@ -440,11 +442,30 @@ A Variable node declares a type and initial literal in the workflow document:
 The id is the reference; the name is a display label. `value_type` uses the same recursive
 PropertyType schema as tools and settings, including primitive array item names and nested
 object/array schemas. Initial values must match; object field names must be valid and unique.
-There is no separate global variable-name namespace. Variables are local to one run, not one
-user or all runs of a blueprint. Each queued snapshot receives its own initial values in
+There is no separate global variable-name namespace. By default variables are local to one run.
+Each queued snapshot receives its own initial values in
 `state.variables`, keyed by the Variable node id. State is persisted through the existing run
 store; execution never rewrites the workflow document. Older run records without variables
-load with an empty map. This feature does not add persistent variables between runs.
+load with an empty map. Variable scope defaults to `run`, including documents saved without the field.
+
+With `scope: "blueprint"`, the same Variable and SetVariable nodes retain values between runs
+of that blueprint. Values are isolated by blueprint and its owner, stored in the `blueprint_variables` table
+outside the workflow file. The worker reads them when claiming the queued run, so queued runs
+observe earlier assignments. A missing value uses `initial`; executing the declaration commits
+that default. Successful declarations and assignments commit the value and node result in the
+same transaction. A subsequent failure or Stop does not undo earlier committed assignments;
+a Stop that wins before the transaction prevents the new assignment.
+
+The current snapshot's PropertyType validates restored values. An incompatible value fails the
+run with a diagnostic instead of resetting it silently. Changing a default does not overwrite a
+saved value. Removing a node or switching it to run scope preserves its saved value until an
+explicit reset; reusing the same node id with blueprint scope reads it again. Renaming a node
+has no effect on its identity. The variables API exposes retained values and permits one-value
+or whole-map resets, guarded by expected_revision and the existing queue/blueprint locks.
+An active run of this blueprint blocks reset; queued runs read the state after reset. Reset does
+not edit the workflow, increment its revision or modify historical run snapshots. The saved map
+is limited to 4 MiB including retained values; the existing per-value and run-state limits apply.
+There are no variables shared across blueprints.
 
 Variable nodes have the usual incoming control edge and `out` output. The declaration must
 execute before a node reads or assigns it; a declaration in a skipped conditional branch is

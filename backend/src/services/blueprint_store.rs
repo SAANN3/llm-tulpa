@@ -2,6 +2,7 @@ mod entities;
 mod runs;
 mod agent_chats;
 mod schedules;
+mod variables;
 pub use schedules::ScheduledTick;
 
 use std::path::{Path, PathBuf};
@@ -323,6 +324,8 @@ pub enum BlueprintStoreError {
     QueueChanged,
     ConfirmationChanged,
     Busy,
+    VariablesBusy,
+    VariableState(String),
     Database(DbErr),
     Io(std::io::Error),
     Json(serde_json::Error),
@@ -353,6 +356,8 @@ impl From<BlueprintStoreError> for ErrorService {
             ),
             BlueprintStoreError::ConfirmationChanged => Self::new(StatusCode::CONFLICT, "tool confirmation changed; reload the run before answering"),
             BlueprintStoreError::QueueChanged => Self::new(StatusCode::CONFLICT, "queue changed; reload before reordering"),
+            BlueprintStoreError::VariablesBusy => Self::new(StatusCode::CONFLICT, "stop the active run before resetting this blueprint's variables"),
+            BlueprintStoreError::VariableState(message) => Self::new(StatusCode::UNPROCESSABLE_ENTITY, message),
             BlueprintStoreError::Busy => Self::new(StatusCode::CONFLICT, "stop the current run and clear the queue before deleting this blueprint"),
             BlueprintStoreError::Database(e) => {
                 tracing::error!(?e, "blueprint database operation failed");

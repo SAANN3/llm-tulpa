@@ -14,3 +14,5 @@ mod reorder;
 mod clear_queue;
 mod stop;
 pub mod answer;
+mod variables;
+mod reset_variables;

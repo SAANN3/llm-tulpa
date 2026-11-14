@@ -12,6 +12,7 @@ pub mod runs;
 mod template;
 mod operations;
 mod control_flow;
+pub(crate) mod variables;
 mod tool_nodes;
 pub mod validation;
 
@@ -26,7 +27,8 @@ use crate::services::{
 };
 use axum::http::StatusCode;
 use catalog::{NodeDescriptor, NodeType};
-use definition::{Schedule, Workflow};
+use definition::{Literal, Schedule, Workflow};
+use std::collections::BTreeMap;
 use runner::Runner;
 use scheduler::Scheduler;
 use generation::Generation;
@@ -81,6 +83,16 @@ impl BlueprintFacade {
         self.runner.initialize().await?;
         Scheduler::start(self.clone());
         Ok(())
+    }
+
+    pub async fn variables(&self, user_id: i64, id: i64) -> Result<BTreeMap<String, Literal>, ErrorService> {
+        Ok(self.store.variables(user_id, id).await?)
+    }
+
+    pub async fn reset_variables(
+        &self, user_id: i64, id: i64, expected_revision: i64, node_id: Option<&str>,
+    ) -> Result<(), ErrorService> {
+        Ok(self.store.reset_variables(user_id, id, expected_revision, node_id).await?)
     }
 
     pub async fn start(

@@ -112,7 +112,7 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
         }
         let inputs: Vec<&Input> = match &node.kind {
             NodeKind::Entry => vec![],
-            NodeKind::Variable { value_type, initial } => {
+            NodeKind::Variable { value_type, initial, .. } => {
                 property_type(value_type, 0)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.value_type", message))?;
                 variable_value(initial, value_type)
@@ -265,7 +265,7 @@ fn property_type(kind: &PropertyType, depth: usize) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn variable_value(value: &Literal, schema: &PropertyType) -> Result<(), String> {
+pub(crate) fn variable_value(value: &Literal, schema: &PropertyType) -> Result<(), String> {
     let mut report = ValidationReport::default();
     properties::Properties { report: &mut report, node_id: None }
         .property(&values::Shape::literal(value), schema, "value");
