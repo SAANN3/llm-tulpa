@@ -1,13 +1,14 @@
 use super::{
-    definition::{NodeKind, Workflow},
+    definition::NodeKind,
     events::BlueprintEvent,
     execution,
+    control_flow::{ControlFlow, MAX_EXECUTIONS},
     agent_nodes::AgentNodes,
     permissions::Permissions,
     plugin_nodes::PluginNodes,
     generation::Generation,
     tool_nodes::ToolNodes,
-    runs::{NodeStatus, RunDetail, RunState, RunStatus},
+    runs::{NodeStatus, RunDetail, RunStatus},
     validation::{self, report::Severity},
 };
 use crate::facade::agent::Allowance;
@@ -210,19 +211,17 @@ impl Runner {
             run.state.error = Some(error);
             status = RunStatus::Failed;
         }
-        let mut pending = if status == RunStatus::Completed {
-            run.workflow
-                .nodes
-                .iter()
-                .find(|n| matches!(n.kind, NodeKind::Entry))
-                .map(|n| vec![n.id.clone()])
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
-        while let Some(node_id) = pending.pop() {
+        let mut flow = ControlFlow::new(&run.workflow);
+        while status == RunStatus::Completed {
             if cancel.is_cancelled() {
                 status = RunStatus::Cancelled;
+                break;
+            }
+            let Some(visit) = flow.next(&mut run.state) else { break };
+            let node_id = visit.node_id.clone();
+            if run.state.execution_count >= MAX_EXECUTIONS {
+                run.state.error = Some("run execution limit reached".into());
+                status = RunStatus::Failed;
                 break;
             }
             let node = run
@@ -245,6 +244,9 @@ impl Runner {
                 break;
             }
             progress.status = NodeStatus::Running;
+            run.state.execution_count += 1;
+            progress.execution_id = Some(run.state.execution_count);
+            progress.iteration = visit.iteration.clone();
             run.state.current_node = Some(node_id.clone());
             if !self.progress(user_id, &run, Some(&node_id)).await? {
                 status = RunStatus::Cancelled;
@@ -255,6 +257,7 @@ impl Runner {
                 NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
                 NodeKind::Plugin { .. } => self.plugins.execute(user_id, &run, &node_id, &kind, cancel).await,
                 NodeKind::Agent { .. } => self.agents.execute(user_id, &mut run, &node_id, &kind, &self.permissions, notify, cancel).await,
+                NodeKind::While { .. } | NodeKind::ForEach { .. } => flow.loop_outcome(&node_id, &kind, &mut run.state),
                 _ => execution::execute(&node_id, &kind, &run.workflow, &run.state, cancel).await,
             };
             if cancel.is_cancelled() {
@@ -270,6 +273,13 @@ impl Runner {
                     let node = run.state.nodes.get_mut(&node_id).unwrap();
                     node.status = NodeStatus::Completed;
                     node.outputs = outcome.outputs;
+                    if let Err(error) = flow.advance(&run.workflow, &mut run.state, visit, outcome.control_output.as_deref()) {
+                        run.state.nodes.get_mut(&node_id).unwrap().status = NodeStatus::Failed;
+                        run.state.nodes.get_mut(&node_id).unwrap().error = Some(error.clone());
+                        run.state.error = Some(error);
+                        status = RunStatus::Failed;
+                        break;
+                    }
                     if serde_json::to_vec(&run.state)?.len() > execution::MAX_STATE_BYTES {
                         if let Some((id, previous)) = previous {
                             match previous {
@@ -285,19 +295,8 @@ impl Runner {
                         status = RunStatus::Failed;
                         break;
                     }
+                    run.state.nodes.get_mut(&node_id).unwrap().executions += 1;
                     run.state.current_node = None;
-                    for edge in run.workflow.edges.iter().filter(|e| e.from == node_id) {
-                        if outcome.control_output.as_deref() != Some(&edge.port) {
-                            skip_branch(&run.workflow, &mut run.state, &edge.to);
-                        }
-                    }
-                    for edge in
-                        run.workflow.edges.iter().rev().filter(|e| {
-                            e.from == node_id && outcome.control_output.as_deref() == Some(&e.port)
-                        })
-                    {
-                        pending.push(edge.to.clone());
-                    }
                     if !self.progress(user_id, &run, Some(&node_id)).await? {
                         status = RunStatus::Cancelled;
                         break;
@@ -324,23 +323,5 @@ impl Runner {
         self.emit(user_id, &finished, changed.as_deref());
         self.queue_changed(user_id);
         Ok(())
-    }
-}
-fn skip_branch(workflow: &Workflow, state: &mut RunState, root: &str) {
-    let mut pending = vec![root.to_owned()];
-    while let Some(id) = pending.pop() {
-        if let Some(node) = state.nodes.get_mut(&id) {
-            if node.status != NodeStatus::Pending {
-                continue;
-            }
-            node.status = NodeStatus::Skipped;
-            pending.extend(
-                workflow
-                    .edges
-                    .iter()
-                    .filter(|e| e.from == id)
-                    .map(|e| e.to.clone()),
-            );
-        }
     }
 }

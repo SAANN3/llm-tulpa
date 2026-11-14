@@ -1,6 +1,7 @@
 use crate::facade::blueprint::{
     catalog::NodeType,
     definition::{NodeKind, Workflow},
+    control_flow::{ControlFlow, MAX_LOOP_DEPTH},
 };
 use super::report::ValidationReport;
 use crate::plugins::blueprint::NodeRegistration;
@@ -98,6 +99,15 @@ impl<'a> Graph<'a> {
         if !valid {
             return graph;
         }
+        let mut depths = vec![0; n];
+        for node in workflow.nodes.iter().filter(|node| matches!(node.kind, NodeKind::While { .. } | NodeKind::ForEach { .. })) {
+            let roots = workflow.edges.iter().filter(|edge| edge.from == node.id && edge.port == "body").map(|edge| edge.to.as_str());
+            for member in ControlFlow::descendants(workflow, roots) { depths[graph.indices[member.as_str()]] += 1; }
+        }
+        if depths.iter().any(|depth| *depth > MAX_LOOP_DEPTH) {
+            report.error(None, "edges", "loop_nesting", "loop nesting exceeds 32 levels");
+            return graph;
+        }
         let mut visited = HashSet::new();
         graph.visit(entries[0], HashSet::new(), &outgoing, &mut visited);
         for (i, node) in workflow.nodes.iter().enumerate() {
@@ -140,6 +150,7 @@ impl<'a> Graph<'a> {
             if matches!(
                 self.workflow.nodes[i].kind,
                 NodeKind::If { .. } | NodeKind::Switch { .. } | NodeKind::Plugin { .. }
+                    | NodeKind::While { .. } | NodeKind::ForEach { .. }
             ) {
                 // Without merges, distinct outcomes cannot guarantee any shared descendant.
                 // Each outcome starts with the same available values and restores them afterwards.

@@ -9,7 +9,7 @@ export type BlueprintNodeStatus = 'pending' | 'running' | 'waiting_for_permissio
 
 export type BlueprintEvent =
     | { type: 'queue_changed'; user_id: number }
-    | { type: 'run_changed'; user_id: number; blueprint_id: number; run_id: number; status: BlueprintRunStatus; current_node: string | null; node_id: string | null; node_status: BlueprintNodeStatus | null; progress: { completed: number; skipped: number; total: number | null; percent: number | null } }
+    | { type: 'run_changed'; user_id: number; blueprint_id: number; run_id: number; status: BlueprintRunStatus; current_node: string | null; node_id: string | null; node_status: BlueprintNodeStatus | null; execution_id: number | null; iteration: { node_id: string; index: number }[]; progress: { completed: number; skipped: number; total: number | null; percent: number | null } }
 
 export type ServerEvent =
     | { type: 'blueprint'; event: BlueprintEvent }

@@ -2625,6 +2625,81 @@ def blueprint_variables_are_run_local_and_operations_use_typed_values():
     eq(calls("main"), [], "variables and operations make no model requests")
 
 
+@scenario
+def blueprint_loops_repeat_scoped_bodies_and_preserve_variables():
+    def lit(value): return {"source": "literal", "value": value}
+    def var(node): return {"source": "variable", "node_id": node}
+    def out(node, port): return {"source": "output", "node_id": node, "port": port}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": a, "port": port, "to": b} for i, (a, port, b) in enumerate(edges)]}
+    def run(workflow):
+        report = ok("/api/blueprints/validate", {"workflow": workflow})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "Loop fixture", "workflow": workflow})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="loop completion")
+        return ok(url)
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 0}),
+        ("loop", {"type": "while", "left": var("counter"), "operator": "less", "right": lit(3), "max_iterations": 3}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": var("counter"), "right": lit(1)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": out("add", "value")}),
+        ("end", {"type": "return", "values": {"value": var("counter"), "iterations": out("loop", "iterations")}}),
+    ]
+    edges = [("start", "out", "counter"), ("counter", "out", "loop"), ("loop", "out", "end"),
+        ("loop", "body", "add"), ("add", "out", "save")]
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "completed", "while completes at the exact iteration limit")
+    eq(d["state"]["nodes"]["end"]["outputs"], {"value": 3, "iterations": 3}, "live condition is checked again")
+    eq(d["state"]["nodes"]["add"]["executions"], 3, "same body node executes three times")
+    eq(d["state"]["nodes"]["loop"]["executions"], 4, "final false check is an execution")
+    eq(d["state"]["nodes"]["save"]["iteration"], [{"node_id": "loop", "index": 2}], "iteration identity")
+    eq(d["run"]["progress"], {"completed": 13, "skipped": 0, "total": None, "percent": None}, "counts executions without a fictional percentage")
+    kinds[2][1]["right"] = lit(0)
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["add"]["status"], "skipped", "zero iterations skip the body")
+    eq(d["state"]["variables"]["counter"], 0, "zero iterations leave initial state")
+    kinds[2][1]["right"] = lit(4)
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "failed", "iteration limit fails instead of truncating")
+    has(d["run"]["error"], "iteration limit", "bounded failure")
+    eq(d["state"]["variables"]["counter"], 3, "no extra body after the limit")
+
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("items", {"type": "variable", "value_type": {"property_type": "array", "items": "integer"}, "initial": [1, 2, 3]}),
+        ("collected", {"type": "variable", "value_type": {"property_type": "array", "items": "integer"}, "initial": []}),
+        ("loop", {"type": "for_each", "items": var("items")}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("collected"), "value": out("loop", "item")}}),
+        ("save", {"type": "set_variable", "variable_id": "collected", "value": out("append", "value")}),
+        ("replace", {"type": "set_variable", "variable_id": "items", "value": lit([99])}),
+        ("end", {"type": "return", "values": {"items": var("collected")}}),
+    ]
+    edges = [("start", "out", "items"), ("items", "out", "collected"), ("collected", "out", "loop"),
+        ("loop", "body", "append"), ("append", "out", "save"), ("loop", "body", "replace"), ("loop", "out", "end")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["end"]["outputs"]["items"], [1, 2, 3], "for_each freezes its input once")
+    eq(d["state"]["variables"]["items"], [99], "mutating the source does not alter the iteration snapshot")
+    kinds[1][1]["initial"] = []
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "completed", "empty list completes")
+    eq(d["state"]["loops"]["loop"]["iterations"], 0, "empty list has no iterations")
+    kinds[1][1]["initial"] = [1, 2]
+    for invalid in ("body_output", "item_after_loop", "limit", "back_edge"):
+        w = graph(kinds, edges)
+        w = json.loads(json.dumps(w))
+        if invalid == "body_output": w["nodes"][-1]["kind"]["values"]["bad"] = out("append", "value")
+        if invalid == "item_after_loop": w["nodes"][-1]["kind"]["values"]["bad"] = out("loop", "item")
+        if invalid == "limit": w["nodes"][3]["kind"]["max_iterations"] = 0
+        if invalid == "back_edge": w["edges"].append({"id": "back", "from": "save", "port": "out", "to": "loop"})
+        eq(ok("/api/blueprints/validate", {"workflow": w})["valid"], False, invalid + " is rejected")
+    eq(calls("main"), [], "control loops make no model requests")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0

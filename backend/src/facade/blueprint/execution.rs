@@ -31,6 +31,8 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
             | NodeKind::Plugin { .. }
             | NodeKind::Sleep { .. }
             | NodeKind::If { .. }
+            | NodeKind::While { .. }
+            | NodeKind::ForEach { .. }
             | NodeKind::Switch { .. }
             | NodeKind::Format { .. }
             | NodeKind::Return { .. }
@@ -100,25 +102,7 @@ pub(super) async fn execute(
         } => {
             let left = values.resolve(left, 0)?;
             let right = values.resolve(right, 0)?;
-            let condition = match operator {
-                Comparison::Equal => equal(&left, &right),
-                Comparison::NotEqual => !equal(&left, &right),
-                Comparison::Contains => match (&left, &right) {
-                    (Literal::String(a), Literal::String(b)) => a.contains(b),
-                    _ => return Err("contains requires two strings".into()),
-                },
-                other => {
-                    let order =
-                        numeric_cmp(&left, &right).ok_or("ordering requires finite numbers")?;
-                    match other {
-                        Comparison::Greater => order.is_gt(),
-                        Comparison::GreaterOrEqual => !order.is_lt(),
-                        Comparison::Less => order.is_lt(),
-                        Comparison::LessOrEqual => !order.is_gt(),
-                        _ => unreachable!(),
-                    }
-                }
-            };
+            let condition = operator.evaluate(&left, &right)?;
             result.control_output = Some(if condition { "true" } else { "false" }.into());
         }
         NodeKind::Switch { value, cases } => {
@@ -314,5 +298,29 @@ fn equal(a: &Literal, b: &Literal) -> bool {
             a.len() == b.len() && a.iter().all(|(k, a)| b.get(k).is_some_and(|b| equal(a, b)))
         }
         _ => false,
+    }
+}
+
+impl Comparison {
+    pub(super) fn evaluate(&self, left: &Literal, right: &Literal) -> Result<bool, String> {
+        Ok(match self {
+            Comparison::Equal => equal(left, right),
+            Comparison::NotEqual => !equal(left, right),
+            Comparison::Contains => match (left, right) {
+                (Literal::String(a), Literal::String(b)) => a.contains(b),
+                _ => return Err("contains requires two strings".into()),
+            },
+            other => {
+                let order =
+                    numeric_cmp(left, right).ok_or("ordering requires finite numbers")?;
+                match other {
+                    Comparison::Greater => order.is_gt(),
+                    Comparison::GreaterOrEqual => !order.is_lt(),
+                    Comparison::Less => order.is_lt(),
+                    Comparison::LessOrEqual => !order.is_gt(),
+                    _ => unreachable!(),
+                }
+            }
+        })
     }
 }

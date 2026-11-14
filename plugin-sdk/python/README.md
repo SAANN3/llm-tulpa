@@ -81,3 +81,7 @@ Return `NodeResult(control_output="out", outputs={...})`; `control_output` selec
 while `outputs` contains the data values.
 Declarations use the same `Param` types as tools; `ctx.host` is the usual host handle.
 See [the contract](../PROTOCOL.md#blueprint-nodes) and `examples/hello-world-python`.
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
+the node is outside a loop. The same node can execute several times within one run.

@@ -215,6 +215,11 @@ impl Validation {
                     left,
                     operator,
                     right,
+                } | NodeKind::While {
+                    left,
+                    operator,
+                    right,
+                    ..
                 } => {
                     let left = values.infer(left, "kind.left");
                     let right = values.infer(right, "kind.right");
@@ -301,6 +306,10 @@ impl Validation {
                     }
                 }
                 NodeKind::Calculate { operation } => { values.operation(operation, "kind.operation"); }
+                NodeKind::ForEach { items, .. } => {
+                    let shape = values.infer(items, "kind.items");
+                    values.expect(&shape, ValueType::Array, "kind.items");
+                }
             }
         }
         Ok(report.finish())

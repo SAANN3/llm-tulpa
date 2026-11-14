@@ -112,6 +112,8 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | `tool` | name, arguments keyed by the tool's argument names, require_confirmation (default false) |
 | `sleep` | seconds as an input binding |
 | `if` | left, operator, right |
+| `while` | left, operator, right, max_iterations (default 1000); body/out control outputs |
+| `for_each` | items binding, max_iterations (default 1000); body/out control outputs |
 | `switch` | value, cases (`port`, literal `value`); `default` is reserved |
 | `format` | template, arguments |
 | `return` | named result values |
@@ -135,7 +137,8 @@ Inputs are another typed enum:
 
 Edges control execution; bindings control data dependencies. The order in the edges array defines
 the order of edges leaving the same port. Execution traverses that order depth-first.
-Cycles and multiple incoming control edges require separate execution semantics and are rejected.
+Back edges and multiple incoming control edges are rejected. While/ForEach repeat their bodies
+through explicit body/out control outputs.
 
 Draft validation rejects unknown schema versions, duplicate/invalid IDs, dangling node references,
 invalid settings and oversized documents (1 MiB, 1000 nodes, 4000 edges; binding depth at most 32).
@@ -182,7 +185,8 @@ Control edges use ordered, depth-first sequential branches. A leaf (including Re
 branch; pending sibling branches still follow. Earlier unconditional branches can supply values to
 later ones. A value produced only on one If/Switch outcome is not guaranteed available after that
 conditional branch. Empty conditional outcomes finish without producing branch-specific values.
-Multiple incoming edges and cycles are rejected until explicit Merge/Join/loop semantics exist.
+Multiple incoming edges require explicit Merge/Join semantics and are rejected. Back edges remain
+invalid; While/ForEach bodies have implicit repetition after their branches finish.
 
 Generate, Agent and Format publish a `text` string. Tool publishes `result`, whose schema is unknown:
 the Tool interface declares argument schemas only. A binding to that output gets a
@@ -204,7 +208,7 @@ Each user has one sequential queue shared by all of their blueprints. Only one r
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
 by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Variable,
-SetVariable, Calculate, Sleep, If,
+SetVariable, Calculate, Sleep, If, While, ForEach,
 Switch, Format, Return, Tool, Generate and Agent; Plugin nodes execute through their enabled plugin.
 Static validation can still describe those draft nodes without an executor.
 
@@ -242,14 +246,15 @@ The existing `/api/live` stream carries one `ServerEvent::Blueprint` wrapper con
 `BlueprintEvent`. Its JSON is `{"type":"blueprint","event":{"type":"queue_changed","user_id":1}}`
 or an inner `run_changed` event. Both carry `user_id` and are filtered to their owner before
 delivery, without an ownership DB lookup per event. Run events also include `blueprint_id`,
-`run_id`, status, current node, changed node/status and progress. They are refresh hints, not a replay log; clients fetch queue/run state
+`run_id`, status, current node, changed node/status, execution_id, iteration path and progress. They are refresh hints, not a replay log; clients fetch queue/run state
 on reconnect. Node outputs are available through the run endpoint, not broadcast.
 
 Progress reports completed/skipped node counts, total and percent. Untaken branches are excluded
 from the total once the condition is evaluated, so the estimate can change during execution.
-It measures node count, not elapsed time; a long Sleep and a Format each count once. Total and
-percent are nullable for future executors whose remaining work cannot be counted. There are no
-loop or merge nodes in the current executor.
+It measures node count, not elapsed time; a long Sleep and a Format each count once. For graphs
+containing loops, completed/skipped count executions and total/percent are null. Node state keeps
+cumulative successful executions, the latest execution_id and its outer-to-inner iteration path.
+Outputs describe the latest attempt, not an unbounded history of all iterations.
 
 
 ## Tool nodes
@@ -488,4 +493,48 @@ uses f64 and rejects integer operands that cannot be converted exactly; division
 this numeric path. Existing comparison and formatting nodes consume the same variable bindings.
 Resolved inputs/results retain the existing 1 MiB limits. Static data-dependency inference is
 bounded to 128 nested bindings and 65,536 inferred shape entries per checked node, so repeated
-references cannot expand validation without a bound. Control loops remain unsupported.
+references cannot expand validation without a bound.
+
+
+## Explicit loops
+
+While and ForEach have `body` and `out` control outputs. Body edges run in document order,
+depth-first, through the existing node executors. When all body branches finish (including any
+Return leaves), the loop checks its next iteration. On completion it follows out edges once.
+No back edge, merge node, additional queue or second executor is involved. Nested loops are
+supported; arbitrary control cycles and multiple incoming edges remain invalid.
+
+While compares left/operator/right before each iteration using the same comparison implementation
+as If. Its condition can read current variables declared before the loop. ForEach resolves items
+to a list once per entry to that loop and iterates its snapshot. Mutating the source variable does
+not alter this snapshot; re-entering an inner ForEach in another outer iteration takes a new one.
+A false initial condition or empty list executes no body and continues through out.
+
+Inside the body, the loop's data outputs are `index` (zero-based), `iterations` (entries so far)
+and, for ForEach, `item`. After the loop only `iterations` is available. The checker rejects
+item/index outside that loop body and references to body outputs from outside; a body may run
+zero times. Accumulate results with a Variable declared before the loop. Static inference
+propagates a known ForEach item schema from the input list; dynamic selections still require
+runtime checks.
+
+Before each iteration the body's statuses, outputs, error, chat reference and execution identity
+are cleared. Successful-execution counts and variable values are retained. Branches can choose
+differently on each iteration without exposing an old output from a skipped branch. A Variable
+declaration in the body exposes its existing run value and does not reset it to its default; it
+remains scoped to the body's control availability. Node `executions` counts successful calls,
+`execution_id` identifies the latest attempt within the run, and `iteration` identifies enclosing
+loop node ids and indices. SSE and plugin NodeContext carry the same identity.
+
+Each loop has max_iterations from 1 to 10,000, default 1000. A While that becomes false exactly
+at the limit finishes; one requesting another body fails. The run also allows at most 100,000
+node executions and 32 nested loop bodies. A frozen ForEach list is limited to 1 MiB; all active
+list snapshots together are limited to 4 MiB. The existing 4 MiB persisted-state limit applies.
+Counters and per-node latest results are retained, not every iteration's full result.
+
+Stop and permissions follow existing executors: model calls and Sleep can stop, Tool/plugin
+calls settle their bounded current invocation, and a permission wait holds this user's queue.
+Each wait has its existing fresh request id. Repeated Agent calls honour reuse_chat exactly as
+separate executions do. Restart marks active runs interrupted and runs queued snapshots from
+the beginning; it never resumes a loop that may already have performed external actions. Loop
+cursors/list snapshots are local to the active runner, while persisted iteration metadata is
+for observation and diagnostics. No crash-resume guarantee is implied.

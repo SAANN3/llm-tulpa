@@ -126,6 +126,10 @@ async fn dispatch(conn: &Arc<Connection>, plugin: &Arc<dyn Plugin>, method: &str
                 blueprint_id: ctx["blueprint_id"].as_i64().ok_or((INVALID_PARAMS, "ctx.blueprint_id is missing".into()))?,
                 run_id: ctx["run_id"].as_i64().ok_or((INVALID_PARAMS, "ctx.run_id is missing".into()))?,
                 node_id: ctx["node_id"].as_str().ok_or((INVALID_PARAMS, "ctx.node_id is missing".into()))?.into(),
+                execution_id: serde_json::from_value(ctx.get("execution_id").cloned().unwrap_or(json!(0)))
+                    .map_err(|e| (INVALID_PARAMS, format!("invalid ctx.execution_id: {e}")))?,
+                iteration: serde_json::from_value(ctx.get("iteration").cloned().unwrap_or(json!([])))
+                    .map_err(|e| (INVALID_PARAMS, format!("invalid ctx.iteration: {e}")))?,
                 host: Host { conn: conn.clone() },
             };
             let node_type = params["node_type"].as_str().ok_or((INVALID_PARAMS, "node_type is missing".into()))?.to_string();

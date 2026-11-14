@@ -55,10 +55,27 @@ pub enum NodeStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodeProgress {
     #[serde(default)]
+    pub execution_id: Option<u32>,
+    #[serde(default)]
+    pub executions: u32,
+    #[serde(default)]
+    pub iteration: Vec<Iteration>,
+    #[serde(default)]
     pub chat_id: Option<i64>,
     pub status: NodeStatus,
     pub outputs: BTreeMap<String, Literal>,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct Iteration {
+    pub node_id: String,
+    pub index: u32,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct LoopProgress {
+    pub iterations: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -72,6 +89,12 @@ pub struct PendingTool {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunState {
     #[serde(default)]
+    pub execution_count: u32,
+    #[serde(default)]
+    pub skipped_executions: u32,
+    #[serde(default)]
+    pub loops: BTreeMap<String, LoopProgress>,
+    #[serde(default)]
     pub variables: BTreeMap<String, Literal>,
     #[serde(default)]
     pub pending_tool: Option<PendingTool>,
@@ -82,6 +105,10 @@ pub struct RunState {
 impl RunState {
     pub fn new(workflow: &Workflow) -> Self {
         Self {
+            execution_count: 0,
+            skipped_executions: 0,
+            loops: workflow.nodes.iter().filter(|node| matches!(node.kind, NodeKind::While { .. } | NodeKind::ForEach { .. }))
+                .map(|node| (node.id.clone(), LoopProgress::default())).collect(),
             variables: workflow.nodes.iter().filter_map(|node| match &node.kind {
                 NodeKind::Variable { initial, .. } => Some((node.id.clone(), initial.clone())),
                 _ => None,
@@ -94,6 +121,9 @@ impl RunState {
                     (
                         n.id.clone(),
                         NodeProgress {
+                            execution_id: None,
+                            executions: 0,
+                            iteration: vec![],
                             chat_id: None,
                             status: NodeStatus::Pending,
                             outputs: BTreeMap::new(),
@@ -107,6 +137,14 @@ impl RunState {
         }
     }
     pub fn progress(&self) -> Progress {
+        if !self.loops.is_empty() {
+            return Progress {
+                completed: self.nodes.values().map(|node| node.executions).sum(),
+                skipped: self.skipped_executions,
+                total: None,
+                percent: None,
+            };
+        }
         let completed = self
             .nodes
             .values()

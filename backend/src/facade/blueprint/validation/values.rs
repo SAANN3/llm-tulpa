@@ -2,6 +2,7 @@ use crate::facade::blueprint::{
     catalog::{NodeType, ValueType},
     definition::{Input, Literal, NodeKind, Operation, PathPart},
     operations::Operations,
+    control_flow::ControlFlow,
     template::{self, Part},
 };
 use super::{
@@ -130,7 +131,22 @@ impl<'a, 'b> Values<'a, 'b> {
                     );
                     return Shape::scalar(ValueType::Dynamic);
                 }
+                let source_node = &self.graph.workflow.nodes[source];
+                if matches!(source_node.kind, NodeKind::While { .. } | NodeKind::ForEach { .. }) && matches!(port.as_str(), "index" | "item") {
+                    let roots = self.graph.workflow.edges.iter().filter(|edge| edge.from == source_node.id && edge.port == "body").map(|edge| edge.to.as_str());
+                    if !ControlFlow::descendants(self.graph.workflow, roots).iter().any(|id| id == &self.graph.workflow.nodes[self.node].id) {
+                        self.error(field, "loop_output_unavailable", "item/index is only available inside this loop body");
+                        return Shape::scalar(ValueType::Dynamic);
+                    }
+                }
                 match &self.graph.workflow.nodes[source].kind {
+                    NodeKind::ForEach { items, .. } if port == "item" => {
+                        let current = self.node;
+                        self.node = source;
+                        let list = self.infer(items, "kind.items");
+                        self.node = current;
+                        return self.shape_path(Self::item_shape(&list), path, field);
+                    }
                     NodeKind::Variable { value_type, .. } if port == "value" => return self.property_path(value_type, path, field),
                     NodeKind::SetVariable { variable_id, .. } if port == "value" => {
                         let schema = self.graph.workflow.nodes.iter().find_map(|node| match &node.kind {

@@ -26,7 +26,7 @@
 
 mod connection;
 mod blueprint;
-pub use blueprint::{NodeSpec, NodeContext, NodeResult};
+pub use blueprint::{NodeSpec, NodeContext, NodeIteration, NodeResult};
 mod http;
 mod spec;
 mod stdio;

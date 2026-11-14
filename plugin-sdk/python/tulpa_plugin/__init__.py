@@ -17,7 +17,7 @@ the log the backend shows.
 
 To ship a plugin, put this folder (`tulpa_plugin/`) next to its `main.py`: `python3 vendor.py <the plugin's folder>` does it."""
 
-from .blueprint import NodeSpec, NodeContext, NodeResult
+from .blueprint import NodeSpec, NodeContext, NodeIteration, NodeResult
 from .failure import BadArgs, Failure, NotFound
 from .host import Host
 from .plugin import Plugin, tool
@@ -27,7 +27,7 @@ from .tab import Block, Row, Section, Tab
 from .types import CallContext, HttpRequest, HttpResponse, UploadedFile
 
 __all__ = [
-    "NodeSpec", "NodeContext", "NodeResult",
+    "NodeSpec", "NodeContext", "NodeIteration", "NodeResult",
     "Array", "Object", "BadArgs", "Block", "CallContext", "DELETE", "Failure", "Host", "HttpRequest", "HttpResponse", "NotFound", "PROTOCOL", "Param",
     "Plugin", "READ", "Row", "Section", "Tab", "ToolSpec", "UploadedFile", "WRITE", "access_folder", "access_path_arg", "run", "tool",
 ]

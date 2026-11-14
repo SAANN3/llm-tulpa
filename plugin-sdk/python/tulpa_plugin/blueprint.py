@@ -24,12 +24,20 @@ class NodeSpec:
 
 
 @dataclass
+class NodeIteration:
+    node_id: str
+    index: int
+
+
+@dataclass
 class NodeContext:
     user_id: int
     blueprint_id: int
     run_id: int
     node_id: str
     host: Host
+    execution_id: int = 0
+    iteration: list[NodeIteration] = field(default_factory=list)
 
 
 @dataclass

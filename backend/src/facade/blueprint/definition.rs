@@ -93,6 +93,18 @@ pub enum NodeKind {
         operator: Comparison,
         right: Input,
     },
+    While {
+        left: Input,
+        operator: Comparison,
+        right: Input,
+        #[serde(default = "default_iterations")]
+        max_iterations: u32,
+    },
+    ForEach {
+        items: Input,
+        #[serde(default = "default_iterations")]
+        max_iterations: u32,
+    },
     Switch {
         value: Input,
         cases: Vec<SwitchCase>,
@@ -113,6 +125,8 @@ pub enum NodeKind {
         arguments: BTreeMap<String, Input>,
     },
 }
+
+fn default_iterations() -> u32 { 1000 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

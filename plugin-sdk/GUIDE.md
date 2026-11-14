@@ -76,3 +76,7 @@ Use `NodeSpec` with the existing `Param` schemas, `NodeContext` for the owning u
 `NodeResult { control_output, outputs }` for output values plus the selected control output. Both hello-world examples declare
 `greet` version 1 and return its `text` through `out`; their model tools continue to work independently.
 See [the node contract](PROTOCOL.md#blueprint-nodes) for versions, limits and Stop behavior.
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
+the node is outside a loop. The same node can execute several times within one run.

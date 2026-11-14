@@ -111,3 +111,7 @@ schemas; return `NodeResult(control_output, outputs)`. Work only on `ctx.user_id
 examples implement the same `greet` node. Versions are exact: bump the node version when changing
 its contract. Stop waits for the current bounded call; do not assume timeout undoes side effects.
 See [Blueprint nodes](PROTOCOL.md#blueprint-nodes) for the complete contract.
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
+the node is outside a loop. The same node can execute several times within one run.

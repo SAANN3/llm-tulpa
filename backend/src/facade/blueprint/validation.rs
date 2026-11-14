@@ -11,6 +11,7 @@ use crate::tools::base::{PropertyInfo, PropertyType};
 use crate::plugins::blueprint::NodeRegistration;
 
 use super::definition::{Input, Literal, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
+use super::control_flow::MAX_LOOP_ITERATIONS;
 use graph::Graph;
 use report::{Diagnostic, ValidationReport};
 
@@ -105,6 +106,10 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
         }
     }
     for node in &workflow.nodes {
+        if matches!(&node.kind, NodeKind::While { max_iterations, .. } | NodeKind::ForEach { max_iterations, .. }
+            if *max_iterations == 0 || *max_iterations > MAX_LOOP_ITERATIONS) {
+            return Err(Diagnostic::draft(Some(&node.id), "kind.max_iterations", format!("max_iterations must be 1..{MAX_LOOP_ITERATIONS}")));
+        }
         let inputs: Vec<&Input> = match &node.kind {
             NodeKind::Entry => vec![],
             NodeKind::Variable { value_type, initial } => {
@@ -157,7 +162,8 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
                 arguments.values().collect()
             }
             NodeKind::Sleep { seconds } => vec![seconds],
-            NodeKind::If { left, right, .. } => vec![left, right],
+            NodeKind::If { left, right, .. } | NodeKind::While { left, right, .. } => vec![left, right],
+            NodeKind::ForEach { items, .. } => vec![items],
             NodeKind::Switch { value, cases } => {
                 let mut ports = HashSet::new();
                 for case in cases {

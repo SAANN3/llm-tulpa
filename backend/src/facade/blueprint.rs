@@ -11,6 +11,7 @@ mod plugin_nodes;
 pub mod runs;
 mod template;
 mod operations;
+mod control_flow;
 mod tool_nodes;
 pub mod validation;
 

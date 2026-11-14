@@ -13,7 +13,7 @@ from .connection import Connection, ProtocolError, internal_error
 from .failure import Failure, NotFound
 from .host import Host
 from .plugin import Plugin
-from .blueprint import NodeContext, NodeResult
+from .blueprint import NodeContext, NodeIteration, NodeResult
 from .tab import Tab
 from .types import CallContext, HttpRequest, HttpResponse, UploadedFile
 
@@ -54,7 +54,9 @@ async def _dispatch(plugin: Plugin, host: Host, method: str, params: dict[str, A
         return [spec.to_json() for spec in plugin.blueprint_nodes()]
     if method == "execute_blueprint_node":
         context = params.get("ctx") or {}
-        ctx = NodeContext(int(context["user_id"]), int(context["blueprint_id"]), int(context["run_id"]), str(context["node_id"]), host)
+        ctx = NodeContext(int(context["user_id"]), int(context["blueprint_id"]), int(context["run_id"]), str(context["node_id"]), host,
+                          execution_id=int(context.get("execution_id", 0)),
+                          iteration=[NodeIteration(str(item["node_id"]), int(item["index"])) for item in context.get("iteration", [])])
         node_type, version = str(params["node_type"]), int(params["version"])
         if not any(n.node_type == node_type and n.version == version for n in plugin.blueprint_nodes()):
             raise NotFound("blueprint node/version is not declared by this plugin")

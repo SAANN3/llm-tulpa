@@ -71,6 +71,8 @@ impl PluginNodes {
                     blueprint_id: run.run.blueprint_id,
                     run_id: run.run.id,
                     node_id: node_id.into(),
+                    execution_id: run.state.nodes[node_id].execution_id.ok_or("node execution id is missing")?,
+                    iteration: run.state.nodes[node_id].iteration.clone(),
                 },
             ))
             .catch_unwind(),

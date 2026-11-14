@@ -1,4 +1,4 @@
-use super::runs::{NodeStatus, Progress, RunStatus, RunDetail};
+use super::runs::{Iteration, NodeStatus, Progress, RunStatus, RunDetail};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -16,6 +16,8 @@ pub enum BlueprintEvent {
         current_node: Option<String>,
         node_id: Option<String>,
         node_status: Option<NodeStatus>,
+        execution_id: Option<u32>,
+        iteration: Vec<Iteration>,
         progress: Progress,
     },
 }
@@ -31,6 +33,8 @@ impl BlueprintEvent {
             node_status: node_id
                 .and_then(|id| run.state.nodes.get(id))
                 .map(|n| n.status),
+            execution_id: node_id.and_then(|id| run.state.nodes.get(id)).and_then(|node| node.execution_id),
+            iteration: node_id.and_then(|id| run.state.nodes.get(id)).map(|node| node.iteration.clone()).unwrap_or_default(),
             progress: run.state.progress(),
         }
     }

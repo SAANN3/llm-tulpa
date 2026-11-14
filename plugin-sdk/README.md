@@ -62,3 +62,7 @@ Both SDKs expose `NodeSpec`, `NodeContext`, `NodeResult` and the hooks `blueprin
 `execute_blueprint_node`. Declarations reuse `Param` schemas, and executions carry the owning
 user and graph run. Both hello-world examples declare the same `greet` node. See
 [the versioned node contract](PROTOCOL.md#blueprint-nodes).
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
+the node is outside a loop. The same node can execute several times within one run.

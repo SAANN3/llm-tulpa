@@ -46,6 +46,8 @@ pub enum NodeType {
     Tool,
     Sleep,
     If,
+    While,
+    ForEach,
     Switch,
     Format,
     Return,
@@ -64,6 +66,8 @@ impl NodeType {
             Self::Tool,
             Self::Sleep,
             Self::If,
+            Self::While,
+            Self::ForEach,
             Self::Switch,
             Self::Format,
             Self::Return,
@@ -84,6 +88,8 @@ impl NodeType {
             NodeKind::Tool { .. } => Self::Tool,
             NodeKind::Sleep { .. } => Self::Sleep,
             NodeKind::If { .. } => Self::If,
+            NodeKind::While { .. } => Self::While,
+            NodeKind::ForEach { .. } => Self::ForEach,
             NodeKind::Switch { .. } => Self::Switch,
             NodeKind::Format { .. } => Self::Format,
             NodeKind::Return { .. } => Self::Return,
@@ -102,19 +108,26 @@ impl NodeType {
             Self::Tool => ("Tool", vec!["out"], Some(("result", ValueType::Dynamic))),
             Self::Sleep => ("Sleep", vec!["out"], None),
             Self::If => ("If", vec!["true", "false"], None),
+            Self::While => ("While", vec!["body", "out"], None),
+            Self::ForEach => ("For each", vec!["body", "out"], None),
             Self::Switch => ("Switch", vec!["default"], None),
             Self::Format => ("Format", vec!["out"], Some(("text", ValueType::String))),
             Self::Return => ("Return", vec![], None),
             Self::Plugin => ("Plugin", vec![], None),
         };
+        let mut outputs: Vec<_> = output.into_iter().map(|(name, value_type)| OutputPort { name, value_type }).collect();
+        if matches!(self, Self::While | Self::ForEach) {
+            outputs.extend([
+                OutputPort { name: "index", value_type: ValueType::Integer },
+                OutputPort { name: "iterations", value_type: ValueType::Integer },
+            ]);
+        }
+        if self == Self::ForEach { outputs.push(OutputPort { name: "item", value_type: ValueType::Dynamic }); }
         NodeDescriptor {
             kind: self,
             title,
             control_outputs,
-            outputs: output
-                .into_iter()
-                .map(|(name, value_type)| OutputPort { name, value_type })
-                .collect(),
+            outputs,
             dynamic_control_outputs: self == Self::Switch,
         }
     }

@@ -303,8 +303,14 @@ configured instance; after a process restart the SDK also rejects an undeclared 
 
 ```json
 {"node_type":"greet","version":1,"arguments":{"name":"Alice"},
- "ctx":{"user_id":7,"blueprint_id":12,"run_id":40,"node_id":"greeting"}}
+ "ctx":{"user_id":7,"blueprint_id":12,"run_id":40,"node_id":"greeting",
+        "execution_id":9,"iteration":[{"node_id":"loop","index":2}]}}
 ```
+
+`execution_id` is unique within this run for each attempted node execution. `iteration` is an
+outer-to-inner list of enclosing loop node ids and zero-based indices, empty outside loops.
+Both SDKs default missing execution_id/iteration to 0/empty for older hosts. Use the run and
+execution identities to distinguish repeated calls; node_id alone does not identify an invocation.
 
 It returns `{"control_output":"out","outputs":{"text":"Hello, Alice!"}}`. Arguments are resolved by the
 existing graph bindings and checked against inputs; output fields and types are checked against

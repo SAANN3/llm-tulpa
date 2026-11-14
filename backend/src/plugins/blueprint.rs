@@ -1,5 +1,5 @@
 use crate::{
-    facade::blueprint::definition::{Literal, NodeKind},
+    facade::blueprint::{definition::{Literal, NodeKind}, runs::Iteration},
     tools::base::PropertyInfo,
 };
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,8 @@ pub struct NodeContext {
     pub blueprint_id: i64,
     pub run_id: i64,
     pub node_id: String,
+    pub execution_id: u32,
+    pub iteration: Vec<Iteration>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

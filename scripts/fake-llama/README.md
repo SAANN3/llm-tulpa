@@ -56,3 +56,7 @@ to check exact versions, input/output references, enabling/disabling and tool-fr
 `blueprint_variables_are_run_local_and_operations_use_typed_values` checks ordered assignments,
 live variable reads versus stored output snapshots, fresh defaults on each run, static errors,
 formatting and all arithmetic/boolean/list operations without model requests.
+
+`blueprint_loops_repeat_scoped_bodies_and_preserve_variables` checks While/ForEach, zero iterations,
+exact iteration limits, snapshot lists, current variables, repeated execution identities/progress
+and static rejection of escaping body results and back edges.

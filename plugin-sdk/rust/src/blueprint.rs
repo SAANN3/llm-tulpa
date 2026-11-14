@@ -1,5 +1,5 @@
 use crate::{Host, Param};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, Serialize)]
@@ -21,6 +21,14 @@ pub struct NodeContext {
     pub run_id: i64,
     pub node_id: String,
     pub host: Host,
+    pub execution_id: u32,
+    pub iteration: Vec<NodeIteration>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NodeIteration {
+    pub node_id: String,
+    pub index: u32,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct NodeResult {
