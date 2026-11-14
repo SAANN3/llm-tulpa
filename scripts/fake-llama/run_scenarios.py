@@ -2566,6 +2566,65 @@ def blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings():
     eq(calls("main"), [], "plugin graph nodes do not call the model")
 
 
+@scenario
+def blueprint_variables_are_run_local_and_operations_use_typed_values():
+    def literal(value): return {"source": "literal", "value": value}
+    def output(node): return {"source": "output", "node_id": node, "port": "value"}
+    def variable(node): return {"source": "variable", "node_id": node}
+    def workflow(kinds):
+        return {"schema_version": 1,
+            "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": kinds[i][0], "port": "out", "to": kinds[i+1][0]} for i in range(len(kinds)-1)]}
+    def create(w): return ok("/api/blueprints", {"name": "Run variables", "workflow": w})["id"]
+    def run(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="typed graph completion")
+        return ok(url)
+    script()
+    w = workflow([
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 2}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": variable("counter"), "right": literal(3)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": output("add")}),
+        ("again", {"type": "set_variable", "variable_id": "counter", "value": literal(9)}),
+        ("format", {"type": "format", "template": "Counter {current}", "arguments": {"current": variable("counter")}}),
+        ("end", {"type": "return", "values": {"initial": output("counter"), "assigned": output("save"),
+            "current": variable("counter"), "text": {"source": "output", "node_id": "format", "port": "text"}}}),
+    ])
+    assert ok("/api/blueprints/validate", {"workflow": w})["valid"]
+    b = create(w)
+    for _ in range(2):
+        d = run(b)
+        eq(d["run"]["status"], "completed", "variable graph finishes")
+        eq(d["state"]["variables"], {"counter": 9}, "assignments are ordered")
+        eq(d["state"]["nodes"]["end"]["outputs"], {"initial": 2, "assigned": 5, "current": 9, "text": "Counter 9"}, "live reads and output snapshots differ")
+    eq(ok(f"/api/blueprints/{b}")["workflow"]["nodes"][1]["kind"]["initial"], 2, "execution does not edit defaults")
+    for broken in ("default", "assignment", "missing", "operation", "path"):
+        bad = json.loads(json.dumps(w))
+        if broken == "default": bad["nodes"][1]["kind"]["initial"] = "two"
+        if broken == "assignment": bad["nodes"][3]["kind"]["value"] = literal("five")
+        if broken == "missing": bad["nodes"][3]["kind"]["variable_id"] = "absent"
+        if broken == "operation": bad["nodes"][2]["kind"]["operation"]["right"] = literal(True)
+        if broken == "path": bad["nodes"][2]["kind"]["operation"]["left"]["path"] = ["field"]
+        eq(ok("/api/blueprints/validate", {"workflow": bad})["valid"], False, broken + " is rejected")
+    for operation, arguments, expected in [
+        ("subtract", {"left": 9, "right": 2}, 7), ("multiply", {"left": 3, "right": 4}, 12),
+        ("divide", {"left": 5, "right": 2}, 2.5), ("remainder", {"left": 9, "right": 4}, 1),
+        ("and", {"left": True, "right": False}, False), ("or", {"left": False, "right": True}, True),
+        ("not", {"value": False}, True), ("length", {"value": "abc"}, 3),
+        ("get", {"list": [4, 5], "index": 1}, 5), ("append", {"list": [1], "value": 2}, [1, 2]),
+        ("concat", {"left": [1], "right": [2, 3]}, [1, 2, 3]),
+    ]:
+        w = workflow([("start", {"type": "entry"}), ("calc", {"type": "calculate", "operation": {"type": operation,
+            **{key: literal(value) for key, value in arguments.items()}}}), ("end", {"type": "return", "values": {"value": output("calc")}})])
+        d = run(create(w))
+        eq(d["run"]["status"], "completed", operation + " finishes")
+        eq(d["state"]["nodes"]["end"]["outputs"]["value"], expected, operation + " result")
+    eq(calls("main"), [], "variables and operations make no model requests")
+
+
 def main():
     names = ONLY or list(SCENARIOS)
     failed = skipped = 0

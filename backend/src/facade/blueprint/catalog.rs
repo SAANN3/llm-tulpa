@@ -1,7 +1,7 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::definition::NodeKind;
+use super::definition::{Literal, NodeKind};
 use crate::plugins::blueprint::NodeRegistration;
 use crate::tools::base::PropertyType;
 
@@ -38,6 +38,9 @@ pub struct NodeDescriptor {
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     Entry,
+    Variable,
+    SetVariable,
+    Calculate,
     Generate,
     Agent,
     Tool,
@@ -53,6 +56,9 @@ impl NodeType {
     pub fn builtins() -> Vec<NodeDescriptor> {
         [
             Self::Entry,
+            Self::Variable,
+            Self::SetVariable,
+            Self::Calculate,
             Self::Generate,
             Self::Agent,
             Self::Tool,
@@ -70,6 +76,9 @@ impl NodeType {
     pub(super) fn kind(node: &NodeKind) -> Self {
         match node {
             NodeKind::Entry => Self::Entry,
+            NodeKind::Variable { .. } => Self::Variable,
+            NodeKind::SetVariable { .. } => Self::SetVariable,
+            NodeKind::Calculate { .. } => Self::Calculate,
             NodeKind::Generate { .. } => Self::Generate,
             NodeKind::Agent { .. } => Self::Agent,
             NodeKind::Tool { .. } => Self::Tool,
@@ -85,6 +94,9 @@ impl NodeType {
     pub(super) fn descriptor(self) -> NodeDescriptor {
         let (title, control_outputs, output) = match self {
             Self::Entry => ("Start", vec!["out"], None),
+            Self::Variable => ("Variable", vec!["out"], Some(("value", ValueType::Dynamic))),
+            Self::SetVariable => ("Set variable", vec!["out"], Some(("value", ValueType::Dynamic))),
+            Self::Calculate => ("Calculate", vec!["out"], Some(("value", ValueType::Dynamic))),
             Self::Generate => ("Generate", vec!["out"], Some(("text", ValueType::String))),
             Self::Agent => ("Agent", vec!["out"], Some(("text", ValueType::String))),
             Self::Tool => ("Tool", vec!["out"], Some(("result", ValueType::Dynamic))),
@@ -130,6 +142,20 @@ impl NodeType {
             .into_iter()
             .find(|p| p.name == port)
             .map(|p| p.value_type)
+    }
+}
+
+impl ValueType {
+    pub(super) fn literal(value: &Literal) -> Self {
+        match value {
+            Literal::Null => Self::Null,
+            Literal::Boolean(_) => Self::Boolean,
+            Literal::Integer(_) => Self::Integer,
+            Literal::Number(_) => Self::Number,
+            Literal::String(_) => Self::String,
+            Literal::Array(_) => Self::Array,
+            Literal::Object(_) => Self::Object,
+        }
     }
 }
 

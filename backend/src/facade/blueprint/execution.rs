@@ -1,5 +1,7 @@
 use super::{
-    definition::{Comparison, Input, Literal, NodeKind, PathPart},
+    definition::{Comparison, Input, Literal, NodeKind, PathPart, Workflow},
+    operations::Operations,
+    validation,
     runs::{NodeStatus, RunState},
     template::{self, Part},
 };
@@ -12,12 +14,17 @@ pub(super) const MAX_STATE_BYTES: usize = 4 * MAX_VALUE_BYTES;
 pub(super) struct Outcome {
     pub control_output: Option<String>,
     pub outputs: BTreeMap<String, Literal>,
+    // Applied with the result so a stopped or oversized node cannot change a variable.
+    pub assignment: Option<(String, Literal)>,
 }
 
 pub(super) fn supported(kind: &NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::Entry
+            | NodeKind::Variable { .. }
+            | NodeKind::SetVariable { .. }
+            | NodeKind::Calculate { .. }
             | NodeKind::Tool { .. }
             | NodeKind::Generate { .. }
             | NodeKind::Agent { .. }
@@ -31,7 +38,9 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
 }
 
 pub(super) async fn execute(
+    node_id: &str,
     kind: &NodeKind,
+    workflow: &Workflow,
     state: &RunState,
     cancel: &CancellationToken,
 ) -> Result<Outcome, String> {
@@ -42,9 +51,31 @@ pub(super) async fn execute(
     let mut result = Outcome {
         control_output: Some("out".into()),
         outputs: BTreeMap::new(),
+        assignment: None,
     };
     match kind {
         NodeKind::Entry => {}
+        NodeKind::Variable { .. } => {
+            let value = state.variables.get(node_id).ok_or("variable is not initialized")?;
+            result.outputs.insert("value".into(), copy_value(value, &mut values.remaining, 0)?);
+        }
+        NodeKind::SetVariable { variable_id, value } => {
+            let schema = workflow.nodes.iter().find_map(|node| match &node.kind {
+                NodeKind::Variable { value_type, .. } if node.id == *variable_id => Some(value_type),
+                _ => None,
+            }).ok_or("assignment must reference a Variable node")?;
+            if !state.variables.contains_key(variable_id) { return Err("variable is not initialized".into()); }
+            if !state.nodes.get(variable_id).is_some_and(|node| node.status == NodeStatus::Completed) {
+                return Err("variable declaration has not executed".into());
+            }
+            let value = values.resolve(value, 0)?;
+            validation::variable_value(&value, schema)?;
+            result.assignment = Some((variable_id.clone(), value.clone()));
+            result.outputs.insert("value".into(), value);
+        }
+        NodeKind::Calculate { operation } => {
+            result.outputs.insert("value".into(), Operations::execute(operation, &mut values)?);
+        }
         NodeKind::Sleep { seconds } => {
             let seconds = values.resolve(seconds, 0)?;
             let seconds = match seconds {
@@ -159,6 +190,15 @@ impl Values<'_> {
         spend(&mut self.remaining, 1, depth)?;
         match input {
             Input::Literal { value } => copy_value(value, &mut self.remaining, depth + 1),
+            Input::Variable { node_id, path } => {
+                if !self.state.nodes.get(node_id).is_some_and(|node| node.status == NodeStatus::Completed) {
+                    return Err(format!("variable declaration '{node_id}' has not executed"));
+                }
+                let value = self.state.variables.get(node_id)
+                    .ok_or_else(|| format!("variable '{node_id}' is not initialized"))?;
+                let value = select(value, path).ok_or_else(|| format!("variable path in '{node_id}' does not exist"))?;
+                copy_value(value, &mut self.remaining, depth + 1)
+            }
             Input::Array { items } => Ok(Literal::Array(
                 items
                     .iter()
@@ -177,24 +217,25 @@ impl Values<'_> {
                     .get(node_id)
                     .filter(|n| n.status == NodeStatus::Completed)
                     .ok_or_else(|| format!("output from '{node_id}' is not available"))?;
-                let mut value = node
+                let value = node
                     .outputs
                     .get(port)
                     .ok_or_else(|| format!("output '{node_id}.{port}' is missing"))?;
-                for part in path {
-                    value = match (value, part) {
-                        (Literal::Object(fields), PathPart::Field(name)) => fields.get(name),
-                        (Literal::Array(items), PathPart::Index(index)) => {
-                            items.get(*index as usize)
-                        }
-                        _ => None,
-                    }
-                    .ok_or_else(|| format!("output path in '{node_id}.{port}' does not exist"))?;
-                }
+                let value = select(value, path).ok_or_else(|| format!("output path in '{node_id}.{port}' does not exist"))?;
                 copy_value(value, &mut self.remaining, depth + 1)
             }
         }
     }
+}
+fn select<'a>(mut value: &'a Literal, path: &[PathPart]) -> Option<&'a Literal> {
+    for part in path {
+        value = match (value, part) {
+            (Literal::Object(fields), PathPart::Field(name)) => fields.get(name),
+            (Literal::Array(items), PathPart::Index(index)) => items.get(*index as usize),
+            _ => None,
+        }?;
+    }
+    Some(value)
 }
 fn spend(remaining: &mut usize, bytes: usize, depth: usize) -> Result<(), String> {
     if depth > 128 {

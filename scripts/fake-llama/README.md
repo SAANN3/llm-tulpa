@@ -52,3 +52,7 @@ manual starts, immutable workflow content and failed readiness without model cal
 
 `blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings` uses the two hello examples
 to check exact versions, input/output references, enabling/disabling and tool-free graph execution.
+
+`blueprint_variables_are_run_local_and_operations_use_typed_values` checks ordered assignments,
+live variable reads versus stored output snapshots, fresh defaults on each run, static errors,
+formatting and all arithmetic/boolean/list operations without model requests.

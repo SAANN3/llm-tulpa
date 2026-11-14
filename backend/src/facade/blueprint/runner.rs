@@ -255,7 +255,7 @@ impl Runner {
                 NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
                 NodeKind::Plugin { .. } => self.plugins.execute(user_id, &run, &node_id, &kind, cancel).await,
                 NodeKind::Agent { .. } => self.agents.execute(user_id, &mut run, &node_id, &kind, &self.permissions, notify, cancel).await,
-                _ => execution::execute(&kind, &run.state, cancel).await,
+                _ => execution::execute(&node_id, &kind, &run.workflow, &run.state, cancel).await,
             };
             if cancel.is_cancelled() {
                 status = RunStatus::Cancelled;
@@ -263,10 +263,20 @@ impl Runner {
             }
             match outcome {
                 Ok(outcome) => {
+                    let previous = outcome.assignment.map(|(id, value)| {
+                        let old = run.state.variables.insert(id.clone(), value);
+                        (id, old)
+                    });
                     let node = run.state.nodes.get_mut(&node_id).unwrap();
                     node.status = NodeStatus::Completed;
                     node.outputs = outcome.outputs;
                     if serde_json::to_vec(&run.state)?.len() > execution::MAX_STATE_BYTES {
+                        if let Some((id, previous)) = previous {
+                            match previous {
+                                Some(value) => { run.state.variables.insert(id, value); }
+                                None => { run.state.variables.remove(&id); }
+                            }
+                        }
                         let node = run.state.nodes.get_mut(&node_id).unwrap();
                         node.outputs.clear();
                         node.status = NodeStatus::Failed;

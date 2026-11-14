@@ -76,6 +76,7 @@ impl Generation {
             return Err(ErrorService::internal("generation output exceeds 1 MiB"));
         }
         Ok(Outcome {
+            assignment: None,
             control_output: Some("out".into()),
             outputs: BTreeMap::from([("text".into(), Literal::String(text))]),
         })

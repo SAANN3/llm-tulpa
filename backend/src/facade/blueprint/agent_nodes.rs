@@ -225,6 +225,7 @@ impl AgentNodes {
                         return Err("agent output exceeds 1 MiB".into());
                     }
                     return Ok(Outcome {
+                        assignment: None,
                         control_output: Some("out".into()),
                         outputs: BTreeMap::from([("text".into(), Literal::String(text))]),
                     });

@@ -97,6 +97,7 @@ impl PluginNodes {
             _ => {}
         }
         Ok(Outcome {
+            assignment: None,
             control_output: result.control_output,
             outputs: result.outputs,
         })

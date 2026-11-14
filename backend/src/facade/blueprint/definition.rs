@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::services::{llm::ThinkChoice, tool_selection_store::ToolMode};
+use crate::tools::base::PropertyType;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -46,6 +47,17 @@ pub struct Edge {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NodeKind {
     Entry,
+    Variable {
+        value_type: PropertyType,
+        initial: Literal,
+    },
+    SetVariable {
+        variable_id: String,
+        value: Input,
+    },
+    Calculate {
+        operation: Operation,
+    },
     Generate {
         model: ModelChoice,
         prompt: Input,
@@ -146,6 +158,11 @@ pub enum Input {
     Literal {
         value: Literal,
     },
+    Variable {
+        node_id: String,
+        #[serde(default)]
+        path: Vec<PathPart>,
+    },
     Output {
         node_id: String,
         port: String,
@@ -160,6 +177,37 @@ pub enum Input {
         #[schema(no_recursion)]
         fields: BTreeMap<String, Input>,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Operation {
+    Add { left: Input, right: Input },
+    Subtract { left: Input, right: Input },
+    Multiply { left: Input, right: Input },
+    Divide { left: Input, right: Input },
+    Remainder { left: Input, right: Input },
+    And { left: Input, right: Input },
+    Or { left: Input, right: Input },
+    Not { value: Input },
+    Length { value: Input },
+    Get { list: Input, index: Input },
+    Append { list: Input, value: Input },
+    Concat { left: Input, right: Input },
+}
+
+impl Operation {
+    pub(super) fn inputs(&self) -> Vec<(&'static str, &Input)> {
+        match self {
+            Self::Add { left, right } | Self::Subtract { left, right }
+            | Self::Multiply { left, right } | Self::Divide { left, right }
+            | Self::Remainder { left, right } | Self::And { left, right }
+            | Self::Or { left, right } | Self::Concat { left, right } => vec![("left", left), ("right", right)],
+            Self::Not { value } | Self::Length { value } => vec![("value", value)],
+            Self::Get { list, index } => vec![("list", list), ("index", index)],
+            Self::Append { list, value } => vec![("list", list), ("value", value)],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

@@ -7,7 +7,7 @@ mod values;
 pub use readiness::Validation;
 
 use std::collections::{BTreeMap, HashSet};
-use crate::tools::base::PropertyInfo;
+use crate::tools::base::{PropertyInfo, PropertyType};
 use crate::plugins::blueprint::NodeRegistration;
 
 use super::definition::{Input, Literal, ModelChoice, NodeKind, SCHEMA_VERSION, Schedule, Workflow};
@@ -107,6 +107,20 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
     for node in &workflow.nodes {
         let inputs: Vec<&Input> = match &node.kind {
             NodeKind::Entry => vec![],
+            NodeKind::Variable { value_type, initial } => {
+                property_type(value_type, 0)
+                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.value_type", message))?;
+                variable_value(initial, value_type)
+                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.initial", message))?;
+                vec![]
+            }
+            NodeKind::SetVariable { variable_id, value } => {
+                if !identifier(variable_id) {
+                    return Err(Diagnostic::draft(Some(&node.id), "kind.variable_id", "invalid variable reference"));
+                }
+                vec![value]
+            }
+            NodeKind::Calculate { operation } => operation.inputs().into_iter().map(|(_, input)| input).collect(),
             NodeKind::Generate { model, prompt, .. } => {
                 model_choice(model)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.model", message))?;
@@ -209,6 +223,9 @@ fn input(value: &Input, nodes: &HashSet<&str>, depth: usize) -> Result<(), Strin
                 return Err(format!("invalid output reference '{node_id}.{port}'"));
             }
         }
+        Input::Variable { node_id, .. } => {
+            if !identifier(node_id) { return Err("invalid variable reference".into()); }
+        }
         Input::Array { items } => {
             for item in items {
                 input(item, nodes, depth + 1)?;
@@ -222,6 +239,34 @@ fn input(value: &Input, nodes: &HashSet<&str>, depth: usize) -> Result<(), Strin
         Input::Literal { .. } => {}
     }
     Ok(())
+}
+
+fn property_type(kind: &PropertyType, depth: usize) -> Result<(), String> {
+    if depth > 32 { return Err("variable type nesting is too deep".into()); }
+    match kind {
+        PropertyType::Array { items } => property_type(items, depth + 1)?,
+        PropertyType::Object { properties } => {
+            let mut names = HashSet::new();
+            for property in properties {
+                if !identifier(&property.name) || !names.insert(&property.name) {
+                    return Err("invalid or duplicate variable object field".into());
+                }
+                property_type(&property.property_type, depth + 1)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub(super) fn variable_value(value: &Literal, schema: &PropertyType) -> Result<(), String> {
+    let mut report = ValidationReport::default();
+    properties::Properties { report: &mut report, node_id: None }
+        .property(&values::Shape::literal(value), schema, "value");
+    match report.diagnostics.into_iter().next() {
+        Some(error) => Err(error.message),
+        None => Ok(()),
+    }
 }
 
 pub(super) fn graph_errors(workflow: &Workflow, plugins: &[NodeRegistration]) -> ValidationReport {

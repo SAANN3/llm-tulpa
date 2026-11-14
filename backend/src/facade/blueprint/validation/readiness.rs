@@ -6,7 +6,7 @@ use super::{
     document, MAX_DOCUMENT_BYTES,
     graph::Graph,
     report::{Severity, ValidationReport},
-    values::{Shape, Values, compatible, placeholders},
+    values::{MAX_INFERRED_SHAPES, Shape, Values, compatible, placeholders},
 };
 use crate::services::{
     error::ErrorService, launch_store::LaunchStore, model_store::ModelStore,
@@ -110,6 +110,9 @@ impl Validation {
                 graph: &graph,
                 report: &mut report,
                 node: index,
+                depth: 0,
+                inferred: BTreeMap::new(),
+                remaining: MAX_INFERRED_SHAPES,
             };
             match &node.kind {
                 NodeKind::Generate { model, prompt, .. }
@@ -290,6 +293,14 @@ impl Validation {
                     }
                 }
                 NodeKind::Entry => {}
+                NodeKind::Variable { .. } => {}
+                NodeKind::SetVariable { variable_id, value } => {
+                    let shape = values.infer(value, "kind.value");
+                    if let Some(schema) = values.variable(variable_id, "kind.variable_id") {
+                        values.property(&shape, schema, "kind.value");
+                    }
+                }
+                NodeKind::Calculate { operation } => { values.operation(operation, "kind.operation"); }
             }
         }
         Ok(report.finish())

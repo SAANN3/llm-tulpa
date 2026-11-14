@@ -152,6 +152,7 @@ impl ToolNodes {
         let value: Literal = serde_json::from_value(result.content)
             .map_err(|_| "tool result cannot be represented as a workflow value")?;
         Ok(Outcome {
+            assignment: None,
             control_output: Some("out".into()),
             outputs: BTreeMap::from([("result".into(), value)]),
         })

@@ -1,4 +1,4 @@
-use super::definition::{Literal, Workflow};
+use super::definition::{Literal, NodeKind, Workflow};
 use crate::facade::agent::{AgentToolCall, Allowance};
 use chrono::{DateTime, Utc};
 use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
@@ -72,6 +72,8 @@ pub struct PendingTool {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunState {
     #[serde(default)]
+    pub variables: BTreeMap<String, Literal>,
+    #[serde(default)]
     pub pending_tool: Option<PendingTool>,
     pub nodes: BTreeMap<String, NodeProgress>,
     pub current_node: Option<String>,
@@ -80,6 +82,10 @@ pub struct RunState {
 impl RunState {
     pub fn new(workflow: &Workflow) -> Self {
         Self {
+            variables: workflow.nodes.iter().filter_map(|node| match &node.kind {
+                NodeKind::Variable { initial, .. } => Some((node.id.clone(), initial.clone())),
+                _ => None,
+            }).collect(),
             pending_tool: None,
             nodes: workflow
                 .nodes

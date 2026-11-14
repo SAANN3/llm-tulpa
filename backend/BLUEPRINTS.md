@@ -104,6 +104,9 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | Kind | Configuration |
 |---|---|
 | `entry` | No timer; the execution entry point |
+| `variable` | value_type (existing PropertyType), initial literal; identity is this node's id |
+| `set_variable` | variable_id, value as an input binding |
+| `calculate` | typed operation with named input bindings |
 | `generate` | model, prompt, optional think |
 | `agent` | model, prompt, optional system_prompt/think, tools, reuse_chat, write_notes, write_memory |
 | `tool` | name, arguments keyed by the tool's argument names, require_confirmation (default false) |
@@ -124,6 +127,7 @@ them. A system-prompt override does not imply changing or deleting the user's gl
 Inputs are another typed enum:
 
 - `{source:"literal", value: ...}`: null, boolean, integer, number, string, list or object.
+- `{source:"variable", node_id, path?: [...]}`: the current value of a Variable node in this run.
 - `{source:"output", node_id, port, path?: [...]}`: another node's output, with optional field names
   and array indices, e.g. `["items", 0, "text"]`.
 - `{source:"array", items: [input, ...]}` and `{source:"object", fields: {name: input}}`: nested
@@ -131,7 +135,7 @@ Inputs are another typed enum:
 
 Edges control execution; bindings control data dependencies. The order in the edges array defines
 the order of edges leaving the same port. Execution traverses that order depth-first.
-There are no variable, arithmetic or loop nodes yet.
+Cycles and multiple incoming control edges require separate execution semantics and are rejected.
 
 Draft validation rejects unknown schema versions, duplicate/invalid IDs, dangling node references,
 invalid settings and oversized documents (1 MiB, 1000 nodes, 4000 edges; binding depth at most 32).
@@ -199,7 +203,8 @@ as text is explicit in Format: strings are used directly, other values render as
 Each user has one sequential queue shared by all of their blueprints. Only one run per user
 is active; different users can run independently. A start
 validates the saved revision and stores an immutable workflow snapshot in `blueprint_runs`, owned
-by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Sleep, If,
+by `BlueprintStore`. Later edits affect future starts only. The runner executes Entry, Variable,
+SetVariable, Calculate, Sleep, If,
 Switch, Format, Return, Tool, Generate and Agent; Plugin nodes execute through their enabled plugin.
 Static validation can still describe those draft nodes without an executor.
 
@@ -417,3 +422,70 @@ for a terminal node); undeclared values/ports fail the node. Explicit plugin act
 Stop behavior as Tool nodes: finish the current bounded call, then cancel downstream work.
 Errors, panics, timeout and process disconnect fail without retries. No dedicated cancellation
 RPC or side-effect rollback is implied. See [the plugin contract](../plugin-sdk/PROTOCOL.md#blueprint-nodes).
+
+## Run variables and operations
+
+A Variable node declares a type and initial literal in the workflow document:
+
+```json
+{"id":"counter","name":"Attempts","kind":{"type":"variable",
+ "value_type":{"property_type":"integer"},"initial":0}}
+```
+
+The id is the reference; the name is a display label. `value_type` uses the same recursive
+PropertyType schema as tools and settings, including primitive array item names and nested
+object/array schemas. Initial values must match; object field names must be valid and unique.
+There is no separate global variable-name namespace. Variables are local to one run, not one
+user or all runs of a blueprint. Each queued snapshot receives its own initial values in
+`state.variables`, keyed by the Variable node id. State is persisted through the existing run
+store; execution never rewrites the workflow document. Older run records without variables
+load with an empty map. This feature does not add persistent variables between runs.
+
+Variable nodes have the usual incoming control edge and `out` output. The declaration must
+execute before a node reads or assigns it; a declaration in a skipped conditional branch is
+not available outside that branch. Executing the declaration exposes its current value as a
+`value` data output; it does not reset it. `set_variable` changes the value and exposes the
+assigned value as its own `value` data output:
+
+```json
+{"type":"set_variable","variable_id":"counter","value":{
+ "source":"output","node_id":"increment","port":"value"}}
+```
+
+Reading `{ "source":"variable", "node_id":"counter" }` observes the value when that node
+executes. Reading an ordinary `source:"output"` reference observes the producing node's stored
+result, even after later assignments. Both allow nested field/index paths. Assignments validate
+against the declared type, including data obtained from tools with unknown output types. Only
+a successful bounded result is committed to state; exceeding the 4 MiB run-state limit restores
+the previous variable value. A stop observed before result application also leaves the previous value.
+Writing a variable does not trigger readers: ordered control edges determine all execution.
+
+A Calculate node exposes its result as `value` and continues through `out`:
+
+```json
+{"type":"calculate","operation":{"type":"add",
+ "left":{"source":"variable","node_id":"counter"},
+ "right":{"source":"literal","value":1}}}
+```
+
+| Operation | Inputs | Result |
+|---|---|---|
+| add, subtract, multiply, remainder | left, right (numbers) | integer for two integers, otherwise number |
+| divide | left, right (numbers) | number |
+| and, or | left, right (booleans) | boolean |
+| not | value (boolean) | boolean |
+| length | value (list or string) | integer; string length counts Unicode scalar values |
+| get | list, index (nonnegative integer) | selected element |
+| append | list, value | a list with the value added |
+| concat | left, right (lists) | a combined list |
+
+Operation variants enforce their operand names and arity during deserialization. The static
+checker and executor share the same operand/result type rules. Known list-element schemas are
+propagated; heterogeneous/unknown selections are checked at runtime. No string/boolean-to-number
+coercion, script evaluation or agent parsing is involved. Integer arithmetic is checked; overflow,
+division by zero, nonfinite results and invalid indices fail the node. Mixed/decimal arithmetic
+uses f64 and rejects integer operands that cannot be converted exactly; division always uses
+this numeric path. Existing comparison and formatting nodes consume the same variable bindings.
+Resolved inputs/results retain the existing 1 MiB limits. Static data-dependency inference is
+bounded to 128 nested bindings and 65,536 inferred shape entries per checked node, so repeated
+references cannot expand validation without a bound. Control loops remain unsupported.
