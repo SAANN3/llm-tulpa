@@ -25,6 +25,7 @@ class NodeSpec:
 
 @dataclass
 class NodeIteration:
+    """An enclosing loop iteration or Merge delivery (run-wide delivery ordinal)."""
     node_id: str
     index: int
 

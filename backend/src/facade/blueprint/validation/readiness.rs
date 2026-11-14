@@ -297,6 +297,13 @@ impl Validation {
                         values.error("kind", "plugin_node_unavailable", "plugin node/version is not available from an enabled plugin");
                     }
                 }
+                NodeKind::Merge { value_type, inputs } => {
+                    for (edge_id, input) in inputs {
+                        let field = format!("kind.inputs.{edge_id}");
+                        let shape = values.infer(input, &field);
+                        values.property(&shape, value_type, &field);
+                    }
+                }
                 NodeKind::Entry => {}
                 NodeKind::Variable { .. } => {}
                 NodeKind::SetVariable { variable_id, value } => {

@@ -145,6 +145,13 @@ impl<'a, 'b> Values<'a, 'b> {
                         self.node = current;
                         return self.shape_path(Self::item_shape(&list), path, field);
                     }
+                    NodeKind::Merge { value_type, .. } if port == "value" => {
+                        if !self.graph.dependencies.scope(&self.graph.workflow.nodes[self.node].id).contains(&source_node.id) {
+                            self.error(field, "merge_output_unavailable", "merge values are only available in that delivery's continuation; accumulate in an outer variable");
+                            return Shape::scalar(ValueType::Dynamic);
+                        }
+                        return self.property_path(value_type, path, field);
+                    }
                     NodeKind::Variable { value_type, .. } if port == "value" => return self.property_path(value_type, path, field),
                     NodeKind::SetVariable { variable_id, .. } if port == "value" => {
                         let schema = self.graph.workflow.nodes.iter().find_map(|node| match &node.kind {

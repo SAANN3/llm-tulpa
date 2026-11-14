@@ -2626,6 +2626,100 @@ def blueprint_variables_are_run_local_and_operations_use_typed_values():
 
 
 @scenario
+def blueprint_merge_delivers_each_input_without_overwriting_active_results():
+    def lit(value): return {"source": "literal", "value": value}
+    def out(node, port="text", path=None): return {"source": "output", "node_id": node, "port": port, "path": path or []}
+    def var(node): return {"source": "variable", "node_id": node}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": edge, "from": a, "port": port, "to": b} for edge, a, port, b in edges]}
+    def run(w):
+        report = ok("/api/blueprints/validate", {"workflow": w})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "Merge fixture", "workflow": w})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="Merge completion")
+        d = ok(url)
+        eq(d["run"]["status"], "completed", "Merge graph completes")
+        return d
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("values", {"type": "variable", "value_type": {"property_type": "array", "items": "string"}, "initial": []}),
+        ("a", {"type": "format", "template": "A", "arguments": {}}),
+        ("b", {"type": "format", "template": "B", "arguments": {}}),
+        ("m", {"type": "merge", "value_type": {"property_type": "string"}, "inputs": {"a-m": out("a"), "b-m": out("b")}}),
+        ("consumer", {"type": "format", "template": "{value}:{b}", "arguments": {"value": out("m", "value"), "b": out("b")}}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("values"), "value": out("consumer")}}),
+        ("save", {"type": "set_variable", "variable_id": "values", "value": out("append", "value")}),
+        ("end", {"type": "return", "values": {"values": var("values")}}),
+    ]
+    edges = [("start-values", "start", "out", "values"), ("values-a", "values", "out", "a"),
+        ("a-m", "a", "out", "m"), ("values-b", "values", "out", "b"), ("b-m", "b", "out", "m"),
+        ("m-consumer", "m", "out", "consumer"), ("consumer-append", "consumer", "out", "append"),
+        ("append-save", "append", "out", "save"), ("save-end", "save", "out", "end")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["variables"]["values"], ["A:B", "B:B"], "first value survives while the second producer supplies its input")
+    for name in ("m", "consumer", "end"): eq(d["state"]["nodes"][name]["executions"], 2, "each delivery runs the continuation")
+    eq(d["state"]["nodes"]["consumer"]["iteration"], [{"node_id": "m", "index": 1}], "delivery identity")
+    eq(d["run"]["progress"]["percent"], None, "unknown delivery total has no percentage")
+    # Inactive alternatives do not prevent the active input; two inactive inputs skip the region.
+    for active in (True, False, None):
+        w = graph(kinds, edges); w = json.loads(json.dumps(w))
+        w["nodes"].append({"id": "if", "name": "If", "kind": {"type": "if", "left": lit(active is True), "operator": "equal", "right": lit(True)}})
+        w["nodes"][5]["kind"]["arguments"]["b"] = lit("B")
+        w["edges"][1].update({"to": "if"})
+        w["edges"][3].update({"from": "if", "port": "false" if active is not None else "true"})
+        w["edges"].append({"id": "if-a", "from": "if", "port": "true", "to": "a"})
+        d = run(w)
+        eq(d["state"]["variables"]["values"], [] if active is None else ["A:B" if active else "B:B"], "selected input only")
+        eq(d["state"]["nodes"]["m"]["executions"], 0 if active is None else 1, "inactive inputs make no calls")
+        if active is None: eq(d["state"]["nodes"]["consumer"]["status"], "skipped", "no input skips continuation")
+    # A Merge can pass a typed object; bindings retain recursive schema/path validation.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    w["nodes"][4]["kind"]["value_type"] = {"property_type": "object", "properties": [
+        {"name": "text", "property_type": "string", "description": "", "required": True},
+        {"name": "active", "property_type": "boolean", "description": "", "required": True}]}
+    w["nodes"][4]["kind"]["inputs"] = {f"{name}-m": {"source": "object", "fields": {"text": out(name), "active": lit(True)}} for name in ("a", "b")}
+    w["nodes"][5]["kind"]["arguments"]["value"] = out("m", "value", ["text"])
+    eq(run(w)["state"]["variables"]["values"], ["A:B", "B:B"], "typed object deliveries")
+    for invalid in ("missing", "extra", "type", "path", "escape", "ordinary_multiple"):
+        broken = json.loads(json.dumps(w))
+        if invalid == "missing": del broken["nodes"][4]["kind"]["inputs"]["a-m"]
+        if invalid == "extra": broken["nodes"][4]["kind"]["inputs"]["extra"] = lit({"text": "X", "active": True})
+        if invalid == "type": broken["nodes"][4]["kind"]["inputs"]["a-m"] = lit(42)
+        if invalid == "path": broken["nodes"][5]["kind"]["arguments"]["value"] = out("m", "value", ["absent"])
+        if invalid == "escape":
+            broken["nodes"].append({"id": "outside", "name": "Outside", "kind": {"type": "return", "values": {"bad": out("m", "value")}}})
+            broken["edges"].append({"id": "outside", "from": "start", "port": "out", "to": "outside"})
+        if invalid == "ordinary_multiple": broken["nodes"][4]["kind"] = {"type": "format", "template": "bad", "arguments": {}}
+        eq(ok("/api/blueprints/validate", {"workflow": broken})["valid"], False, invalid + " is rejected")
+    # A new loop iteration resets closed input edges, while delivery ordinals stay unique.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    w["nodes"].extend([{"id": "loop", "name": "Loop", "kind": {"type": "for_each", "items": lit([1, 2])}},
+        {"id": "final", "name": "Final", "kind": {"type": "return", "values": {"values": var("values")}}}])
+    w["edges"][1].update({"from": "loop", "port": "body"}); w["edges"][3].update({"from": "loop", "port": "body"})
+    w["edges"].extend([{"id": "values-loop", "from": "values", "port": "out", "to": "loop"}, {"id": "loop-final", "from": "loop", "port": "out", "to": "final"}])
+    d = run(w)
+    eq(d["state"]["variables"]["values"], ["A:B", "B:B", "A:B", "B:B"], "every loop iteration receives both inputs")
+    eq(d["state"]["nodes"]["consumer"]["iteration"], [{"node_id": "loop", "index": 1}, {"node_id": "m", "index": 3}], "nested scope identity")
+    # Nested Merge continues twice for each outer delivery.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    for name in ("p", "q"):
+        w["nodes"].append({"id": name, "name": name, "kind": {"type": "format", "template": "{value}/" + name, "arguments": {"value": out("m", "value")}}})
+    w["nodes"].append({"id": "n", "name": "Nested", "kind": {"type": "merge", "value_type": {"property_type": "string"}, "inputs": {"p-n": out("p"), "q-n": out("q")}}})
+    w["nodes"][5]["kind"]["arguments"] = {"value": out("n", "value"), "b": lit("B")}
+    w["edges"][5]["to"] = "p"
+    w["edges"].extend([{"id": "m-q", "from": "m", "port": "out", "to": "q"}, {"id": "p-n", "from": "p", "port": "out", "to": "n"},
+        {"id": "q-n", "from": "q", "port": "out", "to": "n"}, {"id": "n-consumer", "from": "n", "port": "out", "to": "consumer"}])
+    d = run(w)
+    eq(d["state"]["variables"]["values"], ["A/p:B", "A/q:B", "B/p:B", "B/q:B"], "nested deliveries finish in order")
+    eq(d["state"]["nodes"]["n"]["executions"], 4, "nested execution count")
+    eq(calls("main"), [], "Merge itself makes no model requests")
+
+
+@scenario
 def blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results():
     def lit(value): return {"source": "literal", "value": value}
     def out(node, port="text"): return {"source": "output", "node_id": node, "port": port}

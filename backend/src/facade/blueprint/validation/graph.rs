@@ -1,7 +1,7 @@
 use crate::facade::blueprint::{
     catalog::NodeType,
     definition::{NodeKind, Workflow},
-    control_flow::{ControlFlow, MAX_LOOP_DEPTH},
+    control_flow::{ControlFlow, MAX_REPEAT_DEPTH},
     dependencies::Dependencies,
 };
 use super::report::ValidationReport;
@@ -68,8 +68,8 @@ impl<'a> Graph<'a> {
             valid = false;
         }
         for (i, count) in incoming.iter().enumerate() {
-            if *count > 1 {
-                report.error(Some(&workflow.nodes[i].id), "edges", "merge_unsupported", "multiple incoming edges require explicit merge semantics, which are not supported yet");
+            if *count > 1 && !matches!(workflow.nodes[i].kind, NodeKind::Merge { .. }) {
+                report.error(Some(&workflow.nodes[i].id), "edges", "merge_unsupported", "multiple incoming control edges require a Merge node");
                 valid = false;
             }
             if *count > 0 && matches!(workflow.nodes[i].kind, NodeKind::Entry) {
@@ -83,8 +83,28 @@ impl<'a> Graph<'a> {
             }
         }
         if !valid { return graph; }
-        if graph.dependencies.scopes.values().any(|scope| scope.len() > MAX_LOOP_DEPTH) {
-            report.error(None, "edges", "loop_nesting", "loop nesting exceeds 32 levels");
+        for node in &workflow.nodes {
+            if let NodeKind::Merge { inputs, .. } = &node.kind {
+                let expected: HashSet<_> = workflow.edges.iter().filter(|edge| edge.to == node.id).map(|edge| edge.id.as_str()).collect();
+                if expected.is_empty() || expected != inputs.keys().map(String::as_str).collect() {
+                    report.error(Some(&node.id), "kind.inputs", "merge_inputs", "Merge needs one binding for every incoming control edge, keyed by edge id");
+                }
+            }
+        }
+        for edge in &workflow.edges {
+            let from = &workflow.nodes[graph.indices[edge.from.as_str()]];
+            let mut expected = graph.dependencies.scope(&from.id).to_vec();
+            if matches!(from.kind, NodeKind::Merge { .. }) || (matches!(from.kind, NodeKind::While { .. } | NodeKind::ForEach { .. }) && edge.port == "body") {
+                expected.push(from.id.clone());
+            }
+            if graph.dependencies.scope(&edge.to) != expected {
+                report.error(Some(&edge.to), "edges", "repeat_scope", "incoming control edges must belong to the same repeat scope");
+            }
+        }
+        if graph.dependencies.scopes.values().any(|scope| scope.len() > MAX_REPEAT_DEPTH)
+            || workflow.nodes.iter().any(|node| matches!(node.kind, NodeKind::Merge { .. } | NodeKind::While { .. } | NodeKind::ForEach { .. })
+                && graph.dependencies.scope(&node.id).len() >= MAX_REPEAT_DEPTH) {
+            report.error(None, "edges", "loop_nesting", "repeat nesting exceeds 32 levels");
             return graph;
         }
         let visited: HashSet<_> = ControlFlow::descendants(workflow, std::iter::once(workflow.nodes[entries[0]].id.as_str())).into_iter().collect();
@@ -98,7 +118,7 @@ impl<'a> Graph<'a> {
             for source in sources {
                 let Some(&from) = graph.indices.get(source.as_str()) else { continue };
                 if !graph.dependencies.scope(id).starts_with(graph.dependencies.scope(source)) {
-                    report.error(Some(id), "kind", "iteration_scope", format!("'{source}' is inside a different loop scope; accumulate its result in an outer variable"));
+                    report.error(Some(id), "kind", "iteration_scope", format!("'{source}' is inside a different repeat scope; accumulate its result in an outer variable"));
                 }
                 if !outgoing[from].iter().any(|(_, target)| *target == to) {
                     outgoing[from].push(("", to));
@@ -131,7 +151,7 @@ impl<'a> Graph<'a> {
                 for loop_id in graph.dependencies.scope(id) {
                     if source != loop_id && !graph.dependencies.scope(source).contains(loop_id)
                         && graph.available[from].contains(&graph.indices[loop_id.as_str()]) {
-                        report.error(Some(id), "kind", "loop_dependency", format!("'{source}' waits for loop '{loop_id}' to finish and cannot supply its body"));
+                        report.error(Some(id), "kind", "repeat_dependency", format!("'{source}' waits for repeat scope '{loop_id}' to finish and cannot supply its continuation"));
                     }
                 }
             }

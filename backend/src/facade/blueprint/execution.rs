@@ -25,6 +25,7 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
             | NodeKind::Variable { .. }
             | NodeKind::SetVariable { .. }
             | NodeKind::Calculate { .. }
+            | NodeKind::Merge { .. }
             | NodeKind::Tool { .. }
             | NodeKind::Generate { .. }
             | NodeKind::Agent { .. }

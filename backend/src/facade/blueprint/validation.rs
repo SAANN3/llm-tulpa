@@ -111,6 +111,13 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
             return Err(Diagnostic::draft(Some(&node.id), "kind.max_iterations", format!("max_iterations must be 1..{MAX_LOOP_ITERATIONS}")));
         }
         match &node.kind {
+            NodeKind::Merge { value_type, inputs } => {
+                property_type(value_type, 0)
+                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.value_type", message))?;
+                if inputs.keys().any(|id| !identifier(id)) {
+                    return Err(Diagnostic::draft(Some(&node.id), "kind.inputs", "invalid incoming edge id"));
+                }
+            }
             NodeKind::Variable { value_type, initial, .. } => {
                 property_type(value_type, 0)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.value_type", message))?;

@@ -85,5 +85,6 @@ See [the contract](../PROTOCOL.md#blueprint-nodes) and `examples/hello-world-pyt
 The host waits for all bound data before invoking a node; a skipped required source skips its invocation.
 
 Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
-`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
-the node is outside a loop. The same node can execute several times within one run.
+`NodeIteration(node_id, index)` entries from outermost to innermost repeat scope: loop iterations
+or Merge deliveries. Merge indices count deliveries across this run. An empty path means the node
+is outside a repeat scope. The same node can execute several times within one run.

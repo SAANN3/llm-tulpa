@@ -89,6 +89,8 @@ pub struct PendingTool {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunState {
     #[serde(default)]
+    pub has_merges: bool,
+    #[serde(default)]
     pub execution_count: u32,
     #[serde(default)]
     pub skipped_executions: u32,
@@ -105,6 +107,7 @@ pub struct RunState {
 impl RunState {
     pub fn new(workflow: &Workflow) -> Self {
         Self {
+            has_merges: workflow.nodes.iter().any(|node| matches!(node.kind, NodeKind::Merge { .. })),
             execution_count: 0,
             skipped_executions: 0,
             loops: workflow.nodes.iter().filter(|node| matches!(node.kind, NodeKind::While { .. } | NodeKind::ForEach { .. }))
@@ -137,7 +140,7 @@ impl RunState {
         }
     }
     pub fn progress(&self) -> Progress {
-        if !self.loops.is_empty() {
+        if self.has_merges || !self.loops.is_empty() {
             return Progress {
                 completed: self.nodes.values().map(|node| node.executions).sum(),
                 skipped: self.skipped_executions,

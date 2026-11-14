@@ -3,21 +3,25 @@ use super::{
     dependencies::Dependencies,
     execution::{MAX_STATE_BYTES, MAX_VALUE_BYTES, Outcome, Values},
     runs::{Iteration, NodeStatus, RunState},
+    validation,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub(super) const MAX_EXECUTIONS: u32 = 100_000;
 pub(super) const MAX_LOOP_ITERATIONS: u32 = 10_000;
-pub(super) const MAX_LOOP_DEPTH: usize = 32;
+pub(super) const MAX_REPEAT_DEPTH: usize = 32;
 
 pub(super) struct Visit {
     pub node_id: String,
     pub iteration: Vec<Iteration>,
+    pub input: Option<String>,
 }
 
 enum Frame {
     Node(Visit),
     Repeat(Visit),
+    Merge(Visit),
+    Close(Visit),
 }
 
 struct Cursor {
@@ -30,6 +34,8 @@ pub(super) struct ControlFlow {
     pending: Vec<Frame>,
     cursors: HashMap<String, Cursor>,
     dependencies: Dependencies,
+    active_merges: HashSet<String>,
+    settled: HashSet<String>,
 }
 
 impl ControlFlow {
@@ -42,6 +48,7 @@ impl ControlFlow {
                 vec![Frame::Node(Visit {
                     node_id: node.id.clone(),
                     iteration: vec![],
+                    input: None,
                 })]
             })
             .unwrap_or_default();
@@ -49,63 +56,145 @@ impl ControlFlow {
             pending,
             cursors: HashMap::new(),
             dependencies: Dependencies::new(workflow),
+            active_merges: HashSet::new(),
+            settled: HashSet::new(),
         }
     }
 
     pub fn next(&mut self, workflow: &Workflow, state: &mut RunState) -> Result<Option<Visit>, String> {
         loop {
-            let skipped: Vec<_> = self.dependencies.sources.iter().filter(|(id, sources)| {
-                state.nodes.get(*id).is_some_and(|node| node.status == NodeStatus::Pending)
-                    && sources.iter().any(|source| state.nodes.get(source).is_some_and(|node| node.status == NodeStatus::Skipped))
-            }).map(|(id, _)| id.as_str()).collect();
-            if skipped.is_empty() { break; }
-            Self::skip(workflow, state, skipped.into_iter());
-        }
-        self.pending.retain(|frame| state.nodes[&Self::visit(frame).node_id].status != NodeStatus::Skipped);
-        for index in (0..self.pending.len()).rev() {
-            let frame = &self.pending[index];
-            let visit = Self::visit(frame);
-            if matches!(frame, Frame::Repeat(_)) {
-                let mut body = visit.iteration.clone();
-                body.push(Iteration { node_id: visit.node_id.clone(), index: self.cursors[&visit.node_id].iterations - 1 });
-                // A parked body node can wait for a later outer branch. Keep that iteration alive.
-                if self.pending.iter().enumerate().any(|(other, frame)| other != index && Self::visit(frame).iteration.starts_with(&body))
-                    || self.dependencies.scopes.iter().any(|(id, scope)| scope.contains(&visit.node_id) && matches!(state.nodes[id].status, NodeStatus::Pending | NodeStatus::Running)) {
-                    continue;
+            self.settle(workflow, state);
+            let mut closed = false;
+            for index in (0..self.pending.len()).rev() {
+                let frame = &self.pending[index];
+                let visit = Self::visit(frame);
+                if matches!(frame, Frame::Close(_)) {
+                    if self.body_pending(state, index, &visit.node_id, &visit.iteration) { continue; }
+                    let id = visit.node_id.clone();
+                    self.pending.remove(index);
+                    self.active_merges.remove(&id);
+                    closed = true;
+                    break;
                 }
+                if matches!(frame, Frame::Merge(_)) && self.active_merges.contains(&visit.node_id) { continue; }
+                if matches!(frame, Frame::Repeat(_)) {
+                    let mut body = visit.iteration.clone();
+                    body.push(Iteration { node_id: visit.node_id.clone(), index: self.cursors[&visit.node_id].iterations - 1 });
+                    // A parked body node can wait for a later outer branch. Keep that iteration alive.
+                    if self.body_pending(state, index, &visit.node_id, &body) { continue; }
+                }
+                if !self.dependencies.required(&visit.node_id, visit.input.as_deref()).iter().all(|source| {
+                    state.nodes.get(source).is_some_and(|node| {
+                        let scope = self.dependencies.scope(source);
+                        node.status == NodeStatus::Completed && visit.iteration.starts_with(&node.iteration)
+                            && node.iteration.len() == scope.len()
+                            && (!(self.cursors.contains_key(source) || self.active_merges.contains(source)) || self.dependencies.scope(&visit.node_id).contains(source))
+                    })
+                }) { continue; }
+                let frame = self.pending.remove(index);
+                let visit = match frame {
+                    Frame::Node(visit) => { self.cursors.remove(&visit.node_id); visit }
+                    Frame::Repeat(visit) => { Self::reset(state, &visit.node_id); visit }
+                    Frame::Merge(visit) => {
+                        let ids = Self::descendants(workflow, std::iter::once(visit.node_id.as_str()));
+                        self.reset_region(workflow, state, &ids, Some(&visit.node_id));
+                        visit
+                    }
+                    Frame::Close(_) => unreachable!(),
+                };
+                return Ok(Some(visit));
             }
-            if !self.dependencies.sources[&visit.node_id].iter().all(|source| {
-                state.nodes.get(source).is_some_and(|node| {
-                    let scope = self.dependencies.scope(source);
-                    node.status == NodeStatus::Completed && visit.iteration.starts_with(&node.iteration)
-                        && node.iteration.len() == scope.len()
-                        && (!self.cursors.contains_key(source) || self.dependencies.scope(&visit.node_id).contains(source))
-                })
-            }) { continue; }
-            let frame = self.pending.remove(index);
-            let visit = match frame {
-                Frame::Node(visit) => { self.cursors.remove(&visit.node_id); visit }
-                Frame::Repeat(visit) => { Self::reset(state, &visit.node_id); visit }
-            };
-            return Ok(Some(visit));
+            if closed { continue; }
+            if self.pending.is_empty() { return Ok(None); }
+            return Err("no node can proceed: required inputs or an unfinished repeat scope are still pending".into());
         }
-        if self.pending.is_empty() { return Ok(None); }
-        Err("no node can proceed: required inputs or an unfinished loop are still pending".into())
+    }
+
+    fn body_pending(&self, state: &RunState, index: usize, id: &str, body: &[Iteration]) -> bool {
+        self.pending.iter().enumerate().any(|(other, frame)| other != index && Self::visit(frame).iteration.starts_with(body))
+            || self.dependencies.scopes.iter().any(|(node, scope)| scope.iter().any(|scope| scope == id) && matches!(state.nodes[node].status, NodeStatus::Pending | NodeStatus::Running))
     }
 
     fn visit(frame: &Frame) -> &Visit {
-        match frame { Frame::Node(visit) | Frame::Repeat(visit) => visit }
+        match frame { Frame::Node(visit) | Frame::Repeat(visit) | Frame::Merge(visit) | Frame::Close(visit) => visit }
     }
 
-    fn skip<'a>(workflow: &Workflow, state: &mut RunState, roots: impl Iterator<Item = &'a str>) {
-        for id in Self::descendants(workflow, roots) {
+    fn settle(&mut self, workflow: &Workflow, state: &mut RunState) {
+        loop {
+            let roots: Vec<_> = self.dependencies.sources.iter().filter(|(id, sources)| {
+                !self.dependencies.merge_sources.contains_key(*id)
+                    && state.nodes.get(*id).is_some_and(|node| node.status == NodeStatus::Pending)
+                    && sources.iter().any(|source| state.nodes.get(source).is_some_and(|node| node.status == NodeStatus::Skipped))
+            }).map(|(id, _)| id.clone()).collect();
+            let mut changed = !roots.is_empty();
+            self.skip_nodes(workflow, state, roots);
+            let before = self.pending.len();
+            self.pending.retain(|frame| {
+                let visit = Self::visit(frame);
+                if matches!(frame, Frame::Merge(_)) {
+                    !self.dependencies.required(&visit.node_id, visit.input.as_deref()).iter()
+                        .any(|source| state.nodes.get(source).is_some_and(|node| node.status == NodeStatus::Skipped))
+                } else { state.nodes[&visit.node_id].status != NodeStatus::Skipped }
+            });
+            changed |= self.pending.len() != before;
+            let skipped: Vec<_> = self.dependencies.merge_sources.keys().filter(|id| {
+                state.nodes[*id].status == NodeStatus::Pending && !self.active_merges.contains(*id)
+                    && !self.pending.iter().any(|frame| matches!(frame, Frame::Merge(visit) if &visit.node_id == *id))
+                    && workflow.edges.iter().filter(|edge| &edge.to == *id).all(|edge| self.settled.contains(&edge.id))
+            }).cloned().collect();
+            changed |= !skipped.is_empty();
+            self.skip_nodes(workflow, state, skipped);
+            if !changed { break; }
+        }
+    }
+
+    fn skip_nodes(&mut self, workflow: &Workflow, state: &mut RunState, mut roots: Vec<String>) {
+        while let Some(id) = roots.pop() {
             if let Some(node) = state.nodes.get_mut(&id) {
-                if node.status == NodeStatus::Pending {
-                    node.status = NodeStatus::Skipped;
-                    state.skipped_executions += 1;
+                if node.status != NodeStatus::Pending { continue; }
+                node.status = NodeStatus::Skipped;
+                state.skipped_executions += 1;
+                for edge in workflow.edges.iter().filter(|edge| edge.from == id) {
+                    self.settled.insert(edge.id.clone());
+                    // An inactive branch closes only its own Merge input, not the other deliveries.
+                    if !self.dependencies.merge_sources.contains_key(&edge.to) { roots.push(edge.to.clone()); }
                 }
             }
         }
+    }
+
+    fn skip_edge(&mut self, workflow: &Workflow, state: &mut RunState, edge_id: &str) {
+        if let Some(edge) = workflow.edges.iter().find(|edge| edge.id == edge_id) {
+            self.settled.insert(edge.id.clone());
+            if !self.dependencies.merge_sources.contains_key(&edge.to) {
+                self.skip_nodes(workflow, state, vec![edge.to.clone()]);
+            }
+        }
+    }
+
+    fn reset_region(&mut self, workflow: &Workflow, state: &mut RunState, ids: &[String], preserve_input: Option<&str>) {
+        let members: HashSet<_> = ids.iter().map(String::as_str).collect();
+        for id in ids {
+            Self::reset(state, id);
+            if let Some(progress) = state.loops.get_mut(id) { progress.iterations = 0; }
+        }
+        for edge in &workflow.edges {
+            if members.contains(edge.to.as_str()) && Some(edge.to.as_str()) != preserve_input {
+                self.settled.remove(&edge.id);
+            }
+        }
+    }
+
+    pub fn merge_outcome(&self, workflow: &Workflow, state: &RunState, visit: &Visit) -> Result<Outcome, String> {
+        let node = workflow.nodes.iter().find(|node| node.id == visit.node_id).ok_or("missing Merge node")?;
+        let NodeKind::Merge { inputs, value_type } = &node.kind else { return Err("expected Merge node".into()) };
+        let input = visit.input.as_ref().and_then(|id| inputs.get(id)).ok_or("missing Merge input binding")?;
+        let value = Values { state, remaining: MAX_VALUE_BYTES }.resolve(input, 0)?;
+        validation::variable_value(&value, value_type)?;
+        if serde_json::to_vec(&value).map_err(|_| "could not serialize Merge value")?.len() > MAX_VALUE_BYTES {
+            return Err("Merge value exceeds 1 MiB".into());
+        }
+        Ok(Outcome { control_output: Some("out".into()), outputs: BTreeMap::from([("value".into(), value)]), assignment: None })
     }
 
     pub fn loop_outcome(
@@ -209,20 +298,16 @@ impl ControlFlow {
     ) -> Result<(), String> {
         let is_loop = state.loops.contains_key(&visit.node_id);
         if is_loop && selected == Some("body") {
-            if visit.iteration.len() >= MAX_LOOP_DEPTH {
-                return Err("loop nesting exceeds 32 levels".into());
+            if visit.iteration.len() >= MAX_REPEAT_DEPTH {
+                return Err("repeat nesting exceeds 32 levels".into());
             }
             let roots = workflow
                 .edges
                 .iter()
                 .filter(|edge| edge.from == visit.node_id && edge.port == "body")
                 .map(|edge| edge.to.as_str());
-            for id in Self::descendants(workflow, roots) {
-                Self::reset(state, &id);
-                if let Some(progress) = state.loops.get_mut(&id) {
-                    progress.iterations = 0;
-                }
-            }
+            let ids = Self::descendants(workflow, roots);
+            self.reset_region(workflow, state, &ids, None);
             let mut iteration = visit.iteration.clone();
             iteration.push(Iteration {
                 node_id: visit.node_id.clone(),
@@ -231,8 +316,16 @@ impl ControlFlow {
             self.pending.push(Frame::Repeat(Visit {
                 node_id: visit.node_id.clone(),
                 iteration: visit.iteration,
+                input: None,
             }));
             self.push_edges(workflow, &visit.node_id, "body", &iteration);
+        } else if self.dependencies.merge_sources.contains_key(&visit.node_id) {
+            if visit.iteration.len() >= MAX_REPEAT_DEPTH { return Err("repeat nesting exceeds 32 levels".into()); }
+            let mut body = visit.iteration;
+            body.push(Iteration { node_id: visit.node_id.clone(), index: state.nodes[&visit.node_id].executions });
+            self.active_merges.insert(visit.node_id.clone());
+            self.pending.push(Frame::Close(Visit { node_id: visit.node_id.clone(), iteration: body.clone(), input: None }));
+            self.push_edges(workflow, &visit.node_id, "out", &body);
         } else {
             if is_loop {
                 self.cursors.remove(&visit.node_id);
@@ -242,7 +335,7 @@ impl ControlFlow {
                 .iter()
                 .filter(|edge| edge.from == visit.node_id && Some(edge.port.as_str()) != selected)
             {
-                Self::skip(workflow, state, std::iter::once(edge.to.as_str()));
+                self.skip_edge(workflow, state, &edge.id);
             }
             if let Some(selected) = selected {
                 self.push_edges(workflow, &visit.node_id, selected, &visit.iteration);
@@ -258,10 +351,10 @@ impl ControlFlow {
             .rev()
             .filter(|edge| edge.from == from && edge.port == port)
         {
-            self.pending.push(Frame::Node(Visit {
-                node_id: edge.to.clone(),
-                iteration: iteration.to_vec(),
-            }));
+            self.settled.insert(edge.id.clone());
+            let merge = self.dependencies.merge_sources.contains_key(&edge.to);
+            let visit = Visit { node_id: edge.to.clone(), iteration: iteration.to_vec(), input: merge.then(|| edge.id.clone()) };
+            self.pending.push(if merge { Frame::Merge(visit) } else { Frame::Node(visit) });
         }
     }
 

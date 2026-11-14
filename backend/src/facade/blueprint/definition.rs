@@ -68,6 +68,10 @@ pub enum NodeKind {
     Calculate {
         operation: Operation,
     },
+    Merge {
+        value_type: PropertyType,
+        inputs: BTreeMap<String, Input>,
+    },
     Generate {
         model: ModelChoice,
         prompt: Input,
@@ -232,7 +236,7 @@ impl NodeKind {
             Self::Sleep { seconds } => vec![seconds],
             Self::If { left, right, .. } | Self::While { left, right, .. } => vec![left, right],
             Self::ForEach { items, .. } => vec![items],
-            Self::Return { values } => values.values().collect(),
+            Self::Return { values } | Self::Merge { inputs: values, .. } => values.values().collect(),
         }
     }
 }

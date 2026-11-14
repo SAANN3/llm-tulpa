@@ -113,5 +113,6 @@ its contract. Stop waits for the current bounded call; do not assume timeout und
 See [Blueprint nodes](PROTOCOL.md#blueprint-nodes) for the complete contract.
 
 Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
-`NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
-the node is outside a loop. The same node can execute several times within one run.
+`NodeIteration(node_id, index)` entries from outermost to innermost repeat scope: loop iterations
+or Merge deliveries. Merge indices count deliveries across this run. An empty path means the node
+is outside a repeat scope. The same node can execute several times within one run.

@@ -68,3 +68,7 @@ type changes, revision-checked resets and Stop before assignment without model r
 `blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results` checks four-source readiness,
 branch order, nested array/object bindings, skipped consumers, delayed variable declarations,
 parked loop bodies, final loop-header results and rejection of circular or cross-iteration inputs.
+
+`blueprint_merge_delivers_each_input_without_overwriting_active_results` checks ordered deliveries,
+parked continuations, inactive alternatives, typed objects/binding maps/paths, repeated loop
+inputs, nested Merge scopes and rejection of escaping results or implicit control convergence.

@@ -267,6 +267,7 @@ impl Runner {
                 NodeKind::Generate { model, prompt, think } => self.generation.execute(user_id, &run.state, model, prompt, think.clone(), cancel).await,
                 NodeKind::Plugin { .. } => self.plugins.execute(user_id, &run, &node_id, &kind, cancel).await,
                 NodeKind::Agent { .. } => self.agents.execute(user_id, &mut run, &node_id, &kind, &self.permissions, notify, cancel).await,
+                NodeKind::Merge { .. } => flow.merge_outcome(&run.workflow, &run.state, &visit),
                 NodeKind::While { .. } | NodeKind::ForEach { .. } => flow.loop_outcome(&node_id, &kind, &mut run.state),
                 _ => execution::execute(&node_id, &kind, &run.workflow, &run.state, cancel).await,
             };

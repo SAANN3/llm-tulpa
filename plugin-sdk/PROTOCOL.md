@@ -308,7 +308,9 @@ configured instance; after a process restart the SDK also rejects an undeclared 
 ```
 
 `execution_id` is unique within this run for each attempted node execution. `iteration` is an
-outer-to-inner list of enclosing loop node ids and zero-based indices, empty outside loops.
+outer-to-inner list of enclosing repeat node ids and zero-based indices, empty outside repeat scopes.
+A step identifies a loop iteration or Merge delivery; Merge indices count successful deliveries
+across the run, including when that Merge is inside a loop.
 Both SDKs default missing execution_id/iteration to 0/empty for older hosts. Use the run and
 execution identities to distinguish repeated calls; node_id alone does not identify an invocation.
 

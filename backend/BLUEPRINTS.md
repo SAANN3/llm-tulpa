@@ -109,6 +109,7 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | `variable` | value_type (existing PropertyType), initial literal, scope (`run` by default, or `blueprint`); identity is this node's id |
 | `set_variable` | variable_id, value as an input binding |
 | `calculate` | typed operation with named input bindings |
+| `merge` | value_type (existing PropertyType), inputs keyed by incoming control edge id |
 | `generate` | model, prompt, optional think |
 | `agent` | model, prompt, optional system_prompt/think, tools, reuse_chat, write_notes, write_memory |
 | `tool` | name, arguments keyed by the tool's argument names, require_confirmation (default false) |
@@ -140,7 +141,7 @@ Inputs are another typed enum:
 Edges control execution; bindings control data dependencies. The order in the edges array defines
 the order of edges leaving the same port. Ready nodes execute in that depth-first order; a node
 whose bound data is still pending waits while another available branch executes.
-Back edges and multiple incoming control edges are rejected. While/ForEach repeat their bodies
+Back edges are rejected; multiple incoming control edges are accepted only by Merge. While/ForEach repeat their bodies
 through explicit body/out control outputs.
 
 Draft validation rejects unknown schema versions, duplicate/invalid IDs, dangling node references,
@@ -202,7 +203,7 @@ for that loop to finish. While an iteration has parked consumers, the loop canno
 iteration. Outside consumers of a loop header wait for its final result, rather than reading an
 intermediate iteration count. Independent outer branches can supply data to a parked body.
 
-Multiple incoming control edges still require explicit Merge semantics and are rejected. Back
+Multiple incoming control edges require a Merge node. Back
 edges remain invalid; While/ForEach bodies have implicit repetition after their branches finish.
 
 Generate, Agent and Format publish a `text` string. Tool publishes `result`, whose schema is unknown:
@@ -538,7 +539,7 @@ While and ForEach have `body` and `out` control outputs. Body edges run in docum
 depth-first, through the existing node executors. When all body branches finish (including any
 Return leaves), the loop checks its next iteration. On completion it follows out edges once.
 No back edge, merge node, additional queue or second executor is involved. Nested loops are
-supported; arbitrary control cycles and multiple incoming edges remain invalid.
+supported; arbitrary control cycles remain invalid; multiple incoming edges require Merge.
 
 While compares left/operator/right before each iteration using the same comparison implementation
 as If. Its condition can read current variables declared before the loop. ForEach resolves items
@@ -559,11 +560,11 @@ differently on each iteration without exposing an old output from a skipped bran
 declaration in the body exposes its existing run value and does not reset it to its default; it
 remains scoped to the body's control availability. Node `executions` counts successful calls,
 `execution_id` identifies the latest attempt within the run, and `iteration` identifies enclosing
-loop node ids and indices. SSE and plugin NodeContext carry the same identity.
+repeat node ids and indices (loop iterations or Merge deliveries). SSE and plugin NodeContext carry the same identity.
 
 Each loop has max_iterations from 1 to 10,000, default 1000. A While that becomes false exactly
 at the limit finishes; one requesting another body fails. The run also allows at most 100,000
-node executions and 32 nested loop bodies. A frozen ForEach list is limited to 1 MiB; all active
+node executions and 32 nested repeat scopes (loop bodies and Merge continuations). A frozen ForEach list is limited to 1 MiB; all active
 list snapshots together are limited to 4 MiB. The existing 4 MiB persisted-state limit applies.
 Counters and per-node latest results are retained, not every iteration's full result.
 
@@ -574,3 +575,50 @@ separate executions do. Restart marks active runs interrupted and runs queued sn
 the beginning; it never resumes a loop that may already have performed external actions. Loop
 cursors/list snapshots are local to the active runner, while persisted iteration metadata is
 for observation and diagnostics. No crash-resume guarantee is implied.
+
+
+## Merge deliveries
+
+Merge is the explicit control convergence node. Each active incoming edge delivers one input;
+it does not wait for the other alternatives. It publishes a typed `value` and activates `out`
+for that delivery. Ordinary downstream nodes retain their all-input-readiness rule.
+
+```json
+{"id":"merged","name":"Analysis","kind":{"type":"merge",
+ "value_type":{"property_type":"string"},
+ "inputs":{"a-merged":{"source":"output","node_id":"a","port":"text"},
+           "b-merged":{"source":"output","node_id":"b","port":"text"}}}}
+```
+
+The keys are the ids of control edges ending at this node; every such edge needs exactly one
+binding, with no extra keys. Bindings use the existing Input types, including recursive object
+and array construction. All alternatives must match value_type; consumers can use ordinary
+output paths into that schema. The `value` output is available only inside this delivery's
+continuation. To retain results outside it, assign/append them to an outer Variable.
+
+Deliveries execute sequentially. If A activates Merge and its continuation waits for B, B can
+run and deliver another input. Merge retains A's result until that continuation has finished,
+then handles B. The selected binding resolves when Merge executes; mutable Variable bindings
+retain their ordinary live-read semantics. No queue of cloned result payloads is introduced.
+
+An inactive edge closes only that input. A selected binding whose required source was skipped
+does not execute; other active inputs still work. When all incoming control edges are settled
+without an active or pending delivery, an unexecuted Merge and its continuation are skipped.
+The last executed result and cumulative counts remain available for observing earlier deliveries.
+
+Incoming control edges must belong to the same enclosing repeat scope. Merging different loop
+iterations, or an outer stream directly into a nested Merge continuation, is rejected; explicit
+outer variables can carry accumulated data across scopes. Nested Merge nodes inside one
+continuation and Merge nodes inside While/ForEach are supported. A continuation cannot depend
+on an external node that itself waits for that continuation to finish.
+
+Before each delivery, its continuation's statuses, outputs and identity are reset; variable
+values and execution counts are retained. `iteration` includes this Merge's node id and a
+zero-based successful-delivery ordinal across the run, in addition to enclosing loop/Merge
+steps. SSE and both SDK NodeContext types carry the same path. Progress has null total/percent
+for graphs containing Merge, and counts successful executions rather than distinct nodes.
+
+The existing 1 MiB value, 4 MiB persisted-state, 100,000 execution and 32 repeat-scope limits
+apply. Pending deliveries contain bounded graph-edge metadata rather than copied payloads.
+Stop/permissions use the existing executors; restart interrupts an active run without replaying
+its pending deliveries. Starting a queued run creates fresh control state from its snapshot.

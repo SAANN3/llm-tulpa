@@ -25,6 +25,7 @@ pub struct NodeContext {
     pub iteration: Vec<NodeIteration>,
 }
 
+/// An enclosing loop iteration or Merge delivery; Merge indices count deliveries within the run.
 #[derive(Clone, Debug, Deserialize)]
 pub struct NodeIteration {
     pub node_id: String,

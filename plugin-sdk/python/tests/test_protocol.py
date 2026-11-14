@@ -153,8 +153,8 @@ class Protocol(unittest.TestCase):
         params = {"node_type": "echo", "version": 1, "arguments": {"text": "hi"},
                   "ctx": {"user_id": 7, "blueprint_id": 2, "run_id": 3, "node_id": "echo"}}
         self.assertEqual(self.host.call("execute_blueprint_node", params)["result"], {"control_output": "out", "outputs": {"text": "7:hi"}})
-        params["ctx"].update(execution_id=9, iteration=[{"node_id": "loop", "index": 2}])
-        self.assertEqual(self.host.call("execute_blueprint_node", params)["result"]["outputs"]["text"], "7:hi:9:loop/2")
+        params["ctx"].update(execution_id=9, iteration=[{"node_id": "loop", "index": 2}, {"node_id": "merge", "index": 3}])
+        self.assertEqual(self.host.call("execute_blueprint_node", params)["result"]["outputs"]["text"], "7:hi:9:loop/2,merge/3")
         params["version"] = 2
         self.assertEqual(self.host.call("execute_blueprint_node", params)["error"]["code"], -32001)
 
