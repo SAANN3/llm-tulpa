@@ -164,5 +164,6 @@ External plugins expose the same hooks through the existing JSON-RPC transport a
 see [the protocol](../plugin-sdk/PROTOCOL.md#blueprint-nodes). A process in restart is unavailable;
 its configured versioned catalog is visible again when it runs. Calls never fall back to another
 plugin/version. Input/output checking and graph traversal reuse the blueprint implementation.
+Invocation waits for all bound inputs; a skipped required source skips the node without calling its handler.
 Stop waits for the bounded call, like an explicit Tool node. Timeouts and disconnects fail the node
 without retries; a timeout does not roll back effects in an external process.

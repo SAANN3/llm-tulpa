@@ -77,6 +77,8 @@ Use `NodeSpec` with the existing `Param` schemas, `NodeContext` for the owning u
 `greet` version 1 and return its `text` through `out`; their model tools continue to work independently.
 See [the node contract](PROTOCOL.md#blueprint-nodes) for versions, limits and Stop behavior.
 
+The host waits for all bound data before invoking a node; a skipped required source skips its invocation.
+
 Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
 `NodeIteration(node_id, index)` entries from outermost to innermost loop. An empty path means
 the node is outside a loop. The same node can execute several times within one run.

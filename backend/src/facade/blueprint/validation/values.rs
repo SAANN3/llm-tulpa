@@ -2,7 +2,6 @@ use crate::facade::blueprint::{
     catalog::{NodeType, ValueType},
     definition::{Input, Literal, NodeKind, Operation, PathPart},
     operations::Operations,
-    control_flow::ControlFlow,
     template::{self, Part},
 };
 use super::{
@@ -127,14 +126,13 @@ impl<'a, 'b> Values<'a, 'b> {
                     self.error(
                         field,
                         "output_unavailable",
-                        format!("'{node_id}' is not guaranteed to finish before this node"),
+                        format!("'{node_id}' is not available to this node"),
                     );
                     return Shape::scalar(ValueType::Dynamic);
                 }
                 let source_node = &self.graph.workflow.nodes[source];
                 if matches!(source_node.kind, NodeKind::While { .. } | NodeKind::ForEach { .. }) && matches!(port.as_str(), "index" | "item") {
-                    let roots = self.graph.workflow.edges.iter().filter(|edge| edge.from == source_node.id && edge.port == "body").map(|edge| edge.to.as_str());
-                    if !ControlFlow::descendants(self.graph.workflow, roots).iter().any(|id| id == &self.graph.workflow.nodes[self.node].id) {
+                    if !self.graph.dependencies.scope(&self.graph.workflow.nodes[self.node].id).contains(&source_node.id) {
                         self.error(field, "loop_output_unavailable", "item/index is only available inside this loop body");
                         return Shape::scalar(ValueType::Dynamic);
                     }

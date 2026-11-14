@@ -138,7 +138,8 @@ Inputs are another typed enum:
   structures whose individual values can be bound independently.
 
 Edges control execution; bindings control data dependencies. The order in the edges array defines
-the order of edges leaving the same port. Execution traverses that order depth-first.
+the order of edges leaving the same port. Ready nodes execute in that depth-first order; a node
+whose bound data is still pending waits while another available branch executes.
 Back edges and multiple incoming control edges are rejected. While/ForEach repeat their bodies
 through explicit body/out control outputs.
 
@@ -183,12 +184,26 @@ approval or tool execution happen during validation. Model registration is check
 provider health or existence of the model's files. Execution must check dependencies and permissions
 again and must validate actual values before calling tools.
 
-Control edges use ordered, depth-first sequential branches. A leaf (including Return) finishes its
-branch; pending sibling branches still follow. Earlier unconditional branches can supply values to
-later ones. A value produced only on one If/Switch outcome is not guaranteed available after that
-conditional branch. Empty conditional outcomes finish without producing branch-specific values.
-Multiple incoming edges require explicit Merge/Join semantics and are rejected. Back edges remain
-invalid; While/ForEach bodies have implicit repetition after their branches finish.
+A control edge activates a node. Every bound input must be ready before the node executes,
+including references nested in arrays/objects, Variable declarations and SetVariable targets.
+A pending source leaves the consumer pending; the existing runner executes other ready branches
+and returns to it. A skipped required source skips the consumer and its control descendants.
+This applies to all built-in and plugin nodes. A node with only literal inputs still requires its
+control activation. There is no separate Join node.
+
+For example, Entry can start A and B, with A's control output connected to a formatter whose
+arguments reference both agents. If A finishes first, the formatter waits for B and executes once
+with both results. Reversing the source-branch order does not change those arguments.
+A leaf (including Return) finishes only its branch; pending sibling branches still follow.
+
+Validation includes both control and data edges when finding dependency cycles. Loop-body
+outputs cannot escape their iteration; an outer source used in a loop body must not itself wait
+for that loop to finish. While an iteration has parked consumers, the loop cannot begin its next
+iteration. Outside consumers of a loop header wait for its final result, rather than reading an
+intermediate iteration count. Independent outer branches can supply data to a parked body.
+
+Multiple incoming control edges still require explicit Merge semantics and are rejected. Back
+edges remain invalid; While/ForEach bodies have implicit repetition after their branches finish.
 
 Generate, Agent and Format publish a `text` string. Tool publishes `result`, whose schema is unknown:
 the Tool interface declares argument schemas only. A binding to that output gets a
@@ -422,7 +437,7 @@ unavailable until it runs again. New node types require no changes to NodeKind o
 
 The saved Plugin variant carries exact identity/version and ordinary Input bindings. Validation
 uses the declared control ports, input schemas and typed data outputs; mutually exclusive control
-outputs follow the existing branch-availability rules. Runtime rechecks availability and resolved
+outputs follow the same input-readiness and skipped-source rules. Runtime rechecks availability and resolved
 inputs/results against the current declaration. No different version or plugin is substituted.
 The existing result/state limits apply. The result's `control_output` selects one declared control output (or null
 for a terminal node); undeclared values/ports fail the node. Explicit plugin actions have the same
@@ -468,8 +483,8 @@ is limited to 4 MiB including retained values; the existing per-value and run-st
 There are no variables shared across blueprints.
 
 Variable nodes have the usual incoming control edge and `out` output. The declaration must
-execute before a node reads or assigns it; a declaration in a skipped conditional branch is
-not available outside that branch. Executing the declaration exposes its current value as a
+execute before a node reads or assigns it. Consumers wait for the declaration; if its conditional
+branch is skipped, those consumers are skipped too. Executing the declaration exposes its current value as a
 `value` data output; it does not reset it. `set_variable` changes the value and exposes the
 assigned value as its own `value` data output:
 

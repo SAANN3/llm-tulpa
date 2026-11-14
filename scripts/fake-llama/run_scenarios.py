@@ -2626,6 +2626,81 @@ def blueprint_variables_are_run_local_and_operations_use_typed_values():
 
 
 @scenario
+def blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results():
+    def lit(value): return {"source": "literal", "value": value}
+    def out(node, port="text"): return {"source": "output", "node_id": node, "port": port}
+    def var(node): return {"source": "variable", "node_id": node}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": a, "port": port, "to": b} for i, (a, port, b) in enumerate(edges)]}
+    def run(w):
+        report = ok("/api/blueprints/validate", {"workflow": w})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "All inputs fixture", "workflow": w})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="input-dependent graph completion")
+        d = ok(url)
+        eq(d["run"]["status"], "completed", "input-dependent graph finishes")
+        return d
+    script()
+    entry = ("start", {"type": "entry"})
+    kinds = [entry] + [(name, {"type": "format", "template": name.upper(), "arguments": {}}) for name in ("a", "b", "c", "d")]
+    kinds += [("format", {"type": "format", "template": "{a}|{b}|{c}|{d}", "arguments": {name: out(name) for name in ("a", "b", "c", "d")}}),
+        ("end", {"type": "return", "values": {"text": out("format"), "nested": {"source": "object", "fields": {
+            "all": {"source": "array", "items": [out(name) for name in ("a", "b", "c", "d")]}}}}})]
+    edges = [("start", "out", "a"), ("a", "out", "format"), ("format", "out", "end")]
+    edges += [("start", "out", name) for name in ("b", "c", "d")]
+    for order in (edges, list(reversed(edges))):
+        d = run(graph(kinds, order))
+        eq(d["state"]["nodes"]["end"]["outputs"], {"text": "A|B|C|D", "nested": {"all": ["A", "B", "C", "D"]}}, "all four values are ready regardless of branch order")
+        nodes = d["state"]["nodes"]
+        assert nodes["format"]["execution_id"] > max(nodes[name]["execution_id"] for name in ("a", "b", "c", "d"))
+    # A skipped required value skips its consumer even when another branch supplies control.
+    skipped = graph([entry,
+        ("if", {"type": "if", "left": lit(False), "operator": "equal", "right": lit(True)}),
+        ("unused", {"type": "format", "template": "unused", "arguments": {}}),
+        ("consumer", {"type": "format", "template": "{value}", "arguments": {"value": out("unused")}}),
+        ("after", {"type": "return", "values": {"bad": out("consumer")}})],
+        [("start", "out", "consumer"), ("consumer", "out", "after"), ("start", "out", "if"), ("if", "true", "unused")])
+    d = run(skipped)
+    for name in ("unused", "consumer", "after"):
+        eq(d["state"]["nodes"][name]["status"], "skipped", "skip propagates through required data and control")
+        eq(d["state"]["nodes"][name]["executions"], 0, "skipped data consumers never execute")
+    # An independent declaration can satisfy Input::Variable and SetVariable's target later.
+    variables = graph([entry,
+        ("save", {"type": "set_variable", "variable_id": "v", "value": lit(9)}),
+        ("v", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 2}),
+        ("end", {"type": "return", "values": {"value": var("v")}})],
+        [("start", "out", "save"), ("save", "out", "end"), ("start", "out", "v")])
+    eq(run(variables)["state"]["nodes"]["end"]["outputs"], {"value": 9}, "target declaration is also a required input")
+    kinds = [entry,
+        ("collected", {"type": "variable", "value_type": {"property_type": "array", "items": "string"}, "initial": []}),
+        ("loop", {"type": "for_each", "items": lit([1, 2])}),
+        ("body", {"type": "format", "template": "{item}:{external}", "arguments": {"item": out("loop", "item"), "external": out("external")}}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("collected"), "value": out("body")}}),
+        ("save", {"type": "set_variable", "variable_id": "collected", "value": out("append", "value")}),
+        ("external", {"type": "format", "template": "B", "arguments": {}}),
+        ("reader", {"type": "return", "values": {"iterations": out("loop", "iterations")}}),
+        ("end", {"type": "return", "values": {"values": var("collected")}})]
+    edges = [("start", "out", "reader"), ("start", "out", "collected"), ("collected", "out", "loop"),
+        ("loop", "body", "body"), ("body", "out", "append"), ("append", "out", "save"), ("loop", "out", "end"), ("start", "out", "external")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["end"]["outputs"], {"values": ["1:B", "2:B"]}, "parked body waits without mixing iteration values")
+    eq(d["state"]["nodes"]["body"]["executions"], 2, "one consumer execution per iteration")
+    eq(d["state"]["nodes"]["reader"]["outputs"], {"iterations": 2}, "outer reader sees the completed loop")
+    eq(d["state"]["nodes"]["body"]["iteration"], [{"node_id": "loop", "index": 1}], "current execution identity remains scoped")
+    for invalid in ("cycle", "loop_completion", "escape"):
+        w = graph(kinds, edges)
+        w = json.loads(json.dumps(w))
+        if invalid == "cycle": w["nodes"][6]["kind"]["arguments"] = {"value": out("body")}
+        if invalid == "loop_completion": w["nodes"][6]["kind"]["arguments"] = {"value": out("loop", "iterations")}
+        if invalid == "escape": w["nodes"][-1]["kind"]["values"]["bad"] = out("body")
+        eq(ok("/api/blueprints/validate", {"workflow": w})["valid"], False, invalid + " is rejected before execution")
+    eq(calls("main"), [], "waiting for data makes no model requests")
+
+
+@scenario
 def blueprint_persistent_variables_are_scoped_and_committed_with_nodes():
     def lit(value): return {"source": "literal", "value": value}
     def var(node): return {"source": "variable", "node_id": node}

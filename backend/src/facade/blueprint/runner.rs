@@ -219,7 +219,15 @@ impl Runner {
                 status = RunStatus::Cancelled;
                 break;
             }
-            let Some(visit) = flow.next(&mut run.state) else { break };
+            let visit = match flow.next(&run.workflow, &mut run.state) {
+                Ok(Some(visit)) => visit,
+                Ok(None) => break,
+                Err(error) => {
+                    run.state.error = Some(error);
+                    status = RunStatus::Failed;
+                    break;
+                }
+            };
             let node_id = visit.node_id.clone();
             if run.state.execution_count >= MAX_EXECUTIONS {
                 run.state.error = Some("run execution limit reached".into());

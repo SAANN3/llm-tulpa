@@ -312,6 +312,10 @@ outer-to-inner list of enclosing loop node ids and zero-based indices, empty out
 Both SDKs default missing execution_id/iteration to 0/empty for older hosts. Use the run and
 execution identities to distinguish repeated calls; node_id alone does not identify an invocation.
 
+The host invokes a node only after control activation and all bound data sources are ready,
+including nested input bindings. A skipped required source skips that invocation. This waiting
+uses the existing run/iteration identity and does not call the plugin with incomplete arguments.
+
 It returns `{"control_output":"out","outputs":{"text":"Hello, Alice!"}}`. Arguments are resolved by the
 existing graph bindings and checked against inputs; output fields and types are checked against
 outputs. No undeclared top-level argument/output is accepted. Choose exactly one declared control

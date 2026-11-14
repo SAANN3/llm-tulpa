@@ -64,3 +64,7 @@ and static rejection of escaping body results and back edges.
 `blueprint_persistent_variables_are_scoped_and_committed_with_nodes` checks blueprint-scoped
 values across queued runs, independent run-local defaults and other blueprints, failed runs,
 type changes, revision-checked resets and Stop before assignment without model requests.
+
+`blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results` checks four-source readiness,
+branch order, nested array/object bindings, skipped consumers, delayed variable declarations,
+parked loop bodies, final loop-header results and rejection of circular or cross-iteration inputs.

@@ -67,7 +67,7 @@ pub struct NodeProgress {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Iteration {
     pub node_id: String,
     pub index: u32,

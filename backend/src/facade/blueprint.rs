@@ -12,6 +12,7 @@ pub mod runs;
 mod template;
 mod operations;
 mod control_flow;
+mod dependencies;
 pub(crate) mod variables;
 mod tool_nodes;
 pub mod validation;

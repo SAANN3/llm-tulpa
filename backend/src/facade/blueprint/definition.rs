@@ -220,6 +220,23 @@ pub enum Operation {
     Concat { left: Input, right: Input },
 }
 
+impl NodeKind {
+    pub(super) fn inputs(&self) -> Vec<&Input> {
+        match self {
+            Self::Entry | Self::Variable { .. } => vec![],
+            Self::SetVariable { value, .. } | Self::Switch { value, .. } => vec![value],
+            Self::Calculate { operation } => operation.inputs().into_iter().map(|(_, input)| input).collect(),
+            Self::Generate { prompt, .. } => vec![prompt],
+            Self::Agent { prompt, system_prompt, .. } => std::iter::once(prompt).chain(system_prompt.iter()).collect(),
+            Self::Tool { arguments, .. } | Self::Format { arguments, .. } | Self::Plugin { arguments, .. } => arguments.values().collect(),
+            Self::Sleep { seconds } => vec![seconds],
+            Self::If { left, right, .. } | Self::While { left, right, .. } => vec![left, right],
+            Self::ForEach { items, .. } => vec![items],
+            Self::Return { values } => values.values().collect(),
+        }
+    }
+}
+
 impl Operation {
     pub(super) fn inputs(&self) -> Vec<(&'static str, &Input)> {
         match self {

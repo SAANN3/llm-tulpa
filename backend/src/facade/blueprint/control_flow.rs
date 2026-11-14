@@ -1,5 +1,6 @@
 use super::{
     definition::{Literal, NodeKind, Workflow},
+    dependencies::Dependencies,
     execution::{MAX_STATE_BYTES, MAX_VALUE_BYTES, Outcome, Values},
     runs::{Iteration, NodeStatus, RunState},
 };
@@ -28,6 +29,7 @@ struct Cursor {
 pub(super) struct ControlFlow {
     pending: Vec<Frame>,
     cursors: HashMap<String, Cursor>,
+    dependencies: Dependencies,
 }
 
 impl ControlFlow {
@@ -46,18 +48,62 @@ impl ControlFlow {
         Self {
             pending,
             cursors: HashMap::new(),
+            dependencies: Dependencies::new(workflow),
         }
     }
 
-    pub fn next(&mut self, state: &mut RunState) -> Option<Visit> {
-        match self.pending.pop()? {
-            Frame::Node(visit) => {
-                self.cursors.remove(&visit.node_id);
-                Some(visit)
+    pub fn next(&mut self, workflow: &Workflow, state: &mut RunState) -> Result<Option<Visit>, String> {
+        loop {
+            let skipped: Vec<_> = self.dependencies.sources.iter().filter(|(id, sources)| {
+                state.nodes.get(*id).is_some_and(|node| node.status == NodeStatus::Pending)
+                    && sources.iter().any(|source| state.nodes.get(source).is_some_and(|node| node.status == NodeStatus::Skipped))
+            }).map(|(id, _)| id.as_str()).collect();
+            if skipped.is_empty() { break; }
+            Self::skip(workflow, state, skipped.into_iter());
+        }
+        self.pending.retain(|frame| state.nodes[&Self::visit(frame).node_id].status != NodeStatus::Skipped);
+        for index in (0..self.pending.len()).rev() {
+            let frame = &self.pending[index];
+            let visit = Self::visit(frame);
+            if matches!(frame, Frame::Repeat(_)) {
+                let mut body = visit.iteration.clone();
+                body.push(Iteration { node_id: visit.node_id.clone(), index: self.cursors[&visit.node_id].iterations - 1 });
+                // A parked body node can wait for a later outer branch. Keep that iteration alive.
+                if self.pending.iter().enumerate().any(|(other, frame)| other != index && Self::visit(frame).iteration.starts_with(&body))
+                    || self.dependencies.scopes.iter().any(|(id, scope)| scope.contains(&visit.node_id) && matches!(state.nodes[id].status, NodeStatus::Pending | NodeStatus::Running)) {
+                    continue;
+                }
             }
-            Frame::Repeat(visit) => {
-                Self::reset(state, &visit.node_id);
-                Some(visit)
+            if !self.dependencies.sources[&visit.node_id].iter().all(|source| {
+                state.nodes.get(source).is_some_and(|node| {
+                    let scope = self.dependencies.scope(source);
+                    node.status == NodeStatus::Completed && visit.iteration.starts_with(&node.iteration)
+                        && node.iteration.len() == scope.len()
+                        && (!self.cursors.contains_key(source) || self.dependencies.scope(&visit.node_id).contains(source))
+                })
+            }) { continue; }
+            let frame = self.pending.remove(index);
+            let visit = match frame {
+                Frame::Node(visit) => { self.cursors.remove(&visit.node_id); visit }
+                Frame::Repeat(visit) => { Self::reset(state, &visit.node_id); visit }
+            };
+            return Ok(Some(visit));
+        }
+        if self.pending.is_empty() { return Ok(None); }
+        Err("no node can proceed: required inputs or an unfinished loop are still pending".into())
+    }
+
+    fn visit(frame: &Frame) -> &Visit {
+        match frame { Frame::Node(visit) | Frame::Repeat(visit) => visit }
+    }
+
+    fn skip<'a>(workflow: &Workflow, state: &mut RunState, roots: impl Iterator<Item = &'a str>) {
+        for id in Self::descendants(workflow, roots) {
+            if let Some(node) = state.nodes.get_mut(&id) {
+                if node.status == NodeStatus::Pending {
+                    node.status = NodeStatus::Skipped;
+                    state.skipped_executions += 1;
+                }
             }
         }
     }
@@ -196,13 +242,7 @@ impl ControlFlow {
                 .iter()
                 .filter(|edge| edge.from == visit.node_id && Some(edge.port.as_str()) != selected)
             {
-                for id in Self::descendants(workflow, std::iter::once(edge.to.as_str())) {
-                    let node = state.nodes.get_mut(&id).unwrap();
-                    if node.status == NodeStatus::Pending {
-                        node.status = NodeStatus::Skipped;
-                        state.skipped_executions += 1;
-                    }
-                }
+                Self::skip(workflow, state, std::iter::once(edge.to.as_str()));
             }
             if let Some(selected) = selected {
                 self.push_edges(workflow, &visit.node_id, selected, &visit.iteration);

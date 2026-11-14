@@ -110,100 +110,41 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
             if *max_iterations == 0 || *max_iterations > MAX_LOOP_ITERATIONS) {
             return Err(Diagnostic::draft(Some(&node.id), "kind.max_iterations", format!("max_iterations must be 1..{MAX_LOOP_ITERATIONS}")));
         }
-        let inputs: Vec<&Input> = match &node.kind {
-            NodeKind::Entry => vec![],
+        match &node.kind {
             NodeKind::Variable { value_type, initial, .. } => {
                 property_type(value_type, 0)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.value_type", message))?;
                 variable_value(initial, value_type)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.initial", message))?;
-                vec![]
             }
-            NodeKind::SetVariable { variable_id, value } => {
-                if !identifier(variable_id) {
-                    return Err(Diagnostic::draft(Some(&node.id), "kind.variable_id", "invalid variable reference"));
-                }
-                vec![value]
+            NodeKind::SetVariable { variable_id, .. } if !identifier(variable_id) => {
+                return Err(Diagnostic::draft(Some(&node.id), "kind.variable_id", "invalid variable reference"));
             }
-            NodeKind::Calculate { operation } => operation.inputs().into_iter().map(|(_, input)| input).collect(),
-            NodeKind::Generate { model, prompt, .. } => {
+            NodeKind::Generate { model, .. } | NodeKind::Agent { model, .. } => {
                 model_choice(model)
                     .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.model", message))?;
-                vec![prompt]
             }
-            NodeKind::Agent {
-                model,
-                prompt,
-                system_prompt,
-                tools,
-                ..
-            } => {
-                model_choice(model)
-                    .map_err(|message| Diagnostic::draft(Some(&node.id), "kind.model", message))?;
-                if tools.names.iter().any(|n| !identifier(n)) {
-                    return Err(Diagnostic::draft(
-                        Some(&node.id),
-                        "kind",
-                        "invalid tool name",
-                    ));
-                }
-                std::iter::once(prompt)
-                    .chain(system_prompt.iter())
-                    .collect()
+            NodeKind::Tool { name, .. } if !identifier(name) => {
+                return Err(Diagnostic::draft(Some(&node.id), "kind", "invalid tool name"));
             }
-            NodeKind::Tool { name, arguments, .. } => {
-                if !identifier(name) {
-                    return Err(Diagnostic::draft(
-                        Some(&node.id),
-                        "kind",
-                        "invalid tool name",
-                    ));
-                }
-                arguments.values().collect()
-            }
-            NodeKind::Sleep { seconds } => vec![seconds],
-            NodeKind::If { left, right, .. } | NodeKind::While { left, right, .. } => vec![left, right],
-            NodeKind::ForEach { items, .. } => vec![items],
-            NodeKind::Switch { value, cases } => {
+            NodeKind::Switch { cases, .. } => {
                 let mut ports = HashSet::new();
                 for case in cases {
-                    if !identifier(&case.port)
-                        || case.port == "default"
-                        || !ports.insert(&case.port)
-                    {
-                        return Err(Diagnostic::draft(
-                            Some(&node.id),
-                            "kind.cases",
-                            "invalid or duplicate switch port",
-                        ));
+                    if !identifier(&case.port) || case.port == "default" || !ports.insert(&case.port) {
+                        return Err(Diagnostic::draft(Some(&node.id), "kind.cases", "invalid or duplicate switch port"));
                     }
                 }
-                vec![value]
             }
-            NodeKind::Format { arguments, .. } => arguments.values().collect(),
-            NodeKind::Return { values } => values.values().collect(),
-            NodeKind::Plugin {
-                plugin_name,
-                plugin_subname,
-                node_type,
-                version,
-                arguments,
-            } => {
-                if !identifier(plugin_name)
-                    || !identifier(plugin_subname)
-                    || !identifier(node_type)
-                    || *version == 0
-                {
-                    return Err(Diagnostic::draft(
-                        Some(&node.id),
-                        "kind",
-                        "invalid plugin node identity",
-                    ));
-                }
-                arguments.values().collect()
+            NodeKind::Plugin { plugin_name, plugin_subname, node_type, version, .. }
+                if !identifier(plugin_name) || !identifier(plugin_subname) || !identifier(node_type) || *version == 0 => {
+                return Err(Diagnostic::draft(Some(&node.id), "kind", "invalid plugin node identity"));
             }
-        };
-        for value in inputs {
+            _ => {}
+        }
+        if matches!(&node.kind, NodeKind::Agent { tools, .. } if tools.names.iter().any(|name| !identifier(name))) {
+            return Err(Diagnostic::draft(Some(&node.id), "kind", "invalid tool name"));
+        }
+        for value in node.kind.inputs() {
             input(value, &nodes, 0)
                 .map_err(|message| Diagnostic::draft(Some(&node.id), "kind", message))?;
         }
