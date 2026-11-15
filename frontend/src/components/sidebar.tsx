@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {ArrowBarLeft, ArrowBarRight, Plus, Folder, Search, Check, Lock, WarningDiamond} from 'pixelarticons/react'
+import {ArrowBarLeft, ArrowBarRight, Plus, Folder, GitBranch, Search, Check, Lock, WarningDiamond} from 'pixelarticons/react'
 import {useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/sidebar.scss'
 import {AccountMenu} from './account-menu.tsx'
@@ -57,6 +57,12 @@ interface UtilItem {
 }
 
 const UTILS: UtilItem[] = [
+    {
+        label: 'Blueprints',
+        path: '/blueprints',
+        icon: (size) => <GitBranch width={size} height={size}/>,
+        match: (pathname) => pathname.startsWith('/blueprints'),
+    },
     {
         label: 'Search chats',
         path: '/search',

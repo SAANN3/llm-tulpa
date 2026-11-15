@@ -32,31 +32,3 @@
 .folder-picker__load-more {
   align-self: center;
 }
-
-.folder-picker__mode {
-  display: flex;
-  gap: $space-2;
-  width: 100%;
-  box-sizing: border-box;
-
-  > button {
-    flex: 1 1 0;
-    min-width: 0;
-    text-align: center;
-    box-sizing: border-box;
-  }
-
-  // A choice group draws its own dividers between the cells
-  &[data-choice-group] {
-    gap: 0;
-  }
-}
-
-.folder-picker__error {
-  color: var(--color-danger);
-  font-size: 12px;
-}
-
-.folder-picker__create {
-  gap: $space-3;
-}

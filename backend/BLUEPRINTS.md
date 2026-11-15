@@ -44,21 +44,28 @@ or null for manual scheduling. Runtime queue state and ticks do not rewrite work
 
 ## API
 
+`POST /api/prompts/blueprint_name` accepts `{content}` and returns a generated name in `response`
+using the caller's current model. It names a description; it does not generate or save a workflow.
+
 All endpoints require the normal bearer authentication. There are no owner-only blueprint operations.
 
 | Method | Path | Request / result |
 |---|---|---|
 | GET | `/api/blueprints` | `offset=0`, `limit=20` (1–100), `q`, `sort=created` or `updated`; returns `items`, `total`, `offset`, `limit` |
-| POST | `/api/blueprints` | `{name, schedule?, workflow}`; returns metadata with revision 1 and status 201 |
+| POST | `/api/blueprints` | `{name, schedule?, workflow?}`; returns metadata with revision 1 and status 201 |
 | GET | `/api/blueprints/{id}` | Returns `{blueprint: metadata, workflow}` |
 | PUT | `/api/blueprints/{id}` | `{expected_revision, name, schedule, workflow?}`; returns updated metadata |
 | DELETE | `/api/blueprints/{id}?expected_revision=N` | Returns 204 |
 | GET | `/api/blueprints/{id}/variables` | Returns `{values: {node_id: literal}}`, including retained values of removed declarations |
 | DELETE | `/api/blueprints/{id}/variables?expected_revision=N&node_id=ID` | Resets one saved value; omit node_id to reset all; returns 204 or 409 during an active run of this blueprint |
 
-Lists are newest first, with descending id as a stable tie-breaker. Search is a case-sensitive
-literal substring of the name, including literal `%` and `_`. Lists read only the metadata table.
+Lists are newest first, with descending id as a stable tie-breaker. Search ignores case and
+whitespace in names. Whitespace-separated query terms each match a substring, in any order;
+an unspaced query also matches spaced names. `%` and `_` match literally. Lists read only the
+metadata table.
 Names need 1–160 non-whitespace/bounded characters; leading/trailing whitespace is trimmed.
+Omitting `workflow` on POST creates a schema-versioned workflow with one Entry node at (0, 0)
+and no edges. An explicit workflow follows the same draft validation. The default schedule is manual.
 Omitting or sending null for `workflow` on PUT preserves the file. PUT requires name and schedule
 explicitly, so an edit cannot accidentally reset the schedule through a default.
 

@@ -4,7 +4,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use crate::{facade::prompt::GreetOut, routes::auth::AuthUser, services::error::ErrorService, state::AppState};
+use crate::{facade::prompt::{GreetOut, NameKind}, routes::auth::AuthUser, services::error::ErrorService, state::AppState};
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct FolderNameRequest {
@@ -32,7 +32,7 @@ pub async fn folder_name(
 ) -> Result<Json<GreetOut>, ErrorService> {
     let services = state.services().await?;
     let model = services.settings_store.effective_model(user.id).await?;
-    let result = services.prompt.folder_name(body.content, &model).await?;
+    let result = services.prompt.resource_name(NameKind::Folder, body.content, &model).await?;
 
     Ok(Json(result))
 }

@@ -5,7 +5,8 @@ import '../styles/folders.scss'
 import '../styles/tree.scss'
 import {FolderEntry} from '../components/folder-entry.tsx'
 import {LazyList} from '../components/lazy-list.tsx'
-import {NewFolderPopup} from '../components/popups/new-folder-popup.tsx'
+import {NewNamedPopup} from '../components/popups/new-named-popup.tsx'
+import {folderName} from '../api/prompts/folder-name'
 import {Button, Div, Input, Label} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
@@ -50,9 +51,12 @@ const Folders = () => {
                 </LazyList>
             </Div>
 
-            <NewFolderPopup
+            <NewNamedPopup
                 open={creating}
-                createFolder={createFolder}
+                title="New folder"
+                resource="folder"
+                generateName={folderName}
+                create={createFolder}
                 onCreated={(folder) => {
                     setCreating(false)
                     navigate(`/folders/${folder.id}`)

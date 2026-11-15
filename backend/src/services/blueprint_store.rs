@@ -11,6 +11,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveValue::Set, DatabaseConnection, QueryOrder, QuerySelect, Select, TransactionTrait, prelude::*,
+    sea_query::{Alias, Func},
 };
 use tokio::io::AsyncWriteExt;
 
@@ -68,12 +69,20 @@ impl BlueprintStore {
         updated: bool,
     ) -> Result<(Vec<BlueprintRecord>, u64), BlueprintStoreError> {
         let mut rows = entity::Entity::find().filter(entity::Column::UserId.eq(user_id));
-        if !query.is_empty() {
-            let escaped = query
+        use sea_orm::sea_query::extension::postgres::PgExpr as _;
+
+        let name = Expr::expr(Func::cust(Alias::new("regexp_replace")).args([
+            Expr::col(entity::Column::Name),
+            Expr::val("[[:space:]]+"),
+            Expr::val(""),
+            Expr::val("g"),
+        ]));
+        for word in query.split_whitespace() {
+            let escaped = word
                 .replace('\\', "\\\\")
                 .replace('%', "\\%")
                 .replace('_', "\\_");
-            rows = rows.filter(entity::Column::Name.like(format!("%{escaped}%")));
+            rows = rows.filter(name.clone().ilike(format!("%{escaped}%")));
         }
         let total = rows.clone().count(&self.db).await?;
         let records = rows

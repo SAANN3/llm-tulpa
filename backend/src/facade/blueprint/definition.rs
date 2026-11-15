@@ -17,6 +17,21 @@ pub struct Workflow {
     pub edges: Vec<Edge>,
 }
 
+impl Default for Workflow {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            nodes: vec![Node {
+                id: "entry".into(),
+                name: "Start".into(),
+                position: Position::default(),
+                kind: NodeKind::Entry,
+            }],
+            edges: vec![],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Node {

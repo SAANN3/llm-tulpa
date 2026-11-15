@@ -2,7 +2,8 @@ import {useState} from 'react'
 
 import '../styles/folder-picker.scss'
 import {useFolders} from '../hooks/use-folders.ts'
-import {CreateFolderForm} from './create-folder-form.tsx'
+import {CreateNamedForm} from './create-named-form.tsx'
+import {folderName} from '../api/prompts/folder-name'
 import {Button, Div, Label} from './primitives'
 
 export interface FolderPickerProps {
@@ -42,8 +43,10 @@ export const FolderPicker = ({selected, onSelect}: FolderPickerProps) => {
             </Div>
 
             {creating ? (
-                <CreateFolderForm
-                    createFolder={createFolder}
+                <CreateNamedForm
+                    resource="folder"
+                    generateName={folderName}
+                    create={createFolder}
                     onCreated={(folder) => {
                         onSelect(folder.id)
                         setCreating(false)

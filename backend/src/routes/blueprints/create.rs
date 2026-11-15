@@ -17,6 +17,7 @@ pub(crate) struct CreateBlueprintIn {
     pub name: String,
     #[serde(default)]
     pub schedule: Schedule,
+    #[serde(default)]
     pub workflow: Workflow,
 }
 
