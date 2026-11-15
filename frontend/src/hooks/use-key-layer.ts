@@ -35,7 +35,7 @@ export const useKeyLayer = (active: boolean, handler: KeyHandler) => {
     }, [active])
 };
 
-const TEXT_INPUT_TYPES = new Set(['text', 'password', 'search', 'email', 'url', 'tel', 'number'])
+const TEXT_INPUT_TYPES = new Set(['text', 'password', 'search', 'email', 'url', 'tel', 'number', 'time'])
 const ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
 
 /** The keys a focused control uses for itself, by its input type or role; every other key goes on to the page, so a

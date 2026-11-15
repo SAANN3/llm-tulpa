@@ -14,6 +14,7 @@ import {useSetup} from './context/use-setup.ts'
 import ChatInfo from './pages/chat-info.tsx'
 import Chat from './pages/chat.tsx'
 import Blueprints from './pages/blueprints.tsx'
+import BlueprintEditor from './pages/blueprint-editor.tsx'
 import Folder from './pages/folder.tsx'
 import Folders from './pages/folders.tsx'
 import Search from './pages/search.tsx'
@@ -115,6 +116,7 @@ const App = () => (
                                         <Route path="/search" element={<Search/>}/>
                                         <Route path="/folders" element={<Folders/>}/>
                                         <Route path="/blueprints" element={<Blueprints/>}/>
+                                        <Route path="/blueprints/:id/:view?" element={<BlueprintEditor/>}/>
                                         <Route path="/folders/:id" element={<Folder/>}/>
                                         <Route path="/settings/:tab?" element={<Settings/>}/>
                                         <Route path="/settings/system-prompt" element={<SystemPrompt/>}/>

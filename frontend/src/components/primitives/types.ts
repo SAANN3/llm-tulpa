@@ -43,7 +43,7 @@ export interface InputProps {
   text: string
   onChanged: (text: string) => void
   placeholder?: string
-  type?: 'text' | 'password'
+  type?: 'text' | 'password' | 'number' | 'time'
   autoFocus?: boolean
   onHovered?: (hovering: boolean) => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void

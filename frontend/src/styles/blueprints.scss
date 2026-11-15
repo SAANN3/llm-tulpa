@@ -32,6 +32,8 @@
 }
 
 .blueprints__actions {
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
 }
 
@@ -48,10 +50,11 @@
 }
 
 .blueprints__row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: $space-3;
-  padding: $space-3 0;
+  padding: $space-3 $space-2;
   border-bottom: $line-border solid var(--color-border);
 }
 
@@ -64,7 +67,17 @@
 }
 
 .blueprints__name {
+  color: inherit;
+  text-decoration: none;
+
   overflow-wrap: anywhere;
+
+  // Extend the native link over the row while keeping its action buttons independent.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
 }
 
 .blueprints__date {

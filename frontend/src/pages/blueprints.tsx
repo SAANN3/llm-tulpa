@@ -10,7 +10,7 @@ import type {Blueprint} from '../api/blueprints/types'
 import {LazyList, type LazyListHandle} from '../components/lazy-list.tsx'
 import {ConfirmPopup} from '../components/popups/base/confirm-popup.tsx'
 import {InputPopup} from '../components/popups/base/input-popup.tsx'
-import {Button, Div, Input, Label} from '../components/primitives'
+import {Button, Div, Input, Label, Link} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {keyBelongsToFocus, useKeyLayer} from '../hooks/use-key-layer.ts'
@@ -65,9 +65,9 @@ const Blueprints = () => {
                 <LazyList ref={list} onBottomReached={loadOlder} className="blueprints__list">
                     {result?.items.length === 0 ? <Label text={query.trim() ? 'No matching blueprints.' : 'No blueprints yet. Create one to get started.'}/> : null}
                     {result?.items.map((blueprint, index) => (
-                        <Div key={blueprint.id} ref={index === 0 ? firstRow : undefined} className="blueprints__row">
+                        <Div key={blueprint.id} ref={index === 0 ? firstRow : undefined} className="list-row blueprints__row">
                             <Div className="blueprints__info">
-                                <Label className="blueprints__name" text={blueprint.name}/>
+                                <Link to={`/blueprints/${blueprint.id}/graph`} className="blueprints__name">{blueprint.name}</Link>
                                 <Label variant="secondary" className="blueprints__date"
                                        text={`Created ${new Date(blueprint.created_at).toLocaleString()} · Updated ${new Date(blueprint.updated_at).toLocaleString()}`}/>
                             </Div>
@@ -82,11 +82,9 @@ const Blueprints = () => {
             </Div>
             <NewNamedPopup open={creating} title="New blueprint" resource="blueprint"
                            create={createBlueprint} generateName={blueprintName}
-                           onClose={() => setCreating(false)} onCreated={() => {
+                           onClose={() => setCreating(false)} onCreated={(blueprint) => {
                                setCreating(false)
-                               clearError()
-                               refresh()
-                               navigate(path(''), {replace: true})
+                               navigate(`/blueprints/${blueprint.id}/graph`)
                            }}/>
             <InputPopup open={renaming !== null} title="Rename blueprint" value={renaming?.name}
                         onClose={() => setRenaming(null)} onSubmit={(name) => {
