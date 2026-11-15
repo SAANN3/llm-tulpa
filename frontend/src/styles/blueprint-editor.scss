@@ -147,3 +147,67 @@
 
 // A short settings form must leave room for Select's panel outside its own content height.
 .blueprint-editor__settings .frame__body { overflow: visible; }
+
+.blueprint-editor__catalog-item[data-variant] {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  border: 0;
+  box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  color: inherit;
+  padding: $space-2;
+  touch-action: none;
+  &:active { transform: none; }
+}
+.blueprint-editor__drag-ghost {
+  position: fixed;
+  z-index: 1200;
+  pointer-events: none;
+  border: 1px solid var(--color-tertiary);
+  background: var(--color-secondary);
+  color: var(--color-primary);
+  padding: $space-2 $space-3;
+  font-size: 13px;
+}
+.blueprint-input { margin: $space-3 0; min-width: 0; }
+.blueprint-input__heading, .blueprint-input__buttons, .blueprint-input__path { display: flex; align-items: center; gap: $space-2; margin: $space-2 0; }
+.blueprint-input__heading > span { flex: 1; overflow-wrap: anywhere; font-size: 12px; }
+.blueprint-input input { width: 100%; min-width: 0; font: inherit; }
+.blueprint-input__buttons > input, .blueprint-input__path > input { flex: 1; width: 0; }
+.blueprint-input button { font: inherit; font-size: 11px; }
+.blueprint-input > [data-select] { display: block; width: 100%; margin: $space-2 0; }
+.blueprint-input__child { margin: $space-2 0; border-left: 1px solid var(--color-border); padding-left: $space-2; }
+.blueprint-canvas__wire-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.blueprint-canvas__wire-handle { fill: var(--color-secondary); stroke: var(--color-primary); stroke-width: 1.5; pointer-events: all; cursor: crosshair; }
+.blueprint-canvas .is-selected .blueprint-canvas__control-wire { stroke: var(--color-tertiary); stroke-width: 3; }
+.blueprint-canvas__pending-wire { fill: none; stroke: var(--color-tertiary); stroke-width: 2; stroke-dasharray: 5 5; }
+.blueprint-canvas button.blueprint-canvas__flow-port,
+.blueprint-canvas button.blueprint-canvas__flow-input,
+.blueprint-canvas button.blueprint-canvas__data-input,
+.blueprint-canvas button.blueprint-canvas__data-output {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 1px 2px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  &:active { transform: translateY(-50%); }
+  &:hover { outline: 1px solid var(--color-tertiary); }
+}
+
+.blueprint-canvas g[data-data-link]:hover .blueprint-canvas__data-wire,
+.blueprint-canvas .is-selected .blueprint-canvas__data-wire {
+  opacity: 1;
+  stroke-width: 3;
+}
+.blueprint-canvas__wire-handle--data { stroke: var(--color-tertiary); }
+.blueprint-canvas button.is-connection-target[data-variant] {
+  color: var(--color-secondary);
+  background: var(--color-tertiary);
+  outline: 2px solid var(--color-primary);
+}

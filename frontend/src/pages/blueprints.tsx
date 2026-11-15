@@ -14,7 +14,7 @@ import {Button, Div, Input, Label, Link} from '../components/primitives'
 import {Sidebar} from '../components/sidebar.tsx'
 import {TypewriterLabel} from '../components/typewriter-label.tsx'
 import {keyBelongsToFocus, useKeyLayer} from '../hooks/use-key-layer.ts'
-import {useBlueprints} from '../hooks/use-blueprints.ts'
+import {useBlueprints} from '../hooks/blueprint-editor/use-blueprints.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import '../styles/blueprints.scss'
 

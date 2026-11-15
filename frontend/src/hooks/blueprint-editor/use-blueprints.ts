@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
 import axios from 'axios'
-import {listBlueprints} from '../api/blueprints/list'
-import type {BlueprintList} from '../api/blueprints/types'
+import {listBlueprints} from '../../api/blueprints/list'
+import type {BlueprintList} from '../../api/blueprints/types'
 
 const BLUEPRINT_BATCH_SIZE = 20
 

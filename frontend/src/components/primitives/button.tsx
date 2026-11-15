@@ -7,6 +7,7 @@ export const Button = ({
     text,
     title,
     onClicked,
+    onPointerDown,
     children,
     disabled
 }: ThemedProps<ButtonProps>) => (
@@ -17,6 +18,7 @@ export const Button = ({
         data-variant={variant}
         title={title}
         onClick={onClicked}
+        onPointerDown={onPointerDown}
         disabled={disabled}
     >
         {text}

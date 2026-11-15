@@ -1,10 +1,10 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
 import axios from 'axios'
-import {getBlueprint} from '../api/blueprints/get'
-import {getBlueprintCatalog} from '../api/blueprints/catalog'
-import {updateBlueprint} from '../api/blueprints/update'
-import {validateBlueprint} from '../api/blueprints/validate'
-import type {BlueprintDocument, NodeCatalog, ValidationReport, Schedule, Workflow} from '../api/blueprints/types'
+import {getBlueprint} from '../../api/blueprints/get'
+import {getBlueprintCatalog} from '../../api/blueprints/catalog'
+import {updateBlueprint} from '../../api/blueprints/update'
+import {validateBlueprint} from '../../api/blueprints/validate'
+import type {BlueprintDocument, NodeCatalog, ValidationReport, Schedule, Workflow} from '../../api/blueprints/types'
 
 const errorText = (error: unknown, fallback: string): string =>
     axios.isAxiosError(error) ? error.response?.data?.error ?? fallback : fallback

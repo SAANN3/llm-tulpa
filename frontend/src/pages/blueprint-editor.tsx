@@ -1,18 +1,22 @@
-import {useEffect, useRef, useState} from 'react'
+import {useEffect, useState} from 'react'
 import {Navigate, useNavigate, useParams} from 'react-router-dom'
 import {Layout} from 'pixelarticons/react'
 import type {Schedule} from '../api/blueprints/types'
 import {Frame} from '../components/frame'
 import {Button, Div, Label} from '../components/primitives'
+import {ConfirmPopup} from '../components/popups/base/confirm-popup'
+import {ConnectionInspector} from '../components/blueprint-editor/connection-inspector'
 import {UnsavedChangesPopup} from '../components/popups/unsaved-changes-popup'
 import {keyBelongsToFocus, useKeyLayer} from '../hooks/use-key-layer'
 import {useDocumentTitle} from '../hooks/use-document-title'
-import {useBlueprintDocument} from '../hooks/use-blueprint-document'
+import {useBlueprintDocument} from '../hooks/blueprint-editor/use-blueprint-document'
 import {EditorMenubar} from '../components/blueprint-editor/editor-menubar'
 import {NodeCatalog} from '../components/blueprint-editor/node-catalog'
 import {GraphCanvas} from '../components/blueprint-editor/graph-canvas'
 import {NodeInspector} from '../components/blueprint-editor/node-inspector'
 import {DocumentSettings} from '../components/blueprint-editor/document-settings'
+import {nodeReferences} from '../utils/blueprint-graph'
+import {useBlueprintGraph} from '../hooks/blueprint-editor/use-blueprint-graph'
 import {EDITOR_VIEWS} from '../utils/blueprint-views'
 import '../styles/blueprint-editor.scss'
 
@@ -22,14 +26,20 @@ const BlueprintEditor = () => {
     const editor = useBlueprintDocument(Number(id))
     const {document, catalog, dirty, busy, loading, error, conflict, report} = editor
     useDocumentTitle(document?.blueprint.name ?? 'Blueprint')
-    const [selected, setSelected] = useState<string | null>(null)
     const [query, setQuery] = useState('')
     const [pane, setPane] = useState<'catalog' | 'inspector' | null>(null)
     const [paletteVisible, setPaletteVisible] = useState(true)
     const [inspectorVisible, setInspectorVisible] = useState(true)
     const [confirm, setConfirm] = useState<'back' | 'reload' | null>(null)
-    const fitRef = useRef<(() => void) | null>(null)
-    const node = document?.workflow.nodes.find(item => item.id === selected)
+    const graph = useBlueprintGraph({
+        document, locked: !!busy, edit: editor.edit,
+        onInspect: () => { setPane('inspector'); setInspectorVisible(true) },
+    })
+    const {
+        selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
+        select, selectEdge, selectData, addNode, connectControl, bindInput, editInput,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode,
+    } = graph
     const path = (next: string) => `/blueprints/${id}/${next}`
 
     const back = () => {
@@ -45,34 +55,9 @@ const BlueprintEditor = () => {
         if (dirty) setConfirm('reload')
         else editor.reload()
     }
-    const select = (nodeId: string | null) => {
-        setSelected(nodeId)
-        if (nodeId) {
-            setPane('inspector')
-            setInspectorVisible(true)
-        }
-    }
     const changeView = (next: string) => {
         navigate(path(next), {replace: true})
         setPane(null)
-    }
-    const moveNode = (nodeId: string, position: {x: number; y: number}) => {
-        editor.edit(value => ({
-            ...value,
-            workflow: {
-                ...value.workflow,
-                nodes: value.workflow.nodes.map(item => item.id === nodeId ? {...item, position} : item),
-            },
-        }))
-    }
-    const renameNode = (name: string) => {
-        editor.edit(value => ({
-            ...value,
-            workflow: {
-                ...value.workflow,
-                nodes: value.workflow.nodes.map(item => item.id === node?.id ? {...item, name} : item),
-            },
-        }))
     }
     const renameDocument = (name: string) => {
         editor.edit(value => ({...value, blueprint: {...value.blueprint, name}}))
@@ -121,10 +106,11 @@ const BlueprintEditor = () => {
         }
         if (keyBelongsToFocus(event)) return false
         if (event.key === 'Escape') {
-            setSelected(null)
+            select(null)
             setPane(null)
             return true
         }
+        if (event.key === 'Delete' && view === 'graph') { requestDelete(); return true }
         if (['1', '2', '3'].includes(event.key)) {
             navigate(path(EDITOR_VIEWS[Number(event.key) - 1].id), {replace: true})
             return true
@@ -141,11 +127,12 @@ const BlueprintEditor = () => {
         edit: [
             {label: 'Undo', shortcut: 'Ctrl Z', disabled: !editor.canUndo || !!busy, onSelect: editor.undo},
             {label: 'Redo', shortcut: 'Ctrl Shift Z', disabled: !editor.canRedo || !!busy, onSelect: editor.redo},
+            {label: 'Delete selection', shortcut: 'Delete', disabled: !!busy || (!edge && !dataLink && (!node || node.kind.type === 'entry')), onSelect: requestDelete},
         ],
         view: [
             {label: 'Node catalog', toggled: paletteVisible, onSelect: () => setPaletteVisible(value => !value)},
             {label: 'Node inspector', toggled: inspectorVisible, onSelect: () => setInspectorVisible(value => !value)},
-            {label: 'Fit graph', onSelect: () => fitRef.current?.()},
+            {label: 'Fit graph', onSelect: () => viewport.current?.fit()},
         ],
     }
     const workspaceClass = [
@@ -185,6 +172,12 @@ const BlueprintEditor = () => {
                         <Button variant="secondary" disabled={!!busy} onClicked={requestReload}>Reload</Button>
                     </Div>
                 ) : null}
+                {graphMessage ? (
+                    <Div className="blueprint-editor__error">
+                        <Label text={graphMessage}/>
+                        <Button variant="secondary" text="Dismiss" onClicked={graph.clearMessage}/>
+                    </Div>
+                ) : null}
                 {loading ? (
                     <Div className="blueprint-editor__loading">Loading blueprint…</Div>
                 ) : document && catalog ? (
@@ -201,12 +194,25 @@ const BlueprintEditor = () => {
                                     </Button>
                                 </Div>
                                 <Div className={workspaceClass}>
-                                    <NodeCatalog catalog={catalog} query={query} onQuery={setQuery} onClose={() => setPane(null)}/>
+                                    <NodeCatalog catalog={catalog} query={query} onQuery={setQuery} onClose={() => setPane(null)}
+                                                 onAdd={addNode} onDrag={() => setPane(null)} locked={!!busy}
+                                                 hasEntry={document.workflow.nodes.some(item => item.kind.type === 'entry')}/>
                                     <GraphCanvas key={id} workflow={document.workflow} catalog={catalog}
                                                  selected={selected} onSelect={select} locked={!!busy}
-                                                 fitRef={fitRef} onMove={moveNode}/>
-                                    <NodeInspector node={node} catalog={catalog} locked={!!busy}
-                                                   onClose={() => setPane(null)} onName={renameNode}/>
+                                                 viewportRef={viewport} onMove={moveNode} selectedEdge={selectedEdge}
+                                                 onSelectEdge={selectEdge} onControl={connectControl} onData={bindInput} onRemoveEdge={removeEdge}
+                                                 selectedData={dataLink} onSelectData={selectData} onRemoveData={removeData}/>
+                                    {edge ? (
+                                        <ConnectionInspector type="control" edge={edge} workflow={document.workflow} locked={!!busy}
+                                                             onDelete={requestDelete} onOrder={reorderEdge} onClose={() => setPane(null)}/>
+                                    ) : dataLink && dataReference ? (
+                                        <ConnectionInspector type="data" link={dataLink} reference={dataReference}
+                                                             workflow={document.workflow} locked={!!busy}
+                                                             onDelete={requestDelete} onClose={() => setPane(null)}/>
+                                    ) : (
+                                        <NodeInspector node={node} catalog={catalog} locked={!!busy} workflow={document.workflow}
+                                                       onClose={() => setPane(null)} onName={renameNode} onInput={editInput} onDelete={requestDelete}/>
+                                    )}
                                 </Div>
                             </>
                         ) : (
@@ -234,6 +240,12 @@ const BlueprintEditor = () => {
                     <span>{node?.name ?? (document ? `${document.workflow.nodes.length} nodes` : '')}</span>
                 </footer>
             </Frame>
+            <ConfirmPopup open={removing !== null} title={removing?.type === 'node' ? 'Delete node' : 'Delete connection'}
+                          message={removing?.type === 'node'
+                              ? `Delete "${document?.workflow.nodes.find(item => item.id === removing.id)?.name ?? removing.id}" and its control connections? ${document ? nodeReferences(document.workflow, removing.id) : 0} input bindings will be reset. Undo can restore them.`
+                              : removing?.type === 'data' ? 'Delete this data connection? Its binding will become null. Undo can restore it.'
+                                  : 'Delete this control connection? Undo can restore it.'}
+                          confirmLabel="Delete" onClose={graph.closeRemoval} onConfirm={deleteSelection}/>
             <UnsavedChangesPopup open={confirm !== null} saving={busy === 'saving'} saveDisabled={conflict || !!busy}
                                  onClose={() => setConfirm(null)} onDiscard={discard}
                                  onSave={() => { void saveAndContinue() }}/>

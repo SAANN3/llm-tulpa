@@ -46,12 +46,27 @@ export const bindingText = (input: InputBinding): string => {
     }
 }
 
-export const references = (input: InputBinding): {node: string; port: string}[] => {
+export type DataReference = Extract<InputBinding, {source: 'output' | 'variable'}>
+export interface DataLink {
+    node: string
+    input: string
+    bindingPath: (string | number)[]
+}
+
+const collectReferences = (input: InputBinding, bindingPath: (string | number)[]): {
+    node: string; port: string; bindingPath: (string | number)[]; binding: DataReference
+}[] => {
     switch (input.source) {
-        case 'output': return [{node: input.node_id, port: input.port}]
-        case 'variable': return [{node: input.node_id, port: 'value'}]
-        case 'array': return input.items.flatMap(references)
-        case 'object': return Object.values(input.fields).flatMap(references)
+        case 'output': return [{node: input.node_id, port: input.port, bindingPath, binding: input}]
+        case 'variable': return [{node: input.node_id, port: 'value', bindingPath, binding: input}]
+        case 'array': return input.items.flatMap((item, index) => collectReferences(item, [...bindingPath, index]))
+        case 'object': return Object.entries(input.fields).flatMap(([key, item]) => collectReferences(item, [...bindingPath, key]))
         case 'literal': return []
     }
 }
+
+export const references = (input: InputBinding) => collectReferences(input, [])
+
+export const sameDataLink = (a: DataLink | null | undefined, b: DataLink): boolean =>
+    !!a && a.node === b.node && a.input === b.input && a.bindingPath.length === b.bindingPath.length
+        && a.bindingPath.every((part, index) => part === b.bindingPath[index])
