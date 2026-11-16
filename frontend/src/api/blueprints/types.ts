@@ -65,6 +65,7 @@ export interface WorkflowNode {
     position: {x: number; y: number}
     kind: NodeKind
 }
+export type NodeOf<T extends NodeKind['type']> = Omit<WorkflowNode, 'kind'> & {kind: Extract<NodeKind, {type: T}>}
 export interface ControlEdge {id: string; from: string; port: string; to: string}
 export interface Workflow {schema_version: number; nodes: WorkflowNode[]; edges: ControlEdge[]}
 export interface BlueprintDocument {blueprint: Blueprint; workflow: Workflow}

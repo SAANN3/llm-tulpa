@@ -19,7 +19,10 @@
   border-bottom: 1px solid var(--color-primary);
   flex-shrink: 0;
 }
-.blueprint-editor__menus, .blueprint-editor__views { display: flex; gap: 2px; align-items: center; }
+.blueprint-editor__menus, .blueprint-editor__view-list { display: flex; gap: 2px; align-items: center; }
+.blueprint-editor__views { display: flex; align-items: stretch; min-width: 0; }
+.blueprint-editor__view-list { min-width: 0; overflow-x: auto; scrollbar-width: none; &::-webkit-scrollbar { display: none; } }
+.blueprint-editor__views-arrow[data-variant] { flex: none; padding: 5px 6px; }
 .blueprint-editor__menus button[data-variant], .blueprint-editor__views button[data-variant] {
   display: flex;
   align-items: center;
@@ -33,6 +36,7 @@
   &:active { transform: none; }
 }
 .blueprint-editor__views { border-left: 1px solid var(--color-border); padding-left: $space-4; }
+.blueprint-editor__exit { margin-left: auto; }
 .blueprint-editor__views button.is-active[data-variant] { background: var(--color-primary); color: var(--color-secondary); }
 .blueprint-editor__views button span { opacity: .55; font-size: 12px; }
 .blueprint-editor__document {
@@ -75,7 +79,7 @@
 .blueprint-editor__value { display: flex; gap: $space-2; justify-content: space-between; padding: $space-2 0; font-size: 12px; border-bottom: 1px solid var(--color-border); }
 .blueprint-editor__value code { font: inherit; overflow-wrap: anywhere; max-width: 65%; opacity: .65; }
 .blueprint-editor__inspector .section-heading { display: block; margin-top: $space-5; }
-.blueprint-editor__node-id { display: block; opacity: .4; font-size: 11px; margin-top: $space-5; overflow-wrap: anywhere; }
+.blueprint-editor__node-id { display: block; opacity: .4; font-size: 11px; margin-top: $space-5; margin-bottom: $space-6; overflow-wrap: anywhere; }
 .blueprint-editor__empty { padding: 60px $space-3; text-align: center; font-size: 13px; opacity: .55; }
 .blueprint-editor__warning { color: var(--color-tertiary); font-size: 12px; line-height: 1.6; }
 .blueprint-editor__settings { flex: 1; min-height: 0; overflow: auto; padding: 60px $space-6; display: flex; align-items: flex-start; justify-content: center; }
@@ -126,14 +130,26 @@
   .blueprint-editor__catalog { left: 0; width: 240px; }
   .blueprint-editor__inspector { right: 0; width: 340px; }
   .mobile-catalog .blueprint-editor__catalog, .mobile-inspector .blueprint-editor__inspector { display: flex; }
-  .blueprint-editor__pane-heading button { display: block; font: inherit; border: 0; padding: 0 5px; box-shadow: none; }
+  .blueprint-editor__pane-heading button[data-variant] { display: inline-flex; font: inherit; font-size: 13px; line-height: 1; }
 }
 @media(max-width: $mobile-max) {
   .page.blueprint-editor { padding: 10px 6px 6px; }
   .blueprint-editor__menubar { flex-wrap: wrap; gap: 0; }
-  .blueprint-editor__menus { width: 100%; }
+  .blueprint-editor__menus { flex: 1; width: auto; min-width: 0; }
+  .blueprint-editor__exit { order: 2; }
+  .blueprint-editor__views { order: 3; }
   .blueprint-editor__menus button[data-variant], .blueprint-editor__views button[data-variant] { font-size: 12px; padding: 5px 9px; }
-  .blueprint-editor__views { border-left: 0; border-top: 1px solid var(--color-border); padding: $space-1 0 0; width: 100%; justify-content: space-between; }
+  // One strip across the row. A section keeps its label width, so extra sections scroll instead of opening gaps, and the arrows step along them
+  .blueprint-editor__views { border-left: 0; border-top: 1px solid var(--color-border); padding: 0; width: 100%; gap: 0; }
+  .blueprint-editor__view-list { flex: 1; gap: 0; border-bottom: 1px solid var(--color-border); }
+  .blueprint-editor__view-list button[data-variant] {
+    flex: 1 1 0;
+    min-width: max-content;
+    justify-content: center;
+    border-right: 1px solid var(--color-border);
+    &:last-child { border-right: 0; }
+  }
+  .blueprint-editor__views-arrow[data-variant] { align-self: stretch; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
   .blueprint-editor__document { flex-wrap: wrap; padding: $space-2 $space-3; gap: $space-2; }
   .blueprint-editor__name { width: 100%; gap: $space-2; }
   .blueprint-editor__name strong { font-size: 14px; }
@@ -173,6 +189,30 @@
   padding: $space-2 $space-3;
   font-size: 13px;
 }
+.blueprint-form__check { display: flex; align-items: flex-start; gap: $space-2; margin: $space-3 0; font-size: 13px; }
+.blueprint-form__hint { display: block; margin: $space-1 0 $space-3; color: color-mix(in srgb, var(--color-primary) 65%, var(--color-secondary)); font-size: 12px; }
+.blueprint-form__details > button[data-variant] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-primary) 50%, var(--color-secondary));
+  padding: 0;
+  font-size: 12px;
+  &:hover,
+  &:focus-visible {
+    background: transparent;
+    color: color-mix(in srgb, var(--color-primary) 78%, var(--color-secondary));
+  }
+  &:active { transform: none; }
+}
+.blueprint-form__schema, .blueprint-form__keys, .blueprint-form__key { display: flex; flex-direction: column; gap: $space-2; min-width: 0; }
+.blueprint-form__key { margin: $space-2 0; }
+.blueprint-form__schema [data-select], .blueprint-editor__field [data-select] { display: block; width: 100%; }
+.blueprint-editor__inspector .tool-choice { margin: $space-2 0 $space-4; }
+.blueprint-editor__inspector .tool-choice__folds { flex-basis: 100%; }
 .blueprint-input { margin: $space-3 0; min-width: 0; }
 .blueprint-input__heading, .blueprint-input__buttons, .blueprint-input__path { display: flex; align-items: center; gap: $space-2; margin: $space-2 0; }
 .blueprint-input__heading > span { flex: 1; overflow-wrap: anywhere; font-size: 12px; }

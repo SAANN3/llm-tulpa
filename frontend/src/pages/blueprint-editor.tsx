@@ -17,6 +17,7 @@ import {NodeInspector} from '../components/blueprint-editor/node-inspector'
 import {DocumentSettings} from '../components/blueprint-editor/document-settings'
 import {nodeReferences} from '../utils/blueprint-graph'
 import {useBlueprintGraph} from '../hooks/blueprint-editor/use-blueprint-graph'
+import {useEditorResources} from '../hooks/blueprint-editor/use-editor-resources'
 import {EDITOR_VIEWS} from '../utils/blueprint-views'
 import '../styles/blueprint-editor.scss'
 
@@ -37,9 +38,10 @@ const BlueprintEditor = () => {
     })
     const {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
-        select, selectEdge, selectData, addNode, connectControl, bindInput, editInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode,
+        select, selectEdge, selectData, addNode, connectControl, bindInput,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode, editKind,
     } = graph
+    const resources = useEditorResources()
     const path = (next: string) => `/blueprints/${id}/${next}`
 
     const back = () => {
@@ -166,6 +168,7 @@ const BlueprintEditor = () => {
                         </Button>
                     </Div>
                 </Div>
+                {resources.toolsError ? <Div className="blueprint-editor__error"><Label text={resources.toolsError}/></Div> : null}
                 {error ? (
                     <Div className="blueprint-editor__error">
                         <Label text={error}/>
@@ -211,7 +214,9 @@ const BlueprintEditor = () => {
                                                              onDelete={requestDelete} onClose={() => setPane(null)}/>
                                     ) : (
                                         <NodeInspector node={node} catalog={catalog} locked={!!busy} workflow={document.workflow}
-                                                       onClose={() => setPane(null)} onName={renameNode} onInput={editInput} onDelete={requestDelete}/>
+                                                       tools={resources.tools} toolsLoaded={resources.toolsLoaded}
+                                                       models={resources.models} profiles={resources.profiles} report={report}
+                                                       onClose={() => setPane(null)} onName={renameNode} onKind={editKind} onDelete={requestDelete}/>
                                     )}
                                 </Div>
                             </>

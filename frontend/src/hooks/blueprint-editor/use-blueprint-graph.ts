@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import type {BlueprintDocument, InputBinding} from '../../api/blueprints/types'
+import type {BlueprintDocument, ControlEdge, InputBinding, NodeKind} from '../../api/blueprints/types'
 import {
     controlConnectionError, createGraphNode, graphId, removeGraphNode, withControlEdges, withNodeInput,
     dataConnectionError, dataReferenceAt, replaceDataReference, literal,
@@ -109,12 +109,6 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
         edit(value => ({...value, workflow: replaceDataReference(value.workflow, link, literal(null))}))
         setSelectedData(null)
     }
-    const editInput = (name: string, input: InputBinding) => {
-        edit(value => ({
-            ...value,
-            workflow: {...value.workflow, nodes: value.workflow.nodes.map(item => item.id === selected ? withNodeInput(item, name, input) : item)},
-        }))
-    }
     const removeEdge = (edgeId: string) => {
         edit(value => ({...value, workflow: withControlEdges(value.workflow, value.workflow.edges.filter(item => item.id !== edgeId))}))
         setSelectedEdge(null)
@@ -158,6 +152,13 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
             },
         }))
     }
+    const editKind = (kind: NodeKind, edges?: ControlEdge[]) => {
+        if (!node) return
+        edit(value => {
+            const nodes = value.workflow.nodes.map(item => item.id === node.id ? {...item, kind} : item)
+            return {...value, workflow: withControlEdges({...value.workflow, nodes}, edges ?? value.workflow.edges)}
+        })
+    }
     const renameNode = (name: string) => {
         edit(value => ({
             ...value,
@@ -169,8 +170,8 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
     }
     return {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
-        select, selectEdge, selectData, addNode, connectControl, bindInput, editInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode,
+        select, selectEdge, selectData, addNode, connectControl, bindInput,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode, editKind,
         clearMessage: () => setGraphMessage(null),
         closeRemoval: () => setRemoving(null),
     }
