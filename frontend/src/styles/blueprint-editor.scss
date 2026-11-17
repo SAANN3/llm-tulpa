@@ -185,6 +185,9 @@
 
 // A short settings form must leave room for Select's panel outside its own content height.
 .blueprint-editor__settings .frame__body { overflow: visible; }
+.blueprint-editor__settings .frame__body:has(.blueprint-editor__saved-variables) { overflow: auto; }
+.blueprint-editor__saved-variables { display: flex; flex-direction: column; gap: $space-3; margin-top: $space-5; }
+.blueprint-editor__saved-value { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: 12px; }
 
 .blueprint-editor__catalog-item[data-variant] {
   display: block;

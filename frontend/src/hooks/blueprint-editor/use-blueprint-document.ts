@@ -126,7 +126,7 @@ export const useBlueprintDocument = (id: number) => {
         }
     }
     const document = !loading && draft?.blueprint.id === id ? draft : null
-    return {document, catalog, loading, busy, error, conflict, report, edit, save, validate, reload,
+    return {document, baseline, catalog, loading, busy, error, conflict, report, edit, save, validate, reload,
         undo: () => travel('undo'), redo: () => travel('redo'), canUndo: history.current.past.length > 0, canRedo: history.current.future.length > 0,
         dirty: document !== null && JSON.stringify(document) !== JSON.stringify(baseline)}
 }

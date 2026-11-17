@@ -1,6 +1,7 @@
 import {Frame} from '../frame'
 import {Div, Input, Label, Select} from '../primitives'
-import type {Schedule} from '../../api/blueprints/types'
+import {SavedVariables} from './saved-variables'
+import type {BlueprintDocument, Schedule} from '../../api/blueprints/types'
 
 interface Props {
     view: string
@@ -8,11 +9,13 @@ interface Props {
     schedule: Schedule
     nextDue: string | null
     locked: boolean
+    saved: BlueprintDocument | null
+    variablesLocked: boolean
     onName: (name: string) => void
     onSchedule: (schedule: Schedule) => void
 }
 
-export const DocumentSettings = ({view, name, schedule, nextDue, locked, onName, onSchedule}: Props) => (
+export const DocumentSettings = ({view, name, schedule, nextDue, locked, saved, variablesLocked, onName, onSchedule}: Props) => (
     <Div className="blueprint-editor__settings">
         <Frame title={view === 'schedule' ? 'Schedule' : 'Blueprint properties'} actions={[]} active={false}>
             <fieldset disabled={locked}>
@@ -60,6 +63,9 @@ export const DocumentSettings = ({view, name, schedule, nextDue, locked, onName,
                     </>
                 )}
             </fieldset>
+            {view === 'general' && saved ? (
+                <SavedVariables key={saved.blueprint.id} saved={saved} locked={variablesLocked}/>
+            ) : null}
         </Frame>
     </Div>
 )

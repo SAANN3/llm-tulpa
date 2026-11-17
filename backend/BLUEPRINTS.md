@@ -491,6 +491,11 @@ not edit the workflow, increment its revision or modify historical run snapshots
 is limited to 4 MiB including retained values; the existing per-value and run-state limits apply.
 There are no variables shared across blueprints.
 
+The editor's **Properties → Saved variables** section shows the current values by node ID and name.
+It also shows stored values whose blueprint-scoped declarations were removed. Use **Reset** to clear
+one value or **Reset all** to clear the blueprint's saved values. A later run uses the declaration's
+initial value when there is no saved value.
+
 Variable nodes have the usual incoming control edge and `out` output. The declaration must
 execute before a node reads or assigns it. Consumers wait for the declaration; if its conditional
 branch is skipped, those consumers are skipped too. Executing the declaration exposes its current value as a

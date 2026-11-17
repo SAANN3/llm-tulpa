@@ -250,6 +250,7 @@ const BlueprintEditor = () => {
                         ) : (
                             <DocumentSettings view={view} name={document.blueprint.name}
                                               schedule={document.blueprint.schedule} nextDue={runs.nextDue} locked={!!busy}
+                                              saved={editor.baseline} variablesLocked={!!busy || conflict}
                                               onName={renameDocument} onSchedule={changeSchedule}/>
                         )}
                         {report ? (
