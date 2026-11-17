@@ -1,17 +1,18 @@
 import {Frame} from '../frame'
-import {Div, Input, Select} from '../primitives'
+import {Div, Input, Label, Select} from '../primitives'
 import type {Schedule} from '../../api/blueprints/types'
 
 interface Props {
     view: string
     name: string
     schedule: Schedule
+    nextDue: string | null
     locked: boolean
     onName: (name: string) => void
     onSchedule: (schedule: Schedule) => void
 }
 
-export const DocumentSettings = ({view, name, schedule, locked, onName, onSchedule}: Props) => (
+export const DocumentSettings = ({view, name, schedule, nextDue, locked, onName, onSchedule}: Props) => (
     <Div className="blueprint-editor__settings">
         <Frame title={view === 'schedule' ? 'Schedule' : 'Blueprint properties'} actions={[]} active={false}>
             <fieldset disabled={locked}>
@@ -51,6 +52,11 @@ export const DocumentSettings = ({view, name, schedule, locked, onName, onSchedu
                                 </label>
                             </>
                         ) : null}
+                        <Label variant="secondary" className="blueprint-editor__hint" text={schedule.type === 'manual'
+                            ? 'Manual runs start from Runs.'
+                            : nextDue
+                                ? `Next run ${new Date(nextDue).toLocaleString()}. This is the saved schedule. Finished runs are in History.`
+                                : 'No run is scheduled yet. Finished runs are in History.'}/>
                     </>
                 )}
             </fieldset>

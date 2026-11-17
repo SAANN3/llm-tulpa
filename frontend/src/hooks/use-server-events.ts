@@ -1,11 +1,11 @@
 import {useEffect, useRef} from 'react'
 import {BACKEND_URL} from '../config'
 import type {CallStatus, RunEndReason, StepList} from '../api/agent/types'
+import type {BlueprintNodeStatus, BlueprintRunStatus} from '../api/blueprints/types'
 import {getToken} from '../utils/auth-token'
 import {debugLog, isDebug} from '../utils/debug.ts'
 
-export type BlueprintRunStatus = 'queued' | 'running' | 'waiting_for_permission' | 'stopping' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
-export type BlueprintNodeStatus = 'pending' | 'running' | 'waiting_for_permission' | 'completed' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+export type {BlueprintNodeStatus, BlueprintRunStatus}
 
 export type BlueprintEvent =
     | { type: 'queue_changed'; user_id: number }

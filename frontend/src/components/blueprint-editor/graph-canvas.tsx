@@ -2,6 +2,7 @@ import {useEffect, useRef, useState, type PointerEvent, type RefObject} from 're
 import {Frame} from '../frame'
 import {Button, Div} from '../primitives'
 import type {NodeCatalog, Workflow} from '../../api/blueprints/types'
+import type {RunMark} from '../../utils/blueprint-runs'
 import {inputBindings, nodeView, references, sameDataLink, type DataLink} from '../../utils/blueprint-node-view'
 import {useBlueprintConnections} from '../../hooks/blueprint-editor/use-blueprint-connections'
 import type {GraphPoint, GraphViewport} from '../../utils/blueprint-graph'
@@ -43,6 +44,7 @@ interface Props {
     onRemoveData: (link: DataLink) => void
     onRemoveEdge: (id: string) => void
     locked: boolean
+    marks: Record<string, RunMark> | null
 }
 
 type Gesture =
@@ -51,7 +53,7 @@ type Gesture =
 
 export const GraphCanvas = ({
     workflow, catalog, selected, onSelect, onMove, viewportRef, locked,
-    selectedEdge, onSelectEdge, onControl, onData, onRemoveEdge, selectedData, onSelectData, onRemoveData,
+    selectedEdge, onSelectEdge, onControl, onData, onRemoveEdge, selectedData, onSelectData, onRemoveData, marks,
 }: Props) => {
     const surface = useRef<HTMLDivElement>(null)
     const gesture = useRef<Gesture | null>(null)
@@ -248,9 +250,11 @@ export const GraphCanvas = ({
                         return <path d={curve(a, connections.point)} className="blueprint-canvas__pending-wire"/>
                     })() : null}
                 </svg>
-                {nodes.map(node => (
+                {nodes.map(node => {
+                    const mark = marks?.[node.id]
+                    return (
                     <article key={node.id} data-node-id={node.id}
-                             className={`blueprint-canvas__node${selected === node.id ? ' blueprint-canvas__node--selected' : ''}`}
+                             className={`blueprint-canvas__node${selected === node.id ? ' blueprint-canvas__node--selected' : ''}${mark && mark.status !== 'pending' ? ` blueprint-canvas__node--${mark.status}` : ''}`}
                              aria-label={`Node ${node.name}`} tabIndex={0}
                              style={{left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: node.height}}
                              onKeyDown={event => { if (event.key === 'Enter') onSelect(node.id) }}
@@ -268,7 +272,7 @@ export const GraphCanvas = ({
                              }}>
                         <Frame title={node.name} actions={[]} active={false} bodyClassName="blueprint-canvas__node-body">
                             <span className="blueprint-canvas__kind">
-                                {node.title}{node.unavailable ? ' · unavailable' : ''}
+                                {node.title}{node.unavailable ? ' · unavailable' : ''}{mark?.caption ? ` · ${mark.caption}` : ''}
                             </span>
                             {node.control.map((port, index) => (
                                 <Button key={port} variant="secondary" className="blueprint-canvas__flow-port"
@@ -318,7 +322,8 @@ export const GraphCanvas = ({
                             ))}
                         </Frame>
                     </article>
-                ))}
+                    )
+                })}
             </div>
             <Div className="blueprint-canvas__legend">
                 {connections.pending ? 'Pick an input · Esc cancels' : '─ control · ┄ data · Drag or click an output'}

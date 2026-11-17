@@ -15,6 +15,10 @@ import {NodeCatalog} from '../components/blueprint-editor/node-catalog'
 import {GraphCanvas} from '../components/blueprint-editor/graph-canvas'
 import {NodeInspector} from '../components/blueprint-editor/node-inspector'
 import {DocumentSettings} from '../components/blueprint-editor/document-settings'
+import {HistoryPanel} from '../components/blueprint-editor/history-panel'
+import {RunPermission, RunsPanel, RunStartPopup} from '../components/blueprint-editor/run-panel'
+import {liveMarks, progressText, statusText} from '../utils/blueprint-runs'
+import {useBlueprintRuns} from '../hooks/blueprint-editor/use-blueprint-runs'
 import {nodeReferences} from '../utils/blueprint-graph'
 import {useBlueprintGraph} from '../hooks/blueprint-editor/use-blueprint-graph'
 import {useEditorResources} from '../hooks/blueprint-editor/use-editor-resources'
@@ -32,6 +36,8 @@ const BlueprintEditor = () => {
     const [paletteVisible, setPaletteVisible] = useState(true)
     const [inspectorVisible, setInspectorVisible] = useState(true)
     const [confirm, setConfirm] = useState<'back' | 'reload' | null>(null)
+    const [runConfirm, setRunConfirm] = useState(false)
+    const runs = useBlueprintRuns(Number(id))
     const graph = useBlueprintGraph({
         document, locked: !!busy, edit: editor.edit,
         onInspect: () => { setPane('inspector'); setInspectorVisible(true) },
@@ -80,6 +86,16 @@ const BlueprintEditor = () => {
         if (action === 'back') back()
         else editor.reload()
     }
+    const requestRun = () => {
+        if (!document || busy || runs.acting) return
+        if (dirty) setRunConfirm(true)
+        else void runs.start(document.blueprint.revision)
+    }
+    const saveAndRun = async () => {
+        const saved = await editor.save()
+        setRunConfirm(false)
+        if (saved) await runs.start(saved.revision)
+    }
 
     useEffect(() => {
         if (!dirty) return
@@ -113,8 +129,9 @@ const BlueprintEditor = () => {
             return true
         }
         if (event.key === 'Delete' && view === 'graph') { requestDelete(); return true }
-        if (['1', '2', '3'].includes(event.key)) {
-            navigate(path(EDITOR_VIEWS[Number(event.key) - 1].id), {replace: true})
+        const viewIndex = Number(event.key) - 1
+        if (event.key >= '1' && event.key <= '9' && EDITOR_VIEWS[viewIndex]) {
+            navigate(path(EDITOR_VIEWS[viewIndex].id), {replace: true})
             return true
         }
         return false
@@ -166,6 +183,9 @@ const BlueprintEditor = () => {
                         <Button disabled={!dirty || !!busy || conflict} onClicked={() => { void editor.save() }}>
                             {busy === 'saving' ? 'Saving…' : 'Save'}
                         </Button>
+                        <Button variant="secondary" disabled={!document || !!busy || runs.acting || conflict} onClicked={requestRun}>
+                            Run
+                        </Button>
                     </Div>
                 </Div>
                 {resources.toolsError ? <Div className="blueprint-editor__error"><Label text={resources.toolsError}/></Div> : null}
@@ -175,6 +195,7 @@ const BlueprintEditor = () => {
                         <Button variant="secondary" disabled={!!busy} onClicked={requestReload}>Reload</Button>
                     </Div>
                 ) : null}
+                {runs.error ? <Div className="blueprint-editor__error"><Label text={runs.error}/></Div> : null}
                 {graphMessage ? (
                     <Div className="blueprint-editor__error">
                         <Label text={graphMessage}/>
@@ -204,7 +225,8 @@ const BlueprintEditor = () => {
                                                  selected={selected} onSelect={select} locked={!!busy}
                                                  viewportRef={viewport} onMove={moveNode} selectedEdge={selectedEdge}
                                                  onSelectEdge={selectEdge} onControl={connectControl} onData={bindInput} onRemoveEdge={removeEdge}
-                                                 selectedData={dataLink} onSelectData={selectData} onRemoveData={removeData}/>
+                                                 selectedData={dataLink} onSelectData={selectData} onRemoveData={removeData}
+                                                 marks={liveMarks(runs.live, document.blueprint.revision)}/>
                                     {edge ? (
                                         <ConnectionInspector type="control" edge={edge} workflow={document.workflow} locked={!!busy}
                                                              onDelete={requestDelete} onOrder={reorderEdge} onClose={() => setPane(null)}/>
@@ -220,9 +242,14 @@ const BlueprintEditor = () => {
                                     )}
                                 </Div>
                             </>
+                        ) : view === 'runs' ? (
+                            <RunsPanel blueprintId={document.blueprint.id} runs={runs}
+                                       onOpen={target => navigate(`/blueprints/${target}/runs`)}/>
+                        ) : view === 'history' ? (
+                            <HistoryPanel key={document.blueprint.id} blueprintId={document.blueprint.id} revision={document.blueprint.revision}/>
                         ) : (
                             <DocumentSettings view={view} name={document.blueprint.name}
-                                              schedule={document.blueprint.schedule} locked={!!busy}
+                                              schedule={document.blueprint.schedule} nextDue={runs.nextDue} locked={!!busy}
                                               onName={renameDocument} onSchedule={changeSchedule}/>
                         )}
                         {report ? (
@@ -241,8 +268,19 @@ const BlueprintEditor = () => {
                         ) : null}
                     </>
                 ) : null}
+                {runs.live?.state.pending_tool ? (
+                    <RunPermission pending={runs.live.state.pending_tool} busy={runs.acting}
+                                   onAnswer={allowance => { void runs.answer(allowance) }} onStop={() => { void runs.stop() }}/>
+                ) : null}
                 <footer className="blueprint-editor__status">
                     <span>{node?.name ?? (document ? `${document.workflow.nodes.length} nodes` : '')}</span>
+                    <span>
+                        {runs.live && document
+                            ? runs.live.run.revision === document.blueprint.revision
+                                ? `${statusText(runs.live.run.status)} · ${progressText(runs.live.run.progress)}${runs.live.state.current_node ? ` · ${runs.live.state.current_node}` : ''}`
+                                : `Run is revision ${runs.live.run.revision}; the open graph is revision ${document.blueprint.revision}`
+                            : ''}
+                    </span>
                 </footer>
             </Frame>
             <ConfirmPopup open={removing !== null} title={removing?.type === 'node' ? 'Delete node' : 'Delete connection'}
@@ -254,6 +292,10 @@ const BlueprintEditor = () => {
             <UnsavedChangesPopup open={confirm !== null} saving={busy === 'saving'} saveDisabled={conflict || !!busy}
                                  onClose={() => setConfirm(null)} onDiscard={discard}
                                  onSave={() => { void saveAndContinue() }}/>
+            <RunStartPopup open={runConfirm} saving={busy === 'saving'} saveDisabled={conflict || !!busy}
+                           onClose={() => setRunConfirm(false)}
+                           onRunSaved={() => { setRunConfirm(false); if (document) void runs.start(document.blueprint.revision) }}
+                           onSaveAndRun={() => { void saveAndRun() }}/>
         </Div>
     )
 }

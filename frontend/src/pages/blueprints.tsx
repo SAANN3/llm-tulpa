@@ -78,7 +78,7 @@ const Blueprints = () => {
                         </Div>
                     ))}
                 </LazyList>
-                <Label variant="secondary" text={result ? `${result.items.length} of ${result.total} blueprints` : loading ? 'Loading blueprints...' : ' '}/>
+                {!result && loading ? <Label variant="secondary" text="Loading blueprints..."/> : null}
             </Div>
             <NewNamedPopup open={creating} title="New blueprint" resource="blueprint"
                            create={createBlueprint} generateName={blueprintName}

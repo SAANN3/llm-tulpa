@@ -4,7 +4,7 @@ import {getBlueprint} from '../../api/blueprints/get'
 import {getBlueprintCatalog} from '../../api/blueprints/catalog'
 import {updateBlueprint} from '../../api/blueprints/update'
 import {validateBlueprint} from '../../api/blueprints/validate'
-import type {BlueprintDocument, NodeCatalog, ValidationReport, Schedule, Workflow} from '../../api/blueprints/types'
+import type {Blueprint, BlueprintDocument, NodeCatalog, ValidationReport, Schedule, Workflow} from '../../api/blueprints/types'
 
 const errorText = (error: unknown, fallback: string): string =>
     axios.isAxiosError(error) ? error.response?.data?.error ?? fallback : fallback
@@ -84,28 +84,28 @@ export const useBlueprintDocument = (id: number) => {
         setDraft(next)
         setReport(null)
     }
-    const save = async () => {
+    const save = async (): Promise<Blueprint | null> => {
         const snapshot = current.current
-        if (!snapshot || operation.current || conflict) return false
+        if (!snapshot || operation.current || conflict) return null
         const controller = new AbortController()
         operation.current = controller
         setBusy('saving')
         setError(null)
         try {
             const blueprint = await updateBlueprint(snapshot.blueprint, snapshot.blueprint.name, snapshot.workflow, controller.signal)
-            if (controller.signal.aborted) return false
+            if (controller.signal.aborted) return null
             const saved = {...snapshot, blueprint}
             current.current = saved
             setDraft(saved)
             setBaseline(saved)
-            return true
+            return blueprint
         } catch (error) {
-            if (controller.signal.aborted) return false
+            if (controller.signal.aborted) return null
             if (axios.isAxiosError(error) && error.response?.status === 409) {
                 setConflict(true)
                 setError('This blueprint changed elsewhere. Your edits are kept here; reload to review the latest version.')
             } else setError(errorText(error, 'Could not save the blueprint.'))
-            return false
+            return null
         } finally {
             if (!controller.signal.aborted) { operation.current = null; setBusy(null) }
         }

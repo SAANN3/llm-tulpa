@@ -1,3 +1,4 @@
+import type {AgentToolCall} from '../agent/types'
 import type {PropertyInfo, PropertySchema} from '../plugins/types'
 
 export type BlueprintSort = 'created' | 'updated'
@@ -92,3 +93,76 @@ export interface PluginNodeDefinition {
 export interface NodeCatalog {nodes: NodeDescriptor[]; plugin_nodes: PluginNodeDefinition[]}
 export interface ValidationDiagnostic {severity: 'error' | 'warning'; node_id: string | null; field: string; code: string; message: string}
 export interface ValidationReport {valid: boolean; diagnostics: ValidationDiagnostic[]}
+
+export type BlueprintRunStatus = 'queued' | 'running' | 'waiting_for_permission' | 'stopping' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+export type BlueprintNodeStatus = 'pending' | 'running' | 'waiting_for_permission' | 'completed' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+
+export interface RunProgress {
+    completed: number
+    skipped: number
+    total: number | null
+    percent: number | null
+}
+
+export interface RunSummary {
+    id: number
+    blueprint_id: number
+    revision: number
+    scheduled_for: string | null
+    status: BlueprintRunStatus
+    queue_position: number | null
+    created_at: string
+    started_at: string | null
+    finished_at: string | null
+    current_node: string | null
+    progress: RunProgress
+    error: string | null
+}
+
+export interface NodeProgress {
+    execution_id: number | null
+    executions: number
+    iteration: {node_id: string; index: number}[]
+    chat_id: number | null
+    status: BlueprintNodeStatus
+    outputs: Record<string, Literal>
+    error: string | null
+}
+
+export interface PendingTool {
+    request_id: string
+    node_id: string
+    call: AgentToolCall
+    answer: 'permanent' | 'only_now' | 'deny' | null
+}
+
+export interface RunState {
+    has_merges: boolean
+    execution_count: number
+    skipped_executions: number
+    loops: Record<string, {iterations: number}>
+    variables: Record<string, Literal>
+    pending_tool: PendingTool | null
+    nodes: Record<string, NodeProgress>
+    current_node: string | null
+    error: string | null
+}
+
+export interface RunDetail {
+    chat_id: number | null
+    run: RunSummary
+    workflow: Workflow
+    state: RunState
+}
+
+export interface QueueState {
+    running: RunSummary | null
+    queued: RunSummary[]
+}
+
+export interface RunHistory {
+    items: RunSummary[]
+    total: number
+    offset: number
+    limit: number
+}
