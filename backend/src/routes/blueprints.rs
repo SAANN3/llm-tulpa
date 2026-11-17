@@ -12,6 +12,7 @@ mod history;
 mod queue;
 mod reorder;
 mod clear_queue;
+mod cancel_queued;
 mod stop;
 pub mod answer;
 mod variables;

@@ -174,6 +174,11 @@ impl BlueprintFacade {
         self.runner.queue_changed(user_id);
         Ok(count)
     }
+    pub async fn cancel_queued(&self, user_id: i64, run_id: i64) -> Result<(), ErrorService> {
+        self.store.cancel_queued(user_id, run_id).await?;
+        self.runner.queue_changed(user_id);
+        Ok(())
+    }
     pub async fn stop(&self, user_id: i64) -> Result<Option<i64>, ErrorService> {
         Ok(self.runner.stop(user_id).await?)
     }

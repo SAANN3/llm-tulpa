@@ -197,17 +197,25 @@ impl BlueprintStore {
             .await?;
         let count = rows.len() as u64;
         for row in rows {
-            let mut state: RunState = serde_json::from_value(row.state.clone())?;
-            state.terminate(NodeStatus::Cancelled);
-            let mut row: runs::ActiveModel = row.into();
-            row.status = Set(RunStatus::Cancelled);
-            row.queue_position = Set(None);
-            row.state = Set(serde_json::to_value(state)?);
-            row.finished_at = Set(Some(Utc::now()));
-            row.update(&txn).await?;
+            row.cancel_queued(&txn).await?;
         }
         txn.commit().await?;
         Ok(count)
+    }
+
+    /// Drops one waiting run. A run that already started is left for Stop.
+    pub async fn cancel_queued(&self, user_id: i64, run_id: i64) -> Result<(), BlueprintStoreError> {
+        let txn = self.db.begin().await?;
+        self.lock_queue(&txn, user_id).await?;
+        let row = runs::Entity::find()
+            .filter(runs::Column::UserId.eq(user_id))
+            .filter(runs::Column::Id.eq(run_id))
+            .one(&txn)
+            .await?
+            .ok_or(BlueprintStoreError::NotFound)?;
+        row.cancel_queued(&txn).await?;
+        txn.commit().await?;
+        Ok(())
     }
 
     pub async fn get_run(

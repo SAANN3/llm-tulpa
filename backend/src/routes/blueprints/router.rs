@@ -1,5 +1,5 @@
 use super::{
-    answer, catalog, clear_queue, create, delete, get as read, history, list, queue, reorder, run, start,
+    answer, cancel_queued, catalog, clear_queue, create, delete, get as read, history, list, queue, reorder, run, start,
     stop, update, validate, variables, reset_variables,
 };
 use crate::state::AppState;
@@ -23,6 +23,7 @@ pub fn router() -> Router<Arc<AppState>> {
                 .delete(clear_queue::clear_queue),
         )
         .route("/queue/stop", post(stop::stop))
+        .route("/queue/{run_id}", axum::routing::delete(cancel_queued::cancel_queued))
         .route("/catalog", get(catalog::catalog))
         .route("/validate", post(validate::validate))
         .route("/", get(list::list).post(create::create))
@@ -44,6 +45,7 @@ pub fn router() -> Router<Arc<AppState>> {
         queue::queue,
         reorder::reorder,
         clear_queue::clear_queue,
+        cancel_queued::cancel_queued,
         stop::stop,
         catalog::catalog,
         validate::validate,

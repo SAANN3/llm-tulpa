@@ -245,6 +245,7 @@ Static validation can still describe those draft nodes without an executor.
 | GET | `/api/blueprints/queue` | `{running,queued}`; queued items in execution order |
 | PUT | `/api/blueprints/queue` | `{run_ids:[...]}` containing every currently queued id once; returns queue |
 | DELETE | `/api/blueprints/queue` | `{cancelled:N}`; cancels waiting runs, preserving history and current execution |
+| DELETE | `/api/blueprints/queue/{run_id}` | 204; cancels one waiting run and keeps it in history. Returns 404 if the run is missing or belongs to another user, and 409 if it is no longer queued |
 | POST | `/api/blueprints/queue/stop` | 202 `{run_id}` (null if idle); stops current run, preserving waiting runs |
 
 Reordering sends the full desired order, so moving an item up/down is one atomic operation.
