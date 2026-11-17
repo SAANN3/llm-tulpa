@@ -106,9 +106,10 @@
 .blueprint-editor__status > span:last-child { margin-left: auto; opacity: .55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .blueprint-editor__mobile-tools { display: none; }
 
-.blueprint-canvas { position: relative; min-width: 0; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 16%, var(--color-secondary)) 1px, transparent 1px); isolation: isolate; }
+.blueprint-canvas { position: relative; min-width: 0; min-height: 0; overflow: hidden; touch-action: none; cursor: crosshair; background-image: radial-gradient(color-mix(in srgb, var(--color-tertiary) 16%, var(--color-secondary)) 1px, transparent 1px); isolation: isolate; }
 .blueprint-canvas--panning { cursor: grabbing; }
 .blueprint-canvas__world { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; width: 1px; height: 1px; }
+.blueprint-canvas__selection { position: absolute; pointer-events: none; border: 1px solid var(--color-tertiary); background: color-mix(in srgb, var(--color-tertiary) 18%, transparent); }
 .blueprint-canvas__wires { position: absolute; overflow: visible; pointer-events: none; }
 .blueprint-canvas__control-wire { fill: none; stroke: var(--color-primary); stroke-width: 1.5; }
 .blueprint-canvas__data-wire { fill: none; stroke: var(--color-tertiary); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .6; }
@@ -133,6 +134,11 @@
 .blueprint-canvas__flow-port, .blueprint-canvas__flow-input { color: var(--color-primary); }
 .blueprint-canvas__data-output, .blueprint-canvas__data-input { color: var(--color-tertiary); }
 .blueprint-canvas__legend { position: absolute; left: $space-4; top: $space-3; font-size: 11px; opacity: .55; pointer-events: none; }
+.blueprint-canvas__touch-hint { display: none; }
+@media (pointer: coarse) {
+  .blueprint-canvas__mouse-hint { display: none; }
+  .blueprint-canvas__touch-hint { display: inline; }
+}
 .blueprint-canvas__controls { position: absolute; left: $space-4; bottom: $space-4; display: flex; align-items: center; background: var(--color-secondary); border: 1px solid var(--color-border); }
 .blueprint-canvas__controls button[data-variant] { font: inherit; font-size: 12px; padding: 6px 10px; border: 0; box-shadow: none; &:active { transform: none; } }
 .blueprint-canvas__controls span { font-size: 12px; padding: 0 $space-2; opacity: .6; }

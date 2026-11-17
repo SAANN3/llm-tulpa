@@ -19,7 +19,6 @@ import {HistoryPanel} from '../components/blueprint-editor/history-panel'
 import {RunPermission, RunsPanel, RunStartPopup} from '../components/blueprint-editor/run-panel'
 import {liveMarks, progressText, statusText} from '../utils/blueprint-runs'
 import {useBlueprintRuns} from '../hooks/blueprint-editor/use-blueprint-runs'
-import {nodeReferences} from '../utils/blueprint-graph'
 import {useBlueprintGraph} from '../hooks/blueprint-editor/use-blueprint-graph'
 import {useEditorResources} from '../hooks/blueprint-editor/use-editor-resources'
 import {EDITOR_VIEWS} from '../utils/blueprint-views'
@@ -45,7 +44,8 @@ const BlueprintEditor = () => {
     const {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
         select, selectEdge, selectData, addNode, connectControl, bindInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode, editKind,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNodes, renameNode, editKind,
+        selectNodes, selectAll, copySelection, pasteSelection, canCopy, hasClipboard,
     } = graph
     const resources = useEditorResources()
     const path = (next: string) => `/blueprints/${id}/${next}`
@@ -120,6 +120,12 @@ const BlueprintEditor = () => {
                 else editor.undo()
                 return true
             }
+            if (view === 'graph' && !keyBelongsToFocus(event)) {
+                if (key === 'KeyA') return selectAll()
+                if (key === 'KeyC') return copySelection()
+                if (key === 'KeyX') return copySelection(true)
+                if (key === 'KeyV') return pasteSelection()
+            }
             return false
         }
         if (keyBelongsToFocus(event)) return false
@@ -146,7 +152,11 @@ const BlueprintEditor = () => {
         edit: [
             {label: 'Undo', shortcut: 'Ctrl Z', disabled: !editor.canUndo || !!busy, onSelect: editor.undo},
             {label: 'Redo', shortcut: 'Ctrl Shift Z', disabled: !editor.canRedo || !!busy, onSelect: editor.redo},
-            {label: 'Delete selection', shortcut: 'Delete', disabled: !!busy || (!edge && !dataLink && (!node || node.kind.type === 'entry')), onSelect: requestDelete},
+            {label: 'Cut', shortcut: 'Ctrl X', disabled: view !== 'graph' || !!busy || !canCopy, onSelect: () => { copySelection(true) }},
+            {label: 'Copy', shortcut: 'Ctrl C', disabled: view !== 'graph' || !!busy || !canCopy, onSelect: () => { copySelection() }},
+            {label: 'Paste', shortcut: 'Ctrl V', disabled: view !== 'graph' || !!busy || !hasClipboard, onSelect: () => { pasteSelection() }},
+            {label: 'Select all', shortcut: 'Ctrl A', disabled: view !== 'graph' || !document, onSelect: () => { selectAll() }},
+            {label: 'Delete selection', shortcut: 'Delete', disabled: view !== 'graph' || !!busy || (!edge && !dataLink && !canCopy), onSelect: requestDelete},
         ],
         view: [
             {label: 'Node catalog', toggled: paletteVisible, onSelect: () => setPaletteVisible(value => !value)},
@@ -222,8 +232,8 @@ const BlueprintEditor = () => {
                                                  onAdd={addNode} onDrag={() => setPane(null)} locked={!!busy}
                                                  hasEntry={document.workflow.nodes.some(item => item.kind.type === 'entry')}/>
                                     <GraphCanvas key={id} workflow={document.workflow} catalog={catalog}
-                                                 selected={selected} onSelect={select} locked={!!busy}
-                                                 viewportRef={viewport} onMove={moveNode} selectedEdge={selectedEdge}
+                                                 selected={selected} onSelect={select} onSelectNodes={selectNodes} locked={!!busy}
+                                                 viewportRef={viewport} onMove={moveNodes} selectedEdge={selectedEdge}
                                                  onSelectEdge={selectEdge} onControl={connectControl} onData={bindInput} onRemoveEdge={removeEdge}
                                                  selectedData={dataLink} onSelectData={selectData} onRemoveData={removeData}
                                                  marks={liveMarks(runs.live, document.blueprint.revision)}/>
@@ -274,7 +284,7 @@ const BlueprintEditor = () => {
                                    onAnswer={allowance => { void runs.answer(allowance) }} onStop={() => { void runs.stop() }}/>
                 ) : null}
                 <footer className="blueprint-editor__status">
-                    <span>{node?.name ?? (document ? `${document.workflow.nodes.length} nodes` : '')}</span>
+                    <span>{selected.size > 1 ? `${selected.size} selected` : node?.name ?? (document ? `${document.workflow.nodes.length} nodes` : '')}</span>
                     <span>
                         {runs.live && document
                             ? runs.live.run.revision === document.blueprint.revision
@@ -284,9 +294,9 @@ const BlueprintEditor = () => {
                     </span>
                 </footer>
             </Frame>
-            <ConfirmPopup open={removing !== null} title={removing?.type === 'node' ? 'Delete node' : 'Delete connection'}
-                          message={removing?.type === 'node'
-                              ? `Delete "${document?.workflow.nodes.find(item => item.id === removing.id)?.name ?? removing.id}" and its control connections? ${document ? nodeReferences(document.workflow, removing.id) : 0} input bindings will be reset. Undo can restore them.`
+            <ConfirmPopup open={removing !== null} title={removing?.type === 'nodes' ? 'Delete nodes' : 'Delete connection'}
+                          message={removing?.type === 'nodes'
+                              ? `Delete ${removing.ids.length} selected ${removing.ids.length === 1 ? 'node' : 'nodes'} and reset their connections? Undo can restore them.`
                               : removing?.type === 'data' ? 'Delete this data connection? Its binding will become null. Undo can restore it.'
                                   : 'Delete this control connection? Undo can restore it.'}
                           confirmLabel="Delete" onClose={graph.closeRemoval} onConfirm={deleteSelection}/>

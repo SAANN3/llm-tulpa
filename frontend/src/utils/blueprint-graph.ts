@@ -1,6 +1,6 @@
 import type {ControlEdge, InputBinding, Literal, NodeDescriptor, NodeKind, PluginNodeDefinition, Workflow, WorkflowNode} from '../api/blueprints/types'
 import type {PropertySchema} from '../api/plugins/types'
-import {inputBindings, references, type DataLink, type DataReference} from './blueprint-node-view'
+import {inputBindings, type DataLink, type DataReference} from './blueprint-node-view'
 
 export interface GraphPoint {x: number; y: number}
 export interface GraphViewport {
@@ -68,11 +68,14 @@ export const withNodeInput = (node: WorkflowNode, name: string, input: InputBind
     }
 }
 
-const withoutReference = (input: InputBinding, id: string): InputBinding => {
+const mapReferences = (input: InputBinding, resolve: (id: string) => string | undefined): InputBinding => {
     switch (input.source) {
-        case 'output': case 'variable': return input.node_id === id ? literal(null) : input
-        case 'array': return {...input, items: input.items.map(item => withoutReference(item, id))}
-        case 'object': return {...input, fields: Object.fromEntries(Object.entries(input.fields).map(([key, value]) => [key, withoutReference(value, id)]))}
+        case 'output': case 'variable': {
+            const id = resolve(input.node_id)
+            return id === undefined ? literal(null) : {...input, node_id: id}
+        }
+        case 'array': return {...input, items: input.items.map(item => mapReferences(item, resolve))}
+        case 'object': return {...input, fields: Object.fromEntries(Object.entries(input.fields).map(([key, value]) => [key, mapReferences(value, resolve)]))}
         case 'literal': return input
     }
 }
@@ -91,16 +94,47 @@ export const withControlEdges = (workflow: Workflow, edges: ControlEdge[]): Work
     }),
 })
 
-export const removeGraphNode = (workflow: Workflow, id: string): Workflow => {
-    const nodes = workflow.nodes.filter(node => node.id !== id).map(node => {
-        let next = node
-        for (const [name, input] of inputBindings(node)) next = withNodeInput(next, name, withoutReference(input, id))
-        if (next.kind.type === 'set_variable' && next.kind.variable_id === id) {
-            next = {...next, kind: {...next.kind, variable_id: 'unconfigured'}}
+const remapNode = (node: WorkflowNode, resolve: (id: string) => string | undefined) => {
+    let next = node
+    for (const [name, input] of inputBindings(node)) next = withNodeInput(next, name, mapReferences(input, resolve))
+    if (next.kind.type === 'set_variable') {
+        next = {...next, kind: {...next.kind, variable_id: resolve(next.kind.variable_id) ?? 'unconfigured'}}
+    }
+    return next
+}
+
+export const removeGraphNodes = (workflow: Workflow, ids: ReadonlySet<string>): Workflow => {
+    const nodes = workflow.nodes.filter(node => !ids.has(node.id)).map(node => remapNode(node, id => ids.has(id) ? undefined : id))
+    return withControlEdges({...workflow, nodes}, workflow.edges.filter(edge => !ids.has(edge.from) && !ids.has(edge.to)))
+}
+
+export type GraphFragment = Pick<Workflow, 'nodes' | 'edges'>
+
+export const copyGraphNodes = (workflow: Workflow, selected: ReadonlySet<string>): GraphFragment => {
+    const nodes = workflow.nodes.filter(node => selected.has(node.id) && node.kind.type !== 'entry')
+    const ids = new Set(nodes.map(node => node.id))
+    return {nodes, edges: workflow.edges.filter(edge => ids.has(edge.from) && ids.has(edge.to))}
+}
+
+export const pasteGraphNodes = (fragment: GraphFragment, offset: GraphPoint): GraphFragment => {
+    const ids = new Map(fragment.nodes.map(node => [node.id, graphId('node')]))
+    const edgeIds = new Map(fragment.edges.map(edge => [edge.id, graphId('edge')]))
+    const edges = fragment.edges.map(edge => ({
+        ...edge, id: edgeIds.get(edge.id)!, from: ids.get(edge.from)!, to: ids.get(edge.to)!,
+    }))
+    const nodes = fragment.nodes.map(original => {
+        let node = remapNode(original, id => ids.get(id))
+        if (node.kind.type === 'merge') {
+            const inputs: Record<string, InputBinding> = {}
+            for (const [id, value] of Object.entries(node.kind.inputs)) {
+                const newId = edgeIds.get(id)
+                if (newId) inputs[newId] = value
+            }
+            node = {...node, kind: {...node.kind, inputs}}
         }
-        return next
+        return {...node, id: ids.get(original.id)!, position: {x: node.position.x + offset.x, y: node.position.y + offset.y}}
     })
-    return withControlEdges({...workflow, nodes}, workflow.edges.filter(edge => edge.from !== id && edge.to !== id))
+    return {nodes, edges}
 }
 
 export const controlConnectionError = (workflow: Workflow, from: string, port: string, to: string, replacing?: string): string | null => {
@@ -122,11 +156,6 @@ export const controlConnectionError = (workflow: Workflow, from: string, port: s
     }
     return null
 }
-
-export const nodeReferences = (workflow: Workflow, id: string): number => workflow.nodes.reduce((total, node) =>
-    total + inputBindings(node).filter(([, input]) => references(input).some(ref => ref.node === id)).length
-        + (node.kind.type === 'set_variable' && node.kind.variable_id === id ? 1 : 0), 0)
-
 
 export const dataReferenceAt = (workflow: Workflow, link: DataLink): DataReference | null => {
     const node = workflow.nodes.find(item => item.id === link.node)

@@ -1,9 +1,9 @@
 import {useEffect, useRef, useState} from 'react'
 import type {BlueprintDocument, ControlEdge, InputBinding, NodeKind} from '../../api/blueprints/types'
 import {
-    controlConnectionError, createGraphNode, graphId, removeGraphNode, withControlEdges, withNodeInput,
+    controlConnectionError, createGraphNode, graphId, removeGraphNodes, copyGraphNodes, pasteGraphNodes, withControlEdges, withNodeInput,
     dataConnectionError, dataReferenceAt, replaceDataReference, literal,
-    type GraphPoint, type GraphViewport, type NodeChoice,
+    type GraphFragment, type GraphPoint, type GraphViewport, type NodeChoice,
 } from '../../utils/blueprint-graph'
 import {type DataLink} from '../../utils/blueprint-node-view'
 
@@ -15,40 +15,44 @@ interface BlueprintGraphOptions {
 }
 
 export const useBlueprintGraph = ({document, locked, edit, onInspect}: BlueprintGraphOptions) => {
-    const [selected, setSelected] = useState<string | null>(null)
+    const [selection, setSelection] = useState<string[]>([])
+    const clipboard = useRef<{fragment: GraphFragment; pastes: number} | null>(null)
+    const [hasClipboard, setHasClipboard] = useState(false)
     const viewport = useRef<GraphViewport | null>(null)
     const [selectedEdge, setSelectedEdge] = useState<string | null>(null)
     const [selectedData, setSelectedData] = useState<DataLink | null>(null)
     const [graphMessage, setGraphMessage] = useState<string | null>(null)
-    const [removing, setRemoving] = useState<{type: 'node' | 'edge'; id: string} | {type: 'data'; link: DataLink} | null>(null)
+    const [removing, setRemoving] = useState<{type: 'nodes'; ids: string[]} | {type: 'edge'; id: string} | {type: 'data'; link: DataLink} | null>(null)
     useEffect(() => {
-        setSelected(null)
+        setSelection([])
         setSelectedEdge(null)
         setSelectedData(null)
         setRemoving(null)
         setGraphMessage(null)
     }, [document?.blueprint.id])
 
-    const node = document?.workflow.nodes.find(item => item.id === selected)
+    const selectedNodes = document?.workflow.nodes.filter(item => selection.includes(item.id)) ?? []
+    const selected = new Set(selectedNodes.map(item => item.id))
+    const editableIds = selectedNodes.filter(item => item.kind.type !== 'entry').map(item => item.id)
+    const node = selectedNodes.length === 1 ? selectedNodes[0] : undefined
     const edge = document?.workflow.edges.find(item => item.id === selectedEdge)
     const dataReference = document && selectedData ? dataReferenceAt(document.workflow, selectedData) : null
     const dataLink = dataReference ? selectedData : null
-    const select = (nodeId: string | null) => {
+    const selectNodes = (ids: string[], inspect = false) => {
         setSelectedEdge(null)
         setSelectedData(null)
-        setSelected(nodeId)
-        if (nodeId) {
-            onInspect()
-        }
+        setSelection(ids)
+        if (inspect && ids.length === 1) onInspect()
     }
+    const select = (id: string | null) => selectNodes(id === null ? [] : [id], true)
     const selectEdge = (edgeId: string) => {
-        setSelected(null)
+        setSelection([])
         setSelectedData(null)
         setSelectedEdge(edgeId)
         onInspect()
     }
     const selectData = (link: DataLink) => {
-        setSelected(null)
+        setSelection([])
         setSelectedEdge(null)
         setSelectedData(link)
         onInspect()
@@ -117,15 +121,15 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
         if (locked) return
         if (edge) setRemoving({type: 'edge', id: edge.id})
         else if (dataLink) setRemoving({type: 'data', link: dataLink})
-        else if (node && node.kind.type !== 'entry') setRemoving({type: 'node', id: node.id})
+        else if (editableIds.length) setRemoving({type: 'nodes', ids: editableIds})
     }
     const deleteSelection = () => {
         if (!removing) return
         if (removing.type === 'edge') removeEdge(removing.id)
         else if (removing.type === 'data') removeData(removing.link)
         else {
-            edit(value => ({...value, workflow: removeGraphNode(value.workflow, removing.id)}))
-            setSelected(null)
+            edit(value => ({...value, workflow: removeGraphNodes(value.workflow, new Set(removing.ids))}))
+            setSelection([])
         }
     }
     const reorderEdge = (direction: -1 | 1) => {
@@ -143,14 +147,47 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
             return {...value, workflow: {...value.workflow, edges}}
         })
     }
-    const moveNode = (nodeId: string, position: {x: number; y: number}) => {
+    const moveNodes = (ids: ReadonlySet<string>, delta: GraphPoint) => {
+        if (locked || (delta.x === 0 && delta.y === 0)) return
         edit(value => ({
             ...value,
             workflow: {
                 ...value.workflow,
-                nodes: value.workflow.nodes.map(item => item.id === nodeId ? {...item, position} : item),
+                nodes: value.workflow.nodes.map(item => ids.has(item.id)
+                    ? {...item, position: {x: item.position.x + delta.x, y: item.position.y + delta.y}} : item),
             },
         }))
+    }
+    const copySelection = (cut = false) => {
+        if (!document || locked || editableIds.length === 0) return false
+        const ids = new Set(editableIds)
+        clipboard.current = {fragment: copyGraphNodes(document.workflow, ids), pastes: 0}
+        setHasClipboard(true)
+        if (cut) {
+            edit(value => ({...value, workflow: removeGraphNodes(value.workflow, ids)}))
+            selectNodes(selection.filter(id => !ids.has(id)))
+        }
+        return true
+    }
+    const pasteSelection = () => {
+        const content = clipboard.current
+        const anchor = viewport.current?.place()
+        if (!document || locked || !content || !anchor) return false
+        const step = 24 * (++content.pastes)
+        const left = Math.min(...content.fragment.nodes.map(node => node.position.x))
+        const top = Math.min(...content.fragment.nodes.map(node => node.position.y))
+        const {nodes, edges} = pasteGraphNodes(content.fragment, {x: anchor.x - left + step, y: anchor.y - top + step})
+        edit(value => ({
+            ...value,
+            workflow: {...value.workflow, nodes: [...value.workflow.nodes, ...nodes], edges: [...value.workflow.edges, ...edges]},
+        }))
+        selectNodes(nodes.map(item => item.id))
+        return true
+    }
+    const selectAll = () => {
+        if (!document) return false
+        selectNodes(document.workflow.nodes.map(item => item.id))
+        return true
     }
     const editKind = (kind: NodeKind, edges?: ControlEdge[]) => {
         if (!node) return
@@ -171,7 +208,8 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
     return {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
         select, selectEdge, selectData, addNode, connectControl, bindInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNode, renameNode, editKind,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNodes, renameNode, editKind,
+        selectNodes, selectAll, copySelection, pasteSelection, hasClipboard, canCopy: editableIds.length > 0,
         clearMessage: () => setGraphMessage(null),
         closeRemoval: () => setRemoving(null),
     }

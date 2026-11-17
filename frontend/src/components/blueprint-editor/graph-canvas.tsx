@@ -14,6 +14,7 @@ const SECTION_GAP = 26
 const CANVAS_MARGIN = 64
 const MIN_ZOOM = 0.15
 const MAX_ZOOM = 1.7
+const DRAG_THRESHOLD = 4
 const curveBend = (a: GraphPoint, b: GraphPoint) => Math.max(60, Math.abs(b.x - a.x) * 0.45)
 const curve = (a: GraphPoint, b: GraphPoint) => {
     const bend = curveBend(a, b)
@@ -31,9 +32,10 @@ const curvePoint = (a: GraphPoint, b: GraphPoint, t: number): GraphPoint => {
 interface Props {
     workflow: Workflow
     catalog: NodeCatalog
-    selected: string | null
+    selected: ReadonlySet<string>
     onSelect: (id: string | null) => void
-    onMove: (id: string, position: {x: number; y: number}) => void
+    onSelectNodes: (ids: string[]) => void
+    onMove: (ids: ReadonlySet<string>, delta: GraphPoint) => void
     viewportRef: RefObject<GraphViewport | null>
     selectedEdge: string | null
     onSelectEdge: (id: string) => void
@@ -49,16 +51,23 @@ interface Props {
 
 type Gesture =
     | {type: 'pan'; pointer: number; clientX: number; clientY: number; x: number; y: number}
-    | {type: 'node'; pointer: number; clientX: number; clientY: number; x: number; y: number; id: string; zoom: number}
+    | {type: 'node'; pointer: number; clientX: number; clientY: number; id: string; ids: ReadonlySet<string>; zoom: number}
+    | {type: 'selection'; pointer: number; clientX: number; clientY: number; from: GraphPoint; extend: boolean}
+
+const selectionRect = (from: GraphPoint, to: GraphPoint) => ({
+    left: Math.min(from.x, to.x), top: Math.min(from.y, to.y),
+    width: Math.abs(from.x - to.x), height: Math.abs(from.y - to.y),
+})
 
 export const GraphCanvas = ({
-    workflow, catalog, selected, onSelect, onMove, viewportRef, locked,
+    workflow, catalog, selected, onSelect, onSelectNodes, onMove, viewportRef, locked,
     selectedEdge, onSelectEdge, onControl, onData, onRemoveEdge, selectedData, onSelectData, onRemoveData, marks,
 }: Props) => {
     const surface = useRef<HTMLDivElement>(null)
     const gesture = useRef<Gesture | null>(null)
     const [camera, setCamera] = useState({x: 0, y: 0, zoom: 1})
-    const [drag, setDrag] = useState<{id: string; x: number; y: number} | null>(null)
+    const [drag, setDrag] = useState<{ids: ReadonlySet<string>; delta: GraphPoint} | null>(null)
+    const [marquee, setMarquee] = useState<ReturnType<typeof selectionRect> | null>(null)
     const [panning, setPanning] = useState(false)
     const toWorld = (point: GraphPoint): GraphPoint => {
         const rect = surface.current!.getBoundingClientRect()
@@ -81,7 +90,7 @@ export const GraphCanvas = ({
         const controlRows = Math.max(control.length, node.kind.type === 'merge' ? incoming.length : 1, 1)
         const dataTop = CONTROL_TOP + controlRows * PORT_ROW + SECTION_GAP
         return {...node, ...view, control, outputs, inputs, incoming, dataTop,
-            position: drag?.id === node.id ? {x: drag.x, y: drag.y} : node.position,
+            position: drag?.ids.has(node.id) ? {x: node.position.x + drag.delta.x, y: node.position.y + drag.delta.y} : node.position,
             height: dataTop + Math.max(inputs.length, outputs.length) * PORT_ROW + 20}
     })
     const byId = new Map(nodes.map(node => [node.id, node]))
@@ -138,10 +147,10 @@ export const GraphCanvas = ({
         return () => cancelAnimationFrame(frame)
     }, [viewportRef])
     useEffect(() => {
-        if (locked) { gesture.current = null; setDrag(null); setPanning(false) }
+        if (locked) { gesture.current = null; setDrag(null); setMarquee(null); setPanning(false) }
     }, [locked])
     useEffect(() => {
-        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { gesture.current = null; setDrag(null); setPanning(false) } }
+        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { gesture.current = null; setDrag(null); setMarquee(null); setPanning(false) } }
         window.addEventListener('keydown', escape)
         return () => window.removeEventListener('keydown', escape)
     }, [])
@@ -157,8 +166,19 @@ export const GraphCanvas = ({
         if (!element) return
         const wheel = (event: WheelEvent) => {
             event.preventDefault()
+            if (gesture.current) return
+            const {deltaMode, deltaX, deltaY} = event
+            const horizontal = deltaX !== 0 && Math.abs(deltaX) >= Math.abs(deltaY)
+            if (horizontal || event.shiftKey) {
+                const unit = deltaMode === WheelEvent.DOM_DELTA_LINE ? PORT_ROW
+                    : deltaMode === WheelEvent.DOM_DELTA_PAGE ? element.clientWidth : 1
+                const distance = (horizontal ? deltaX : deltaY) * unit
+                setCamera(previous => ({...previous, x: previous.x - distance}))
+                return
+            }
+            if (deltaY === 0) return
             const bounds = element.getBoundingClientRect()
-            zoomBy(event.deltaY > 0 ? 0.92 : 1.08, {x: event.clientX - bounds.left, y: event.clientY - bounds.top})
+            zoomBy(deltaY > 0 ? 0.92 : 1.08, {x: event.clientX - bounds.left, y: event.clientY - bounds.top})
         }
         element.addEventListener('wheel', wheel, {passive: false})
         return () => element.removeEventListener('wheel', wheel)
@@ -169,34 +189,57 @@ export const GraphCanvas = ({
         if (!active || event.pointerId !== active.pointer) return
         const dx = event.clientX - active.clientX, dy = event.clientY - active.clientY
         if (active.type === 'pan') setCamera(value => ({...value, x: active.x + dx, y: active.y + dy}))
-        else setDrag({id: active.id, x: active.x + dx / active.zoom, y: active.y + dy / active.zoom})
+        else if (active.type === 'node') {
+            if (drag || Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
+                setDrag({ids: active.ids, delta: {x: dx / active.zoom, y: dy / active.zoom}})
+            }
+        }
+        else setMarquee(selectionRect(active.from, toWorld({x: event.clientX, y: event.clientY})))
     }
     const finish = (event: PointerEvent<HTMLDivElement>) => {
         if (connections.finish(event)) return
-        if (drag && gesture.current?.type === 'node') onMove(drag.id, {x: drag.x, y: drag.y})
+        const active = gesture.current
+        if (!active || event.pointerId !== active.pointer) return
+        const dx = event.clientX - active.clientX, dy = event.clientY - active.clientY
+        const moved = Math.hypot(dx, dy) >= DRAG_THRESHOLD
+        if (active.type === 'node') {
+            if (drag || moved) onMove(active.ids, {x: dx / active.zoom, y: dy / active.zoom})
+            else if (active.ids.size > 1) onSelect(active.id)
+        } else if (active.type === 'selection') {
+            const rect = selectionRect(active.from, toWorld({x: event.clientX, y: event.clientY}))
+            const ids = moved ? nodes.filter(({position, height}) =>
+                position.x <= rect.left + rect.width && position.x + NODE_WIDTH >= rect.left
+                && position.y <= rect.top + rect.height && position.y + height >= rect.top,
+            ).map(node => node.id) : []
+            onSelectNodes(active.extend ? [...new Set([...selected, ...ids])] : ids)
+        }
         gesture.current = null
         setDrag(null)
+        setMarquee(null)
         setPanning(false)
     }
     const cancel = () => {
         connections.cancel()
         gesture.current = null
         setDrag(null)
+        setMarquee(null)
         setPanning(false)
     }
     return (
-        <div className={`blueprint-canvas${panning ? ' blueprint-canvas--panning' : ''}`} ref={surface}
+        <div className={`blueprint-canvas${panning ? ' blueprint-canvas--panning' : ''}`} ref={surface} tabIndex={-1}
              onPointerDown={event => {
-                 if (event.button !== 0 || (event.target as Element).closest('article,button,[data-edge],[data-data-link],[data-data-link-handle]')) return
-                 onSelect(null)
+                 const pan = event.button === 1 || event.altKey || event.pointerType === 'touch'
+                 if ((event.button !== 0 && event.button !== 1) || gesture.current) return
+                 if ((event.target as Element).closest('article,button,[data-edge],[data-data-link],[data-data-link-handle]')) return
+                 if (pan) event.preventDefault()
                  connections.cancel()
-                 gesture.current = {
-                     type: 'pan', pointer: event.pointerId,
-                     clientX: event.clientX, clientY: event.clientY,
-                     x: camera.x, y: camera.y,
-                 }
+                 const start = {pointer: event.pointerId, clientX: event.clientX, clientY: event.clientY}
+                 gesture.current = pan
+                     ? {type: 'pan', ...start, x: camera.x, y: camera.y}
+                     : {type: 'selection', ...start, from: toWorld({x: start.clientX, y: start.clientY}),
+                         extend: event.shiftKey || event.ctrlKey || event.metaKey}
                  event.currentTarget.setPointerCapture(event.pointerId)
-                 setPanning(true)
+                 setPanning(pan)
              }}
              onPointerMove={move} onPointerUp={finish} onPointerCancel={cancel}
              style={{
@@ -254,19 +297,25 @@ export const GraphCanvas = ({
                     const mark = marks?.[node.id]
                     return (
                     <article key={node.id} data-node-id={node.id}
-                             className={`blueprint-canvas__node${selected === node.id ? ' blueprint-canvas__node--selected' : ''}${mark && mark.status !== 'pending' ? ` blueprint-canvas__node--${mark.status}` : ''}`}
+                             className={`blueprint-canvas__node${selected.has(node.id) ? ' blueprint-canvas__node--selected' : ''}${mark && mark.status !== 'pending' ? ` blueprint-canvas__node--${mark.status}` : ''}`}
                              aria-label={`Node ${node.name}`} tabIndex={0}
                              style={{left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: node.height}}
                              onKeyDown={event => { if (event.key === 'Enter') onSelect(node.id) }}
                              onPointerDown={event => {
                                  if (event.button !== 0 || (event.target as Element).closest('button')) return
                                  event.stopPropagation()
-                                 onSelect(node.id)
-                                 if (locked) return
+                                 if (event.shiftKey || event.ctrlKey || event.metaKey) {
+                                     onSelectNodes(selected.has(node.id)
+                                         ? [...selected].filter(id => id !== node.id)
+                                         : [...selected, node.id])
+                                     return
+                                 }
+                                 const ids = selected.has(node.id) ? selected : new Set([node.id])
+                                 if (ids.size === 1) onSelect(node.id)
+                                 if (locked || gesture.current) return
                                  gesture.current = {
-                                     type: 'node', pointer: event.pointerId, id: node.id,
-                                     clientX: event.clientX, clientY: event.clientY,
-                                     x: node.position.x, y: node.position.y, zoom: camera.zoom,
+                                     type: 'node', pointer: event.pointerId, id: node.id, ids,
+                                     clientX: event.clientX, clientY: event.clientY, zoom: camera.zoom,
                                  }
                                  event.currentTarget.setPointerCapture(event.pointerId)
                              }}>
@@ -324,9 +373,15 @@ export const GraphCanvas = ({
                     </article>
                     )
                 })}
+                {marquee ? <Div className="blueprint-canvas__selection" style={marquee}/> : null}
             </div>
             <Div className="blueprint-canvas__legend">
-                {connections.pending ? 'Pick an input · Esc cancels' : '─ control · ┄ data · Drag or click an output'}
+                {connections.pending ? 'Pick an input · Esc cancels' : (
+                    <>
+                        <span className="blueprint-canvas__mouse-hint">Drag to select · Middle button or Alt+drag to pan</span>
+                        <span className="blueprint-canvas__touch-hint">Drag empty space to pan · Use + / − to zoom</span>
+                    </>
+                )}
             </Div>
             <Div className="blueprint-canvas__controls">
                 <Button variant="secondary" title="Zoom out" onClicked={() => zoomBy(0.8)}>−</Button>
