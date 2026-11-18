@@ -36,6 +36,8 @@ pub(super) fn supported(kind: &NodeKind) -> bool {
             | NodeKind::ForEach { .. }
             | NodeKind::Switch { .. }
             | NodeKind::Format { .. }
+            | NodeKind::Print { .. }
+            | NodeKind::Html { .. }
             | NodeKind::Return { .. }
     )
 }
@@ -144,6 +146,16 @@ pub(super) async fn execute(
                 text.push_str(piece);
             }
             result.outputs.insert("text".into(), Literal::String(text));
+        }
+        NodeKind::Html { value } => {
+            let html = values.resolve(value, 0)?;
+            if !matches!(html, Literal::String(_)) {
+                return Err("HTML requires a string".into());
+            }
+            result.outputs.insert("value".into(), html);
+        }
+        NodeKind::Print { value } => {
+            result.outputs.insert("value".into(), values.resolve(value, 0)?);
         }
         NodeKind::Return { values: inputs } => {
             for (name, input) in inputs {

@@ -17,7 +17,7 @@ import {NodeInspector} from '../components/blueprint-editor/node-inspector'
 import {DocumentSettings} from '../components/blueprint-editor/document-settings'
 import {HistoryPanel} from '../components/blueprint-editor/history-panel'
 import {RunPermission, RunsPanel, RunStartPopup} from '../components/blueprint-editor/run-panel'
-import {liveMarks, progressText, statusText} from '../utils/blueprint-runs'
+import {displayedOutputs, runMarks, progressText, sameExecutionGraph, statusText} from '../utils/blueprint-runs'
 import {useBlueprintRuns} from '../hooks/blueprint-editor/use-blueprint-runs'
 import {useBlueprintGraph} from '../hooks/blueprint-editor/use-blueprint-graph'
 import {useEditorResources} from '../hooks/blueprint-editor/use-editor-resources'
@@ -37,6 +37,10 @@ const BlueprintEditor = () => {
     const [confirm, setConfirm] = useState<'back' | 'reload' | null>(null)
     const [runConfirm, setRunConfirm] = useState(false)
     const runs = useBlueprintRuns(Number(id))
+    const runResult = runs.result
+    const savedRun = runResult && runResult.run.revision === editor.baseline?.blueprint.revision ? editor.baseline : null
+    const displayedRun = document && runResult && ((!dirty && savedRun)
+        || sameExecutionGraph(document.workflow, savedRun?.workflow ?? runResult.workflow)) ? runResult : null
     const graph = useBlueprintGraph({
         document, locked: !!busy, edit: editor.edit,
         onInspect: () => { setPane('inspector'); setInspectorVisible(true) },
@@ -44,9 +48,13 @@ const BlueprintEditor = () => {
     const {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
         select, selectEdge, selectData, addNode, connectControl, bindInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNodes, renameNode, editKind,
+        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNodes, resizeNode, renameNode, editKind,
         selectNodes, selectAll, copySelection, pasteSelection, canCopy, hasClipboard,
     } = graph
+    const result = node && displayedRun ? displayedRun.state.nodes[node.id] : undefined
+    const values = result ? displayedOutputs(result) : undefined
+    const nodeValues = node?.kind.type === 'variable' && displayedRun && Object.hasOwn(displayedRun.state.variables, node.id)
+        ? {value: displayedRun.state.variables[node.id]} : values
     const resources = useEditorResources()
     const path = (next: string) => `/blueprints/${id}/${next}`
 
@@ -233,10 +241,10 @@ const BlueprintEditor = () => {
                                                  hasEntry={document.workflow.nodes.some(item => item.kind.type === 'entry')}/>
                                     <GraphCanvas key={id} workflow={document.workflow} catalog={catalog}
                                                  selected={selected} onSelect={select} onSelectNodes={selectNodes} locked={!!busy}
-                                                 viewportRef={viewport} onMove={moveNodes} selectedEdge={selectedEdge}
+                                                 viewportRef={viewport} onMove={moveNodes} onResize={resizeNode} selectedEdge={selectedEdge}
                                                  onSelectEdge={selectEdge} onControl={connectControl} onData={bindInput} onRemoveEdge={removeEdge}
                                                  selectedData={dataLink} onSelectData={selectData} onRemoveData={removeData}
-                                                 marks={liveMarks(runs.live, document.blueprint.revision)}/>
+                                                 marks={runMarks(displayedRun)}/>
                                     {edge ? (
                                         <ConnectionInspector type="control" edge={edge} workflow={document.workflow} locked={!!busy}
                                                              onDelete={requestDelete} onOrder={reorderEdge} onClose={() => setPane(null)}/>
@@ -248,7 +256,9 @@ const BlueprintEditor = () => {
                                         <NodeInspector node={node} catalog={catalog} locked={!!busy} workflow={document.workflow}
                                                        tools={resources.tools} toolsLoaded={resources.toolsLoaded}
                                                        models={resources.models} profiles={resources.profiles} report={report}
-                                                       onClose={() => setPane(null)} onName={renameNode} onKind={editKind} onDelete={requestDelete}/>
+                                                       onClose={() => setPane(null)} onName={renameNode} onKind={editKind} onDelete={requestDelete}
+                                                       result={displayedRun && nodeValues && Object.keys(nodeValues).length
+                                                           ? {runId: displayedRun.run.id, values: nodeValues, previous: !!result?.last_outputs && node?.kind.type !== 'variable'} : undefined}/>
                                     )}
                                 </Div>
                             </>
@@ -287,10 +297,12 @@ const BlueprintEditor = () => {
                     <span>{selected.size > 1 ? `${selected.size} selected` : node?.name ?? (document ? `${document.workflow.nodes.length} nodes` : '')}</span>
                     <span>
                         {runs.live && document
-                            ? runs.live.run.revision === document.blueprint.revision
+                            ? displayedRun?.run.id === runs.live.run.id
                                 ? `${statusText(runs.live.run.status)} · ${progressText(runs.live.run.progress)}${runs.live.state.current_node ? ` · ${runs.live.state.current_node}` : ''}`
                                 : `Run is revision ${runs.live.run.revision}; the open graph is revision ${document.blueprint.revision}`
-                            : ''}
+                            : view === 'graph' && displayedRun
+                                ? `Run ${displayedRun.run.id} · ${statusText(displayedRun.run.status)}`
+                                : ''}
                     </span>
                 </footer>
             </Frame>
@@ -299,7 +311,8 @@ const BlueprintEditor = () => {
                               ? `Delete ${removing.ids.length} selected ${removing.ids.length === 1 ? 'node' : 'nodes'} and reset their connections? Undo can restore them.`
                               : removing?.type === 'data' ? 'Delete this data connection? Its binding will become null. Undo can restore it.'
                                   : 'Delete this control connection? Undo can restore it.'}
-                          confirmLabel="Delete" onClose={graph.closeRemoval} onConfirm={deleteSelection}/>
+                          confirmLabel="Delete" onClose={graph.closeRemoval} onConfirm={deleteSelection}
+                          onConfirmAndSkip={removing?.type === 'nodes' ? graph.deleteAndSkipConfirmation : undefined}/>
             <UnsavedChangesPopup open={confirm !== null} saving={busy === 'saving'} saveDisabled={conflict || !!busy}
                                  onClose={() => setConfirm(null)} onDiscard={discard}
                                  onSave={() => { void saveAndContinue() }}/>

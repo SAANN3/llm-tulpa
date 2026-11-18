@@ -70,7 +70,7 @@ export const ToolsTab = ({chatId, readOnly, dirtyRef, onDirty, onStatus}: {
                         .catch(() => onStatus('Could not load the default.'))
                 }}/>
             </Div>
-            <ToolChoice catalog={catalog} mode={mode} names={names} disabled={readOnly} onMode={setMode} onNames={setNames}/>
+            <ToolChoice catalog={catalog} mode={mode} names={names} disabled={readOnly} onMode={(mode, names) => { setMode(mode); setNames(names) }} onNames={setNames}/>
         </Div>
     )
 }

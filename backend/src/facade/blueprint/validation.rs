@@ -87,6 +87,11 @@ pub fn document(workflow: &Workflow) -> Result<(), Diagnostic> {
                 "invalid name or position",
             ));
         }
+        if node.size.as_ref().is_some_and(|size| {
+            !(1.0..=4096.0).contains(&size.width) || !(1.0..=4096.0).contains(&size.height)
+        }) {
+            return Err(Diagnostic::draft(Some(&node.id), "size", "width and height must be between 1 and 4096"));
+        }
     }
     let mut edges = HashSet::new();
     for (edge_index, edge) in workflow.edges.iter().enumerate() {

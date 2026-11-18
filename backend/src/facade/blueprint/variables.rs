@@ -4,7 +4,6 @@ use super::{
     definition::{Literal, NodeKind, VariableScope, Workflow},
     runs::{NodeStatus, RunState},
     validation,
-    execution::MAX_STATE_BYTES,
 };
 
 pub(crate) struct Variables;
@@ -25,7 +24,7 @@ impl Variables {
             }
         }
         let previous = std::mem::replace(&mut state.variables, variables);
-        if serde_json::to_vec(state).map_err(|error| error.to_string())?.len() > MAX_STATE_BYTES {
+        if !state.fits_budget().map_err(|error| error.to_string())? {
             state.variables = previous;
             return Err("persistent values make the run state exceed 4 MiB; reset saved values".into());
         }

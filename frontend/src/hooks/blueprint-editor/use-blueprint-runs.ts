@@ -4,6 +4,7 @@ import {answerBlueprintRun} from '../../api/blueprints/answer'
 import {cancelQueuedRun} from '../../api/blueprints/cancel-queued'
 import {clearBlueprintQueue} from '../../api/blueprints/clear-queue'
 import {getBlueprintRun} from '../../api/blueprints/get-run'
+import {listBlueprintRuns} from '../../api/blueprints/history'
 import {listBlueprints} from '../../api/blueprints/list'
 import {getBlueprintQueue} from '../../api/blueprints/queue'
 import {reorderBlueprintQueue} from '../../api/blueprints/reorder'
@@ -15,33 +16,58 @@ import {useServerEvent} from '../use-server-events'
 import {errorReason} from '../../utils/error-reason'
 
 const REFRESH_MS = 250
+const TRACK_MS = 400
 const ACTIVE = new Set(['queued', 'running', 'waiting_for_permission', 'stopping'])
 
 const errorText = (error: unknown, fallback: string) => errorReason(error, fallback)
 
 export const useBlueprintRuns = (blueprintId: number) => {
     const [queue, setQueue] = useState<QueueState | null>(null)
-    const [live, setLive] = useState<RunDetail | null>(null)
+    const [detail, setDetail] = useState<RunDetail | null>(null)
+    const finished = useRef<RunDetail | null>(null)
+    const requestId = useRef(0)
     const [names, setNames] = useState<Record<number, string>>({})
     const [nextDue, setNextDue] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [acting, setActing] = useState(false)
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const refresh = useRef<() => void>(() => {})
+    const refreshPending = useRef(false)
+    const queueRefreshPending = useRef(false)
+    const refreshController = useRef<AbortController | null>(null)
+    const refresh = useRef<(includeQueue?: boolean) => void>(() => {})
+    const cancelRefresh = useCallback(() => {
+        requestId.current++
+        if (timer.current !== null) clearTimeout(timer.current)
+        timer.current = null
+        refreshPending.current = false
+        queueRefreshPending.current = false
+        refreshController.current?.abort()
+        refreshController.current = null
+    }, [])
 
     const load = useCallback(async (signal?: AbortSignal) => {
         if (!Number.isSafeInteger(blueprintId) || blueprintId <= 0) return
+        const request = ++requestId.current
         const [nextQueue, listed] = await Promise.all([
             getBlueprintQueue(signal),
             listBlueprints({offset: 0, limit: 100, q: '', sort: 'updated'}, signal),
         ])
-        if (signal?.aborted) return
+        if (signal?.aborted || request !== requestId.current) return
         setQueue(nextQueue)
         setNames(Object.fromEntries(listed.items.map(item => [item.id, item.name])))
         setNextDue(listed.items.find(item => item.id === blueprintId)?.next_due_at ?? null)
-        const running = nextQueue.running && nextQueue.running.blueprint_id === blueprintId && ACTIVE.has(nextQueue.running.status)
-            ? nextQueue.running.id : null
-        setLive(running ? await getBlueprintRun(blueprintId, running, signal) : null)
+        const running = nextQueue.running?.blueprint_id === blueprintId ? nextQueue.running : null
+        const summary = running ?? (await listBlueprintRuns(blueprintId, {offset: 0, limit: 1}, signal)).items[0]
+        if (signal?.aborted || request !== requestId.current) return
+        if (!summary) {
+            setDetail(null)
+            return
+        }
+        const cached = finished.current
+        const next = cached?.run.id === summary.id ? cached : await getBlueprintRun(blueprintId, summary.id, signal)
+        if (signal?.aborted || request !== requestId.current) return
+        if (!ACTIVE.has(next.run.status)) finished.current = next
+        setDetail(next)
     }, [blueprintId])
 
     useEffect(() => {
@@ -51,21 +77,69 @@ export const useBlueprintRuns = (blueprintId: number) => {
         load(controller.signal).catch((reason: unknown) => {
             if (!controller.signal.aborted) setError(errorText(reason, 'Could not load runs.'))
         })
-        return () => controller.abort()
-    }, [blueprintId, load])
+        return () => {
+            controller.abort()
+            cancelRefresh()
+        }
+    }, [blueprintId, load, cancelRefresh])
 
-    refresh.current = () => {
-        if (timer.current) clearTimeout(timer.current)
-        timer.current = setTimeout(() => {
+    const result = detail?.run.blueprint_id === blueprintId ? detail : null
+    const live = result && queue?.running?.id === result.run.id && ACTIVE.has(result.run.status) ? result : null
+    const activeId = result && ACTIVE.has(result.run.status) ? result.run.id : null
+
+    refresh.current = (includeQueue = false) => {
+        refreshPending.current = true
+        queueRefreshPending.current ||= includeQueue
+        if (timer.current !== null || refreshController.current) return
+        // Node events can arrive continuously in a loop. Read at a fixed cadence while
+        // they arrive, then catch up once if state changed during the request.
+        timer.current = setTimeout(async () => {
             timer.current = null
-            load().catch((reason: unknown) => setError(errorText(reason, 'Could not refresh runs.')))
+            refreshPending.current = false
+            const includeQueue = queueRefreshPending.current
+            queueRefreshPending.current = false
+            const controller = new AbortController()
+            refreshController.current = controller
+            try {
+                if (includeQueue || !live) {
+                    await load(controller.signal)
+                } else {
+                    const request = ++requestId.current
+                    const next = await getBlueprintRun(blueprintId, live.run.id, controller.signal)
+                    if (controller.signal.aborted || request !== requestId.current) return
+                    if (!ACTIVE.has(next.run.status)) finished.current = next
+                    setDetail(next)
+                    if (next.run.status !== live.run.status) {
+                        await load(controller.signal)
+                    } else {
+                        setQueue(current => current?.running?.id === next.run.id ? {...current, running: next.run} : current)
+                    }
+                }
+            } catch (reason) {
+                if (!controller.signal.aborted) setError(errorText(reason, 'Could not refresh runs.'))
+            } finally {
+                if (!controller.signal.aborted) {
+                    refreshController.current = null
+                    if (refreshPending.current) refresh.current()
+                }
+            }
         }, REFRESH_MS)
     }
-    useServerEvent('blueprint', event => {
-        const inner = event.event
-        if (inner.type === 'queue_changed' || (inner.type === 'run_changed' && inner.blueprint_id === blueprintId)) refresh.current()
+    useServerEvent('blueprint', ({event}) => {
+        if (event.type === 'queue_changed') refresh.current(true)
+        else if (event.blueprint_id === blueprintId) refresh.current(event.run_id !== live?.run.id)
     })
-    useServerEvent('stream_open', () => refresh.current())
+    useServerEvent('stream_open', () => refresh.current(true))
+
+    useEffect(() => {
+        if (activeId === null) return
+        // The stream may reconnect late or a proxy may buffer it. Keep a known run
+        // visible through its last snapshot even if there are no events to wake us.
+        const tick = window.setInterval(() => {
+            if (!document.hidden) refresh.current()
+        }, TRACK_MS)
+        return () => window.clearInterval(tick)
+    }, [activeId])
 
     const act = async (work: () => Promise<void>, fallback: string) => {
         setActing(true)
@@ -83,7 +157,7 @@ export const useBlueprintRuns = (blueprintId: number) => {
     }
 
     return {
-        queue, live, names, nextDue, error, acting,
+        queue, live, result, names, nextDue, error, acting,
         start: (revision: number) => act(async () => {
             try {
                 await startBlueprint(blueprintId, revision)

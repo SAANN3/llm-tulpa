@@ -1,6 +1,5 @@
 use super::{
     events::BlueprintEvent,
-    execution::MAX_STATE_BYTES,
     runs::{NodeStatus, PendingTool, RunDetail, RunStatus},
 };
 use crate::{
@@ -41,11 +40,7 @@ impl Permissions {
             answer: None,
         });
         run.state.nodes.get_mut(node_id).unwrap().status = NodeStatus::WaitingForPermission;
-        if serde_json::to_vec(&run.state)
-            .map_err(|_| "could not serialize permission state")?
-            .len()
-            > MAX_STATE_BYTES
-        {
+        if !run.state.fits_budget().map_err(|_| "could not serialize permission state")? {
             run.state.pending_tool = None;
             return Err("run state exceeds 4 MiB".into());
         }

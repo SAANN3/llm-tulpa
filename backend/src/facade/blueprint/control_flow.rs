@@ -360,8 +360,13 @@ impl ControlFlow {
 
     fn reset(state: &mut RunState, id: &str) {
         if let Some(node) = state.nodes.get_mut(id) {
+            // Only outputs of the current visit can feed data bindings.
+            if node.status == NodeStatus::Completed {
+                node.last_outputs = std::mem::take(&mut node.outputs);
+            } else {
+                node.outputs.clear();
+            }
             node.status = NodeStatus::Pending;
-            node.outputs.clear();
             node.error = None;
             node.chat_id = None;
             node.execution_id = None;

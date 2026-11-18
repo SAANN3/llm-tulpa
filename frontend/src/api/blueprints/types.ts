@@ -57,13 +57,18 @@ export type NodeKind =
     | {type: 'for_each'; items: InputBinding; max_iterations?: number}
     | {type: 'switch'; value: InputBinding; cases: {port: string; value: Literal}[]}
     | {type: 'format'; template: string; arguments: Record<string, InputBinding>}
+    | {type: 'html'; value: InputBinding}
+    | {type: 'print'; value: InputBinding}
     | {type: 'return'; values: Record<string, InputBinding>}
     | {type: 'plugin'; plugin_name: string; plugin_subname: string; node_type: string; version: number; arguments: Record<string, InputBinding>}
+
+export interface NodeSize {width: number; height: number}
 
 export interface WorkflowNode {
     id: string
     name: string
     position: {x: number; y: number}
+    size?: NodeSize
     kind: NodeKind
 }
 export type NodeOf<T extends NodeKind['type']> = Omit<WorkflowNode, 'kind'> & {kind: Extract<NodeKind, {type: T}>}
@@ -126,6 +131,7 @@ export interface NodeProgress {
     chat_id: number | null
     status: BlueprintNodeStatus
     outputs: Record<string, Literal>
+    last_outputs?: Record<string, Literal>
     error: string | null
 }
 

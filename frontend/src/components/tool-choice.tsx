@@ -9,7 +9,7 @@ interface ToolChoiceProps {
     mode: ToolMode
     /** The names the mode lists */
     names: string[]
-    onMode: (mode: ToolMode) => void
+    onMode: (mode: ToolMode, names: string[]) => void
     onNames: (names: string[]) => void
     disabled?: boolean
     /** Start with every domain folded. The chat settings leave them open. */
@@ -63,8 +63,7 @@ export const ToolChoice = ({catalog, mode, names, onMode, onNames, disabled, ini
                 <ChoiceGroup label="Tool mode" chosen={mode} onChosen={(value) => {
                     if (value === mode) return
                     // An empty list is every tool for a blacklist and none for a whitelist
-                    onMode(value as ToolMode)
-                    onNames([])
+                    onMode(value as ToolMode, [])
                 }} options={[
                     {value: 'blacklist', label: 'Blacklist', help: 'Every tool is sent, except the ones switched off'},
                     {value: 'whitelist', label: 'Whitelist', help: 'Only the switched-on tools are sent. None on means no tools'},

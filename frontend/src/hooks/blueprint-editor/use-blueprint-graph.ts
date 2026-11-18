@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import type {BlueprintDocument, ControlEdge, InputBinding, NodeKind} from '../../api/blueprints/types'
+import type {BlueprintDocument, ControlEdge, InputBinding, NodeKind, NodeSize} from '../../api/blueprints/types'
 import {
     controlConnectionError, createGraphNode, graphId, removeGraphNodes, copyGraphNodes, pasteGraphNodes, withControlEdges, withNodeInput,
     dataConnectionError, dataReferenceAt, replaceDataReference, literal,
@@ -117,20 +117,40 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
         edit(value => ({...value, workflow: withControlEdges(value.workflow, value.workflow.edges.filter(item => item.id !== edgeId))}))
         setSelectedEdge(null)
     }
+    const deleteNodes = (ids: string[]) => {
+        edit(value => ({...value, workflow: removeGraphNodes(value.workflow, new Set(ids))}))
+        setSelection([])
+    }
+    const skipNodeConfirmation = (write: boolean): boolean => {
+        if (!document) return false
+        const {user_id, id} = document.blueprint
+        const key = `blueprint:skip-node-delete:${user_id}:${id}`
+        try {
+            if (write) localStorage.setItem(key, '1')
+            return localStorage.getItem(key) === '1'
+        } catch {
+            return false
+        }
+    }
     const requestDelete = () => {
         if (locked) return
         if (edge) setRemoving({type: 'edge', id: edge.id})
         else if (dataLink) setRemoving({type: 'data', link: dataLink})
-        else if (editableIds.length) setRemoving({type: 'nodes', ids: editableIds})
+        else if (editableIds.length) {
+            if (skipNodeConfirmation(false)) deleteNodes(editableIds)
+            else setRemoving({type: 'nodes', ids: editableIds})
+        }
     }
     const deleteSelection = () => {
         if (!removing) return
         if (removing.type === 'edge') removeEdge(removing.id)
         else if (removing.type === 'data') removeData(removing.link)
-        else {
-            edit(value => ({...value, workflow: removeGraphNodes(value.workflow, new Set(removing.ids))}))
-            setSelection([])
-        }
+        else deleteNodes(removing.ids)
+    }
+    const deleteAndSkipConfirmation = () => {
+        if (removing?.type !== 'nodes' || locked) return
+        skipNodeConfirmation(true)
+        deleteNodes(removing.ids)
     }
     const reorderEdge = (direction: -1 | 1) => {
         if (!edge) return
@@ -156,6 +176,13 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
                 nodes: value.workflow.nodes.map(item => ids.has(item.id)
                     ? {...item, position: {x: item.position.x + delta.x, y: item.position.y + delta.y}} : item),
             },
+        }))
+    }
+    const resizeNode = (id: string, size: NodeSize) => {
+        if (locked) return
+        edit(value => ({
+            ...value,
+            workflow: {...value.workflow, nodes: value.workflow.nodes.map(node => node.id === id ? {...node, size} : node)},
         }))
     }
     const copySelection = (cut = false) => {
@@ -208,7 +235,7 @@ export const useBlueprintGraph = ({document, locked, edit, onInspect}: Blueprint
     return {
         selected, selectedEdge, node, edge, dataLink, dataReference, viewport, graphMessage, removing,
         select, selectEdge, selectData, addNode, connectControl, bindInput,
-        removeEdge, removeData, requestDelete, deleteSelection, reorderEdge, moveNodes, renameNode, editKind,
+        removeEdge, removeData, requestDelete, deleteSelection, deleteAndSkipConfirmation, reorderEdge, moveNodes, resizeNode, renameNode, editKind,
         selectNodes, selectAll, copySelection, pasteSelection, hasClipboard, canCopy: editableIds.length > 0,
         clearMessage: () => setGraphMessage(null),
         closeRemoval: () => setRemoving(null),

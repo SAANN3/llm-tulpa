@@ -138,7 +138,7 @@ export const AgentForm = ({node, workflow, catalog, models, profiles, tools, onC
                         onChange={think => onChange({...kind, think})}/>
             <Label className="section-heading" text="Tools"/>
             <ToolChoice catalog={tools} mode={kind.tools.mode} names={kind.tools.names} initiallyCollapsed
-                        onMode={mode => onChange({...kind, tools: {mode, names: []}})}
+                        onMode={(mode, names) => onChange({...kind, tools: {mode, names}})}
                         onNames={names => onChange({...kind, tools: {...kind.tools, names}})}/>
             <Check label="Continue the same hidden chat" on={!!kind.reuse_chat} onToggle={reuse_chat => onChange({...kind, reuse_chat})}/>
             <Check label="Allow chat notes" on={!!kind.write_notes} onToggle={write_notes => onChange({...kind, write_notes})}/>

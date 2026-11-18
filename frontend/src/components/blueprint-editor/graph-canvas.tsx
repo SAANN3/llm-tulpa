@@ -1,13 +1,17 @@
 import {useEffect, useRef, useState, type PointerEvent, type RefObject} from 'react'
+import {HtmlPreview} from './html-preview'
 import {Frame} from '../frame'
 import {Button, Div} from '../primitives'
-import type {NodeCatalog, Workflow} from '../../api/blueprints/types'
+import type {NodeCatalog, NodeSize, Workflow} from '../../api/blueprints/types'
 import type {RunMark} from '../../utils/blueprint-runs'
 import {inputBindings, nodeView, references, sameDataLink, type DataLink} from '../../utils/blueprint-node-view'
 import {useBlueprintConnections} from '../../hooks/blueprint-editor/use-blueprint-connections'
 import type {GraphPoint, GraphViewport} from '../../utils/blueprint-graph'
 
 const NODE_WIDTH = 256
+const MAX_NODE_SIZE = 4096
+const HTML_PREVIEW_HEIGHT = 150
+const PRINT_PREVIEW_HEIGHT = 42
 const PORT_ROW = 24
 const CONTROL_TOP = 64
 const SECTION_GAP = 26
@@ -36,6 +40,7 @@ interface Props {
     onSelect: (id: string | null) => void
     onSelectNodes: (ids: string[]) => void
     onMove: (ids: ReadonlySet<string>, delta: GraphPoint) => void
+    onResize: (id: string, size: NodeSize) => void
     viewportRef: RefObject<GraphViewport | null>
     selectedEdge: string | null
     onSelectEdge: (id: string) => void
@@ -52,7 +57,14 @@ interface Props {
 type Gesture =
     | {type: 'pan'; pointer: number; clientX: number; clientY: number; x: number; y: number}
     | {type: 'node'; pointer: number; clientX: number; clientY: number; id: string; ids: ReadonlySet<string>; zoom: number}
+    | {type: 'resize'; pointer: number; clientX: number; clientY: number; id: string; size: NodeSize; minHeight: number; zoom: number}
     | {type: 'selection'; pointer: number; clientX: number; clientY: number; from: GraphPoint; extend: boolean}
+
+const resizeTo = (gesture: Extract<Gesture, {type: 'resize'}>, dx: number, dy: number): NodeSize => ({
+    width: Math.max(NODE_WIDTH, Math.min(MAX_NODE_SIZE, Math.round(gesture.size.width + dx / gesture.zoom))),
+    height: Math.max(Math.min(gesture.minHeight, MAX_NODE_SIZE),
+        Math.min(MAX_NODE_SIZE, Math.round(gesture.size.height + dy / gesture.zoom))),
+})
 
 const selectionRect = (from: GraphPoint, to: GraphPoint) => ({
     left: Math.min(from.x, to.x), top: Math.min(from.y, to.y),
@@ -60,13 +72,14 @@ const selectionRect = (from: GraphPoint, to: GraphPoint) => ({
 })
 
 export const GraphCanvas = ({
-    workflow, catalog, selected, onSelect, onSelectNodes, onMove, viewportRef, locked,
+    workflow, catalog, selected, onSelect, onSelectNodes, onMove, onResize, viewportRef, locked,
     selectedEdge, onSelectEdge, onControl, onData, onRemoveEdge, selectedData, onSelectData, onRemoveData, marks,
 }: Props) => {
     const surface = useRef<HTMLDivElement>(null)
     const gesture = useRef<Gesture | null>(null)
     const [camera, setCamera] = useState({x: 0, y: 0, zoom: 1})
     const [drag, setDrag] = useState<{ids: ReadonlySet<string>; delta: GraphPoint} | null>(null)
+    const [resize, setResize] = useState<{id: string; size: NodeSize} | null>(null)
     const [marquee, setMarquee] = useState<ReturnType<typeof selectionRect> | null>(null)
     const [panning, setPanning] = useState(false)
     const toWorld = (point: GraphPoint): GraphPoint => {
@@ -89,9 +102,14 @@ export const GraphCanvas = ({
         const incoming = workflow.edges.filter(edge => edge.to === node.id)
         const controlRows = Math.max(control.length, node.kind.type === 'merge' ? incoming.length : 1, 1)
         const dataTop = CONTROL_TOP + controlRows * PORT_ROW + SECTION_GAP
-        return {...node, ...view, control, outputs, inputs, incoming, dataTop,
+        const previewHeight = node.kind.type === 'html' ? HTML_PREVIEW_HEIGHT : node.kind.type === 'print' ? PRINT_PREVIEW_HEIGHT : 0
+        const previewTop = dataTop + Math.max(inputs.length, outputs.length) * PORT_ROW + 14
+        const minHeight = previewTop + (previewHeight ? previewHeight + 8 : 6)
+        const size = resize?.id === node.id ? resize.size : node.size
+        return {...node, ...view, control, outputs, inputs, incoming, dataTop, previewTop, minHeight,
             position: drag?.ids.has(node.id) ? {x: node.position.x + drag.delta.x, y: node.position.y + drag.delta.y} : node.position,
-            height: dataTop + Math.max(inputs.length, outputs.length) * PORT_ROW + 20}
+            width: Math.max(NODE_WIDTH, size?.width ?? NODE_WIDTH),
+            height: Math.max(minHeight, size?.height ?? minHeight)}
     })
     const byId = new Map(nodes.map(node => [node.id, node]))
     const controlWires = workflow.edges.flatMap(edge => {
@@ -99,7 +117,7 @@ export const GraphCanvas = ({
         if (!from || !to) return []
         if (connections.pending?.type === 'control' && connections.pending.edge === edge.id && connections.point) return []
         const a = {
-            x: from.position.x + NODE_WIDTH,
+            x: from.position.x + from.width,
             y: from.position.y + CONTROL_TOP + Math.max(0, from.control.indexOf(edge.port)) * PORT_ROW,
         }
         const index = to.kind.type === 'merge' ? Math.max(0, to.incoming.findIndex(item => item.id === edge.id)) : 0
@@ -114,7 +132,7 @@ export const GraphCanvas = ({
             const link: DataLink = {node: node.id, input: name, bindingPath: ref.bindingPath}
             if (connections.pending?.type === 'data' && sameDataLink(connections.pending.replacing?.link, link) && connections.point) return []
             const outputIndex = Math.max(0, from.outputs.findIndex(port => port.name === ref.port))
-            const a = {x: from.position.x + NODE_WIDTH, y: from.position.y + from.dataTop + outputIndex * PORT_ROW}
+            const a = {x: from.position.x + from.width, y: from.position.y + from.dataTop + outputIndex * PORT_ROW}
             const b = {x: node.position.x, y: node.position.y + node.dataTop + inputIndex * PORT_ROW}
             // Separate handles along a shared curve so repeated nested references remain individually selectable.
             const handle = refs.length === 1 ? {x: b.x - 9, y: b.y} : curvePoint(a, b, 0.35 + index * 0.5 / (refs.length - 1))
@@ -125,7 +143,7 @@ export const GraphCanvas = ({
         if (!surface.current || !nodes.length) return
         const left = Math.min(...nodes.map(node => node.position.x))
         const top = Math.min(...nodes.map(node => node.position.y))
-        const right = Math.max(...nodes.map(node => node.position.x + NODE_WIDTH))
+        const right = Math.max(...nodes.map(node => node.position.x + node.width))
         const bottom = Math.max(...nodes.map(node => node.position.y + node.height))
         const {width, height} = surface.current.getBoundingClientRect()
         const zoom = Math.max(MIN_ZOOM, Math.min(1, (width - CANVAS_MARGIN * 2) / (right - left), (height - CANVAS_MARGIN * 2) / (bottom - top)))
@@ -147,10 +165,10 @@ export const GraphCanvas = ({
         return () => cancelAnimationFrame(frame)
     }, [viewportRef])
     useEffect(() => {
-        if (locked) { gesture.current = null; setDrag(null); setMarquee(null); setPanning(false) }
+        if (locked) { gesture.current = null; setDrag(null); setResize(null); setMarquee(null); setPanning(false) }
     }, [locked])
     useEffect(() => {
-        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { gesture.current = null; setDrag(null); setMarquee(null); setPanning(false) } }
+        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { gesture.current = null; setDrag(null); setResize(null); setMarquee(null); setPanning(false) } }
         window.addEventListener('keydown', escape)
         return () => window.removeEventListener('keydown', escape)
     }, [])
@@ -194,6 +212,7 @@ export const GraphCanvas = ({
                 setDrag({ids: active.ids, delta: {x: dx / active.zoom, y: dy / active.zoom}})
             }
         }
+        else if (active.type === 'resize') setResize({id: active.id, size: resizeTo(active, dx, dy)})
         else setMarquee(selectionRect(active.from, toWorld({x: event.clientX, y: event.clientY})))
     }
     const finish = (event: PointerEvent<HTMLDivElement>) => {
@@ -205,16 +224,20 @@ export const GraphCanvas = ({
         if (active.type === 'node') {
             if (drag || moved) onMove(active.ids, {x: dx / active.zoom, y: dy / active.zoom})
             else if (active.ids.size > 1) onSelect(active.id)
+        } else if (active.type === 'resize' && moved) {
+            const size = resizeTo(active, dx, dy)
+            if (size.width !== active.size.width || size.height !== active.size.height) onResize(active.id, size)
         } else if (active.type === 'selection') {
             const rect = selectionRect(active.from, toWorld({x: event.clientX, y: event.clientY}))
-            const ids = moved ? nodes.filter(({position, height}) =>
-                position.x <= rect.left + rect.width && position.x + NODE_WIDTH >= rect.left
+            const ids = moved ? nodes.filter(({position, width, height}) =>
+                position.x <= rect.left + rect.width && position.x + width >= rect.left
                 && position.y <= rect.top + rect.height && position.y + height >= rect.top,
             ).map(node => node.id) : []
             onSelectNodes(active.extend ? [...new Set([...selected, ...ids])] : ids)
         }
         gesture.current = null
         setDrag(null)
+        setResize(null)
         setMarquee(null)
         setPanning(false)
     }
@@ -222,6 +245,7 @@ export const GraphCanvas = ({
         connections.cancel()
         gesture.current = null
         setDrag(null)
+        setResize(null)
         setMarquee(null)
         setPanning(false)
     }
@@ -287,7 +311,7 @@ export const GraphCanvas = ({
                         const index = connections.pending.type === 'control' ? source.control.indexOf(connections.pending.port)
                             : source.outputs.findIndex(port => port.name === connections.pending!.port)
                         const a = {
-                            x: source.position.x + NODE_WIDTH,
+                            x: source.position.x + source.width,
                             y: source.position.y + (connections.pending.type === 'control' ? CONTROL_TOP : source.dataTop) + Math.max(0, index) * PORT_ROW,
                         }
                         return <path d={curve(a, connections.point)} className="blueprint-canvas__pending-wire"/>
@@ -299,7 +323,7 @@ export const GraphCanvas = ({
                     <article key={node.id} data-node-id={node.id}
                              className={`blueprint-canvas__node${selected.has(node.id) ? ' blueprint-canvas__node--selected' : ''}${mark && mark.status !== 'pending' ? ` blueprint-canvas__node--${mark.status}` : ''}`}
                              aria-label={`Node ${node.name}`} tabIndex={0}
-                             style={{left: node.position.x, top: node.position.y, width: NODE_WIDTH, height: node.height}}
+                             style={{left: node.position.x, top: node.position.y, width: node.width, height: node.height}}
                              onKeyDown={event => { if (event.key === 'Enter') onSelect(node.id) }}
                              onPointerDown={event => {
                                  if (event.button !== 0 || (event.target as Element).closest('button')) return
@@ -369,7 +393,29 @@ export const GraphCanvas = ({
                                     {port.name} □
                                 </Button>
                             ))}
+                            {node.kind.type === 'html' ? (
+                                <Div className="blueprint-canvas__html-value" style={{top: node.previewTop}}>
+                                    {mark?.html === undefined ? 'No value yet' : <HtmlPreview html={mark.html}/>}
+                                </Div>
+                            ) : null}
+                            {node.kind.type === 'print' ? (
+                                <div className="blueprint-canvas__print-value" style={{top: node.previewTop}}>{mark?.preview ?? 'No value yet'}</div>
+                            ) : null}
                         </Frame>
+                        {!locked ? (
+                            <span className="blueprint-canvas__resize" title="Resize node"
+                                  onPointerDown={event => {
+                                      if (event.button !== 0 || gesture.current) return
+                                      event.stopPropagation()
+                                      connections.cancel()
+                                      gesture.current = {
+                                          type: 'resize', pointer: event.pointerId, id: node.id,
+                                          clientX: event.clientX, clientY: event.clientY, zoom: camera.zoom,
+                                          size: {width: node.width, height: node.height}, minHeight: node.minHeight,
+                                      }
+                                      event.currentTarget.setPointerCapture(event.pointerId)
+                                  }}/>
+                        ) : null}
                     </article>
                     )
                 })}

@@ -283,6 +283,13 @@ impl Validation {
                         Err(message) => values.error("kind.template", "invalid_template", message),
                     }
                 }
+                NodeKind::Html { value } => {
+                    let shape = values.infer(value, "kind.value");
+                    values.expect(&shape, ValueType::String, "kind.value");
+                }
+                NodeKind::Print { value } => {
+                    values.infer(value, "kind.value");
+                }
                 NodeKind::Return { values: inputs } => {
                     for (name, input) in inputs { values.infer(input, &format!("kind.values.{name}")); }
                 }

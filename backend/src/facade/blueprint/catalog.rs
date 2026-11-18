@@ -51,6 +51,8 @@ pub enum NodeType {
     ForEach,
     Switch,
     Format,
+    Html,
+    Print,
     Return,
     Plugin,
 }
@@ -72,6 +74,8 @@ impl NodeType {
             Self::ForEach,
             Self::Switch,
             Self::Format,
+            Self::Print,
+            Self::Html,
             Self::Return,
         ]
         .into_iter()
@@ -95,6 +99,8 @@ impl NodeType {
             NodeKind::ForEach { .. } => Self::ForEach,
             NodeKind::Switch { .. } => Self::Switch,
             NodeKind::Format { .. } => Self::Format,
+            NodeKind::Html { .. } => Self::Html,
+            NodeKind::Print { .. } => Self::Print,
             NodeKind::Return { .. } => Self::Return,
             NodeKind::Plugin { .. } => Self::Plugin,
         }
@@ -116,6 +122,8 @@ impl NodeType {
             Self::ForEach => ("For each", vec!["body", "out"], None),
             Self::Switch => ("Switch", vec!["default"], None),
             Self::Format => ("Format", vec!["out"], Some(("text", ValueType::String))),
+            Self::Html => ("HTML", vec!["out"], Some(("value", ValueType::String))),
+            Self::Print => ("Print", vec!["out"], Some(("value", ValueType::Dynamic))),
             Self::Return => ("Return", vec![], None),
             Self::Plugin => ("Plugin", vec![], None),
         };

@@ -4,7 +4,7 @@ export const inputBindings = (node: WorkflowNode): [string, InputBinding][] => {
     const kind = node.kind
     switch (kind.type) {
         case 'entry': case 'variable': return []
-        case 'set_variable': case 'switch': return [['value', kind.value]]
+        case 'set_variable': case 'switch': case 'print': case 'html': return [['value', kind.value]]
         case 'generate': return [['prompt', kind.prompt]]
         case 'agent': return [['prompt', kind.prompt], ...(kind.system_prompt ? [['system_prompt', kind.system_prompt] as [string, InputBinding]] : [])]
         case 'tool': case 'plugin': case 'format': return Object.entries(kind.arguments)

@@ -25,6 +25,7 @@ impl Default for Workflow {
                 id: "entry".into(),
                 name: "Start".into(),
                 position: Position::default(),
+                size: None,
                 kind: NodeKind::Entry,
             }],
             edges: vec![],
@@ -39,6 +40,8 @@ pub struct Node {
     pub name: String,
     #[serde(default)]
     pub position: Position,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<NodeSize>,
     pub kind: NodeKind,
 }
 
@@ -47,6 +50,13 @@ pub struct Node {
 pub struct Position {
     pub x: f64,
     pub y: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NodeSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -141,6 +151,12 @@ pub enum NodeKind {
     Format {
         template: String,
         arguments: BTreeMap<String, Input>,
+    },
+    Html {
+        value: Input,
+    },
+    Print {
+        value: Input,
     },
     Return {
         values: BTreeMap<String, Input>,
@@ -243,7 +259,7 @@ impl NodeKind {
     pub(super) fn inputs(&self) -> Vec<&Input> {
         match self {
             Self::Entry | Self::Variable { .. } => vec![],
-            Self::SetVariable { value, .. } | Self::Switch { value, .. } => vec![value],
+            Self::SetVariable { value, .. } | Self::Switch { value, .. } | Self::Print { value } | Self::Html { value } => vec![value],
             Self::Calculate { operation } => operation.inputs().into_iter().map(|(_, input)| input).collect(),
             Self::Generate { prompt, .. } => vec![prompt],
             Self::Agent { prompt, system_prompt, .. } => std::iter::once(prompt).chain(system_prompt.iter()).collect(),

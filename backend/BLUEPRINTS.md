@@ -126,8 +126,17 @@ A minimal editable draft is `{"schema_version":1,"nodes":[],"edges":[]}`. Exampl
 | `for_each` | items binding, max_iterations (default 1000); body/out control outputs |
 | `switch` | value, cases (`port`, literal `value`); `default` is reserved |
 | `format` | template, arguments |
+| `html` | String binding; shows a static HTML/CSS preview on the graph, passes the string through `value`, and follows `out` |
+| `print` | Any value binding; displays the value on the graph and passes it through the `value` and `out` ports |
 | `return` | named result values |
 | `plugin` | plugin_name, plugin_subname, node_type, positive version, arguments |
+
+Nodes accept an optional `size` object with `width` and `height` for their layout.
+The editor uses automatic dimensions when size is absent.
+
+The graph can display the last completed visit's outputs while a node waits for its next
+iteration. These values are kept separately from the current visit's outputs and are discarded
+if the run reaches its state size limit.
 
 Model choice is `{type:"user_default"}` or `{type:"model", id, launch_profile_id?}`.
 Thinking reuses the existing `ThinkChoice` (boolean or effort string); tools reuse `ToolMode`

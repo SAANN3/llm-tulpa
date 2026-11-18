@@ -1,4 +1,4 @@
-use super::definition::{Literal, NodeKind, Workflow};
+use super::{definition::{Literal, NodeKind, Workflow}, execution::MAX_STATE_BYTES};
 use crate::facade::agent::{AgentToolCall, Allowance};
 use chrono::{DateTime, Utc};
 use sea_orm::{DeriveActiveEnum, EnumIter, sea_query::StringLen};
@@ -64,6 +64,8 @@ pub struct NodeProgress {
     pub chat_id: Option<i64>,
     pub status: NodeStatus,
     pub outputs: BTreeMap<String, Literal>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub last_outputs: BTreeMap<String, Literal>,
     pub error: Option<String>,
 }
 
@@ -105,6 +107,20 @@ pub struct RunState {
     pub error: Option<String>,
 }
 impl RunState {
+    pub(super) fn fits_budget(&mut self) -> Result<bool, serde_json::Error> {
+        if serde_json::to_vec(self)?.len() <= MAX_STATE_BYTES {
+            return Ok(true);
+        }
+        if !self.nodes.values().any(|node| !node.last_outputs.is_empty()) {
+            return Ok(false);
+        }
+        // Previous results are only for display and must not displace execution state.
+        for node in self.nodes.values_mut() {
+            node.last_outputs.clear();
+        }
+        Ok(serde_json::to_vec(self)?.len() <= MAX_STATE_BYTES)
+    }
+
     pub fn new(workflow: &Workflow) -> Self {
         Self {
             has_merges: workflow.nodes.iter().any(|node| matches!(node.kind, NodeKind::Merge { .. })),
@@ -130,6 +146,7 @@ impl RunState {
                             chat_id: None,
                             status: NodeStatus::Pending,
                             outputs: BTreeMap::new(),
+                            last_outputs: BTreeMap::new(),
                             error: None,
                         },
                     )

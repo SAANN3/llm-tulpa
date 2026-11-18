@@ -46,7 +46,7 @@ export const ChatToolsPopup = ({open, initial, onClose, onUse, onUseDefault}: {
         <Popup open={open} onClose={onClose} title="Tools for this chat" width={640} actions={[]}>
             {catalog ? (
                 <Div className="vbox" style={{gap: 12, minHeight: 0}}>
-                    <ToolChoiceList catalog={catalog} mode={mode} names={names} onMode={setMode} onNames={setNames}/>
+                    <ToolChoiceList catalog={catalog} mode={mode} names={names} onMode={(mode, names) => { setMode(mode); setNames(names) }} onNames={setNames}/>
                     <Div className="popup__actions popup__actions--stacked">
                         <Button variant="secondary" text="Use default" onClicked={onUseDefault}/>
                     </Div>

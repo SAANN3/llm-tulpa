@@ -4,7 +4,7 @@ import {Button, Div, Input, Label} from '../primitives'
 import type {AvailableTool} from '../../api/chats/available-tools'
 import type {LaunchProfile} from '../../api/profiles/types'
 import type {ManagedModel} from '../../api/runtime/types'
-import type {ControlEdge, NodeCatalog, NodeKind, ValidationReport, Workflow, WorkflowNode} from '../../api/blueprints/types'
+import type {ControlEdge, Literal, NodeCatalog, NodeKind, ValidationReport, Workflow, WorkflowNode} from '../../api/blueprints/types'
 import {nodeView} from '../../utils/blueprint-node-view'
 
 interface Props {
@@ -21,9 +21,10 @@ interface Props {
     report: ValidationReport | null
     onKind: (kind: NodeKind, edges?: ControlEdge[]) => void
     onDelete: () => void
+    result?: {runId: number; values: Record<string, Literal>; previous: boolean}
 }
 
-export const NodeInspector = ({node, catalog, locked, onName, onClose, workflow, tools, toolsLoaded, models, profiles, report, onKind, onDelete}: Props) => {
+export const NodeInspector = ({node, catalog, locked, onName, onClose, workflow, tools, toolsLoaded, models, profiles, report, onKind, onDelete, result}: Props) => {
     const body = useRef<HTMLFieldSetElement>(null)
     const descriptor = node ? nodeView(node, catalog) : null
 
@@ -40,6 +41,12 @@ export const NodeInspector = ({node, catalog, locked, onName, onClose, workflow,
             <fieldset ref={body} disabled={locked}>
                 {node && descriptor ? (
                     <>
+                        {result ? (
+                            <>
+                                <Label className="section-heading" text={`Run ${result.runId} values${result.previous ? ' · previous execution' : ''}`}/>
+                                <pre className="blueprint-editor__saved-value">{JSON.stringify(result.values, null, 2)}</pre>
+                            </>
+                        ) : null}
                         <label className="blueprint-editor__field">
                             <span>Node name</span>
                             <Input text={node.name} onChanged={onName}/>

@@ -40,6 +40,8 @@ const defaultKind = (type: NodeDescriptor['kind'], workflow: Workflow): NodeKind
         case 'for_each': return {type, items: literal([]), max_iterations: 1000}
         case 'switch': return {type, value: literal(''), cases: []}
         case 'format': return {type, template: '', arguments: {}}
+        case 'html': return {type, value: literal('')}
+        case 'print': return {type, value: literal(null)}
         case 'return': return {type, values: {}}
         case 'plugin': throw new Error('Plugin nodes require a registered definition.')
     }

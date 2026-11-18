@@ -2,7 +2,7 @@ import {useCallback, useRef, useState} from 'react'
 import {flushSync} from 'react-dom'
 import {Frame} from '../frame'
 import {LazyList, type LazyListHandle} from '../lazy-list'
-import {Button, Div, Label} from '../primitives'
+import {Button, Div, Label, Link} from '../primitives'
 import {useBlueprintHistory} from '../../hooks/blueprint-editor/use-blueprint-history'
 import {progressText, statusText} from '../../utils/blueprint-runs'
 
@@ -67,6 +67,13 @@ export const HistoryPanel = ({blueprintId, revision}: HistoryPanelProps) => {
                                     return (
                                         <Div key={node.id} className="blueprint-editor__run-row">
                                             <Label text={`${node.name} · ${statusText(state?.status ?? 'pending')}`}/>
+                                            {node.kind.type === 'agent' && state?.chat_id != null ? (
+                                                <Div className="blueprint-editor__run-actions">
+                                                    <Link to={`/chat?id=${state.chat_id}`} variant="secondary" className="link-button">
+                                                        Open agent chat
+                                                    </Link>
+                                                </Div>
+                                            ) : null}
                                             {state?.error ? <Label variant="secondary" text={state.error}/> : null}
                                             {state && Object.keys(state.outputs).length > 0 ? (
                                                 <Label variant="secondary" className="blueprint-editor__run-output" text={JSON.stringify(state.outputs).slice(0, 240)}/>

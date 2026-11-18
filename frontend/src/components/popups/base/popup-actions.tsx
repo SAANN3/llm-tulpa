@@ -4,6 +4,7 @@ export interface PopupActionsProps {
     confirmLabel: string
     onConfirm: () => void
     confirmDisabled?: boolean
+    middleAction?: {label: string; onClick: () => void}
     cancelLabel?: string
     onCancel: () => void
     /** Which button carries the highlighted variant: "cancel" for a confirm or rename (the
@@ -16,12 +17,14 @@ export const PopupActions = ({
     confirmLabel,
     onConfirm,
     confirmDisabled,
+    middleAction,
     cancelLabel = 'Cancel',
     onCancel,
     emphasis = 'cancel',
 }: PopupActionsProps) => (
     <Div className="popup__actions">
         <Button text={cancelLabel} variant={emphasis === 'cancel' ? 'primary' : 'secondary'} onClicked={onCancel}/>
+        {middleAction ? <Button text={middleAction.label} variant="secondary" onClicked={middleAction.onClick}/> : null}
         <Button text={confirmLabel} variant={emphasis === 'confirm' ? 'primary' : 'secondary'}
                 onClicked={onConfirm} disabled={confirmDisabled}/>
     </Div>

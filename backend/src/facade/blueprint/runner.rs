@@ -284,6 +284,7 @@ impl Runner {
                     let node = run.state.nodes.get_mut(&node_id).unwrap();
                     node.status = NodeStatus::Completed;
                     node.outputs = outcome.outputs;
+                    node.last_outputs.clear();
                     if let Err(error) = flow.advance(&run.workflow, &mut run.state, visit, outcome.control_output.as_deref()) {
                         run.state.nodes.get_mut(&node_id).unwrap().status = NodeStatus::Failed;
                         run.state.nodes.get_mut(&node_id).unwrap().error = Some(error.clone());
@@ -291,7 +292,7 @@ impl Runner {
                         status = RunStatus::Failed;
                         break;
                     }
-                    if serde_json::to_vec(&run.state)?.len() > execution::MAX_STATE_BYTES {
+                    if !run.state.fits_budget()? {
                         if let Some((id, previous)) = previous {
                             match previous {
                                 Some(value) => { run.state.variables.insert(id, value); }

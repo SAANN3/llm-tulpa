@@ -6,6 +6,8 @@ import {CalculateForm, MergeForm, SetVariableForm, SleepForm, VariableForm} from
 import {AgentForm, GenerateForm} from './model-form'
 import {ForEachForm, FormatForm, IfForm, ReturnForm, SwitchForm, WhileForm} from './flow-form'
 import {PluginForm} from './plugin-form'
+import {Binding} from './fields'
+import {TEXT} from '../../../utils/blueprint-accepts'
 import {ToolForm} from './tool-form'
 
 export const NodeConfig = ({node, workflow, catalog, tools, toolsLoaded, models, profiles, onChange}: {
@@ -34,6 +36,10 @@ export const NodeConfig = ({node, workflow, catalog, tools, toolsLoaded, models,
         case 'for_each': return <ForEachForm node={{...node, kind}} workflow={workflow} catalog={catalog} onChange={onChange}/>
         case 'switch': return <SwitchForm node={{...node, kind}} workflow={workflow} catalog={catalog} onChange={onChange}/>
         case 'format': return <FormatForm node={{...node, kind}} workflow={workflow} catalog={catalog} onChange={onChange}/>
+        case 'html': case 'print': return <Binding name={kind.type === 'html' ? 'HTML' : 'Value'} input={kind.value}
+                                                        accepts={kind.type === 'html' ? TEXT : undefined}
+                                                        workflow={workflow} catalog={catalog} nodeId={node.id}
+                                      onChange={value => onChange({...kind, value})}/>
         case 'return': return <ReturnForm node={{...node, kind}} workflow={workflow} catalog={catalog} onChange={onChange}/>
         case 'plugin': return <PluginForm node={{...node, kind}} workflow={workflow} catalog={catalog} onChange={onChange}/>
     }

@@ -160,6 +160,13 @@ impl<'a, 'b> Values<'a, 'b> {
                         });
                         return schema.map(|schema| self.property_path(schema, path, field)).unwrap_or_else(|| Shape::scalar(ValueType::Dynamic));
                     }
+                    NodeKind::Print { value } if port == "value" => {
+                        let current = self.node;
+                        self.node = source;
+                        let shape = self.infer(value, "kind.value");
+                        self.node = current;
+                        return self.shape_path(shape, path, field);
+                    }
                     NodeKind::Calculate { operation } if port == "value" => {
                         if let Some(shape) = self.inferred.get(&source).cloned() {
                             return self.shape_path(shape, path, field);

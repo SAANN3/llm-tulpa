@@ -9,11 +9,12 @@ export interface ConfirmPopupProps {
     confirmLabel?: string
     /** Runs after the popup has closed itself */
     onConfirm: () => void
+    onConfirmAndSkip?: () => void
     onClose: () => void
 }
 
 /** Asks the user to confirm something before it happens */
-export const ConfirmPopup = ({open, title, message, confirmLabel = 'Continue', onConfirm, onClose}: ConfirmPopupProps) => {
+export const ConfirmPopup = ({open, title, message, confirmLabel = 'Continue', onConfirm, onConfirmAndSkip, onClose}: ConfirmPopupProps) => {
     const confirm = () => {
         onClose()
         onConfirm()
@@ -23,7 +24,11 @@ export const ConfirmPopup = ({open, title, message, confirmLabel = 'Continue', o
         <Popup open={open} onClose={onClose} title={title}
                actions={[{keys: ['Enter'], shown: 'enter', label: confirmLabel.toLowerCase(), run: confirm}]}>
             <Label text={message}/>
-            <PopupActions confirmLabel={confirmLabel} onConfirm={confirm} onCancel={onClose}/>
+            <PopupActions confirmLabel={confirmLabel} onConfirm={confirm} onCancel={onClose}
+                          middleAction={onConfirmAndSkip ? {label: "Don't ask again", onClick: () => {
+                              onClose()
+                              onConfirmAndSkip()
+                          }} : undefined}/>
         </Popup>
     )
 };
