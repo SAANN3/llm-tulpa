@@ -45,6 +45,7 @@ It keeps the database, search and frontend in Docker and runs the backend with `
 |:---:|:---:|:---:|
 | <img src="./readme/home-screen.png" width="260"><br><sub>Home — a fresh chat starts with a generated greeting, and the model for it can be picked right there.</sub> | <img src="./readme/models-tab.png" width="260"><br><sub>Models — what is loaded and where it went, each model's launch profiles with Load, Test and Edit.</sub> | <img src="./readme/models-download.png" width="260"><br><sub>Download — search Hugging Face and download into your model folder; the free space is shown.</sub> |
 | <img src="./readme/chat-choose-model.png" width="260"><br><sub>Choose model — one chooser with a tab per provider, each launch profile with its settings.</sub> | <img src="./readme/settings-page.png" width="260"><br><sub>Settings — the Appearance tab: themes and animated backgrounds, with a live preview of the page.</sub> | <img src="./readme/plugins-page.png" width="260"><br><sub>Plugins — enable Telegram, Discord, or VK to talk to the agent from your own chat app, or install your own.</sub> |
+| <a href="./readme/blueprints.png"><img src="./readme/blueprints.png" alt="Blueprint editor in Rose Dusk, with agent and formatting nodes connected to HTML previews" width="260"></a><br><sub>Blueprints — connect steps on the graph, inspect a node's output and see HTML previews from the last run.</sub> | | |
 
 On a phone the same pages reflow: the sidebar slides over the page, tabs scroll sideways, and a menu or dialog stays inside the screen.
 
