@@ -15,6 +15,7 @@ A chat assistant that runs on your own computer and can actually do things: read
 - **A model that works with your files and your machine.** It reads and writes files, runs shell commands, downloads things and searches the web. Anything that could change or expose something asks you first (per folder for files, per site for web requests). Turn on auto-confirm in Settings when you want to let it work on its own.
 - **Setup on screen.** One command starts everything, and a setup wizard picks the right llama.cpp build for your hardware, downloads it and helps you choose a model. No config files and no `llama-server` flags.
 - **Long chats that keep working.** Old messages are folded into a summary before the model runs out of room, a run keeps going if you close the tab, and the model can hand long jobs to sub-agents or background jobs.
+- **Blueprints for work you do more than once.** Connect tools, models and other steps on a graph, run it on demand or on a schedule, and watch the results as each step finishes.
 - **Images, files and voice.** Attach images and documents, or press the microphone and talk.
 - **Plugins.** Chat with the agent from Telegram, Discord or VK, or connect an MCP server and use its tools. You can also write your own plugin in Python or Rust, as a separate program, and ask the model to install it for you ([`plugin-sdk/`](./plugin-sdk/README.md)).
 - **Several people, one machine.** The owner adds users, and everyone's chats and settings are their own.

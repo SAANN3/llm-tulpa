@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- Blueprints. Build a workflow in a visual editor by wiring tools, one-shot model calls and agent chats together with conditions, loops and variables. Run it by hand, at an interval or at a set time each day. Each user has one queue for their blueprints, with controls to reorder waiting runs, cancel them or stop the current run. The graph shows which step is running and what it produced, including text and HTML previews. History keeps the graph and results from each run, with links to the chats created by Agent nodes. Python and Rust plugins can add their own nodes.
 - The model can ask the user a question (`ui.ask_question`): two to six options and an optional typed answer. The call returns once the question is on screen. Several questions since your last message are answered one at a time above the composer, and the picks go out together as your next message. A sub-agent is not offered the tool.
 
 ### Changed
