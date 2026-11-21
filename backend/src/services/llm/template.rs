@@ -2,6 +2,10 @@
 //! served it: what thinking control the template supports, which tags it wraps a tool call in, and
 //! pulling a `</think>`-delimited reasoning block back out of text.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
+
 use super::types::ThinkingCapability;
 
 /// The tags a chat template wraps a tool call in, as literal text: every `<name>` and
@@ -81,26 +85,12 @@ pub(super) fn ensure_thinking_split(existing_thinking: Option<String>, content: 
     (existing_thinking.or(derived_thinking), clean_content)
 }
 
-/// Parses a model's raw Jinja chat template text for what it actually supports —
-/// this is real per-model detection, not a fact about one specific model baked into
-/// code. Looks first for a graduated `reasoning_effort` enum (the pattern this
-/// Unsloth/Qwen convention uses: `{%- if resolved_reasoning_effort not in ('xhigh',
-/// 'medium', 'low') %}` right before a `raise_exception` naming the supported set —
-/// `extract_reasoning_effort_levels` pulls the quoted literals straight out of that
-/// `not in (...)` check, since that's the actual enforced logic, not just the
-/// human-readable error text restating it). Falls back to a plain `enable_thinking`
-/// substring check for "does this model support on/off at all" if no graduated
-/// pattern is found — this is NOT a universal chat-template standard (other model
-/// families phrase reasoning effort differently, or don't support it at all), so
-/// failing to find the `reasoning_effort` pattern correctly degrades to `OnOff`
-/// rather than claiming levels that don't exist; failing to find `enable_thinking`
-/// either degrades further to `Unsupported` rather than showing a control that would
-/// do nothing.
+/// Finds reasoning controls without loading the model. Recognizes the effort tuple
+/// used by Qwen templates and the named effort-to-number map used by Inkling.
+/// Unknown conventions fall back to the template's on/off control when present.
 pub(super) fn parse_thinking_capability(template: &str) -> ThinkingCapability {
-    if let Some(modes) = extract_reasoning_effort_levels(template) {
-        if !modes.is_empty() {
-            return ThinkingCapability::Graduated { modes };
-        }
+    if let Some(modes) = extract_reasoning_effort_levels(template).filter(|modes| !modes.is_empty()) {
+        return ThinkingCapability::Graduated { modes };
     }
     if template.contains("enable_thinking") {
         return ThinkingCapability::OnOff;
@@ -109,22 +99,36 @@ pub(super) fn parse_thinking_capability(template: &str) -> ThinkingCapability {
 }
 
 fn extract_reasoning_effort_levels(template: &str) -> Option<Vec<String>> {
-    let anchor = template.find("reasoning_effort")?;
-    let window = &template[anchor..];
-    let not_in = window.find("not in (")?;
-    let after = &window[not_in + "not in (".len()..];
-    let close = after.find(')')?;
-    let inside = &after[..close];
+    static TUPLE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\{%-?\s*(?:if|elif)\s+(?:resolved_)?reasoning_effort\s+not\s+in\s*\(([^)]*)\)").unwrap()
+    });
+    static MAP: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\{%-?\s*set\s+effort_map\s*=\s*\{([^}]*)\}\s*-?%\}").unwrap()
+    });
 
-    let levels: Vec<String> = inside
-        .split(',')
-        .filter_map(|raw| {
-            let trimmed = raw.trim().trim_matches(|c| c == '\'' || c == '"');
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
+    if let Some(tuple) = TUPLE.captures(template) {
+        return tuple[1].trim_end().trim_end_matches(',').split(',').map(quoted_level).collect();
+    }
+    // Inkling validates a normalized key against this map. Restrict extraction to
+    // that declaration so a later role-membership check cannot supply effort levels.
+    let map = MAP.captures(template)?;
+    template.find("reasoning_effort")?;
+    let mut levels = map[1].trim_end().trim_end_matches(',').split(',')
+        .map(|entry| {
+            let (key, value) = entry.split_once(':')?;
+            value.trim().parse::<f32>().ok()?;
+            quoted_level(key)
         })
-        .collect();
+        .collect::<Option<Vec<_>>>()?;
+    levels.retain(|level| level != "none");
+    Some(levels)
+}
 
-    (!levels.is_empty()).then_some(levels)
+fn quoted_level(value: &str) -> Option<String> {
+    let value = value.trim();
+    let quote = value.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+    let name = value.strip_prefix(quote)?.strip_suffix(quote)?;
+    (!name.is_empty() && !name.contains(quote)).then(|| name.to_string())
 }
 
 #[cfg(test)]
