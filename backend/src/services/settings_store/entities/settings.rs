@@ -38,6 +38,12 @@ pub struct Model {
     pub tool_mode: String,
     /// Whether the model suggests, after a reply, what the user might write next.
     pub suggest_next: bool,
+    /// The home page asks the model for a greeting. Off, it picks from `static_greeting` (a JSON array of lines).
+    pub generate_greeting: bool,
+    pub static_greeting: String,
+    /// The home page asks the model for a placeholder line. Off, it picks from `static_placeholder` (a JSON array of lines).
+    pub generate_placeholder: bool,
+    pub static_placeholder: String,
     /// How many model calls one turn may make before it is stopped; `NULL` for no limit.
     pub max_turn_steps: Option<i32>,
     /// The user's Hugging Face access token, for downloading gated models.

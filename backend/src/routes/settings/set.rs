@@ -58,7 +58,11 @@ pub async fn set_settings(
     // Only an actual change: the settings page sends the name and timezone with every save
     let current = services.settings_store.settings(auth.id).await?;
     let affects_generated_content = body.name.as_ref().is_some_and(|name| current.name.as_ref() != Some(name))
-        || body.timezone.is_some_and(|timezone| current.timezone != Some(timezone));
+        || body.timezone.is_some_and(|timezone| current.timezone != Some(timezone))
+        || body.generate_greeting.is_some()
+        || body.static_greeting.is_some()
+        || body.generate_placeholder.is_some()
+        || body.static_placeholder.is_some();
     let changed_model = body.active_model.is_some() || body.launch_profile_id.is_some();
     services.settings_store.update(auth.id, body).await?;
 

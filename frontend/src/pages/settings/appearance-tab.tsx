@@ -1,11 +1,36 @@
-import {useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import '../../styles/appearance.scss'
 import {backgroundEffects, findBackground, type BackgroundId} from '../../backgrounds'
 import {AppearancePreview} from '../../components/appearance-preview.tsx'
 import {Button, Div, Input, Label, Slider, ToggleSwitch} from '../../components/primitives'
 import {TimeFormatChoice} from '../../components/settings-fields.tsx'
+import {useSettings} from '../../context/use-settings.ts'
 import {useTheme} from '../../context/use-theme.ts'
 import {themeDisplayNames, themeGroups, type ThemeName} from '../../themes'
+import {homeLines, type HomeLines} from '../../api/prompts/home-lines.ts'
+
+const linesText = (saved: string[] | undefined, defaults: string[]): string =>
+    (saved && saved.length > 0 ? saved : defaults).join('\n')
+
+/** Blank lines are dropped. A list identical to `defaults` is stored empty, so the built-in lines stay in use. */
+const linesToSave = (text: string, defaults: string[]): string[] => {
+    const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+    const same = lines.length === defaults.length && lines.every((line, index) => line === defaults[index])
+    return same ? [] : lines
+}
+
+/** One line per greeting or placeholder. Blur saves the list; the same text as the built-in lines stores nothing. */
+const LineList = ({text, onChanged, onCommit, onDefaults}: {
+    text: string
+    onChanged: (text: string) => void
+    onCommit: () => void
+    onDefaults: () => void
+}) => (
+    <Div className="appearance__lines">
+        <textarea data-variant="secondary" rows={8} value={text} onChange={(event) => onChanged(event.target.value)} onBlur={onCommit}/>
+        <Button variant="secondary" text="Use defaults" onClicked={onDefaults}/>
+    </Div>
+);
 
 /** The two plain choices, listed before the animated backgrounds */
 const PLAIN: { id: BackgroundId; name: string; group: string }[] = [{id: 'off', name: 'Off', group: 'Plain'}, {id: 'dots', name: 'Dots', group: 'Plain'}]
@@ -36,6 +61,25 @@ const Swatches = ({theme}: { theme: ThemeName }) => (
  * lists and the preview (the first-run wizard, which asks the time format on a step of its own). */
 export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
     const {themeName, setThemeName, background, setBackground, timeFormat, sidebarSeeThrough, setSidebarSeeThrough, streamReplies, setStreamReplies} = useTheme()
+    const {settings, setSettings} = useSettings()
+    const [greetingText, setGreetingText] = useState('')
+    const [placeholderText, setPlaceholderText] = useState('')
+    const [defaults, setDefaults] = useState<HomeLines | null>(null)
+    const textsLoaded = useRef(false)
+    useEffect(() => {
+        if (!controls) return
+        let cancelled = false
+        homeLines().then((lines) => !cancelled && setDefaults(lines)).catch(() => {})
+        return () => {
+            cancelled = true
+        }
+    }, [controls])
+    useEffect(() => {
+        if (!settings || !defaults || textsLoaded.current) return
+        textsLoaded.current = true
+        setGreetingText(linesText(settings.static_greeting, defaults.greetings))
+        setPlaceholderText(linesText(settings.static_placeholder, defaults.placeholders))
+    }, [settings, defaults])
     const [themeFilter, setThemeFilter] = useState('')
     const [backgroundFilter, setBackgroundFilter] = useState('')
     const [pointedTheme, setPointedTheme] = useState<ThemeName | null>(null)
@@ -138,6 +182,32 @@ export const AppearanceTab = ({controls = true}: { controls?: boolean }) => {
                     </Div>
                     <Label text="Time format"/>
                     <TimeFormatChoice/>
+                    <Label text="Greeting"/>
+                    <Div className="appearance__inline">
+                        <ToggleSwitch toggled={settings?.generate_greeting !== false} onToggled={(on) => void setSettings({generate_greeting: on})}/>
+                        <Label variant="secondary" text="a new greeting each visit. Off, one of the lines below"/>
+                    </Div>
+                    {settings?.generate_greeting === false && defaults ? (
+                        <LineList text={greetingText} onChanged={setGreetingText}
+                                  onCommit={() => void setSettings({static_greeting: linesToSave(greetingText, defaults.greetings)})}
+                                  onDefaults={() => {
+                                      setGreetingText(defaults.greetings.join('\n'))
+                                      void setSettings({static_greeting: []})
+                                  }}/>
+                    ) : null}
+                    <Label text="Suggestions"/>
+                    <Div className="appearance__inline">
+                        <ToggleSwitch toggled={settings?.generate_placeholder !== false} onToggled={(on) => void setSettings({generate_placeholder: on})}/>
+                        <Label variant="secondary" text="a new suggestion in the input. Off, one of the lines below"/>
+                    </Div>
+                    {settings?.generate_placeholder === false && defaults ? (
+                        <LineList text={placeholderText} onChanged={setPlaceholderText}
+                                  onCommit={() => void setSettings({static_placeholder: linesToSave(placeholderText, defaults.placeholders)})}
+                                  onDefaults={() => {
+                                      setPlaceholderText(defaults.placeholders.join('\n'))
+                                      void setSettings({static_placeholder: []})
+                                  }}/>
+                    ) : null}
                 </Div> : null}
             </Div>
         </Div>

@@ -91,6 +91,10 @@ impl SettingsStore {
             trim_old_thinking: row.trim_old_thinking,
             tool_mode: ToolMode::try_from(row.tool_mode.as_str()).map_err(|_| SettingsStoreErrors::CorruptToolMode)?,
             suggest_next: row.suggest_next,
+            generate_greeting: row.generate_greeting,
+            static_greeting: Self::lines_from_stored(&row.static_greeting),
+            generate_placeholder: row.generate_placeholder,
+            static_placeholder: Self::lines_from_stored(&row.static_placeholder),
             max_turn_steps: row.max_turn_steps,
             memory_enabled: row.memory_enabled,
             memory_max_entries: row.memory_max_entries,
@@ -179,6 +183,18 @@ impl SettingsStore {
         }
         if let Some(suggest_next) = update.suggest_next {
             model.suggest_next = Set(suggest_next);
+        }
+        if let Some(generate) = update.generate_greeting {
+            model.generate_greeting = Set(generate);
+        }
+        if let Some(text) = update.static_greeting {
+            model.static_greeting = Set(Self::lines_to_stored(&text));
+        }
+        if let Some(generate) = update.generate_placeholder {
+            model.generate_placeholder = Set(generate);
+        }
+        if let Some(text) = update.static_placeholder {
+            model.static_placeholder = Set(Self::lines_to_stored(&text));
         }
         if let Some(steps) = update.max_turn_steps {
             if !(0..=MAX_TURN_STEPS_LIMIT).contains(&steps) {
@@ -307,6 +323,23 @@ impl SettingsStore {
         model.update(&self.db).await?;
         Ok(())
     }
+
+    /// The column keeps a JSON array. A value written before that (one plain line, or nothing) still reads.
+    fn lines_from_stored(text: &str) -> Vec<String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(lines) = serde_json::from_str::<Vec<String>>(trimmed) {
+            return lines.into_iter().map(|line| line.trim().to_string()).filter(|line| !line.is_empty()).collect();
+        }
+        vec![trimmed.to_string()]
+    }
+
+    fn lines_to_stored(lines: &[String]) -> String {
+        let kept: Vec<&str> = lines.iter().map(|line| line.trim()).filter(|line| !line.is_empty()).collect();
+        serde_json::to_string(&kept).unwrap_or_else(|_| "[]".to_string())
+    }
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema, Clone)]
@@ -325,6 +358,14 @@ pub struct Settings {
     pub tool_mode: ToolMode,
     /// After a reply, the model writes one line of what the user might send next, shown in the empty message box.
     pub suggest_next: bool,
+    /// The home page asks the model for a greeting. Off, one line of `static_greeting` is picked at random.
+    /// An empty list uses the built-in lines.
+    pub generate_greeting: bool,
+    pub static_greeting: Vec<String>,
+    /// The home page asks the model for the placeholder. Off, one line of `static_placeholder` is picked at random.
+    /// An empty list uses the built-in lines.
+    pub generate_placeholder: bool,
+    pub static_placeholder: Vec<String>,
     /// How many model calls one turn may make before it is stopped and the model is asked to wrap up;
     /// `None` for no limit.
     pub max_turn_steps: Option<i32>,
@@ -359,6 +400,10 @@ pub struct SettingsUpdate {
     pub trim_old_thinking: Option<bool>,
     pub tool_mode: Option<ToolMode>,
     pub suggest_next: Option<bool>,
+    pub generate_greeting: Option<bool>,
+    pub static_greeting: Option<Vec<String>>,
+    pub generate_placeholder: Option<bool>,
+    pub static_placeholder: Option<Vec<String>>,
     /// The turn step limit, 0 for none
     pub max_turn_steps: Option<i32>,
     pub memory_enabled: Option<bool>,

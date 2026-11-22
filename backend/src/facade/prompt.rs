@@ -28,6 +28,38 @@ impl PromptFacade {
         Self { one_shot: OneShot::new(providers.clone()), providers }
     }
 
+    /// Lines the home page picks from when greeting generation is off and the user has not written their own.
+    pub fn default_greetings() -> &'static [&'static str] {
+        &[
+            "What are you working on?",
+            "Where should we start?",
+            "What's on your mind?",
+            "Ready when you are.",
+            "What do you want to look at?",
+            "Tell me what you need.",
+            "What should we figure out?",
+            "How can I help?",
+            "What are we doing?",
+            "Ask whenever you're ready.",
+        ]
+    }
+
+    /// Lines the home page picks from when placeholder generation is off and the user has not written their own.
+    pub fn default_placeholders() -> &'static [&'static str] {
+        &[
+            "Explain this in plain words",
+            "Help me plan the next step",
+            "Summarize what I just pasted",
+            "Find what's wrong with this",
+            "Turn this into a short list",
+            "Draft a reply for me",
+            "Compare these two options",
+            "Walk me through it",
+            "What should I check first?",
+            "Rewrite this more clearly",
+        ]
+    }
+
     /// A short, lively greeting for the "no chat open yet" landing page — never a
     /// predefined string, and nudged to reference the time of day rather than state it
     /// outright. `local_time` is the caller's own local date/time, not server/UTC time:
