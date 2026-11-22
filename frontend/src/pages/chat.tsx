@@ -1,4 +1,5 @@
 import axios from 'axios'
+import {Trash} from 'pixelarticons/react'
 import {Fragment, useEffect, useLayoutEffect, useRef, useState} from 'react'
 import {Navigate, useLocation, useNavigate, useSearchParams} from 'react-router-dom'
 import '../styles/chat.scss'
@@ -38,7 +39,16 @@ import {isSameDay} from '../utils/dates'
 import type {ModelChoice} from '../utils/model-choice.ts'
 import {errorReason} from '../utils/error-reason.ts'
 import {describeRunEnd} from '../utils/run-end.ts'
-import type {Decision, RunEnded} from '../api/agent/types'
+import type {Decision, QueuedMessage, RunEnded} from '../api/agent/types'
+
+const waitingText = (index: number, item: QueuedMessage): string => {
+    const text = item.prompt.trim() || 'Attachment'
+    const extras = [
+        item.images > 0 ? `${item.images} ${item.images === 1 ? 'image' : 'images'}` : '',
+        item.file_ids.length > 0 ? `${item.file_ids.length} ${item.file_ids.length === 1 ? 'file' : 'files'}` : '',
+    ].filter(Boolean)
+    return `${index + 1}. Waiting — ${text}${extras.length > 0 ? ` · ${extras.join(' · ')}` : ''}`
+}
 
 const LOAD_MORE_THRESHOLD = 80
 
@@ -64,7 +74,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
     const fetchNewRef = useRef(fetchNew)
     fetchNewRef.current = fetchNew
     const runEndedRef = useRef<(end: RunEnded, view: TurnView) => void>(() => undefined)
-    const {view: turn, send, regenerate, answer, stop, refresh: refreshTurn} = useTurn(chatId, {
+    const {view: turn, send, regenerate, answer, stop, dropQueuedMessage, refresh: refreshTurn} = useTurn(chatId, {
         onMessagesChanged: () => void fetchNewRef.current(),
         onRunEnded: (end, view) => runEndedRef.current(end, view),
     })
@@ -261,20 +271,26 @@ const ChatView = ({chatId}: { chatId: number }) => {
         setSearchHighlight(null)
         // An edit sends the new text as an ordinary turn, once what it replaces is gone. If that
         // can't be removed the composer keeps the text, so nothing the user wrote is lost.
-        if (editing) {
+        // The edit stays up until the new turn is stored. Clearing it earlier puts the old draft
+        // back over a prompt that failed after the message it replaces was already removed.
+        const replacing = editing
+        if (replacing) {
             try {
-                await rewind(editing.messageId)
+                await rewind(replacing.messageId)
             } catch (e) {
                 if (chatIdRef.current === forChatId) setTurnError(errorReason(e, "Couldn't replace that message — the chat is unchanged."))
-                return
+                throw e
             }
-            setEditing(null)
         }
         try {
             await send(prompt, think, images, fileIds)
         } catch (e) {
             turnFailed(forChatId, e, 'Something went wrong sending that — try again.')
+            // The old message is already gone, so a retry must send rather than rewind again.
+            if (replacing) setEditing(null)
+            throw e
         }
+        if (replacing) setEditing(null)
     }
 
     const handleRegenerate = async (messageId: number) => {
@@ -322,7 +338,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
 
     useEffect(() => {
         const pending = consumePendingPrompt(chatId)
-        if (pending) sendRef.current(pending.prompt, pending.think, pending.images, pending.fileIds)
+        if (pending) void sendRef.current(pending.prompt, pending.think, pending.images, pending.fileIds).catch(() => {})
     }, [chatId])
 
     // A search hit may live in a page that isn't loaded yet: load older pages until it's
@@ -452,7 +468,19 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     <ToolConfirmation key={turn.lastEnd?.ended_at} pending={turn.pending} onConfirm={handleConfirm}/>
                 ) : openQuestions.length > 0 && !busy && parentChatId == null ? (
                     <QuestionPrompt key={openQuestions.map((q) => q.key).join('-')} questions={openQuestions}
-                                    onAnswer={(text) => void handleSend(text)}/>
+                                    onAnswer={(text) => void handleSend(text).catch(() => {})}/>
+                ) : null}
+                {turn.queued.length > 0 ? (
+                    <Div className="chat__queue">
+                        {turn.queued.map((item, i) => (
+                            <Div key={item.id} className="chat__queue-item">
+                                <Label className="chat__queue-text" variant="secondary" text={waitingText(i, item)}/>
+                                <Button className="chat__queue-remove" variant="secondary" title="Remove" onClicked={() => void dropQueuedMessage(item.id)}>
+                                    <Trash width={16} height={16}/>
+                                </Button>
+                            </Div>
+                        ))}
+                    </Div>
                 ) : null}
                 {turnError ? (
                     <Div className="chat__error">
@@ -466,7 +494,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                     </Div>
                 ) : (
                     <UserInput
-                        blocked={busy}
+                        blocked={false}
                         onSended={handleSend}
                         inputDisabled={false}
                         clearOnSend={editing == null}
@@ -476,6 +504,7 @@ const ChatView = ({chatId}: { chatId: number }) => {
                         savedLevel={chatThinkLevel}
                         suggestion={busy ? null : chatSuggestion}
                         chatId={chatId}
+                        draftKey={String(chatId)}
                         modelChoice={chatModel != null ? {provider: chatProvider, model: chatModel, profileId: chatProfileId} : null}
                         onModelPicked={(choice) => void changeModel(choice)}
                     />

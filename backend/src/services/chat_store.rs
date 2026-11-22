@@ -1,4 +1,6 @@
 mod entities;
+mod queue;
+pub use queue::QueuedPrompt;
 mod export;
 mod find;
 mod rewind;

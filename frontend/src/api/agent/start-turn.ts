@@ -2,7 +2,7 @@ import axios from 'axios'
 import {BACKEND_URL} from '../../config'
 import type {StartTurnOut, ThinkChoice} from './types'
 
-/** Stores the prompt as the user's next message and starts a run that answers it; returns at once. A 409 means the chat already has a run. */
+/** Stores the prompt as the user's next message and starts a run that answers it, or queues it when a turn is already going. Returns at once. */
 export const startTurn = async (
     chatId: number,
     prompt: string,

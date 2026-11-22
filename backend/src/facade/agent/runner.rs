@@ -98,6 +98,19 @@ pub struct TurnState {
     pub call: Option<CallStatus>,
     /// The lists of steps of the work going on (a compaction, a plan), oldest first (see `ServerEvent::RunSteps`).
     pub steps: Vec<StepList>,
+    /// Prompts sent while this chat's turn was still going, oldest first. Each starts on its own once the turn
+    /// has finished, including a wait for permission. Images are a count: the bytes stay in the queue until the run starts.
+    pub queued: Vec<QueuedMessage>,
+}
+
+/// One prompt waiting behind the chat's current turn. `images` is how many pictures are attached;
+/// their bytes are not in this poll.
+#[derive(Serialize, ToSchema)]
+pub struct QueuedMessage {
+    pub id: i64,
+    pub prompt: String,
+    pub images: u32,
+    pub file_ids: Vec<i64>,
 }
 
 /// A reply being written, as far as its pieces were sent (see `ServerEvent::ReplyPiece`).
@@ -111,7 +124,10 @@ pub struct ReplySoFarOut {
 
 /// What `start_prompt` returns at once: the run goes on in the background.
 pub struct StartedTurn {
+    /// `0` while `queued`: the prompt is not stored yet.
     pub user_message_id: i64,
+    pub queued: bool,
+    /// Present for a run that started. A queued prompt's handle is already closed.
     pub run: RunHandle,
 }
 
@@ -257,8 +273,9 @@ impl TurnRunner {
 
     // ---- starting, stopping, reading ----
 
-    /// Stores the user's prompt and starts a run that answers it. Refused (409) while the chat has a
-    /// run going: two tabs on one chat must not run the same turn twice.
+    /// Stores the user's prompt and starts a run that answers it. While the chat's turn is still going
+    /// (a run, or a wait for permission), the prompt waits and starts on its own once that turn has
+    /// finished. Two tabs can both send; the later one waits behind the earlier.
     pub(super) async fn start_prompt(
         &self,
         chat_id: i64,
@@ -269,7 +286,22 @@ impl TurnRunner {
         policy: Policy,
     ) -> Result<StartedTurn, ErrorService> {
         self.check_chat_policy(chat_id, policy).await?;
-        let slot = self.claim(chat_id)?;
+        // A service or sub-agent chat still refuses: its caller is driving the run and has to wait itself.
+        let busy = self.has_run(chat_id) || self.waiting_for_permission(chat_id).await?;
+        if busy && matches!(policy, Policy::Attended) {
+            self.chat_store.enqueue_prompt(chat_id, prompt, images, file_ids, think).await?;
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
+            return Ok(StartedTurn { user_message_id: 0, queued: true, run: RunHandle::closed() });
+        }
+        let slot = match self.claim(chat_id) {
+            Ok(slot) => slot,
+            Err(_) if matches!(policy, Policy::Attended) => {
+                self.chat_store.enqueue_prompt(chat_id, prompt, images, file_ids, think).await?;
+                self.events.publish(ServerEvent::QueueChanged { chat_id });
+                return Ok(StartedTurn { user_message_id: 0, queued: true, run: RunHandle::closed() });
+            }
+            Err(e) => return Err(e),
+        };
         // A call a crash cut short gets its result before this message, so the history stays in order
         if matches!(policy, Policy::Service) {
             self.tool_calls.cancel_pending(chat_id).await?;
@@ -285,7 +317,44 @@ impl TurnRunner {
         let stored = self.store_user_message(chat_id, prompt, images, file_ids).await?;
 
         let run = self.spawn(slot, think, Start::Prompt, policy);
-        Ok(StartedTurn { user_message_id: stored, run })
+        Ok(StartedTurn { user_message_id: stored, queued: false, run })
+    }
+
+    async fn queued_messages(&self, chat_id: i64) -> Vec<QueuedMessage> {
+        self.chat_store.queued_messages(chat_id).await.unwrap_or_default().into_iter().map(|item| QueuedMessage {
+            id: item.id,
+            prompt: item.prompt,
+            images: item.images,
+            file_ids: item.file_ids,
+        }).collect()
+    }
+
+    /// Starts the oldest waiting prompt, once the chat is free and not waiting for permission.
+    /// A prompt that cannot start goes back to the front.
+    async fn promote_queue(&self, chat_id: i64) {
+        if self.has_run(chat_id) || self.waiting_for_permission(chat_id).await.unwrap_or(true) {
+            return;
+        }
+        let Ok(Some(next)) = self.chat_store.pop_queued_prompt(chat_id).await else {
+            return;
+        };
+        self.events.publish(ServerEvent::QueueChanged { chat_id });
+        let crate::services::chat_store::QueuedPrompt { prompt, images, file_ids, think } = next;
+        if let Err(e) = self.start_prompt(chat_id, prompt.clone(), images.clone(), file_ids.clone(), think.clone(), Policy::Attended).await {
+            tracing::warn!(chat_id, "a queued message didn't start: {}", e.message.as_deref().unwrap_or("unknown error"));
+            let _ = self.chat_store.requeue_prompt_front(chat_id, prompt, images, file_ids, think).await;
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
+        }
+    }
+
+    /// Starts whatever was still waiting when the process came back up.
+    pub(super) async fn resume_queued(&self) {
+        let Ok(chats) = self.chat_store.chats_with_queued_prompts().await else {
+            return;
+        };
+        for chat_id in chats {
+            self.promote_queue(chat_id).await;
+        }
     }
 
     /// Has the model answer again where it answered last, and replaces that answer with the new one. Only a
@@ -416,6 +485,10 @@ impl TurnRunner {
     /// Stops the chat's run: the model call in flight is dropped and nothing of it is stored. A tool that is
     /// already running finishes.
     pub(super) async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+        // Whatever was waiting goes with the run: a stop is not a hand-off to the next prompt.
+        if self.chat_store.clear_queued_prompts(chat_id).await.is_ok() {
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
+        }
         let run = self.runs.lock().unwrap().get(&chat_id).cloned();
         if let Some(run) = run {
             run.stop();
@@ -432,6 +505,16 @@ impl TurnRunner {
         self.last_ends.lock().unwrap().remove(&chat_id);
         slot.run.mark_ended();
         self.events.publish(ServerEvent::MessagesChanged { chat_id });
+        drop(slot);
+        Ok(())
+    }
+
+    /// Drops one prompt waiting behind this chat's turn.
+    pub(super) async fn drop_queued(&self, chat_id: i64, id: i64) -> Result<(), ErrorService> {
+        if !self.chat_store.delete_queued_prompt(chat_id, id).await? {
+            return Err(ErrorService::new(StatusCode::NOT_FOUND, "that queued message is gone"));
+        }
+        self.events.publish(ServerEvent::QueueChanged { chat_id });
         Ok(())
     }
 
@@ -462,6 +545,7 @@ impl TurnRunner {
                 }),
                 call: snapshot.call,
                 steps: snapshot.steps,
+                queued: self.queued_messages(chat_id).await,
             });
         }
         // Only for a chat with no run: while one goes on, a pending call is just between the model's
@@ -483,6 +567,7 @@ impl TurnRunner {
             reply: None,
             call: None,
             steps: vec![],
+            queued: self.queued_messages(chat_id).await,
         })
     }
 
@@ -584,12 +669,18 @@ impl TurnRunner {
             if matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered) {
                 runner.suggestion.start(chat_id);
             }
+            let hold_for_permission = matches!(end, RunEnd::WaitingForPermission);
             drop(slot);
             if let Some(ended) = ended { let _ = sender.send(ended); }
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
                 }
+            }
+            // A wait for permission is still this turn. Anything else has finished, so the next
+            // prompt the user sent during it can start — unless a job wake-up just took the chat.
+            if !hold_for_permission && !runner.has_run(chat_id) {
+                runner.promote_queue(chat_id).await;
             }
         });
         RunHandle { completion }

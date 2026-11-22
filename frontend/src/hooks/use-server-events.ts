@@ -18,6 +18,8 @@ export type ServerEvent =
     | { type: 'stream_open' }
     | { type: 'run_started'; chat_id: number; parent_chat_id: number | null; started_at: string }
     | { type: 'messages_changed'; chat_id: number }
+    /** The chat's waiting queue changed: read it back from the turn state */
+    | { type: 'queue_changed'; chat_id: number }
     | { type: 'tool_started'; chat_id: number; tool_name: string }
     | { type: 'run_ended'; chat_id: number; reason: RunEndReason; detail: string | null; started_at: string; eval_tokens: number; status: number | null }
     | { type: 'chat_seen'; chat_id: number }

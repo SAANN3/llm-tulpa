@@ -56,6 +56,8 @@ pub enum ServerEvent {
     /// Messages were stored in the chat (the user's, a reply, a tool result, a notice): read the ones
     /// newer than the last one the client has.
     MessagesChanged { chat_id: i64 },
+    /// A prompt was added to, taken from, or dropped out of the chat's waiting queue. Read `GET /api/agent/turn`.
+    QueueChanged { chat_id: i64 },
     /// A tool call is about to run.
     ToolStarted { chat_id: i64, tool_name: String },
     /// The run on the chat ended, and why. For `waiting_for_permission`, `GET /api/agent/turn` says what is asked.
@@ -228,6 +230,7 @@ impl ServerEvent {
             ServerEvent::TurnProgress { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::MessagesChanged { chat_id } => Some(*chat_id),
+            ServerEvent::QueueChanged { chat_id } => Some(*chat_id),
             ServerEvent::ToolStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatSeen { chat_id } => Some(*chat_id),

@@ -12,9 +12,10 @@ pub(crate) struct StopRequest {
 }
 
 /// Stops the run on `chat_id`: the model call in flight is dropped (the server stops generating) and nothing of it
-/// is stored; a tool that is already running finishes and its result is stored. The chat is left as of its last
-/// stored message, and `run_ended` with the reason `stopped` follows. A permission pause has already
-/// ended its run; Stop closes its pending calls without executing them or starting another run.
+/// is stored; a tool that is already running finishes and its result is stored. Prompts waiting behind the
+/// turn are dropped. The chat is left as of its last stored message, and `run_ended` with the reason
+/// `stopped` follows. A permission pause has already ended its run; Stop closes its pending calls
+/// without executing them or starting another run.
 #[utoipa::path(
     post,
     path = "/api/agent/stop",

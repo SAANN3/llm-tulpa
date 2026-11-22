@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use utoipa::OpenApi;
@@ -9,6 +9,7 @@ use utoipa::OpenApi;
 use crate::state::AppState;
 
 use super::answer::*;
+use super::drop_queued::*;
 use super::regenerate::*;
 use super::running::*;
 use super::start_turn::*;
@@ -22,11 +23,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/regenerate", post(regenerate))
         .route("/answer", post(answer))
         .route("/stop", post(stop))
+        .route("/queue", delete(drop_queued))
 }
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(start_turn, turn_state, running, regenerate, answer, stop),
+    paths(start_turn, turn_state, running, regenerate, answer, stop, drop_queued),
     components(schemas(
         StartTurnRequest,
         StartTurnOut,

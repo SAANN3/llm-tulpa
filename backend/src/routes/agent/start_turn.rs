@@ -27,8 +27,11 @@ pub(crate) struct StartTurnRequest {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct StartTurnOut {
-    /// The id of the stored message with the user's prompt.
-    user_message_id: i64,
+    /// The id of the stored message with the user's prompt. Absent when `queued` is set: the
+    /// prompt is waiting for the current turn to finish and is stored when its own run starts.
+    user_message_id: Option<i64>,
+    /// The chat's turn was still going, so this prompt waits and starts on its own afterwards.
+    queued: bool,
 }
 
 /// Stores `prompt` as the user's next message and starts a run on `chat_id` that answers it: the
@@ -42,7 +45,7 @@ pub(crate) struct StartTurnOut {
     tag = "agent",
     request_body = StartTurnRequest,
     responses(
-        (status = 202, description = "The prompt is stored and the run has started", body = StartTurnOut),
+        (status = 202, description = "The prompt is stored and the run has started, or it is waiting for the current turn to finish", body = StartTurnOut),
         (status = 404, description = "Chat not found", body = crate::services::error::ErrorBody),
         (status = 409, description = "The chat already has a run going on, or belongs to a messaging plugin", body = crate::services::error::ErrorBody),
     ),
@@ -66,5 +69,8 @@ pub async fn start_turn(
         )
         .await?;
 
-    Ok((StatusCode::ACCEPTED, Json(StartTurnOut { user_message_id: started.user_message_id })))
+    Ok((StatusCode::ACCEPTED, Json(StartTurnOut {
+        user_message_id: (!started.queued).then_some(started.user_message_id),
+        queued: started.queued,
+    })))
 }

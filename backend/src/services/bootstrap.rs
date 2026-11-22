@@ -288,6 +288,8 @@ pub async fn bootstrap(
     ));
     agent.bind_subagent_runner();
     agent.bind_job_waker();
+    let resume = agent.clone();
+    tokio::spawn(async move { resume.resume_queued().await; });
     let prompt = PromptFacade::new(providers.clone());
     let stats = StatsFacade::new(
         chat_store.clone(),

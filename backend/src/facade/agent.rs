@@ -204,7 +204,7 @@ impl Agent {
     /// any) as a `user` message and starts a run that answers it, returning at once: the loop of model
     /// calls and tool calls goes on in the background (see `TurnRunner`). The prompt is saved before any
     /// model call, so a failed or slow one never loses what the user sent. `think` is forwarded to the
-    /// model provider as-is. Refused with 409 while the chat has a run going on.
+    /// model provider as-is. While the chat's turn is still going, the prompt waits and starts once that turn finishes.
     pub async fn start_turn(
         &self,
         chat_id: i64,
@@ -244,6 +244,16 @@ impl Agent {
     /// Stops the chat's run: the model call in flight is dropped. A tool already running finishes.
     pub async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
         self.runner.stop(chat_id).await
+    }
+
+    /// Drops one prompt waiting behind this chat's turn.
+    pub async fn drop_queued(&self, chat_id: i64, id: i64) -> Result<(), ErrorService> {
+        self.runner.drop_queued(chat_id, id).await
+    }
+
+    /// Starts prompts that were still waiting when the process came back up.
+    pub async fn resume_queued(&self) {
+        self.runner.resume_queued().await;
     }
 
     /// Whether the chat has a run going on.
