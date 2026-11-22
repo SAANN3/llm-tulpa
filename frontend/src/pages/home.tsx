@@ -14,6 +14,7 @@ import {useChats} from '../hooks/use-chats.ts'
 import {useDocumentTitle} from '../hooks/use-document-title.ts'
 import {usePrompts} from '../hooks/use-prompts.ts'
 import {useRuntime} from '../hooks/use-runtime.ts'
+import {errorReason} from '../utils/error-reason.ts'
 import {sameChoice, type ModelChoice} from '../utils/model-choice.ts'
 import {setPendingPrompt} from '../utils/pending-prompt.ts'
 
@@ -28,6 +29,7 @@ const Home = () => {
     const [greetingLoading, setGreetingLoading] = useState(true)
     const [placeholder, setPlaceholder] = useState('')
     const [creating, setCreating] = useState(false)
+    const [sendError, setSendError] = useState<string | null>(null)
     // A model picked for the chat about to be started, instead of the user's default: the default in the settings
     // is not touched
     const [startOn, setStartOn] = useState<ModelChoice | null>(null)
@@ -41,6 +43,7 @@ const Home = () => {
     // replace swaps this history entry for the chat, so Back can't land on /?prompt=... and send it twice
     const onSend = async (prompt: string, think: ThinkChoice, images: string[], fileIds: number[], replace = false) => {
         setCreating(true)
+        setSendError(null)
         try {
             const name = await chatName(prompt, images)
             const chat = await createChat(name, {
@@ -49,6 +52,9 @@ const Home = () => {
             })
             setPendingPrompt(chat.id, prompt, think, images, fileIds)
             navigate(`/chat?id=${chat.id}`, {replace})
+        } catch (e) {
+            setSendError(errorReason(e, "Couldn't start that chat — try again."))
+            throw e
         } finally {
             setCreating(false)
         }
@@ -62,7 +68,8 @@ const Home = () => {
     useEffect(() => {
         if (!launchPrompt || launchedRef.current) return
         launchedRef.current = true
-        void onSendRef.current(launchPrompt, true, [], [], true)
+        // onSend records the failure on the page; this only keeps the rejection off the console
+        void onSendRef.current(launchPrompt, true, [], [], true).catch(() => {})
     }, [launchPrompt])
 
     // Aborted on unmount so orphaned slow requests don't hold connection slots against the backend
@@ -120,12 +127,14 @@ const Home = () => {
                     {!greetingLoading && greeting ? (
                         <Label className="greeting home__greeting" text={greeting}/>
                     ) : null}
+                    {sendError ? <Label className="home__error" text={sendError}/> : null}
                     <UserInput
                         className="home__composer"
                         blocked={creating}
                         onSended={onSend}
                         placeholder={placeholder || undefined}
                         clearOnSend={false}
+                        draftKey="home"
                         startModel={startOn ? {model: startOn.model, provider: startOn.provider} : null}
                         modelChoice={startOn ?? defaultChoice}
                         onModelPicked={(choice) => setStartOn(defaultChoice && sameChoice(choice, defaultChoice) ? null : choice)}
