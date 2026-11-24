@@ -5,22 +5,23 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::{
-    facade::agent::Decision, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState,
+    facade::agent::{Decision, RunPolicy}, routes::auth::AuthUser, services::error::ErrorService, services::llm::ThinkChoice, state::AppState,
 };
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AnswerRequest {
     chat_id: i64,
     /// One answer per pending tool call the user decides on, by its position in `pending` of `GET
-    /// /api/agent/turn`. A call with no answer is refused: the model is told it was denied.
+    /// /api/agent/turn`.
     decisions: Vec<Decision>,
     /// Same as on `POST /api/agent/turn`.
     think: Option<ThinkChoice>,
 }
 
-/// Answers the permission prompt `chat_id` is waiting at and continues its turn: `permanent` grants what the
-/// call asked for now and for later calls in the chat, `only_now` lets that one call through, `deny` refuses
-/// it. The pending calls then run in order and the model is asked again, in the background.
+/// Answers what `chat_id` is waiting at and continues its turn: for a permission, `permanent` grants
+/// what the call asked for now and for later calls in the chat, `only_now` lets that one call through,
+/// `deny` refuses it. Pending calls then run in order until the next one that needs the user, and the
+/// model is asked again, in the background.
 #[utoipa::path(
     post,
     path = "/api/agent/answer",
@@ -40,6 +41,6 @@ pub async fn answer(
 ) -> Result<StatusCode, ErrorService> {
     let services = state.services().await?;
     services.chat_store.owned_chat(auth.id, body.chat_id).await?;
-    services.agent.answer(body.chat_id, body.decisions, body.think).await?;
+    services.agent.answer(body.chat_id, body.decisions, body.think, RunPolicy::Attended).await?;
     Ok(StatusCode::ACCEPTED)
 }

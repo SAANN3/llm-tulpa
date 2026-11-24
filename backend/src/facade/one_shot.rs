@@ -1,5 +1,5 @@
 //! One-shot model calls: a fixed instruction, and the data to work on as a user message of its own.
-//! No chat history, no tools, thinking off.
+//! No chat history or tools. `ask` keeps thinking off for instruction/data helpers.
 //!
 //! The data is untrusted text (a conversation excerpt, a note someone typed), not instructions, so it
 //! goes in a separate `user` message instead of being interpolated into the instruction: the model
@@ -33,21 +33,24 @@ impl OneShot {
         data: ChatMessage,
         on_piece: Option<OnPiece<'_>>,
     ) -> Result<ChatResponse, ErrorService> {
-        let response = self
-            .providers
-            .get(provider)?
-            .chat(
-                vec![ChatMessage::system(system)],
-                Some(data),
-                &[],
-                Some(ThinkChoice::Enabled(false)),
-                model,
-                None,
-                &CallParams::default(),
-                on_piece,
-            )
-            .await?;
-        Ok(response)
+        self.complete(provider, model, vec![ChatMessage::system(system), data],
+            Some(ThinkChoice::Enabled(false)), &CallParams::default(), on_piece).await
+    }
+
+    /// A single completion with caller-supplied messages and model parameters, without tools.
+    /// The caller owns any claim that must span model preparation and the call.
+    pub async fn complete(
+        &self,
+        provider: &str,
+        model: &str,
+        messages: Vec<ChatMessage>,
+        think: Option<ThinkChoice>,
+        params: &CallParams,
+        on_piece: Option<OnPiece<'_>>,
+    ) -> Result<ChatResponse, ErrorService> {
+        Ok(self.providers.get(provider)?.chat(
+            messages, None, &[], think, model, None, params, on_piece,
+        ).await?)
     }
 
     /// Asks until `check` accepts the reply and returns its text: one attempt per entry of `closings`,

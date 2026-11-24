@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
 import {useServerEvent} from './use-server-events.ts'
+import {clearDraft} from '../utils/draft-storage.ts'
 import {unseenEndOf} from '../utils/run-end.ts'
 import {CHAT_FOLDER_CHANGED_EVENT} from '../api/chats/set-folder'
 import {createChat as createChatApi, type ChatStart} from '../api/chats/create'
@@ -127,6 +128,7 @@ export const useChats = (onLoaded?: () => void, folderId?: number) => {
 
     const remove = async (id: number) => {
         await deleteChatApi(id)
+        clearDraft(id)
         setChats((prev) => prev.filter((c) => c.id !== id))
         setTotal((t) => Math.max(0, t - 1))
     }

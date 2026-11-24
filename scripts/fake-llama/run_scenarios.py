@@ -66,7 +66,10 @@ def calls(kind=None):
 
 
 def new_chat(name, tools=True):
-    return ok("/api/chats", {"name": name, "launch_profile_id": PROFILE, "tools_enabled": tools})["id"]
+    body = {"name": name, "launch_profile_id": PROFILE}
+    if not tools:
+        body.update(tool_mode="whitelist", tools=[])
+    return ok("/api/chats", body)["id"]
 
 
 def state(chat):
@@ -319,6 +322,44 @@ def permission_waits_and_answers_continue():
     eq(tool["tool_denied"], True, "the call was recorded as denied")
     assert not os.path.exists(write["arguments"]["path"]), "the file was not written"
     has(calls("main")[1]["messages"][-1]["content"], "declined", "the model is told it was declined")
+    settings()
+
+
+@scenario
+def stop_closes_a_permission_wait_without_running_the_tool():
+    settings(auto_confirm=False)
+    chat = new_chat("stop-permission")
+    path = "/tmp/fake_stop_permission_%d.txt" % os.getpid()
+    script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": path, "content": "must not write"}}]})
+    eq(turn(chat, "write it")["status"], "waiting_for_permission", "permission pause")
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 204, "stop the pause")
+    s = state(chat)
+    eq(s["status"], "idle", "pause is closed")
+    eq(s["pending"], [], "no pending calls")
+    assert not os.path.exists(path), "Stop must not execute the pending write"
+    eq(api("/api/agent/stop", {"chat_id": chat})[0], 409, "nothing remains to stop")
+    script({"text": "Continued safely."})
+    eq(turn(chat, "continue with text")["last_end"]["reason"], "answered", "the same chat can continue")
+    eq(len(calls("main")), 2, "one model call per prompt, without replaying the old write")
+    assert not os.path.exists(path)
+    settings()
+
+
+@scenario
+def a_question_returns_as_soon_as_it_is_shown():
+    settings(auto_confirm=True)
+    chat = new_chat("ask")
+    ask = {"name": "ui.ask_question", "arguments": {
+        "question": "Which port?",
+        "options": [{"id": "a", "label": "8080"}, {"id": "b", "label": "3000"}],
+    }}
+    script({"tool_calls": [ask]}, {"text": "Pick one."})
+    s = turn(chat, "pick a port")
+    eq(s["status"], "idle", "the question does not hold the run")
+    eq(s["last_end"]["reason"], "answered", "run end")
+    tool = [m for m in messages(chat) if m["role"] == "tool"][0]
+    has(str(tool["content"]), "Which port?", "the result names the question")
+    has(str(tool["content"]), "next user message", "and says the pick comes later")
     settings()
 
 
@@ -2211,6 +2252,705 @@ def another_user_cannot_use_the_plugin_tools():
     finally:
         api(f"/api/users?id={made['id']}", None, "DELETE")
         settings()
+
+
+@scenario
+def blueprint_tools_use_shared_permissions_without_model_calls():
+    import tempfile
+    settings(auto_confirm=False)
+    with tempfile.TemporaryDirectory(prefix="tulpa-blueprint-tools-") as directory:
+        def blueprint(path, confirmation=False):
+            nodes = [
+                {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                {"id": "write", "name": "Write", "kind": {"type": "tool", "name": "storage.write_file",
+                    "require_confirmation": confirmation,
+                    "arguments": {"path": {"source": "literal", "value": path}, "content": {"source": "literal", "value": "blueprint fixture"}}}},
+                {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                    "bytes": {"source": "output", "node_id": "write", "port": "result", "path": ["bytes_written"]}}}},
+            ]
+            return ok("/api/blueprints", {"name": "Tool fixture", "workflow": {"schema_version": 1, "nodes": nodes,
+                "edges": [{"id": "e1", "from": "start", "port": "out", "to": "write"},
+                          {"id": "e2", "from": "write", "port": "out", "to": "result"}]}})["id"]
+        def start(blueprint_id):
+            return ok(f"/api/blueprints/{blueprint_id}/runs", {"expected_revision": 1})["id"]
+        def detail(blueprint_id, run):
+            return ok(f"/api/blueprints/{blueprint_id}/runs/{run}")
+        def wait(blueprint_id, run, status):
+            wait_for(lambda: detail(blueprint_id, run)["run"]["status"] == status, what=f"blueprint {status}")
+            return detail(blueprint_id, run)
+        path = os.path.join(directory, "default.txt")
+        b = blueprint(path)
+        r = start(b)
+        d = wait(b, r, "completed")
+        eq(open(path).read(), "blueprint fixture", "explicit node is approved by default")
+        eq(d["state"]["nodes"]["result"]["outputs"]["bytes"], 17, "typed tool output binding")
+        assert d["chat_id"] not in [c["id"] for c in ok("/api/chats?limit=100")["chats"]], "service chat is hidden"
+        eq(roles(d["chat_id"]), ["assistant", "tool"], "ordinary audit messages")
+        for allowance, expected in [("only_now", "completed"), ("permanent", "completed"), ("deny", "failed")]:
+            path = os.path.join(directory, allowance + ".txt")
+            b = blueprint(path, True)
+            r = start(b)
+            d = wait(b, r, "waiting_for_permission")
+            assert not os.path.exists(path), "waiting has no side effect"
+            pending = d["state"]["pending_tool"]
+            eq(ok("/api/blueprints/queue")["running"]["id"], r, "permission wait holds the active slot")
+            url = f"/api/blueprints/{b}/runs/{r}/answer"
+            eq(api(url, {"request_id": "stale", "allowance": allowance})[0], 409, "stale confirmation")
+            eq(api(url, {"request_id": pending["request_id"], "allowance": allowance})[0], 202, "answer")
+            d = wait(b, r, expected)
+            eq(os.path.exists(path), allowance != "deny", "side effect follows decision")
+            eq(api(url, {"request_id": pending["request_id"], "allowance": allowance})[0], 409, "no duplicate answer")
+        path = os.path.join(directory, "stopped.txt")
+        b = blueprint(path, True)
+        r = start(b)
+        wait(b, r, "waiting_for_permission")
+        ok("/api/blueprints/queue/stop", {})
+        wait(b, r, "cancelled")
+        assert not os.path.exists(path), "stop never executes a pending tool"
+        eq(calls(), [], "Tool nodes do not call the model")
+    settings()
+
+
+@scenario
+def blueprint_generate_binds_text_and_cancels_without_a_chat():
+    settings()
+    before = ok("/api/chats?limit=100")["total"]
+    def create(prompt="Generate fixture", choice=None, think=False):
+        nodes = [
+            {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+            {"id": "generate", "name": "Generate", "kind": {"type": "generate",
+                "model": choice or {"type": "user_default"},
+                "prompt": {"source": "literal", "value": prompt}, "think": think}},
+            {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                "answer": {"source": "output", "node_id": "generate", "port": "text", "path": []}}}},
+        ]
+        return ok("/api/blueprints", {"name": "Generate fixture", "workflow": {"schema_version": 1,
+            "nodes": nodes, "edges": [{"id": "e1", "from": "start", "port": "out", "to": "generate"},
+                                      {"id": "e2", "from": "generate", "port": "out", "to": "result"}]}})["id"]
+    def start(b):
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        return f"/api/blueprints/{b}/runs/{r}"
+    def wait(url, status):
+        wait_for(lambda: ok(url)["run"]["status"] == status, what=f"Generate {status}")
+        return ok(url)
+    script({"text": "generated text", "thinking": "private reasoning"})
+    d = wait(start(create()), "completed")
+    eq(d["state"]["nodes"]["result"]["outputs"]["answer"], "generated text", "only content is bound")
+    eq(d["chat_id"], None, "Generate needs no chat")
+    eq(len(calls()), 1, "one completion")
+    call = calls()[0]
+    eq(call["has_tools"], False, "no tools")
+    eq(call["messages"], [{"role": "user", "content": "Generate fixture"}], "no history or implicit system prompt")
+    eq(call["chat_template_kwargs"]["enable_thinking"], False, "thinking option")
+    eq(ok("/api/chats?limit=100")["total"], before, "no visible chat created")
+
+    profile = next(p for p in ok("/api/profiles")["profiles"] if p["id"] == PROFILE)
+    choice = {"type": "model", "id": profile["model_id"], "launch_profile_id": PROFILE}
+    preset = ok("/api/presets", {"name": "Blueprint Generate fixture " + str(time.time_ns()),
+        "model_id": profile["model_id"], "temperature": 0.23})
+    ok("/api/presets/choose", {"model_id": profile["model_id"], "preset_id": preset["id"]})
+    script({"text": "explicit model"})
+    wait(start(create("Explicit selection", choice, "low")), "completed")
+    eq(calls()[-1]["model"], profile["model"], "selected registered model")
+    eq(calls()[-1]["chat_template_kwargs"]["reasoning_effort"], "low", "named effort survives")
+    assert abs(calls()[-1]["temperature"] - 0.23) < 0.001, "existing sampling preset applies"
+    script({"text": "ordinary agent sampling"})
+    chat = new_chat("Blueprint sampling regression")
+    turn(chat, "Reply briefly")
+    assert abs(calls("main")[-1]["temperature"] - 0.23) < 0.001, "the ordinary agent uses the same sampling policy"
+    ok("/api/presets/choose", {"model_id": profile["model_id"], "preset_id": None})
+
+    script({"status": 500, "body": {"error": {"message": "scripted failure"}}}, {"text": "queue continues"})
+    failed = start(create("Failure"))
+    following = start(create("After failure"))
+    d = wait(failed, "failed")
+    assert d["run"]["error"], "provider error is recorded"
+    wait(following, "completed")
+
+    for reply, error in [({"text": "x" * (1024 * 1024 + 1)}, "exceeds 1 MiB"),
+                         ({"tool_calls": [{"name": "storage.write_file", "arguments": {}}]}, "tool call")]:
+        script(reply)
+        d = wait(start(create("Invalid completion")), "failed")
+        assert error in d["run"]["error"], d["run"]["error"]
+
+    script({"text": "too late", "delay": 10}, {"text": "after stop"})
+    stopped = start(create("Slow completion"))
+    wait_for(lambda: any(c["messages"][-1].get("content") == "Slow completion" for c in calls()), what="in-flight Generate")
+    following = start(create("After stop"))
+    t0 = time.time()
+    ok("/api/blueprints/queue/stop", {})
+    d = wait(stopped, "cancelled")
+    wait(following, "completed")
+    assert time.time() - t0 < 5, "Stop drops the model call instead of waiting for its answer"
+    eq(d["state"]["nodes"]["result"]["status"], "cancelled", "stop does not run the next node")
+
+
+@scenario
+def blueprint_agent_uses_the_turn_runner_reuses_chat_and_obeys_permissions():
+    import tempfile
+    settings()
+    def create(reuse=False, names=None, prompt="Agent fixture", notes=False, memory=False):
+        kind = {"type": "agent", "model": {"type": "user_default"}, "prompt": {"source": "literal", "value": prompt},
+            "system_prompt": {"source": "literal", "value": "Blueprint agent fixture instructions"},
+            "tools": {"mode": "whitelist", "names": names or ["storage.read_file"]}, "reuse_chat": reuse,
+            "write_notes": notes, "write_memory": memory, "think": False}
+        return ok("/api/blueprints", {"name": "Agent fixture", "workflow": {"schema_version": 1,
+            "nodes": [{"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                {"id": "agent", "name": "Agent", "kind": kind},
+                {"id": "result", "name": "Result", "kind": {"type": "return", "values": {
+                    "answer": {"source": "output", "node_id": "agent", "port": "text", "path": []}}}}],
+            "edges": [{"id": "e1", "from": "start", "port": "out", "to": "agent"},
+                      {"id": "e2", "from": "agent", "port": "out", "to": "result"}]}})["id"]
+    def start(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+        return f"/api/blueprints/{b}/runs/{r}"
+    def wait(url, status="completed"):
+        wait_for(lambda: ok(url)["run"]["status"] == status, what=f"Agent {status}")
+        return ok(url)
+    def chat(d):
+        return d["state"]["nodes"]["agent"]["chat_id"]
+    with tempfile.TemporaryDirectory(prefix="tulpa-blueprint-agent-") as directory:
+        path = os.path.join(directory, "read.txt")
+        with open(path, "w") as f: f.write("fixture content")
+        script({"tool_calls": [{"name": "storage.read_file", "arguments": {"path": path}}]}, {"text": "read complete"})
+        b = create()
+        d = wait(start(b))
+        eq(d["state"]["nodes"]["result"]["outputs"]["answer"], "read complete", "final agent output binding")
+        eq(roles(chat(d)), ["user", "assistant", "tool", "assistant"], "uses the ordinary tool round")
+        has(calls("main")[-1]["messages"][0]["content"], "Blueprint agent fixture instructions", "scoped system prompt")
+        eq(calls("main")[-1]["tool_names"], ["storage.read_file"], "node tool selection")
+        assert chat(d) not in [c["id"] for c in ok("/api/chats?limit=100")["chats"]], "hidden chat"
+        eq(api("/api/agent/turn", {"chat_id": chat(d), "prompt": "outside"})[0], 409, "ordinary turn cannot drive a service chat")
+        script({"text": "fresh run"})
+        eq(chat(wait(start(b))) != chat(d), True, "fresh by default")
+
+        b = create(reuse=True)
+        script({"text": "reuse first"}, {"text": "reuse second"})
+        first = wait(start(b))
+        data = ok(f"/api/blueprints/{b}")
+        second_profile = next(p for p in ok("/api/profiles")["profiles"] if p["id"] != PROFILE)
+        data["workflow"]["nodes"][1]["kind"]["model"] = {"type": "model", "id": second_profile["model_id"], "launch_profile_id": second_profile["id"]}
+        ok(f"/api/blueprints/{b}", {"expected_revision": data["blueprint"]["revision"], "name": "Agent fixture", "schedule": {"type": "manual"}, "workflow": data["workflow"]}, "PUT")
+        second = wait(start(b))
+        eq(chat(first), chat(second), "model switch retains the reuse chat")
+        eq(calls("main")[-1]["model"], second_profile["model"], "model switch applies")
+        assert any(m.get("content") == "reuse first" for m in calls("main")[-1]["messages"]), "reuse preserves history"
+
+        settings(auto_confirm=False)
+        for allowance in ("only_now", "deny"):
+            target = os.path.join(directory, allowance + ".txt")
+            script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": target, "content": "approved"}}]}, {"text": "permission handled"})
+            b = create(names=["storage.write_file"])
+            url = start(b)
+            d = wait(url, "waiting_for_permission")
+            pending = d["state"]["pending_tool"]
+            eq(api(url + "/answer", {"request_id": "stale", "allowance": allowance})[0], 409, "stale answer")
+            ok(url + "/answer", {"request_id": pending["request_id"], "allowance": allowance})
+            wait(url)
+            eq(os.path.exists(target), allowance == "only_now", "agent follows the ordinary permission decision")
+
+        target = os.path.join(directory, "stopped.txt")
+        script({"tool_calls": [{"name": "storage.write_file", "arguments": {"path": target, "content": "no"}}]})
+        url = start(create(names=["storage.write_file"]))
+        d = wait(url, "waiting_for_permission")
+        ok("/api/blueprints/queue/stop", {})
+        wait(url, "cancelled")
+        assert not os.path.exists(target), "stopping permission wait never executes the call"
+        eq(state(chat(d))["pending"], [], "stopped pending calls are settled")
+
+        settings()
+        script({"tool_calls": [{"name": "chat.write_notes", "arguments": {"notes": "must not persist"}}]}, {"text": "notes disabled"})
+        d = wait(start(create(names=["chat.write_notes", "storage.read_file"])))
+        assert "chat.write_notes" not in calls("main")[-1]["tool_names"], "disabled notes tool is not published"
+        eq(ok(f"/api/chats/context?chat_id={chat(d)}")["memory"]["notes"], None, "invented notes call is denied at execution")
+
+        fake("/__reset", {})
+        b = create(reuse=True, prompt="Long task " + BIG)
+        script({"text": "part one", "prompt_tokens": 25000}, {"text": "part two", "prompt_tokens": 25000}, {"text": "part three", "prompt_tokens": 25000})
+        for _ in range(3): d = wait(start(b))
+        kinds = [c["kind"] for c in calls()]
+        assert "summary" in kinds and "facts" in kinds, kinds
+        assert "notes" not in kinds and "memory" not in kinds, kinds
+        eq(ok(f"/api/chats/context?chat_id={chat(d)}")["memory"]["folded"], True, "fold remains mandatory with notes and memory writes disabled")
+
+        script({"text": "slow", "delay": 10}, {"text": "queue continued"})
+        url = start(create(prompt="Slow agent"))
+        wait_for(lambda: any("Slow agent" in json.dumps(c["messages"]) for c in calls("main")), what="agent in flight")
+        following = start(create(prompt="Following agent"))
+        t0 = time.time()
+        ok("/api/blueprints/queue/stop", {})
+        wait(url, "cancelled")
+        wait(following)
+        assert time.time() - t0 < 5, "stop cancels the call and continues the queue"
+    settings()
+
+
+@scenario
+def blueprint_schedules_use_the_queue_and_record_readiness_failures():
+    workflow = {"schema_version": 1,
+        "nodes": [{"id": "start", "name": "Start", "kind": {"type": "entry"}},
+                  {"id": "end", "name": "End", "kind": {"type": "return", "values": {}}}],
+        "edges": [{"id": "e", "from": "start", "port": "out", "to": "end"}]}
+    def history(b):
+        return ok(f"/api/blueprints/{b}/runs")["items"]
+    def disable(b):
+        doc = ok(f"/api/blueprints/{b}")
+        return ok(f"/api/blueprints/{b}", {"expected_revision": doc["blueprint"]["revision"],
+            "name": doc["blueprint"]["name"], "schedule": {"type": "manual"}}, "PUT")
+    script()
+    b = ok("/api/blueprints", {"name": "Scheduled control", "schedule": {"type": "interval", "seconds": 2}, "workflow": workflow})["id"]
+    saved_workflow = ok(f"/api/blueprints/{b}")["workflow"]
+    try:
+        assert ok(f"/api/blueprints/{b}")["blueprint"]["next_due_at"], "first due time is exposed"
+        eq(history(b), [], "enabling does not immediately run")
+        wait_for(lambda: any(r["status"] == "completed" for r in history(b)), what="scheduled completion")
+    finally:
+        eq(disable(b)["next_due_at"], None, "manual disables future ticks")
+    count = len(history(b))
+    time.sleep(2.2)
+    eq(len(history(b)), count, "disabled schedule does not tick")
+    eq(ok(f"/api/blueprints/{b}")["workflow"], saved_workflow, "ticks leave the workflow intact")
+    assert all(r["scheduled_for"] for r in history(b)), "scheduled occurrences are visible"
+    manual = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 2})
+    eq(manual["scheduled_for"], None, "manual starts retain their meaning")
+
+    invalid = json.loads(json.dumps(workflow))
+    invalid["nodes"][1]["kind"] = {"type": "tool", "name": "missing.scheduler_fixture", "arguments": {}}
+    b = ok("/api/blueprints", {"name": "Scheduled missing tool", "schedule": {"type": "interval", "seconds": 2}, "workflow": invalid})["id"]
+    try:
+        eq(api(f"/api/blueprints/{b}/runs", {"expected_revision": 1})[0], 400, "manual invalid graph is rejected")
+        wait_for(lambda: bool(history(b)), what="failed scheduled occurrence")
+        run = history(b)[0]
+        eq(run["status"], "failed", "readiness aborts execution")
+        assert run["error"] and run["finished_at"] and run["scheduled_for"]
+        eq(run["queue_position"], None, "failed preparation holds no queue slot")
+        assert ok(f"/api/blueprints/{b}")["blueprint"]["next_due_at"], "next tick remains scheduled"
+    finally:
+        disable(b)
+    eq(calls("main"), [], "control nodes and readiness failures make no model requests")
+
+
+@scenario
+def blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings():
+    registered = {(p["plugin_name"], p["plugin_subname"]) for p in ok("/api/plugins")}
+    if not all(("example", sub) in registered for sub in ("hello", "hello_python")):
+        raise Skip("needs both hello-world example plugins")
+    script()
+    for sub in ("hello", "hello_python"):
+        identity = {"plugin_name": "example", "plugin_subname": sub}
+        ok("/api/plugins/settings", {**identity, "settings": {"greeting": "Hi"}})
+        ok("/api/plugins/enable", {**identity, "enabled": True})
+        assert any(n["plugin_name"] == "example" and n["plugin_subname"] == sub and n["node_type"] == "greet" for n in ok("/api/blueprints/catalog")["plugin_nodes"])
+        workflow = {"schema_version": 1, "nodes": [
+            {"id": "start", "name": "Start", "kind": {"type": "entry"}},
+            {"id": "greet", "name": "Greet", "kind": {"type": "plugin", **identity, "node_type": "greet", "version": 1,
+                "arguments": {"name": {"source": "literal", "value": "Alice"}}}},
+            {"id": "result", "name": "Result", "kind": {"type": "return", "values": {"text": {"source": "output", "node_id": "greet", "port": "text", "path": []}}}}],
+            "edges": [{"id": "a", "from": "start", "port": "out", "to": "greet"}, {"id": "b", "from": "greet", "port": "out", "to": "result"}]}
+        assert ok("/api/blueprints/validate", {"workflow": workflow})["valid"]
+        b = ok("/api/blueprints", {"name": "Plugin " + sub, "workflow": workflow})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["status"] == "completed", what="plugin node result")
+        eq(ok(url)["state"]["nodes"]["result"]["outputs"]["text"], "Hi, Alice!", "both SDKs return bound outputs")
+        for change in ("version", "input", "output"):
+            broken = json.loads(json.dumps(workflow))
+            if change == "version": broken["nodes"][1]["kind"]["version"] = 99
+            if change == "input": broken["nodes"][1]["kind"]["arguments"]["name"]["value"] = 123
+            if change == "output": broken["nodes"][2]["kind"]["values"]["text"]["port"] = "missing"
+            eq(ok("/api/blueprints/validate", {"workflow": broken})["valid"], False, change + " is checked")
+        ok("/api/plugins/enable", {**identity, "enabled": False})
+        assert not any(n["plugin_subname"] == sub for n in ok("/api/blueprints/catalog")["plugin_nodes"])
+        eq(api(f"/api/blueprints/{b}/runs", {"expected_revision": 1})[0], 400, "disabled plugin is not executable")
+    eq(calls("main"), [], "plugin graph nodes do not call the model")
+
+
+@scenario
+def blueprint_variables_are_run_local_and_operations_use_typed_values():
+    def literal(value): return {"source": "literal", "value": value}
+    def output(node): return {"source": "output", "node_id": node, "port": "value"}
+    def variable(node): return {"source": "variable", "node_id": node}
+    def workflow(kinds):
+        return {"schema_version": 1,
+            "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": kinds[i][0], "port": "out", "to": kinds[i+1][0]} for i in range(len(kinds)-1)]}
+    def create(w): return ok("/api/blueprints", {"name": "Run variables", "workflow": w})["id"]
+    def run(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="typed graph completion")
+        return ok(url)
+    script()
+    w = workflow([
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 2}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": variable("counter"), "right": literal(3)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": output("add")}),
+        ("again", {"type": "set_variable", "variable_id": "counter", "value": literal(9)}),
+        ("format", {"type": "format", "template": "Counter {current}", "arguments": {"current": variable("counter")}}),
+        ("end", {"type": "return", "values": {"initial": output("counter"), "assigned": output("save"),
+            "current": variable("counter"), "text": {"source": "output", "node_id": "format", "port": "text"}}}),
+    ])
+    assert ok("/api/blueprints/validate", {"workflow": w})["valid"]
+    b = create(w)
+    for _ in range(2):
+        d = run(b)
+        eq(d["run"]["status"], "completed", "variable graph finishes")
+        eq(d["state"]["variables"], {"counter": 9}, "assignments are ordered")
+        eq(d["state"]["nodes"]["end"]["outputs"], {"initial": 2, "assigned": 5, "current": 9, "text": "Counter 9"}, "live reads and output snapshots differ")
+    eq(ok(f"/api/blueprints/{b}")["workflow"]["nodes"][1]["kind"]["initial"], 2, "execution does not edit defaults")
+    for broken in ("default", "assignment", "missing", "operation", "path"):
+        bad = json.loads(json.dumps(w))
+        if broken == "default": bad["nodes"][1]["kind"]["initial"] = "two"
+        if broken == "assignment": bad["nodes"][3]["kind"]["value"] = literal("five")
+        if broken == "missing": bad["nodes"][3]["kind"]["variable_id"] = "absent"
+        if broken == "operation": bad["nodes"][2]["kind"]["operation"]["right"] = literal(True)
+        if broken == "path": bad["nodes"][2]["kind"]["operation"]["left"]["path"] = ["field"]
+        eq(ok("/api/blueprints/validate", {"workflow": bad})["valid"], False, broken + " is rejected")
+    for operation, arguments, expected in [
+        ("subtract", {"left": 9, "right": 2}, 7), ("multiply", {"left": 3, "right": 4}, 12),
+        ("divide", {"left": 5, "right": 2}, 2.5), ("remainder", {"left": 9, "right": 4}, 1),
+        ("and", {"left": True, "right": False}, False), ("or", {"left": False, "right": True}, True),
+        ("not", {"value": False}, True), ("length", {"value": "abc"}, 3),
+        ("get", {"list": [4, 5], "index": 1}, 5), ("append", {"list": [1], "value": 2}, [1, 2]),
+        ("concat", {"left": [1], "right": [2, 3]}, [1, 2, 3]),
+    ]:
+        w = workflow([("start", {"type": "entry"}), ("calc", {"type": "calculate", "operation": {"type": operation,
+            **{key: literal(value) for key, value in arguments.items()}}}), ("end", {"type": "return", "values": {"value": output("calc")}})])
+        d = run(create(w))
+        eq(d["run"]["status"], "completed", operation + " finishes")
+        eq(d["state"]["nodes"]["end"]["outputs"]["value"], expected, operation + " result")
+    eq(calls("main"), [], "variables and operations make no model requests")
+
+
+@scenario
+def blueprint_merge_delivers_each_input_without_overwriting_active_results():
+    def lit(value): return {"source": "literal", "value": value}
+    def out(node, port="text", path=None): return {"source": "output", "node_id": node, "port": port, "path": path or []}
+    def var(node): return {"source": "variable", "node_id": node}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": edge, "from": a, "port": port, "to": b} for edge, a, port, b in edges]}
+    def run(w):
+        report = ok("/api/blueprints/validate", {"workflow": w})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "Merge fixture", "workflow": w})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="Merge completion")
+        d = ok(url)
+        eq(d["run"]["status"], "completed", "Merge graph completes")
+        return d
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("values", {"type": "variable", "value_type": {"property_type": "array", "items": "string"}, "initial": []}),
+        ("a", {"type": "format", "template": "A", "arguments": {}}),
+        ("b", {"type": "format", "template": "B", "arguments": {}}),
+        ("m", {"type": "merge", "value_type": {"property_type": "string"}, "inputs": {"a-m": out("a"), "b-m": out("b")}}),
+        ("consumer", {"type": "format", "template": "{value}:{b}", "arguments": {"value": out("m", "value"), "b": out("b")}}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("values"), "value": out("consumer")}}),
+        ("save", {"type": "set_variable", "variable_id": "values", "value": out("append", "value")}),
+        ("end", {"type": "return", "values": {"values": var("values")}}),
+    ]
+    edges = [("start-values", "start", "out", "values"), ("values-a", "values", "out", "a"),
+        ("a-m", "a", "out", "m"), ("values-b", "values", "out", "b"), ("b-m", "b", "out", "m"),
+        ("m-consumer", "m", "out", "consumer"), ("consumer-append", "consumer", "out", "append"),
+        ("append-save", "append", "out", "save"), ("save-end", "save", "out", "end")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["variables"]["values"], ["A:B", "B:B"], "first value survives while the second producer supplies its input")
+    for name in ("m", "consumer", "end"): eq(d["state"]["nodes"][name]["executions"], 2, "each delivery runs the continuation")
+    eq(d["state"]["nodes"]["consumer"]["iteration"], [{"node_id": "m", "index": 1}], "delivery identity")
+    eq(d["run"]["progress"]["percent"], None, "unknown delivery total has no percentage")
+    # Inactive alternatives do not prevent the active input; two inactive inputs skip the region.
+    for active in (True, False, None):
+        w = graph(kinds, edges); w = json.loads(json.dumps(w))
+        w["nodes"].append({"id": "if", "name": "If", "kind": {"type": "if", "left": lit(active is True), "operator": "equal", "right": lit(True)}})
+        w["nodes"][5]["kind"]["arguments"]["b"] = lit("B")
+        w["edges"][1].update({"to": "if"})
+        w["edges"][3].update({"from": "if", "port": "false" if active is not None else "true"})
+        w["edges"].append({"id": "if-a", "from": "if", "port": "true", "to": "a"})
+        d = run(w)
+        eq(d["state"]["variables"]["values"], [] if active is None else ["A:B" if active else "B:B"], "selected input only")
+        eq(d["state"]["nodes"]["m"]["executions"], 0 if active is None else 1, "inactive inputs make no calls")
+        if active is None: eq(d["state"]["nodes"]["consumer"]["status"], "skipped", "no input skips continuation")
+    # A Merge can pass a typed object; bindings retain recursive schema/path validation.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    w["nodes"][4]["kind"]["value_type"] = {"property_type": "object", "properties": [
+        {"name": "text", "property_type": "string", "description": "", "required": True},
+        {"name": "active", "property_type": "boolean", "description": "", "required": True}]}
+    w["nodes"][4]["kind"]["inputs"] = {f"{name}-m": {"source": "object", "fields": {"text": out(name), "active": lit(True)}} for name in ("a", "b")}
+    w["nodes"][5]["kind"]["arguments"]["value"] = out("m", "value", ["text"])
+    eq(run(w)["state"]["variables"]["values"], ["A:B", "B:B"], "typed object deliveries")
+    for invalid in ("missing", "extra", "type", "path", "escape", "ordinary_multiple"):
+        broken = json.loads(json.dumps(w))
+        if invalid == "missing": del broken["nodes"][4]["kind"]["inputs"]["a-m"]
+        if invalid == "extra": broken["nodes"][4]["kind"]["inputs"]["extra"] = lit({"text": "X", "active": True})
+        if invalid == "type": broken["nodes"][4]["kind"]["inputs"]["a-m"] = lit(42)
+        if invalid == "path": broken["nodes"][5]["kind"]["arguments"]["value"] = out("m", "value", ["absent"])
+        if invalid == "escape":
+            broken["nodes"].append({"id": "outside", "name": "Outside", "kind": {"type": "return", "values": {"bad": out("m", "value")}}})
+            broken["edges"].append({"id": "outside", "from": "start", "port": "out", "to": "outside"})
+        if invalid == "ordinary_multiple": broken["nodes"][4]["kind"] = {"type": "format", "template": "bad", "arguments": {}}
+        eq(ok("/api/blueprints/validate", {"workflow": broken})["valid"], False, invalid + " is rejected")
+    # A new loop iteration resets closed input edges, while delivery ordinals stay unique.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    w["nodes"].extend([{"id": "loop", "name": "Loop", "kind": {"type": "for_each", "items": lit([1, 2])}},
+        {"id": "final", "name": "Final", "kind": {"type": "return", "values": {"values": var("values")}}}])
+    w["edges"][1].update({"from": "loop", "port": "body"}); w["edges"][3].update({"from": "loop", "port": "body"})
+    w["edges"].extend([{"id": "values-loop", "from": "values", "port": "out", "to": "loop"}, {"id": "loop-final", "from": "loop", "port": "out", "to": "final"}])
+    d = run(w)
+    eq(d["state"]["variables"]["values"], ["A:B", "B:B", "A:B", "B:B"], "every loop iteration receives both inputs")
+    eq(d["state"]["nodes"]["consumer"]["iteration"], [{"node_id": "loop", "index": 1}, {"node_id": "m", "index": 3}], "nested scope identity")
+    # Nested Merge continues twice for each outer delivery.
+    w = graph(kinds, edges); w = json.loads(json.dumps(w))
+    for name in ("p", "q"):
+        w["nodes"].append({"id": name, "name": name, "kind": {"type": "format", "template": "{value}/" + name, "arguments": {"value": out("m", "value")}}})
+    w["nodes"].append({"id": "n", "name": "Nested", "kind": {"type": "merge", "value_type": {"property_type": "string"}, "inputs": {"p-n": out("p"), "q-n": out("q")}}})
+    w["nodes"][5]["kind"]["arguments"] = {"value": out("n", "value"), "b": lit("B")}
+    w["edges"][5]["to"] = "p"
+    w["edges"].extend([{"id": "m-q", "from": "m", "port": "out", "to": "q"}, {"id": "p-n", "from": "p", "port": "out", "to": "n"},
+        {"id": "q-n", "from": "q", "port": "out", "to": "n"}, {"id": "n-consumer", "from": "n", "port": "out", "to": "consumer"}])
+    d = run(w)
+    eq(d["state"]["variables"]["values"], ["A/p:B", "A/q:B", "B/p:B", "B/q:B"], "nested deliveries finish in order")
+    eq(d["state"]["nodes"]["n"]["executions"], 4, "nested execution count")
+    eq(calls("main"), [], "Merge itself makes no model requests")
+
+
+@scenario
+def blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results():
+    def lit(value): return {"source": "literal", "value": value}
+    def out(node, port="text"): return {"source": "output", "node_id": node, "port": port}
+    def var(node): return {"source": "variable", "node_id": node}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": a, "port": port, "to": b} for i, (a, port, b) in enumerate(edges)]}
+    def run(w):
+        report = ok("/api/blueprints/validate", {"workflow": w})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "All inputs fixture", "workflow": w})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="input-dependent graph completion")
+        d = ok(url)
+        eq(d["run"]["status"], "completed", "input-dependent graph finishes")
+        return d
+    script()
+    entry = ("start", {"type": "entry"})
+    kinds = [entry] + [(name, {"type": "format", "template": name.upper(), "arguments": {}}) for name in ("a", "b", "c", "d")]
+    kinds += [("format", {"type": "format", "template": "{a}|{b}|{c}|{d}", "arguments": {name: out(name) for name in ("a", "b", "c", "d")}}),
+        ("end", {"type": "return", "values": {"text": out("format"), "nested": {"source": "object", "fields": {
+            "all": {"source": "array", "items": [out(name) for name in ("a", "b", "c", "d")]}}}}})]
+    edges = [("start", "out", "a"), ("a", "out", "format"), ("format", "out", "end")]
+    edges += [("start", "out", name) for name in ("b", "c", "d")]
+    for order in (edges, list(reversed(edges))):
+        d = run(graph(kinds, order))
+        eq(d["state"]["nodes"]["end"]["outputs"], {"text": "A|B|C|D", "nested": {"all": ["A", "B", "C", "D"]}}, "all four values are ready regardless of branch order")
+        nodes = d["state"]["nodes"]
+        assert nodes["format"]["execution_id"] > max(nodes[name]["execution_id"] for name in ("a", "b", "c", "d"))
+    # A skipped required value skips its consumer even when another branch supplies control.
+    skipped = graph([entry,
+        ("if", {"type": "if", "left": lit(False), "operator": "equal", "right": lit(True)}),
+        ("unused", {"type": "format", "template": "unused", "arguments": {}}),
+        ("consumer", {"type": "format", "template": "{value}", "arguments": {"value": out("unused")}}),
+        ("after", {"type": "return", "values": {"bad": out("consumer")}})],
+        [("start", "out", "consumer"), ("consumer", "out", "after"), ("start", "out", "if"), ("if", "true", "unused")])
+    d = run(skipped)
+    for name in ("unused", "consumer", "after"):
+        eq(d["state"]["nodes"][name]["status"], "skipped", "skip propagates through required data and control")
+        eq(d["state"]["nodes"][name]["executions"], 0, "skipped data consumers never execute")
+    # An independent declaration can satisfy Input::Variable and SetVariable's target later.
+    variables = graph([entry,
+        ("save", {"type": "set_variable", "variable_id": "v", "value": lit(9)}),
+        ("v", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 2}),
+        ("end", {"type": "return", "values": {"value": var("v")}})],
+        [("start", "out", "save"), ("save", "out", "end"), ("start", "out", "v")])
+    eq(run(variables)["state"]["nodes"]["end"]["outputs"], {"value": 9}, "target declaration is also a required input")
+    kinds = [entry,
+        ("collected", {"type": "variable", "value_type": {"property_type": "array", "items": "string"}, "initial": []}),
+        ("loop", {"type": "for_each", "items": lit([1, 2])}),
+        ("body", {"type": "format", "template": "{item}:{external}", "arguments": {"item": out("loop", "item"), "external": out("external")}}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("collected"), "value": out("body")}}),
+        ("save", {"type": "set_variable", "variable_id": "collected", "value": out("append", "value")}),
+        ("external", {"type": "format", "template": "B", "arguments": {}}),
+        ("reader", {"type": "return", "values": {"iterations": out("loop", "iterations")}}),
+        ("end", {"type": "return", "values": {"values": var("collected")}})]
+    edges = [("start", "out", "reader"), ("start", "out", "collected"), ("collected", "out", "loop"),
+        ("loop", "body", "body"), ("body", "out", "append"), ("append", "out", "save"), ("loop", "out", "end"), ("start", "out", "external")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["end"]["outputs"], {"values": ["1:B", "2:B"]}, "parked body waits without mixing iteration values")
+    eq(d["state"]["nodes"]["body"]["executions"], 2, "one consumer execution per iteration")
+    eq(d["state"]["nodes"]["reader"]["outputs"], {"iterations": 2}, "outer reader sees the completed loop")
+    eq(d["state"]["nodes"]["body"]["iteration"], [{"node_id": "loop", "index": 1}], "current execution identity remains scoped")
+    for invalid in ("cycle", "loop_completion", "escape"):
+        w = graph(kinds, edges)
+        w = json.loads(json.dumps(w))
+        if invalid == "cycle": w["nodes"][6]["kind"]["arguments"] = {"value": out("body")}
+        if invalid == "loop_completion": w["nodes"][6]["kind"]["arguments"] = {"value": out("loop", "iterations")}
+        if invalid == "escape": w["nodes"][-1]["kind"]["values"]["bad"] = out("body")
+        eq(ok("/api/blueprints/validate", {"workflow": w})["valid"], False, invalid + " is rejected before execution")
+    eq(calls("main"), [], "waiting for data makes no model requests")
+
+
+@scenario
+def blueprint_persistent_variables_are_scoped_and_committed_with_nodes():
+    def lit(value): return {"source": "literal", "value": value}
+    def var(node): return {"source": "variable", "node_id": node}
+    def out(node): return {"source": "output", "node_id": node, "port": "value"}
+    def graph(kinds):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": kinds[i][0], "port": "out", "to": kinds[i+1][0]} for i in range(len(kinds)-1)]}
+    def create(w): return ok("/api/blueprints", {"name": "Persistent fixture", "workflow": w})["id"]
+    def start(b):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        return ok(f"/api/blueprints/{b}/runs", {"expected_revision": revision})["id"]
+    def done(b, r):
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="persistent graph completion")
+        return ok(url)
+    def saved(b): return ok(f"/api/blueprints/{b}/variables")["values"]
+    def update(b, w):
+        revision = ok(f"/api/blueprints/{b}")["blueprint"]["revision"]
+        return ok(f"/api/blueprints/{b}", {"expected_revision": revision, "name": "Persistent fixture",
+            "schedule": {"type": "manual"}, "workflow": w}, "PUT")["revision"]
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "scope": "blueprint", "value_type": {"property_type": "integer"}, "initial": 0}),
+        ("local", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 11}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": var("counter"), "right": lit(1)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": out("add")}),
+        ("local_save", {"type": "set_variable", "variable_id": "local", "value": lit(12)}),
+        ("end", {"type": "return", "values": {"counter": var("counter"), "local_initial": out("local")}}),
+    ]
+    w = graph(kinds)
+    b, other = create(w), create(w)
+    eq(saved(b), {}, "defaults are not writes before execution")
+    blocker = create(graph([kinds[0], ("sleep", {"type": "sleep", "seconds": lit(60)})]))
+    blocking_run = start(blocker)
+    wait_for(lambda: ok(f"/api/blueprints/{blocker}/runs/{blocking_run}")["state"]["nodes"]["sleep"]["status"] == "running", what="queue blocker")
+    queued = [start(b) for _ in range(3)]
+    eq(len(ok("/api/blueprints/queue")["queued"]), 3, "all snapshots wait before reading persistent values")
+    ok("/api/blueprints/queue/stop", {})
+    done(blocker, blocking_run)
+    for expected, r in enumerate(queued, 1):
+        d = done(b, r)
+        eq(d["run"]["status"], "completed", "persistent graph finishes")
+        eq(d["state"]["nodes"]["end"]["outputs"], {"counter": expected, "local_initial": 11}, "queued runs read the previous committed value")
+    eq(saved(b), {"counter": 3}, "run-local variables are not stored")
+    eq(done(other, start(other))["state"]["variables"]["counter"], 1, "another blueprint has independent state")
+    changed = json.loads(json.dumps(w))
+    changed["nodes"][-1]["kind"] = {"type": "calculate", "operation": {"type": "divide", "left": lit(1), "right": lit(0)}}
+    revision = update(b, changed)
+    eq(done(b, start(b))["run"]["status"], "failed", "failure after assignment")
+    eq(saved(b), {"counter": 4}, "earlier successful assignment survives a later failure")
+    eq(api(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")[0], 409, "reset checks revision")
+    eq(saved(b), {"counter": 4}, "stale reset preserves values")
+    ok(f"/api/blueprints/{b}/variables?expected_revision={revision}&node_id=counter", method="DELETE")
+    eq(saved(b), {}, "individual reset removes saved value")
+    revision = update(b, w)
+    eq(done(b, start(b))["state"]["variables"]["counter"], 1, "reset uses initial on the next run")
+    # A compatible draft with a new variable type must not silently discard old state.
+    typed = graph([kinds[0], ("counter", {"type": "variable", "scope": "blueprint",
+        "value_type": {"property_type": "string"}, "initial": "new"})])
+    revision = update(b, typed)
+    d = done(b, start(b))
+    eq(d["run"]["status"], "failed", "incompatible saved type fails the run")
+    has(d["state"]["error"], "persistent variable 'counter'", "type failure identifies the variable")
+    eq(saved(b), {"counter": 1}, "type failure does not destroy saved state")
+    ok(f"/api/blueprints/{b}/variables?expected_revision={revision}", method="DELETE")
+    eq(done(b, start(b))["run"]["status"], "completed", "queue continues after type error and reset")
+    eq(saved(b), {"counter": "new"}, "declaration commits its initial value")
+    # Stop before an assignment and reset during an active run.
+    sleepy = graph([kinds[0], kinds[1], ("sleep", {"type": "sleep", "seconds": lit(60)}), kinds[4]])
+    sleepy["nodes"][-1]["kind"]["value"] = lit(99)
+    b = create(sleepy)
+    r = start(b)
+    url = f"/api/blueprints/{b}/runs/{r}"
+    wait_for(lambda: ok(url)["state"]["nodes"]["sleep"]["status"] == "running", what="sleep before assignment")
+    eq(api(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")[0], 409, "active state cannot be reset")
+    ok("/api/blueprints/queue/stop", {})
+    eq(done(b, r)["run"]["status"], "cancelled", "stop ends the graph")
+    eq(saved(b), {"counter": 0}, "unexecuted assignment does not change persistent state")
+    ok(f"/api/blueprints/{b}/variables?expected_revision=1", method="DELETE")
+    eq(calls("main"), [], "persistent variables make no model requests")
+
+
+@scenario
+def blueprint_loops_repeat_scoped_bodies_and_preserve_variables():
+    def lit(value): return {"source": "literal", "value": value}
+    def var(node): return {"source": "variable", "node_id": node}
+    def out(node, port): return {"source": "output", "node_id": node, "port": port}
+    def graph(kinds, edges):
+        return {"schema_version": 1, "nodes": [{"id": name, "name": name, "kind": kind} for name, kind in kinds],
+            "edges": [{"id": str(i), "from": a, "port": port, "to": b} for i, (a, port, b) in enumerate(edges)]}
+    def run(workflow):
+        report = ok("/api/blueprints/validate", {"workflow": workflow})
+        assert report["valid"], report
+        b = ok("/api/blueprints", {"name": "Loop fixture", "workflow": workflow})["id"]
+        r = ok(f"/api/blueprints/{b}/runs", {"expected_revision": 1})["id"]
+        url = f"/api/blueprints/{b}/runs/{r}"
+        wait_for(lambda: ok(url)["run"]["finished_at"], what="loop completion")
+        return ok(url)
+    script()
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("counter", {"type": "variable", "value_type": {"property_type": "integer"}, "initial": 0}),
+        ("loop", {"type": "while", "left": var("counter"), "operator": "less", "right": lit(3), "max_iterations": 3}),
+        ("add", {"type": "calculate", "operation": {"type": "add", "left": var("counter"), "right": lit(1)}}),
+        ("save", {"type": "set_variable", "variable_id": "counter", "value": out("add", "value")}),
+        ("end", {"type": "return", "values": {"value": var("counter"), "iterations": out("loop", "iterations")}}),
+    ]
+    edges = [("start", "out", "counter"), ("counter", "out", "loop"), ("loop", "out", "end"),
+        ("loop", "body", "add"), ("add", "out", "save")]
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "completed", "while completes at the exact iteration limit")
+    eq(d["state"]["nodes"]["end"]["outputs"], {"value": 3, "iterations": 3}, "live condition is checked again")
+    eq(d["state"]["nodes"]["add"]["executions"], 3, "same body node executes three times")
+    eq(d["state"]["nodes"]["loop"]["executions"], 4, "final false check is an execution")
+    eq(d["state"]["nodes"]["save"]["iteration"], [{"node_id": "loop", "index": 2}], "iteration identity")
+    eq(d["run"]["progress"], {"completed": 13, "skipped": 0, "total": None, "percent": None}, "counts executions without a fictional percentage")
+    kinds[2][1]["right"] = lit(0)
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["add"]["status"], "skipped", "zero iterations skip the body")
+    eq(d["state"]["variables"]["counter"], 0, "zero iterations leave initial state")
+    kinds[2][1]["right"] = lit(4)
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "failed", "iteration limit fails instead of truncating")
+    has(d["run"]["error"], "iteration limit", "bounded failure")
+    eq(d["state"]["variables"]["counter"], 3, "no extra body after the limit")
+
+    kinds = [
+        ("start", {"type": "entry"}),
+        ("items", {"type": "variable", "value_type": {"property_type": "array", "items": "integer"}, "initial": [1, 2, 3]}),
+        ("collected", {"type": "variable", "value_type": {"property_type": "array", "items": "integer"}, "initial": []}),
+        ("loop", {"type": "for_each", "items": var("items")}),
+        ("append", {"type": "calculate", "operation": {"type": "append", "list": var("collected"), "value": out("loop", "item")}}),
+        ("save", {"type": "set_variable", "variable_id": "collected", "value": out("append", "value")}),
+        ("replace", {"type": "set_variable", "variable_id": "items", "value": lit([99])}),
+        ("end", {"type": "return", "values": {"items": var("collected")}}),
+    ]
+    edges = [("start", "out", "items"), ("items", "out", "collected"), ("collected", "out", "loop"),
+        ("loop", "body", "append"), ("append", "out", "save"), ("loop", "body", "replace"), ("loop", "out", "end")]
+    d = run(graph(kinds, edges))
+    eq(d["state"]["nodes"]["end"]["outputs"]["items"], [1, 2, 3], "for_each freezes its input once")
+    eq(d["state"]["variables"]["items"], [99], "mutating the source does not alter the iteration snapshot")
+    kinds[1][1]["initial"] = []
+    d = run(graph(kinds, edges))
+    eq(d["run"]["status"], "completed", "empty list completes")
+    eq(d["state"]["loops"]["loop"]["iterations"], 0, "empty list has no iterations")
+    kinds[1][1]["initial"] = [1, 2]
+    for invalid in ("body_output", "item_after_loop", "limit", "back_edge"):
+        w = graph(kinds, edges)
+        w = json.loads(json.dumps(w))
+        if invalid == "body_output": w["nodes"][-1]["kind"]["values"]["bad"] = out("append", "value")
+        if invalid == "item_after_loop": w["nodes"][-1]["kind"]["values"]["bad"] = out("loop", "item")
+        if invalid == "limit": w["nodes"][3]["kind"]["max_iterations"] = 0
+        if invalid == "back_edge": w["edges"].append({"id": "back", "from": "save", "port": "out", "to": "loop"})
+        eq(ok("/api/blueprints/validate", {"workflow": w})["valid"], False, invalid + " is rejected")
+    eq(calls("main"), [], "control loops make no model requests")
 
 
 def main():

@@ -4,6 +4,7 @@ import {useNavigate} from 'react-router-dom'
 
 import '../styles/chat-header.scss'
 import {deleteChat} from '../api/chats/delete'
+import {clearDraft} from '../utils/draft-storage.ts'
 import {renameChat} from '../api/chats/rename'
 import {setChatFolder} from '../api/chats/set-folder'
 import type {MessageSearchOut} from '../api/chats/types'
@@ -84,6 +85,7 @@ export const ChatHeader = ({
     // The chat list follows by itself (`chat_deleted`); this page has nothing left to show
     const doDelete = async () => {
         await deleteChat(chatId)
+        clearDraft(chatId)
         navigate('/')
     }
 

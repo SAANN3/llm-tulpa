@@ -95,7 +95,11 @@ export const Select = ({
                             role="option"
                             aria-selected={value === selected}
                             data-select-option
-                            onClick={() => {
+                            // Capture, and stopped there: the list usually sits inside a <label>, and a click that
+                            // reaches the label is sent to the trigger as well, which opens the list again
+                            onClickCapture={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
                                 onChosen(value)
                                 setOpen(false)
                             }}

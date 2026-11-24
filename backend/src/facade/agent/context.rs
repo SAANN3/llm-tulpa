@@ -77,11 +77,12 @@ impl ContextReader {
 
     pub(super) async fn breakdown(&self, chat_id: i64) -> Result<ContextBreakdown, ErrorService> {
         let chat_row = self.chat_store.chat(chat_id).await?;
-        let (names, has_tools) = self.tool_selection.listed(chat_id, chat_row.tool_mode).await?;
+        let (names, _) = self.tool_selection.listed(chat_id, chat_row.tool_mode).await?;
+        let tools = Turn::tools_for(&chat_row, &names, self.tools.snapshot_tools(chat_row.user_id).await);
+        let has_tools = !tools.is_empty();
         let (mut chat, built) = self.history.parts(chat_id, has_tools).await?;
         // The model a turn in progress runs on, as `Turn::prepare` sees it
         self.model.bind(&mut chat);
-        let tools = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
         let tool_refs: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let tools_chars = if tool_refs.is_empty() { 0 } else { serde_json::to_string(&tool_definitions(&tool_refs)).unwrap_or_default().len() };
 

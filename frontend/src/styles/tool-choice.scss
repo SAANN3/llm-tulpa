@@ -10,6 +10,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: $space-4;
 }
 
@@ -17,8 +18,9 @@
   display: flex;
   align-self: flex-start;
   align-items: stretch;
+  flex-wrap: wrap;
   gap: $space-2;
-  flex-shrink: 0;
+  max-width: 100%;
 
   // The mode switch is much taller because each option has a line of help; these two stay one line and share a height
   button {

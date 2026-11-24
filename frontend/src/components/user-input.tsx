@@ -4,6 +4,7 @@ import {getHttpsAddress} from '../api/tls/https-address.ts'
 import type {ThinkChoice} from '../api/agent/types'
 import {uploadFile} from '../api/files/upload'
 import {formatBytes} from '../utils/format-bytes.ts'
+import {useComposerDraft} from '../hooks/use-composer-draft.ts'
 import {debugLog} from '../utils/debug.ts'
 import {getThinkingCapability, type ThinkingModel} from '../api/llm/thinking-capability.ts'
 import {useThinkingDefaults} from '../hooks/use-thinking-defaults.ts'
@@ -25,7 +26,7 @@ export interface UserInputProps {
     text?: string
     blocked: boolean
     className?: string
-    onSended: (text: string, think: ThinkChoice, images: string[], fileIds: number[]) => void
+    onSended: (text: string, think: ThinkChoice, images: string[], fileIds: number[]) => Promise<void> | void
     style?: CSSProperties
     placeholder?: string
     clearOnSend?: boolean
@@ -36,6 +37,8 @@ export interface UserInputProps {
     /** A line of what to write next, shown faded in the empty box; Tab or a tap on its hint puts it in the box */
     suggestion?: string | null
     chatId?: number
+    /** The key the composer's draft is kept under: the chat id, or a fixed string for the new-chat page */
+    draftKey?: string
     /** A message being edited: its text and attachments fill the composer until it is sent or cancelled. `key` tells one edit from the next. */
     editing?: { key: number; text: string; images: string[]; fileIds: number[] } | null
     onCancelEdit?: () => void
@@ -94,6 +97,7 @@ export const UserInput = ({
     savedLevel,
     suggestion,
     chatId,
+    draftKey,
     modelChoice,
     onModelPicked,
     onUseDefault,
@@ -104,7 +108,7 @@ export const UserInput = ({
     editing,
     onCancelEdit,
 }: UserInputProps) => {
-    const [value, setValue] = useState(text ?? '')
+    const {value, setValue, images, setImages, fileIds, setFileIds, cancelEdit, sent} = useComposerDraft(draftKey, editing, text)
     const [think, setThink] = useState(initialThink)
     const [thinkingModes, setThinkingModes] = useState<string[] | null>(null)
     // Until the model is asked, it is taken to think: the switch has always been on by default
@@ -114,8 +118,6 @@ export const UserInput = ({
     const levelChosen = useRef(!initialThink)
     const thinkingDefaults = useThinkingDefaults()
     const defaultLevel = thinkingDefaults.levelFor(modelChoice?.provider, modelChoice?.model)
-    const [images, setImages] = useState<string[]>([])
-    const [fileIds, setFileIds] = useState<number[]>([])
     const [uploading, setUploading] = useState(false)
     const [uploads, setUploads] = useState<Uploading[]>([])
     const [uploadError, setUploadError] = useState<string | null>(null)
@@ -124,6 +126,9 @@ export const UserInput = ({
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const dragDepthRef = useRef(0)
+    // Guards against a second send while the first is still in flight: the field is only cleared
+    // once the send is confirmed, so without it a fast double-click would send twice
+    const sendingRef = useRef(false)
 
     // Voice input: what is understood goes into the box as it comes, after whatever was already there
     const {user} = useAuth()
@@ -162,7 +167,7 @@ export const UserInput = ({
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [voiceState, cancelVoice])
+    }, [voiceState, cancelVoice, setValue])
     // Back to the box when the words are in, ready for a correction or Enter
     const wasListening = useRef(false)
     useEffect(() => {
@@ -170,23 +175,10 @@ export const UserInput = ({
         wasListening.current = voiceState !== 'idle'
     }, [voiceState])
 
-    // Starting an edit loads the message into the composer; ending one (sent or cancelled) empties
-    // it, so the edited text isn't left behind as a draft
+    // The draft hook loads the message; the box just needs the caret in it
     const editKey = editing?.key
-    const wasEditingRef = useRef(false)
     useEffect(() => {
-        if (editing) {
-            setValue(editing.text)
-            setImages(editing.images)
-            setFileIds(editing.fileIds)
-            textareaRef.current?.focus()
-        } else if (wasEditingRef.current) {
-            setValue('')
-            setImages([])
-            setFileIds([])
-        }
-        wasEditingRef.current = editing != null
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to a new edit, not to the object's identity
+        if (editKey != null) textareaRef.current?.focus()
     }, [editKey])
 
     useEffect(() => {
@@ -259,15 +251,18 @@ export const UserInput = ({
 
     const canSend = (value.trim().length > 0 || images.length > 0 || fileIds.length > 0) && !uploading
 
-    const send = () => {
-        if (blocked || !canSend) return
+    const send = async () => {
+        if (blocked || !canSend || sendingRef.current) return
+        sendingRef.current = true
         const thinkChoice: ThinkChoice = !think ? false : thinkMode ?? true
-        onSended(value, thinkChoice, images, fileIds)
-        if (clearOnSend) {
-            setValue('')
-            setImages([])
-            setFileIds([])
+        try {
+            await onSended(value, thinkChoice, images, fileIds)
+        } catch {
+            return  // the send failed: keep the draft so the user can retry
+        } finally {
+            sendingRef.current = false
         }
+        sent(clearOnSend)
     }
 
     const addFiles = async (files: File[]) => {
@@ -359,7 +354,10 @@ export const UserInput = ({
             {editing ? (
                 <Div className="composer__editing">
                     <Label variant="secondary" text="Editing a message — sending replaces it and everything after it"/>
-                    <Button variant="secondary" text="Cancel" onClicked={() => onCancelEdit?.()}/>
+                    <Button variant="secondary" text="Cancel" onClicked={() => {
+                        cancelEdit()
+                        onCancelEdit?.()
+                    }}/>
                 </Div>
             ) : null}
             {uploads.length > 0 ? (

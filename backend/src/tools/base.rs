@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use utoipa::ToSchema;
 
@@ -265,7 +265,7 @@ impl fmt::Display for ToolType {
 /// reads to decide what value to fill in. Also doubles as a plugin settings field's
 /// schema (see `plugins::base::PluginBuilder::settings_schema`) — same shape, same
 /// derive, reused rather than duplicated for the frontend's settings-form renderer.
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct PropertyInfo {
     pub name: String,
     #[serde(flatten)]
@@ -278,7 +278,7 @@ pub struct PropertyInfo {
 }
 
 /// Parameter types; containers own their contents so unrelated types cannot carry array or object fields.
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(tag = "property_type", rename_all = "lowercase")]
 pub enum PropertyType {
     String,
@@ -286,15 +286,35 @@ pub enum PropertyType {
     Integer,
     Boolean,
     Array {
-        #[serde(serialize_with = "serialize_item_type")]
+        #[serde(serialize_with = "serialize_item_type", deserialize_with = "deserialize_item_type")]
         #[schema(schema_with = item_type_schema)]
         items: Box<PropertyType>,
     },
     Object {
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schema(no_recursion)]
         properties: Vec<PropertyInfo>,
     },
+}
+
+fn deserialize_item_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Box<PropertyType>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Item {
+        Name(String),
+        Schema(PropertyType),
+    }
+    let kind = match Item::deserialize(deserializer)? {
+        Item::Schema(kind) => kind,
+        Item::Name(name) => match name.as_str() {
+            "string" => PropertyType::String,
+            "number" => PropertyType::Number,
+            "integer" => PropertyType::Integer,
+            "boolean" => PropertyType::Boolean,
+            _ => return Err(serde::de::Error::custom("array item type must be a primitive name or a type object")),
+        },
+    };
+    Ok(Box::new(kind))
 }
 
 fn item_type_schema() -> utoipa::openapi::Schema {

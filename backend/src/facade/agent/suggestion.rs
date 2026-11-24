@@ -106,14 +106,15 @@ impl Suggestion {
             return Ok(());
         }
 
-        let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+        let (names, _) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+        let tools = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
+        let has_tools = !tools.is_empty();
         let mut messages = self.history.for_chat(chat_id, has_tools).await?;
         let system_prompt = self.history.system_prompt(&chat, &mut messages, has_tools).await?;
         let mut request = vec![ChatMessage::system(system_prompt)];
         request.extend(messages);
         request.push(ChatMessage::user(prompts::SUGGEST_NEXT.to_string()));
 
-        let tools = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
         let tools: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
         let mut params = self.model.params(&chat).await?;
         params.max_reply_tokens = Some(SUGGESTION_TOKENS);

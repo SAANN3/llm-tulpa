@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use sea_orm::prelude::DateTimeUtc;
 use tokio_util::sync::CancellationToken;
+use tokio::sync::oneshot;
+use super::runner::RunEnded;
+use crate::services::error::ErrorService;
 
 use crate::services::event_bus::{CallStatus, StepList};
 
@@ -234,5 +237,22 @@ mod tests {
         assert!(!run.is_stopped());
         run.clone().stop();
         assert!(run.is_stopped());
+    }
+}
+
+/// Completion of a particular run. Dropping the observer leaves the background run running.
+pub struct RunHandle {
+    pub(super) completion: oneshot::Receiver<RunEnded>,
+}
+impl RunHandle {
+    /// A handle for a prompt that was queued instead of started: nothing is running, so waiting ends at once.
+    pub(super) fn closed() -> Self {
+        let (sender, completion) = oneshot::channel();
+        drop(sender);
+        Self { completion }
+    }
+
+    pub async fn wait(&mut self) -> Result<RunEnded, ErrorService> {
+        (&mut self.completion).await.map_err(|_| ErrorService::internal("run ended without a completion record"))
     }
 }

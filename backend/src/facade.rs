@@ -1,3 +1,4 @@
+pub mod blueprint;
 pub mod agent;
 pub mod export;
 pub mod launch;

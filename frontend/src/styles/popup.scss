@@ -95,7 +95,8 @@
 }
 
 // An icon, the label taking the rest, and a switch at the end when the item has one
-.popup-menu__item--icon {
+.popup-menu__item--icon,
+.popup-menu__item--trailing {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -108,6 +109,9 @@
     flex-shrink: 0;
   }
 }
+
+.popup-menu__item--trailing > input { flex-shrink: 0; margin: 0; }
+.popup-menu__shortcut { font: inherit; font-size: 11px; opacity: 0.65; margin-left: auto; }
 
 .popup-menu__item--danger {
   color: var(--color-danger);

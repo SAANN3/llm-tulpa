@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 
 use crate::{services::error::ErrorService, state::AppState};
 
-use super::{agent, auth, chats, events, files, folders, hf, llm, memory, plugins, presets, profiles, prompts, runtime, settings, setup, stats, stt, tls, users};
+use super::{blueprints, agent, auth, chats, events, files, folders, hf, llm, memory, plugins, presets, profiles, prompts, runtime, settings, setup, stats, stt, tls, users};
 
 /// Every route that needs a signed-in user — `main.rs` puts `require_auth` in front of the
 /// whole thing. Owner-only routes (users, plugins) are gated per handler by the `OwnerUser`
@@ -15,6 +15,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest("/auth", auth::router::router())
         .nest("/llm", llm::router::router())
         .nest("/agent", agent::router::router())
+        .nest("/blueprints", blueprints::router::router())
         .nest("/chats", chats::router::router())
         // Not `/events`: a path ending in `/api/events` is on the ad-blocker lists (EasyPrivacy), and a page behind such a
         // blocker (Adblock Plus in Samsung Internet) then never gets its stream
@@ -53,6 +54,7 @@ async fn not_found() -> ErrorService {
 /// `router` is public), so this just merges them together.
 pub fn openapi() -> utoipa::openapi::OpenApi {
     llm::router::ApiDoc::openapi()
+        .merge_from(blueprints::router::ApiDoc::openapi())
         .merge_from(agent::router::ApiDoc::openapi())
         .merge_from(auth::router::ApiDoc::openapi())
         .merge_from(chats::router::ApiDoc::openapi())

@@ -78,6 +78,18 @@ struct Inner {
     last_activity: Option<Instant>,
 }
 
+/// A cancelled switch must leave the queue, or new calls cannot claim even a ready server.
+struct QueuedSwitch<'a> {
+    runtime: &'a LlamaRuntime,
+}
+
+impl Drop for QueuedSwitch<'_> {
+    fn drop(&mut self) {
+        lock(&self.runtime.inner).waiting -= 1;
+        self.runtime.released.notify_waiters();
+    }
+}
+
 #[derive(Default, Clone)]
 enum State {
     #[default]
@@ -475,7 +487,7 @@ impl LlamaRuntime {
     /// first. Refused with a 423 only after `QUEUE_LIMIT`.
     async fn ensure_loaded(self: &Arc<Self>, wanted: &LaunchRequest, args: Vec<String>) -> Result<Duration, ErrorService> {
         let queued_at = Instant::now();
-        let mut announced = false;
+        let mut queued = None;
         let outcome = loop {
             // Created before looking, so a release between the look and the wait isn't missed
             let released = self.released.notified();
@@ -486,17 +498,14 @@ impl LlamaRuntime {
             let Some(left) = QUEUE_LIMIT.checked_sub(queued_at.elapsed()) else {
                 break Err(RuntimeErrors::Busy { holders: busy.join(", ") });
             };
-            if !announced {
-                announced = true;
+            if queued.is_none() {
                 lock(&self.inner).waiting += 1;
+                queued = Some(QueuedSwitch { runtime: self });
                 self.publish(ModelStateKind::Queued, Some(wanted), Some(format!("waiting for {}", busy.join(", "))));
             }
             let _ = tokio::time::timeout(left, released).await;
         };
-        if announced {
-            lock(&self.inner).waiting -= 1;
-            self.released.notify_waiters();
-        }
+        drop(queued);
         outcome?;
 
         self.stop_inner().await;

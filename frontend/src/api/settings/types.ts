@@ -11,6 +11,12 @@ export interface Settings {
     trim_old_thinking: boolean
     /** After a reply, the model writes one line of what you might send next, shown in the empty message box. */
     suggest_next: boolean
+    /** The home page asks the model for a greeting. Off, one line of `static_greeting` is picked at random. An empty list uses the built-in lines. */
+    generate_greeting: boolean
+    static_greeting: string[]
+    /** The home page asks the model for a placeholder line. Off, one line of `static_placeholder` is picked at random. An empty list uses the built-in lines. */
+    generate_placeholder: boolean
+    static_placeholder: string[]
     /** How many model calls one turn may make before it is stopped and the model is asked to wrap up; null for no limit. */
     max_turn_steps: number | null
     /** The model learns things about you from your chats and has them in new chats' prompts. */
@@ -40,6 +46,10 @@ export interface SettingsUpdate {
     auto_confirm?: boolean
     trim_old_thinking?: boolean
     suggest_next?: boolean
+    generate_greeting?: boolean
+    static_greeting?: string[]
+    generate_placeholder?: boolean
+    static_placeholder?: string[]
     /** The turn step limit, 0 for none */
     max_turn_steps?: number
     memory_enabled?: boolean

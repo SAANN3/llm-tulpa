@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 use utoipa::ToSchema;
 
 use crate::services::llm::{Generation, PromptProgress};
+use crate::facade::blueprint::events::BlueprintEvent;
 
 /// How many undelivered events a slow subscriber may fall behind by before it starts
 /// missing the oldest ones. Events are tiny and come a few at a time (a run's messages and tool
@@ -27,6 +28,7 @@ const CHANNEL_CAPACITY: usize = 256;
 #[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
+    Blueprint { event: BlueprintEvent },
     /// A background job stopped on its own (exited, or was lost) and hasn't been
     /// reported to its chat's model yet — see `JobStore::claim_unnotified`.
     JobFinished { chat_id: i64, job_id: i64 },
@@ -54,6 +56,8 @@ pub enum ServerEvent {
     /// Messages were stored in the chat (the user's, a reply, a tool result, a notice): read the ones
     /// newer than the last one the client has.
     MessagesChanged { chat_id: i64 },
+    /// A prompt was added to, taken from, or dropped out of the chat's waiting queue. Read `GET /api/agent/turn`.
+    QueueChanged { chat_id: i64 },
     /// A tool call is about to run.
     ToolStarted { chat_id: i64, tool_name: String },
     /// The run on the chat ended, and why. For `waiting_for_permission`, `GET /api/agent/turn` says what is asked.
@@ -208,7 +212,15 @@ pub enum ModelStateKind {
 }
 
 impl ServerEvent {
-    /// The chat this event is about, or `None` for one that concerns everybody. The bus is shared by
+    /// Explicit ownership for events that are not attached to a chat.
+    pub fn user_id(&self) -> Option<i64> {
+        match self {
+            Self::Blueprint { event } => Some(event.user_id()),
+            _ => None,
+        }
+    }
+
+    /// The chat this event is about, or `None` for a global or explicitly user-scoped event. The bus is shared by
     /// every connected user, so the event stream (`routes/events/stream.rs`) delivers a chat's event
     /// only to the owner of that chat — a new variant has to say which chat (and so which user) it
     /// concerns, or be deliberately global, or the stream has no way to keep it from everyone else.
@@ -218,6 +230,7 @@ impl ServerEvent {
             ServerEvent::TurnProgress { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::MessagesChanged { chat_id } => Some(*chat_id),
+            ServerEvent::QueueChanged { chat_id } => Some(*chat_id),
             ServerEvent::ToolStarted { chat_id, .. } => Some(*chat_id),
             ServerEvent::RunEnded { chat_id, .. } => Some(*chat_id),
             ServerEvent::ChatSeen { chat_id } => Some(*chat_id),
@@ -230,7 +243,7 @@ impl ServerEvent {
             ServerEvent::ChatRenamed { chat_id, .. } => Some(*chat_id),
             ServerEvent::SuggestionReady { chat_id } => Some(*chat_id),
             ServerEvent::ChatDeleted { chat_id } => Some(*chat_id),
-            ServerEvent::ModelState { .. } => None,
+            ServerEvent::ModelState { .. } | ServerEvent::Blueprint { .. } => None,
         }
     }
 }

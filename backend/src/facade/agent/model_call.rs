@@ -11,7 +11,6 @@ use crate::services::chat_store::{Chat, MessageTimings};
 use crate::services::error::ErrorService;
 use crate::services::llama_runtime::CallGuard;
 use crate::services::llm::{CallParams, ChatResponse, LaunchRequest, LlmProvider, LlmProviders};
-use crate::services::preset_store::PresetStore;
 
 /// How long a turn's claim on the model server outlasts its last model call.
 const TURN_HOLD_TTL: Duration = Duration::from_secs(10 * 60);
@@ -35,7 +34,6 @@ struct TurnHold {
 #[derive(Clone)]
 pub(super) struct ModelCall {
     providers: LlmProviders,
-    presets: Arc<PresetStore>,
     launch: Arc<LaunchFacade>,
     /// The configured context window: what a chat with no launch profile runs under.
     context_length: u64,
@@ -47,11 +45,10 @@ pub(super) struct ModelCall {
 impl ModelCall {
     pub(super) fn new(
         providers: LlmProviders,
-        presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
         context_length: u64,
     ) -> Self {
-        Self { providers, presets, launch, context_length, turn_holds: Arc::new(Mutex::new(HashMap::new())) }
+        Self { providers, launch, context_length, turn_holds: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// The provider `chat`'s model is served by.
@@ -64,10 +61,7 @@ impl ModelCall {
     /// chosen for the model. A chat on a model with no profile, and a user with no chosen preset,
     /// override nothing and get the server's own behavior.
     pub(super) async fn params(&self, chat: &Chat) -> Result<CallParams, ErrorService> {
-        let launch = self.launch.request_for(chat.user_id, chat.model_id, chat.launch_profile_id).await?;
-        let context_length = launch.as_ref().and_then(|l| l.profile.context_length).map(|c| c as u64);
-        let sampling = self.presets.effective_sampling(chat.user_id, chat.model_id).await?;
-        Ok(CallParams { launch, context_length, sampling, max_reply_tokens: None })
+        self.launch.call_params(chat.user_id, chat.model_id, chat.launch_profile_id).await
     }
 
     /// The context window `chat`'s model runs under.

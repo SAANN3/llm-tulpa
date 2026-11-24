@@ -2,8 +2,9 @@ import {useEffect, useRef, useState} from 'react'
 import {answer as sendAnswer} from '../api/agent/answer.ts'
 import {regenerateChat} from '../api/agent/regenerate-chat.ts'
 import {startTurn} from '../api/agent/start-turn.ts'
+import {dropQueued} from '../api/agent/drop-queued.ts'
 import {stopTurn} from '../api/agent/stop.ts'
-import type {AgentToolCall, CallStatus, Decision, ReplySoFar, RunEnded, StartTurnOut, StepList, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
+import type {AgentToolCall, CallStatus, Decision, QueuedMessage, ReplySoFar, RunEnded, StartTurnOut, StepList, ThinkChoice, TurnState, TurnStatus} from '../api/agent/types.ts'
 import {getTurnState} from '../api/agent/turn-state.ts'
 import {useServerEvent} from './use-server-events.ts'
 
@@ -27,6 +28,8 @@ export interface TurnView {
     call: CallStatus | null
     /** The lists of steps of the work going on (a compaction, a plan), oldest first */
     steps: StepList[]
+    /** Prompts waiting for this turn to finish, oldest first */
+    queued: QueuedMessage[]
 }
 
 const IDLE: TurnView = {
@@ -43,6 +46,7 @@ const IDLE: TurnView = {
     reply: null,
     call: null,
     steps: [],
+    queued: [],
 }
 
 const toMillis = (iso: string | null): number | null => (iso == null ? null : Date.parse(iso))
@@ -61,6 +65,7 @@ const fromState = (state: TurnState): TurnView => ({
     reply: state.reply,
     call: state.call,
     steps: state.steps,
+    queued: state.queued,
 })
 
 export interface TurnHandlers {
@@ -127,15 +132,26 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         handlersRef.current.onMessagesChanged()
     })
 
+    useServerEvent('queue_changed', (event) => {
+        if (event.chat_id !== chatId) return
+        sawEvent()
+        void getTurnState(chatId).then((state) => {
+            if (chatIdRef.current !== chatId) return
+            setView((prev) => ({...prev, queued: state.queued}))
+        }, () => undefined)
+    })
+
     useServerEvent('run_started', (event) => {
         if (event.chat_id !== chatId) return
         sawEvent()
-        setView({...IDLE, status: 'running', startedAt: Date.parse(event.started_at), callStartedAt: Date.now()})
-        // The step limit is only in the state: taken from it for a run that is still going, never replacing what
-        // events have said since
+        setView((prev) => ({...IDLE, status: 'running', startedAt: Date.parse(event.started_at), callStartedAt: Date.now(), queued: prev.queued.slice(1)}))
+        // A queued prompt is stored as the user's message at this moment, after the previous run's end
+        // already re-read the chat. Without this read it stays missing until a reload.
+        handlersRef.current.onMessagesChanged()
+        // The step limit and the prompts still waiting are only in the state
         void getTurnState(chatId).then((state) => {
             if (chatIdRef.current !== chatId) return
-            setView((prev) => (prev.status === 'running' ? {...prev, stepLimit: state.step_limit} : prev))
+            setView((prev) => (prev.status === 'running' ? {...prev, stepLimit: state.step_limit, queued: state.queued} : prev))
         }, () => undefined)
     })
 
@@ -215,8 +231,19 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         }
     }
 
+    const viewRef = useRef(view)
+    viewRef.current = view
+
     const send = async (prompt: string, think: ThinkChoice = true, images: string[] = [], fileIds: number[] = []): Promise<StartTurnOut> => {
-        const started = await guarded(() => startTurn(chatId, prompt, think, images, fileIds))
+        const idle = viewRef.current.status === 'idle'
+        const started = idle
+            ? await guarded(() => startTurn(chatId, prompt, think, images, fileIds))
+            : await startTurn(chatId, prompt, think, images, fileIds)
+        if (started.queued) {
+            // The prompt is waiting, not running: the optimistic "running" a free chat shows is wrong here
+            await refreshRef.current(true)
+            return started
+        }
         handlersRef.current.onMessagesChanged()
         return started
     }
@@ -226,6 +253,7 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
     const answer = (decisions: Decision[], think: ThinkChoice = true) => guarded(() => sendAnswer(chatId, decisions, think))
 
     const stop = async () => {
+        setView((prev) => ({...prev, queued: []}))
         try {
             await stopTurn(chatId)
         } catch {
@@ -234,5 +262,14 @@ export const useTurn = (chatId: number, handlers: TurnHandlers) => {
         }
     }
 
-    return {view, send, regenerate, answer, stop, refresh}
+    const dropQueuedMessage = async (id: number) => {
+        setView((prev) => ({...prev, queued: prev.queued.filter((item) => item.id !== id)}))
+        try {
+            await dropQueued(chatId, id)
+        } catch {
+            void refreshRef.current()
+        }
+    }
+
+    return {view, send, regenerate, answer, stop, dropQueuedMessage, refresh}
 }

@@ -1,4 +1,5 @@
 pub mod base;
+pub mod blueprint;
 pub mod coding;
 pub mod env;
 pub mod events;

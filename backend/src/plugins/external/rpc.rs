@@ -59,6 +59,15 @@ pub trait Incoming: Send + Sync + 'static {
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, CallError>>>>>;
 
+// A bounded node may drop its RPC future before the process replies. Keep the shared pending map bounded too.
+struct PendingCall {
+    pending: Pending,
+    id: u64,
+}
+impl Drop for PendingCall {
+    fn drop(&mut self) { self.pending.lock().unwrap().remove(&self.id); }
+}
+
 pub struct RpcClient {
     out: mpsc::UnboundedSender<String>,
     pending: Pending,
@@ -102,17 +111,16 @@ impl RpcClient {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
+        let _pending = PendingCall { pending: self.pending.clone(), id };
         let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
         if self.out.send(line).is_err() {
-            self.pending.lock().unwrap().remove(&id);
             return Err(CallError::Closed);
         }
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(CallError::Closed),
             Err(_) => {
-                // An answer that arrives later finds no entry and is dropped
-                self.pending.lock().unwrap().remove(&id);
+                // An answer that arrives later finds no entry and is dropped.
                 Err(CallError::Timeout)
             }
         }

@@ -2,7 +2,7 @@ import {useEffect, useLayoutEffect, useRef, useState} from 'react'
 import type {ReactNode} from 'react'
 import {createPortal} from 'react-dom'
 import '../../../styles/popup.scss'
-import {useEscapeToClose} from '../../../hooks/use-escape-to-close.ts'
+import {useKeyLayer, type KeyHandler} from '../../../hooks/use-key-layer.ts'
 import {Frame, type FrameAction, type FrameTab} from '../../frame.tsx'
 import {Div} from '../../primitives'
 
@@ -34,6 +34,7 @@ interface DialogProps extends PopupBaseProps {
 
 /** A menu: unframed and anchored at a point, such as a right-click or a "more" button */
 interface MenuProps extends PopupBaseProps {
+    onKeyDown?: KeyHandler
     position: { x: number; y: number }
     /** Which corner of the menu sits at `position`: the top left (the default) opens it below and to the right,
      * the bottom right above and to the left, the bottom left above and to the right (for a control at the bottom of
@@ -72,7 +73,10 @@ export const Popup = (props: PopupProps) => {
     const [adjustedLeft, setAdjustedLeft] = useState<number | null>(null)
 
     // A dialog's Frame handles Escape along with its other keys; a menu has no frame
-    useEscapeToClose(open && props.position != null, onClose)
+    useKeyLayer(open && props.position != null, event => {
+        if (event.key === 'Escape') { onClose(); return true }
+        return props.position != null ? props.onKeyDown?.(event) ?? false : false
+    })
 
     // Only one menu is open at a time: on a touch screen a second one opens while the first is still up. The latest
     // `onClose` is read through a ref, because callers pass a new function on every render and an effect that depended

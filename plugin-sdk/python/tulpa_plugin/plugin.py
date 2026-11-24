@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .blueprint import NodeSpec, NodeContext, NodeResult
+
 import asyncio
 import inspect
 from typing import Any, Callable, Sequence
@@ -76,6 +78,12 @@ class Plugin:
                 return await function(self, **arguments)
             return await asyncio.to_thread(function, self, **arguments)
         raise NotFound(f"no such tool: {tool}")
+
+    def blueprint_nodes(self) -> list[NodeSpec]:
+        return []
+
+    async def execute_blueprint_node(self, node_type: str, version: int, arguments: dict, ctx: NodeContext) -> NodeResult:
+        raise NotFound("this plugin has no blueprint node handler")
 
     async def enable(self) -> None:
         """The plugin was switched on: start the background work it does, if any. This is where a plugin asks

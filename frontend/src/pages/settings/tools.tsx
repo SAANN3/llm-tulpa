@@ -80,7 +80,7 @@ const ToolsSettings = () => {
                     <Button className="tool-settings__action" text="Save" disabled={saving || !dirty} onClicked={() => void save(mode, names)}/>
                 </Div>
             </Div>
-            <ToolChoice catalog={catalog} mode={mode} names={names} disabled={saving} onMode={setMode} onNames={setNames}/>
+            <ToolChoice catalog={catalog} mode={mode} names={names} disabled={saving} onMode={(mode, names) => { setMode(mode); setNames(names) }} onNames={setNames}/>
         </Div>
     )
 }

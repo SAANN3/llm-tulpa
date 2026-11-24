@@ -80,7 +80,7 @@ async fn main() {
                 .to_str()
                 .is_ok_and(|origin| origin.starts_with("http://") && origin.ends_with(":5173"))
         }))
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         // Named, not `*`: a wildcard doesn't cover `Authorization`, which browsers are about to enforce
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT]);
 

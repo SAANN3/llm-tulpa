@@ -9,9 +9,11 @@ interface ToolChoiceProps {
     mode: ToolMode
     /** The names the mode lists */
     names: string[]
-    onMode: (mode: ToolMode) => void
+    onMode: (mode: ToolMode, names: string[]) => void
     onNames: (names: string[]) => void
     disabled?: boolean
+    /** Start with every domain folded. The chat settings leave them open. */
+    initiallyCollapsed?: boolean
 }
 
 const sent = (mode: ToolMode, listed: Set<string>, name: string): boolean =>
@@ -42,12 +44,14 @@ const domainsOf = (catalog: AvailableTool[]): [string, AvailableTool[]][] => {
 
 /** A tool selection as domains of switches. A tool is on when the mode sends it. A domain switch is on when any
  * tool in it is on: turning it off clears the domain, turning it on from all-off sends every tool in it. */
-export const ToolChoice = ({catalog, mode, names, onMode, onNames, disabled}: ToolChoiceProps) => {
+export const ToolChoice = ({catalog, mode, names, onMode, onNames, disabled, initiallyCollapsed = false}: ToolChoiceProps) => {
     const listed = new Set(names)
     const domains = domainsOf(catalog)
-    const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-    const fold = (domain: string) => setCollapsed((now) => {
-        const next = new Set(now)
+    // null until the user expands or folds something, so a catalog that arrives later still starts folded
+    const [collapsed, setCollapsed] = useState<Set<string> | null>(null)
+    const folded = collapsed ?? (initiallyCollapsed ? new Set(domains.map(([domain]) => domain)) : new Set())
+    const fold = (domain: string) => setCollapsed(() => {
+        const next = new Set(folded)
         if (next.has(domain)) next.delete(domain)
         else next.add(domain)
         return next
@@ -59,23 +63,22 @@ export const ToolChoice = ({catalog, mode, names, onMode, onNames, disabled}: To
                 <ChoiceGroup label="Tool mode" chosen={mode} onChosen={(value) => {
                     if (value === mode) return
                     // An empty list is every tool for a blacklist and none for a whitelist
-                    onMode(value as ToolMode)
-                    onNames([])
+                    onMode(value as ToolMode, [])
                 }} options={[
                     {value: 'blacklist', label: 'Blacklist', help: 'Every tool is sent, except the ones switched off'},
                     {value: 'whitelist', label: 'Whitelist', help: 'Only the switched-on tools are sent. None on means no tools'},
                 ]}/>
                 <Div className="tool-choice__folds">
-                    <Button variant="secondary" text="Expand all" disabled={disabled || collapsed.size === 0}
+                    <Button variant="secondary" text="Expand all" disabled={disabled || folded.size === 0}
                             onClicked={() => setCollapsed(new Set())}/>
-                    <Button variant="secondary" text="Collapse all" disabled={disabled || collapsed.size === domains.length}
+                    <Button variant="secondary" text="Collapse all" disabled={disabled || folded.size === domains.length}
                             onClicked={() => setCollapsed(new Set(domains.map(([domain]) => domain)))}/>
                 </Div>
             </Div>
             <Div className="vbox tool-choice__list">
                 {domains.map(([domain, tools]) => {
                     const anyOn = tools.some((tool) => sent(mode, listed, tool.name))
-                    const open = !collapsed.has(domain)
+                    const open = !folded.has(domain)
                     return (
                         <Div key={domain} className="vbox tool-choice__domain">
                             <Div className="tool-choice__domain-row">

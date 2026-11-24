@@ -102,3 +102,17 @@ Pin versions in `requirements.txt` (`humanize==4.12.3`). Start the environment a
 - Do not write to the backend's files (`settings.json`, its database) or reach for anything outside the plugin's data folder: the plugin runs as the owner without a sandbox, which is why an install is the owner's decision.
 - Do not install a plugin, uninstall one or switch one on without the user having asked for exactly that.
 - Do not guess at the protocol. If something here or in `PROTOCOL.md` does not cover what you need, say so rather than invent a field.
+
+## Blueprint graph nodes
+
+A plugin can also declare explicit graph actions with `blueprint_nodes` and execute them with
+`execute_blueprint_node(node_type, version, arguments, ctx)`. `NodeSpec` uses the existing `Param`
+schemas; return `NodeResult(control_output, outputs)`. Work only on `ctx.user_id`'s data. Both hello-world
+examples implement the same `greet` node. Versions are exact: bump the node version when changing
+its contract. Stop waits for the current bounded call; do not assume timeout undoes side effects.
+See [Blueprint nodes](PROTOCOL.md#blueprint-nodes) for the complete contract.
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost repeat scope: loop iterations
+or Merge deliveries. Merge indices count deliveries across this run. An empty path means the node
+is outside a repeat scope. The same node can execute several times within one run.

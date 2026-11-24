@@ -30,6 +30,47 @@
   font-size: 13px;
 }
 
+.chat__queue {
+  display: flex;
+  flex-direction: column;
+  gap: $space-1;
+  padding: $space-2 $space-3;
+  border: $line-border solid var(--color-border);
+  background: var(--color-secondary);
+  font-size: 13px;
+  // Four waiting lines, then the rest scroll. A long line is cut off; it does not grow a horizontal bar.
+  max-height: calc(4 * 28px + 3 * #{$space-1} + 2 * #{$space-2});
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.chat__queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-2;
+  min-height: 28px;
+  min-width: 0;
+}
+
+.chat__queue-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+// Same box as the buttons under a message (`button.chat-message__copy`): the element selector wins over the
+// theme button's padding, which otherwise squeezes the icon inside a fixed square.
+button.chat__queue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  box-shadow: none;
+}
+
 .chat__status {
   padding: $space-2 $space-3;
   border: $line-border solid var(--color-border);

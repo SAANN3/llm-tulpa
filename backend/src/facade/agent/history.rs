@@ -222,12 +222,19 @@ impl History {
         (!notes.is_empty()).then(|| format!("{}\n\n{notes}", prompts::NOTES_HEADER))
     }
 
+    async fn custom_prompt(&self, chat: &Chat) -> Result<Option<CustomPrompt>, ErrorService> {
+        match chat.agent_policy.as_ref().and_then(|p| p.system_prompt.as_ref()) {
+            Some(text) => Ok(Some(CustomPrompt { text: text.clone(), append: false })),
+            None => Ok(self.settings_store.system_prompt(chat.user_id).await?),
+        }
+    }
+
     /// The one system message a request to the model starts with: the user's own system prompt
     /// (or the built-in one), the sub-agent addendum for a sub-agent's chat, and, when the history
     /// leads with one, that message (the compaction summary and notes) — taken out of `messages`.
     /// Shared by every request built for a chat so they all share the same prefix.
     pub(super) async fn system_prompt(&self, chat: &Chat, messages: &mut Vec<ChatMessage>, has_tools: bool) -> Result<String, ErrorService> {
-        let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        let custom = self.custom_prompt(chat).await?;
         let memory = self.memory_text(chat).await?;
         let sections = self.plugin_sections(chat, has_tools).await;
         let leading = messages.first().is_some_and(|message| message.role == "system").then(|| messages.remove(0).content);
@@ -236,7 +243,7 @@ impl History {
 
     /// The system prompt a turn of `chat` starts with, without what the history leads with.
     pub(super) async fn base_system_prompt(&self, chat: &Chat, has_tools: bool) -> Result<String, ErrorService> {
-        let custom = self.settings_store.system_prompt(chat.user_id).await?;
+        let custom = self.custom_prompt(chat).await?;
         let memory = self.memory_text(chat).await?;
         let sections = self.plugin_sections(chat, has_tools).await;
         Ok(Self::compose_system_prompt(custom, memory, sections, has_tools, chat.parent_chat_id.is_some(), None))
@@ -621,6 +628,7 @@ mod tests {
 
     fn chat() -> Chat {
         Chat {
+            is_service: false, agent_policy: None,
             id: 1,
             user_id: 1,
             name: "c".into(),

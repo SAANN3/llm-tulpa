@@ -1,3 +1,4 @@
+pub mod blueprints;
 pub mod agent;
 pub mod auth;
 pub mod chats;

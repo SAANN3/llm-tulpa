@@ -13,18 +13,20 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
 use sea_orm::prelude::DateTimeUtc;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
 use super::notices::Notices;
 use super::prompts;
-use super::run_tracker::RunTracker;
+use super::run_tracker::{RunHandle, RunTracker};
 use super::suggestion::Suggestion;
 use super::tool_calls::ToolCalls;
 use super::turn::{Step, StepOut, Turn};
 use super::history::History;
-use super::{AgentToolCall, AgentToolPermission, ChatOut};
+use super::pending::{AgentToolCall, Allowance, Decision};
+use super::ChatOut;
+use tokio::sync::oneshot;
 use crate::services::chat_store::{ChatStore, MessageTimings, NewMessage};
 use crate::services::error::ErrorService;
 use crate::services::event_bus::{CallStatus, EventBus, RunEndReason, ServerEvent, StepList};
@@ -37,25 +39,6 @@ use crate::tools::llm::return_agent::ReturnAgentTool;
 /// without ever answering would otherwise run for as long as the model keeps going, holding the
 /// only GPU while the chat that delegated to it waits.
 const SUBAGENT_MAX_MODEL_CALLS: u32 = 100;
-
-/// How a user answers a permission prompt for one pending tool call.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Allowance {
-    /// Grant what the call asked for, now and for later calls in this chat.
-    Permanent,
-    /// Let this one call through with what it asked for.
-    OnlyNow,
-    /// Refuse it: the model is told the call was denied.
-    Deny,
-}
-
-/// The answer to one pending tool call: `index` is its position in `TurnState::pending`.
-#[derive(Clone, Copy, Debug, Deserialize, ToSchema)]
-pub struct Decision {
-    pub index: usize,
-    pub allowance: Allowance,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -104,8 +87,8 @@ pub struct TurnState {
     pub running_tool: Option<String>,
     #[schema(value_type = Option<String>, format = "date-time")]
     pub tool_started_at: Option<DateTimeUtc>,
-    /// While waiting for permission: the tool calls the model asked for that are not run yet, in
-    /// order, with what each needs. `Decision::index` points into this list.
+    /// While waiting for the user: the tool calls the model asked for that are not run yet, in
+    /// order. `Decision::index` points into this list.
     pub pending: Vec<AgentToolCall>,
     pub last_end: Option<RunEnded>,
     /// What the model call in flight has written so far, while it writes; the `reply_piece` events numbered after
@@ -115,6 +98,19 @@ pub struct TurnState {
     pub call: Option<CallStatus>,
     /// The lists of steps of the work going on (a compaction, a plan), oldest first (see `ServerEvent::RunSteps`).
     pub steps: Vec<StepList>,
+    /// Prompts sent while this chat's turn was still going, oldest first. Each starts on its own once the turn
+    /// has finished, including a wait for permission. Images are a count: the bytes stay in the queue until the run starts.
+    pub queued: Vec<QueuedMessage>,
+}
+
+/// One prompt waiting behind the chat's current turn. `images` is how many pictures are attached;
+/// their bytes are not in this poll.
+#[derive(Serialize, ToSchema)]
+pub struct QueuedMessage {
+    pub id: i64,
+    pub prompt: String,
+    pub images: u32,
+    pub file_ids: Vec<i64>,
 }
 
 /// A reply being written, as far as its pieces were sent (see `ServerEvent::ReplyPiece`).
@@ -128,14 +124,20 @@ pub struct ReplySoFarOut {
 
 /// What `start_prompt` returns at once: the run goes on in the background.
 pub struct StartedTurn {
+    /// `0` while `queued`: the prompt is not stored yet.
     pub user_message_id: i64,
+    pub queued: bool,
+    /// Present for a run that started. A queued prompt's handle is already closed.
+    pub run: RunHandle,
 }
 
 /// Who a run is for, which decides what happens at a tool call that needs permission.
 #[derive(Clone, Copy)]
-pub(super) enum Policy {
+pub enum Policy {
     /// A user's chat: the run ends and waits for the user's answer, unless they have auto-confirm on.
     Attended,
+    /// A configured service chat: the caller drives continuations, without suggestions or job wake-ups.
+    Service,
     /// A sub-agent's chat: nobody can be asked, so what the escalation offers is granted with auto-confirm
     /// and the call is refused without it. The run also ends at `llm.return_agent`.
     Subagent,
@@ -271,8 +273,9 @@ impl TurnRunner {
 
     // ---- starting, stopping, reading ----
 
-    /// Stores the user's prompt and starts a run that answers it. Refused (409) while the chat has a
-    /// run going: two tabs on one chat must not run the same turn twice.
+    /// Stores the user's prompt and starts a run that answers it. While the chat's turn is still going
+    /// (a run, or a wait for permission), the prompt waits and starts on its own once that turn has
+    /// finished. Two tabs can both send; the later one waits behind the earlier.
     pub(super) async fn start_prompt(
         &self,
         chat_id: i64,
@@ -280,11 +283,31 @@ impl TurnRunner {
         images: Vec<String>,
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
+        policy: Policy,
     ) -> Result<StartedTurn, ErrorService> {
-        self.refuse_plugin_chat(chat_id).await?;
-        let slot = self.claim(chat_id)?;
+        self.check_chat_policy(chat_id, policy).await?;
+        // A service or sub-agent chat still refuses: its caller is driving the run and has to wait itself.
+        let busy = self.has_run(chat_id) || self.waiting_for_permission(chat_id).await?;
+        if busy && matches!(policy, Policy::Attended) {
+            self.chat_store.enqueue_prompt(chat_id, prompt, images, file_ids, think).await?;
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
+            return Ok(StartedTurn { user_message_id: 0, queued: true, run: RunHandle::closed() });
+        }
+        let slot = match self.claim(chat_id) {
+            Ok(slot) => slot,
+            Err(_) if matches!(policy, Policy::Attended) => {
+                self.chat_store.enqueue_prompt(chat_id, prompt, images, file_ids, think).await?;
+                self.events.publish(ServerEvent::QueueChanged { chat_id });
+                return Ok(StartedTurn { user_message_id: 0, queued: true, run: RunHandle::closed() });
+            }
+            Err(e) => return Err(e),
+        };
         // A call a crash cut short gets its result before this message, so the history stays in order
-        self.tool_calls.settle_interrupted(chat_id).await?;
+        if matches!(policy, Policy::Service) {
+            self.tool_calls.cancel_pending(chat_id).await?;
+        } else {
+            self.tool_calls.settle_interrupted(chat_id).await?;
+        }
 
         // A file can be uploaded before any chat exists to attach it to (the home page's case): this is the
         // moment it becomes this chat's. A no-op for a file already uploaded with a real `chat_id`.
@@ -293,8 +316,45 @@ impl TurnRunner {
         }
         let stored = self.store_user_message(chat_id, prompt, images, file_ids).await?;
 
-        self.spawn(slot, think, Start::Prompt, Policy::Attended);
-        Ok(StartedTurn { user_message_id: stored })
+        let run = self.spawn(slot, think, Start::Prompt, policy);
+        Ok(StartedTurn { user_message_id: stored, queued: false, run })
+    }
+
+    async fn queued_messages(&self, chat_id: i64) -> Vec<QueuedMessage> {
+        self.chat_store.queued_messages(chat_id).await.unwrap_or_default().into_iter().map(|item| QueuedMessage {
+            id: item.id,
+            prompt: item.prompt,
+            images: item.images,
+            file_ids: item.file_ids,
+        }).collect()
+    }
+
+    /// Starts the oldest waiting prompt, once the chat is free and not waiting for permission.
+    /// A prompt that cannot start goes back to the front.
+    async fn promote_queue(&self, chat_id: i64) {
+        if self.has_run(chat_id) || self.waiting_for_permission(chat_id).await.unwrap_or(true) {
+            return;
+        }
+        let Ok(Some(next)) = self.chat_store.pop_queued_prompt(chat_id).await else {
+            return;
+        };
+        self.events.publish(ServerEvent::QueueChanged { chat_id });
+        let crate::services::chat_store::QueuedPrompt { prompt, images, file_ids, think } = next;
+        if let Err(e) = self.start_prompt(chat_id, prompt.clone(), images.clone(), file_ids.clone(), think.clone(), Policy::Attended).await {
+            tracing::warn!(chat_id, "a queued message didn't start: {}", e.message.as_deref().unwrap_or("unknown error"));
+            let _ = self.chat_store.requeue_prompt_front(chat_id, prompt, images, file_ids, think).await;
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
+        }
+    }
+
+    /// Starts whatever was still waiting when the process came back up.
+    pub(super) async fn resume_queued(&self) {
+        let Ok(chats) = self.chat_store.chats_with_queued_prompts().await else {
+            return;
+        };
+        for chat_id in chats {
+            self.promote_queue(chat_id).await;
+        }
     }
 
     /// Has the model answer again where it answered last, and replaces that answer with the new one. Only a
@@ -321,6 +381,9 @@ impl TurnRunner {
         let chat = self.chat_store.chat(chat_id).await?;
         // A sub-agent's chat is driven by the backend, and a plugin's reply has already gone out to
         // the messaging app, where a replacement here would never arrive.
+        if chat.is_service {
+            return Err(not_regenerable("a service chat is driven by its own runtime"));
+        }
         if chat.parent_chat_id.is_some() {
             return Err(not_regenerable("a sub-agent's chat runs on its own"));
         }
@@ -346,10 +409,15 @@ impl TurnRunner {
         Ok(())
     }
 
-    /// A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
+    /// Service chats are driven by their owning runtime. A messaging plugin's chat is answered by the plugin's own agent (no tools, its own runs) and its replies go
     /// back to the messaging app: a run started here would run beside that agent's, with tools, and its reply would
     /// never reach the app.
-    async fn refuse_plugin_chat(&self, chat_id: i64) -> Result<(), ErrorService> {
+    async fn check_chat_policy(&self, chat_id: i64, policy: Policy) -> Result<(), ErrorService> {
+        let chat = self.chat_store.chat(chat_id).await?;
+        let service = matches!(policy, Policy::Service);
+        if chat.is_service != service || (service && chat.agent_policy.is_none()) {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "this chat is driven by a different runtime"));
+        }
         if self.chat_store.is_plugin_chat(chat_id).await? {
             return Err(ErrorService::new(StatusCode::CONFLICT, "this chat belongs to a messaging plugin: write to it from the messaging app"));
         }
@@ -362,8 +430,9 @@ impl TurnRunner {
         chat_id: i64,
         decisions: Vec<Decision>,
         think: Option<ThinkChoice>,
-    ) -> Result<(), ErrorService> {
-        self.refuse_plugin_chat(chat_id).await?;
+        policy: Policy,
+    ) -> Result<RunHandle, ErrorService> {
+        self.check_chat_policy(chat_id, policy).await?;
         let slot = self.claim(chat_id)?;
         let pending = self.tool_calls.can_use(chat_id).await?.tools;
         if pending.is_empty() {
@@ -373,16 +442,11 @@ impl TurnRunner {
             let call = pending.get(decision.index).ok_or_else(|| {
                 ErrorService::new(StatusCode::BAD_REQUEST, format!("there is no pending tool call number {}", decision.index))
             })?;
-            let can_grant = matches!(call.permission, AgentToolPermission::Denied { escalation: Some(_), .. });
-            if decision.allowance != Allowance::Deny && !can_grant {
-                return Err(ErrorService::new(
-                    StatusCode::BAD_REQUEST,
-                    format!("pending tool call number {} offers nothing that could be granted", decision.index),
-                ));
-            }
+            call.check_decision(decision).map_err(|e| {
+                ErrorService::new(StatusCode::BAD_REQUEST, format!("pending tool call number {}: {e}", decision.index))
+            })?;
         }
-        self.spawn(slot, think, Start::Answer { decisions }, Policy::Attended);
-        Ok(())
+        Ok(self.spawn(slot, think, Start::Answer { decisions }, policy))
     }
 
     /// Starts a run because a background job (or sub-agent) of the chat finished, when nothing else is
@@ -390,8 +454,8 @@ impl TurnRunner {
     /// its notice waits for the user's answer instead).
     pub(super) async fn wake(&self, chat_id: i64) -> Result<(), ErrorService> {
         let chat = self.chat_store.chat(chat_id).await?;
-        // A sub-agent's chat is driven by its own run, and a messaging plugin's reply would reach nobody
-        if chat.parent_chat_id.is_some() || self.chat_store.is_plugin_chat(chat_id).await? {
+        // Service and sub-agent chats are driven by their own runtime; a messaging plugin's reply would reach nobody
+        if chat.is_service || chat.parent_chat_id.is_some() || self.chat_store.is_plugin_chat(chat_id).await? {
             return Ok(());
         }
         // Nothing to report: not worth taking the chat from a prompt that arrives at the same moment
@@ -420,15 +484,38 @@ impl TurnRunner {
 
     /// Stops the chat's run: the model call in flight is dropped and nothing of it is stored. A tool that is
     /// already running finishes.
-    pub(super) fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
-        let run = self.runs.lock().unwrap().get(&chat_id).cloned();
-        match run {
-            Some(run) => {
-                run.stop();
-                Ok(())
-            }
-            None => Err(ErrorService::new(StatusCode::CONFLICT, "the chat has no run to stop")),
+    pub(super) async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+        // Whatever was waiting goes with the run: a stop is not a hand-off to the next prompt.
+        if self.chat_store.clear_queued_prompts(chat_id).await.is_ok() {
+            self.events.publish(ServerEvent::QueueChanged { chat_id });
         }
+        let run = self.runs.lock().unwrap().get(&chat_id).cloned();
+        if let Some(run) = run {
+            run.stop();
+            return Ok(());
+        }
+        // A permission pause has no active run, but still owns pending calls and a model claim.
+        let slot = self.claim(chat_id)?;
+        if self.tool_calls.pending_tool_calls(chat_id).await?.is_empty() {
+            return Err(ErrorService::new(StatusCode::CONFLICT, "the chat has no run to stop"));
+        }
+        self.turn.release(chat_id);
+        self.tool_calls.cancel_pending(chat_id).await?;
+        self.chat_store.clear_unseen_end(chat_id).await?;
+        self.last_ends.lock().unwrap().remove(&chat_id);
+        slot.run.mark_ended();
+        self.events.publish(ServerEvent::MessagesChanged { chat_id });
+        drop(slot);
+        Ok(())
+    }
+
+    /// Drops one prompt waiting behind this chat's turn.
+    pub(super) async fn drop_queued(&self, chat_id: i64, id: i64) -> Result<(), ErrorService> {
+        if !self.chat_store.delete_queued_prompt(chat_id, id).await? {
+            return Err(ErrorService::new(StatusCode::NOT_FOUND, "that queued message is gone"));
+        }
+        self.events.publish(ServerEvent::QueueChanged { chat_id });
+        Ok(())
     }
 
     /// What the chat's turn is doing.
@@ -458,6 +545,7 @@ impl TurnRunner {
                 }),
                 call: snapshot.call,
                 steps: snapshot.steps,
+                queued: self.queued_messages(chat_id).await,
             });
         }
         // Only for a chat with no run: while one goes on, a pending call is just between the model's
@@ -479,6 +567,7 @@ impl TurnRunner {
             reply: None,
             call: None,
             steps: vec![],
+            queued: self.queued_messages(chat_id).await,
         })
     }
 
@@ -514,7 +603,7 @@ impl TurnRunner {
         // A page that has the sub-agent's chat open follows it like any run
         self.announce_start(chat_id, &run).await;
         let end = self.run(chat_id, think, Start::Subagent, Policy::Subagent, auto_confirm, None, run.clone()).await;
-        self.finish(chat_id, &end, &run).await;
+        let _ = self.finish(chat_id, &end, &run).await;
         drop(slot);
         match end {
             RunEnd::Subagent(result) => Ok(result),
@@ -540,7 +629,8 @@ impl TurnRunner {
         Ok(RunSlot { runs: self.runs.clone(), chat_id, run })
     }
 
-    fn spawn(&self, slot: RunSlot, think: Option<ThinkChoice>, start: Start, policy: Policy) {
+    fn spawn(&self, slot: RunSlot, think: Option<ThinkChoice>, start: Start, policy: Policy) -> RunHandle {
+        let (sender, completion) = oneshot::channel();
         let runner = self.clone();
         let chat_id = slot.chat_id;
         self.thinks.lock().unwrap().insert(chat_id, think.clone());
@@ -574,18 +664,26 @@ impl TurnRunner {
             let look_again = matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered | RunEnd::StepLimit);
             // The end is recorded and told before the chat is free, so a new run's start can't come first; the state
             // already says idle (the run is marked ended), which is what a page asking on `RunEnded` needs
-            runner.finish(chat_id, &end, &run).await;
+            let ended = runner.finish(chat_id, &end, &run).await;
             // After a user's run that answered, not a stop, a failure or a sub-agent's run
             if matches!(policy, Policy::Attended) && matches!(end, RunEnd::Answered) {
                 runner.suggestion.start(chat_id);
             }
+            let hold_for_permission = matches!(end, RunEnd::WaitingForPermission);
             drop(slot);
+            if let Some(ended) = ended { let _ = sender.send(ended); }
             if look_again {
                 if let Err(e) = runner.wake(chat_id).await {
                     tracing::warn!(chat_id, "couldn't look for jobs finished during the run: {}", e.message.as_deref().unwrap_or("unknown error"));
                 }
             }
+            // A wait for permission is still this turn. Anything else has finished, so the next
+            // prompt the user sent during it can start — unless a job wake-up just took the chat.
+            if !hold_for_permission && !runner.has_run(chat_id) {
+                runner.promote_queue(chat_id).await;
+            }
         });
+        RunHandle { completion }
     }
 
     async fn run_user_run(&self, chat_id: i64, think: Option<ThinkChoice>, start: Start, policy: Policy, run: RunTracker) -> RunEnd {
@@ -596,14 +694,14 @@ impl TurnRunner {
         run.set_user_id(user_id);
         let auto_confirm = self.settings_store.auto_confirm(user_id).await.unwrap_or(false);
         let max_steps = self.settings_store.max_turn_steps(user_id).await.unwrap_or(None);
-        if matches!(policy, Policy::Attended) {
+        if !matches!(policy, Policy::Subagent) {
             run.set_step_limit(max_steps);
         }
         self.run(chat_id, think, start, policy, auto_confirm, max_steps, run).await
     }
 
     /// Records how a run ended and tells whoever is watching.
-    async fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) {
+    async fn finish(&self, chat_id: i64, end: &RunEnd, run: &RunTracker) -> Option<RunEnded> {
         // Only a wait for permission keeps the turn going (its claim on the model server and its step count)
         if !matches!(end, RunEnd::WaitingForPermission) {
             self.turn.release(chat_id);
@@ -629,7 +727,7 @@ impl TurnRunner {
             // Nothing happened, so there is nothing to report
             RunEnd::NothingToDo => {
                 run.mark_ended();
-                return;
+                return None;
             }
         };
         let run = {
@@ -644,6 +742,7 @@ impl TurnRunner {
             self.plugin_events.fire(PluginEvent::RunFinished { user_id, chat_id, state: &ended }).await;
         }
         self.events.publish(ServerEvent::RunEnded { chat_id, reason, detail, started_at: run.started_at, eval_tokens: run.eval_tokens, status });
+        Some(ended)
     }
 
     /// Notes how a run ended for the chat's owner to find (`chats.unseen_end`). A run the user stopped has nothing to
@@ -760,7 +859,7 @@ impl TurnRunner {
             }
 
             let step_limit = match policy {
-                Policy::Attended => max_steps.filter(|limit| steps + 1 >= *limit),
+                Policy::Attended | Policy::Service => max_steps.filter(|limit| steps + 1 >= *limit),
                 Policy::Subagent => None,
             };
             run.set_step(steps + 1);
@@ -832,7 +931,7 @@ impl TurnRunner {
 
     /// Whether any of these calls is refused for want of a permission the user could give.
     fn needs_permission(pending: &[AgentToolCall]) -> bool {
-        pending.iter().any(|call| matches!(call.permission, AgentToolPermission::Denied { escalation: Some(_), .. }))
+        pending.iter().any(|call| call.offered_grant().is_some())
     }
 
     async fn waiting_for_permission(&self, chat_id: i64) -> Result<bool, ErrorService> {
@@ -866,17 +965,15 @@ impl TurnRunner {
         match decisions {
             Some(decisions) => {
                 for decision in decisions {
-                    let Some(AgentToolPermission::Denied { escalation: Some(grant), .. }) =
-                        views.get(decision.index).map(|view| &view.permission)
-                    else {
+                    let Some(scope) = views.get(decision.index).and_then(|view| view.offered_grant()).map(|grant| grant.scope.clone()) else {
                         continue;
                     };
                     match decision.allowance {
                         Allowance::Permanent => {
-                            self.tool_calls.allow_scope(chat_id, views[decision.index].name.clone(), grant.scope.clone()).await?;
+                            self.tool_calls.allow_scope(chat_id, views[decision.index].name.clone(), scope).await?;
                         }
                         Allowance::OnlyNow => {
-                            one_time.insert(decision.index, grant.scope.clone());
+                            one_time.insert(decision.index, scope);
                         }
                         Allowance::Deny => {}
                     }
@@ -887,11 +984,11 @@ impl TurnRunner {
                     for view in &views {
                         self.tool_calls.grant_what_is_offered(chat_id, view).await?;
                     }
-                } else if matches!(policy, Policy::Attended) {
-                    // The calls before the first one that needs permission run now, in the order they were asked,
+                } else if !matches!(policy, Policy::Subagent) {
+                    // The calls before the first one that needs the user run now, in the order they were asked,
                     // and the run waits there: pausing before them would leave them pending, and a read of the
                     // chat would take them for calls a crash had cut short
-                    stop_before = views.iter().position(|view| matches!(view.permission, AgentToolPermission::Denied { escalation: Some(_), .. }));
+                    stop_before = views.iter().position(|view| view.offered_grant().is_some());
                 }
             }
             None => {}
@@ -991,11 +1088,11 @@ impl TurnRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facade::agent::AgentScopeGrant;
+    use crate::facade::agent::{AgentScopeGrant, AgentToolPermission};
     use serde_json::json;
 
-    fn call(permission: AgentToolPermission) -> AgentToolCall {
-        AgentToolCall { permission, name: "storage.write_file".to_string(), arguments: json!({}) }
+    fn call(name: &str, permission: AgentToolPermission) -> AgentToolCall {
+        AgentToolCall { permission, name: name.to_string(), arguments: json!({}) }
     }
 
     fn denied(escalation: bool) -> AgentToolPermission {
@@ -1008,9 +1105,9 @@ mod tests {
     #[test]
     fn only_a_refusal_the_user_could_lift_makes_a_run_wait() {
         assert!(!TurnRunner::needs_permission(&[]));
-        assert!(!TurnRunner::needs_permission(&[call(AgentToolPermission::Allowed)]));
+        assert!(!TurnRunner::needs_permission(&[call("storage.write_file", AgentToolPermission::Allowed)]));
         // A hard refusal is recorded for the model, nobody is asked
-        assert!(!TurnRunner::needs_permission(&[call(denied(false))]));
-        assert!(TurnRunner::needs_permission(&[call(AgentToolPermission::Allowed), call(denied(true))]));
+        assert!(!TurnRunner::needs_permission(&[call("storage.write_file", denied(false))]));
+        assert!(TurnRunner::needs_permission(&[call("storage.write_file", AgentToolPermission::Allowed), call("storage.write_file", denied(true))]));
     }
 }

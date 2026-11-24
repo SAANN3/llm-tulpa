@@ -1,6 +1,6 @@
 import {useRef, useState} from 'react'
 
-import '../styles/folder-picker.scss'
+import '../styles/create-named-form.scss'
 import {chatName as chatNameApi} from '../api/prompts/chat-name'
 import type {ChatOut} from '../api/chats/types'
 import {Button, Div, Input, Label} from './primitives'
@@ -48,8 +48,8 @@ export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatForm
     }
 
     return (
-        <Div className="vbox folder-picker__create">
-            <Div className="folder-picker__mode">
+        <Div className="vbox create-named-form">
+            <Div className="create-named-form__mode">
                 <Button variant={mode === 'describe' ? undefined : 'secondary'} text="Describe it" onClicked={() => switchMode('describe')}/>
                 <Button variant={mode === 'name' ? undefined : 'secondary'} text="Write a name" onClicked={() => switchMode('name')}/>
             </Div>
@@ -60,7 +60,7 @@ export const CreateChatForm = ({createChat, onCreated, onCancel}: CreateChatForm
                 onChanged={setDraft}
                 placeholder={mode === 'describe' ? "What's this chat about? We'll name it." : 'Chat name'}
             />
-            {error ? <Label variant="secondary" className="folder-picker__error" text={error}/> : null}
+            {error ? <Label variant="secondary" className="create-named-form__error" text={error}/> : null}
             <PopupActions
                 emphasis="confirm"
                 confirmLabel={generating ? 'Thinking…' : 'Create'}

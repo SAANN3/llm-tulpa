@@ -9,14 +9,13 @@ use tokio::sync::{broadcast, Semaphore};
 use utoipa::ToSchema;
 
 use crate::services::{
-    chat_store::ChatStore,
+    chat_store::{ChatStore, ToolCallOut},
     error::ErrorService,
     event_bus::{EventBus, ServerEvent},
     file_store::FileStore,
     job_store::JobStore,
     llm::{LlmProviders, ThinkChoice},
     permission_store::PermissionStore,
-    preset_store::PresetStore,
     settings_store::SettingsStore,
     stt::SttService,
     tool_selection_store::ToolSelectionStore,
@@ -35,6 +34,7 @@ mod history;
 mod live;
 mod model_call;
 mod notices;
+mod pending;
 mod prompts;
 mod run_tracker;
 mod runner;
@@ -51,7 +51,9 @@ use notices::Notices;
 use tool_calls::ToolCalls;
 use suggestion::Suggestion;
 use turn::Turn;
-pub use runner::{Allowance, Decision, ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus};
+pub use pending::{AgentScopeGrant, AgentToolCall, AgentToolPermission, Allowance, Decision};
+pub use runner::{ReplySoFarOut, RunEnded, StartedTurn, TurnState, TurnStatus, Policy as RunPolicy};
+pub use run_tracker::RunHandle;
 use runner::TurnRunner;
 use model_call::ModelCall;
 pub use prompts::default_system_prompt;
@@ -111,7 +113,6 @@ impl Agent {
         permission_store: Arc<PermissionStore>,
         settings_store: Arc<SettingsStore>,
         tool_selection: Arc<ToolSelectionStore>,
-        presets: Arc<PresetStore>,
         launch: Arc<LaunchFacade>,
         plugins: Option<Arc<PluginRegistry>>,
         memory_store: Option<Arc<MemoryStore>>,
@@ -136,7 +137,7 @@ impl Agent {
                 subagents: Arc::new(SubagentHandle::new()),
             };
         let history = History::new(chat_store.clone(), settings_store.clone(), plugins, memory_store.clone());
-        let model = ModelCall::new(providers.clone(), presets, launch, context_length);
+        let model = ModelCall::new(providers.clone(), launch, context_length);
         let context = ContextReader::new(chat_store.clone(), tool_selection.clone(), tools.clone(), history.clone(), model.clone());
         let compaction = Compaction::new(
             chat_store.clone(),
@@ -149,7 +150,7 @@ impl Agent {
             OneShot::new(providers),
             plugin_events.clone(),
         );
-        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
+        let tool_calls = ToolCalls::new(chat_store.clone(), tools.clone(), tool_selection.clone(), permission_store, tool_context.clone(), model.clone(), plugin_events.clone());
         let turn = Turn::new(
             chat_store.clone(),
             tool_selection.clone(),
@@ -203,7 +204,7 @@ impl Agent {
     /// any) as a `user` message and starts a run that answers it, returning at once: the loop of model
     /// calls and tool calls goes on in the background (see `TurnRunner`). The prompt is saved before any
     /// model call, so a failed or slow one never loses what the user sent. `think` is forwarded to the
-    /// model provider as-is. Refused with 409 while the chat has a run going on.
+    /// model provider as-is. While the chat's turn is still going, the prompt waits and starts once that turn finishes.
     pub async fn start_turn(
         &self,
         chat_id: i64,
@@ -211,9 +212,10 @@ impl Agent {
         images: Vec<String>,
         file_ids: Vec<i64>,
         think: Option<ThinkChoice>,
+        policy: RunPolicy,
     ) -> Result<StartedTurn, ErrorService> {
         self.remember_think(chat_id, think.as_ref()).await;
-        self.runner.start_prompt(chat_id, prompt, images, file_ids, think).await
+        self.runner.start_prompt(chat_id, prompt, images, file_ids, think, policy).await
     }
 
     /// Keeps the level a turn was asked with on the chat, so the composer offers it again next time. Best-effort: a turn
@@ -235,13 +237,23 @@ impl Agent {
     }
 
     /// Answers the permission prompt a chat is waiting at and continues its turn in the background.
-    pub async fn answer(&self, chat_id: i64, decisions: Vec<Decision>, think: Option<ThinkChoice>) -> Result<(), ErrorService> {
-        self.runner.start_answer(chat_id, decisions, think).await
+    pub async fn answer(&self, chat_id: i64, decisions: Vec<Decision>, think: Option<ThinkChoice>, policy: RunPolicy) -> Result<RunHandle, ErrorService> {
+        self.runner.start_answer(chat_id, decisions, think, policy).await
     }
 
     /// Stops the chat's run: the model call in flight is dropped. A tool already running finishes.
-    pub fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
-        self.runner.stop(chat_id)
+    pub async fn stop(&self, chat_id: i64) -> Result<(), ErrorService> {
+        self.runner.stop(chat_id).await
+    }
+
+    /// Drops one prompt waiting behind this chat's turn.
+    pub async fn drop_queued(&self, chat_id: i64, id: i64) -> Result<(), ErrorService> {
+        self.runner.drop_queued(chat_id, id).await
+    }
+
+    /// Starts prompts that were still waiting when the process came back up.
+    pub async fn resume_queued(&self) {
+        self.runner.resume_queued().await;
     }
 
     /// Whether the chat has a run going on.
@@ -306,6 +318,40 @@ impl Agent {
         self.runner.reply_once(chat_id, prompt, images, think).await
     }
 
+    /// The same permission preview used by a model-requested tool call, without starting a turn.
+    pub async fn inspect_tool_call(
+        &self,
+        chat_id: i64,
+        name: String,
+        arguments: Value,
+        scopes: &[Value],
+    ) -> Result<AgentToolCall, ErrorService> {
+        self.tool_calls
+            .inspect_explicit(chat_id, name, arguments, scopes)
+            .await
+    }
+
+    pub async fn allow_tool_scope(
+        &self,
+        chat_id: i64,
+        name: String,
+        scope: Value,
+    ) -> Result<(), ErrorService> {
+        self.tool_calls.allow_scope(chat_id, name, scope).await
+    }
+
+    /// Records an explicit call and uses the ordinary tool pipeline; no model turn is started.
+    pub async fn call_tool(
+        &self,
+        chat_id: i64,
+        call: ToolCallOut,
+        scopes: &[Value],
+        auto_confirm: bool,
+    ) -> Result<UseToolOut, ErrorService> {
+        self.tool_calls
+            .run_explicit(chat_id, call, scopes, auto_confirm)
+            .await
+    }
     /// Makes a finished background job (or sub-agent) start a run on its chat by itself, with no browser
     /// open: its notice reaches the model and the model answers. Called once, for the agent whose chats
     /// are the users' own (the messaging plugins' agent has no tools and so no jobs).
@@ -328,42 +374,6 @@ impl Agent {
             }
         });
     }
-}
-
-/// `Agent`'s outputs (this one included) derive `Serialize` and go straight out as JSON
-/// from route handlers, unlike service-layer types — `Agent` *is* the app's public API
-/// shape already (that's what a facade is), so there's nothing upstream-specific left to
-/// strip before a route can return it, unlike `ChatMessage` et al.
-#[derive(Serialize, ToSchema)]
-pub struct AgentToolCall {
-    pub permission: AgentToolPermission,
-    pub name: String,
-    #[schema(value_type = Object)]
-    pub arguments: Value,
-}
-
-/// Facade-owned mirror of `tools::base::ToolPermission` — kept as a separate type
-/// (rather than deriving `Serialize`/`ToSchema` on the original and reusing it
-/// directly) for the same reason `ChatMessage` never goes straight out over our
-/// API: the tools layer's internal shape shouldn't be what callers of `Agent` end up
-/// depending on.
-#[derive(Serialize, ToSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum AgentToolPermission {
-    Allowed,
-    Denied {
-        reason: String,
-        escalation: Option<AgentScopeGrant>,
-    },
-}
-
-/// Facade-owned mirror of `tools::base::ScopeGrant` — see `AgentToolPermission` for
-/// why this isn't the original type reused directly.
-#[derive(Serialize, ToSchema)]
-pub struct AgentScopeGrant {
-    #[schema(value_type = Object)]
-    pub scope: Value,
-    pub ui_message: String,
 }
 
 #[derive(Serialize, ToSchema)]

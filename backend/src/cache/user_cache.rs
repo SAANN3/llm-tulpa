@@ -76,14 +76,22 @@ impl UserCacheService {
     /// A greeting for `user_id`, from cache when fresh, otherwise generated from that
     /// user's persisted name/timezone and cached.
     pub async fn greet(&self, user_id: i64) -> Result<GreetOut, ErrorService> {
+        let settings = self.settings.settings(user_id).await?;
+        if !settings.generate_greeting {
+            return Ok(GreetOut {
+                response: pick_line(&settings.static_greeting, PromptFacade::default_greetings()),
+                model: String::new(),
+                created_at: Utc::now().to_rfc3339(),
+                thinking: None,
+            });
+        }
         let slot = self.greet.slot(user_id);
         let mut cached = slot.lock().await;
         if let Some(fresh) = cached.as_ref().filter(|c| c.generated_at.elapsed() < REFRESH_INTERVAL) {
             return Ok(fresh.value.clone());
         }
 
-        let settings = self.settings.settings(user_id).await?;
-        let name = settings.name.unwrap_or_default();
+        let name = settings.name.clone().unwrap_or_default();
         let model = self.settings.effective_model(user_id).await?;
         let greet = self
             .prompt
@@ -97,6 +105,10 @@ impl UserCacheService {
     /// One randomly-picked placeholder string for `user_id`, regenerating the cached batch
     /// when stale.
     pub async fn input_examples(&self, user_id: i64) -> Result<String, ErrorService> {
+        let settings = self.settings.settings(user_id).await?;
+        if !settings.generate_placeholder {
+            return Ok(pick_line(&settings.static_placeholder, PromptFacade::default_placeholders()));
+        }
         let slot = self.input_examples.slot(user_id);
         let mut cached = slot.lock().await;
         if let Some(fresh) = cached.as_ref().filter(|c| c.generated_at.elapsed() < REFRESH_INTERVAL) {
@@ -160,4 +172,18 @@ impl UserCacheService {
             local.format("%H:%M:%S"),
         )
     }
+}
+
+/// One of the user's lines, or one of `defaults` when they have not written any.
+fn pick_line(saved: &[String], defaults: &[&str]) -> String {
+    let own: Vec<&str> = saved.iter().map(|line| line.trim()).filter(|line| !line.is_empty()).collect();
+    let pool: Vec<&str> = if own.is_empty() { defaults.to_vec() } else { own };
+    if pool.is_empty() {
+        return String::new();
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    pool[nanos as usize % pool.len()].to_string()
 }

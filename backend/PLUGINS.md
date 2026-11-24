@@ -148,3 +148,22 @@ A plugin's own instance-level routes (`Plugin::api_router()`) mount under `/api/
 An external plugin subscribes to chat and run events the same way a built-in does: `events.subscribe` from `enable`, then `on_event` for each one. The subscription ends with the process. The kinds and the payload are in [`plugin-sdk/PROTOCOL.md`](../plugin-sdk/PROTOCOL.md).
 
 Tool parameter types support nested objects and arrays through the existing parameter list. Object children carry their own names, descriptions and required flags; arrays carry one element type. See [`plugin-sdk/PROTOCOL.md`](../plugin-sdk/PROTOCOL.md) for the wire format and SDK examples.
+
+## Blueprint nodes
+
+`Plugin::blueprint_nodes` declares versioned graph actions; `execute_blueprint_node` executes one
+with its owning user/blueprint/run/node context. Native plugins use `NodeDefinition` with the
+existing `PropertyInfo`/`PropertyType` schemas. The result's `control_output` selects the next
+branch; `outputs` contains data values. NodeContext also carries execution_id and the enclosing
+repeat-scope path (loop iterations or Merge deliveries), distinguishing repeated calls of the same node within a run. `PluginRegistry` validates the complete list before
+publishing the instance and supplies the same definitions to the graph catalog, validation and
+executor. No independent plugin registry or environment handle is needed. Enable/disable/settings
+rebuilds use the existing plugin lifecycle. Node definitions remain fixed for a configured instance.
+
+External plugins expose the same hooks through the existing JSON-RPC transport and supervisor;
+see [the protocol](../plugin-sdk/PROTOCOL.md#blueprint-nodes). A process in restart is unavailable;
+its configured versioned catalog is visible again when it runs. Calls never fall back to another
+plugin/version. Input/output checking and graph traversal reuse the blueprint implementation.
+Invocation waits for all bound inputs; a skipped required source skips the node without calling its handler.
+Stop waits for the bounded call, like an explicit Tool node. Timeouts and disconnects fail the node
+without retries; a timeout does not roll back effects in an external process.

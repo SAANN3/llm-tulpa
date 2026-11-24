@@ -1,4 +1,4 @@
-import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, ReactNode, Ref, UIEvent } from 'react'
+import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent, PointerEvent, ReactNode, Ref, UIEvent } from 'react'
 
 // `variant` is forwarded as a `data-variant` attribute, not resolved to a color here — see
 // THEMING.md for where variant colors may (and may not) be defined; getting that wrong causes
@@ -32,6 +32,7 @@ export interface LabelProps {
 export interface ButtonProps {
   text?: string
   onClicked: (event: MouseEvent<HTMLButtonElement>) => void
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void
   children?: ReactNode
   disabled?: boolean
   title?: string
@@ -43,7 +44,7 @@ export interface InputProps {
   text: string
   onChanged: (text: string) => void
   placeholder?: string
-  type?: 'text' | 'password'
+  type?: 'text' | 'password' | 'number' | 'time'
   autoFocus?: boolean
   onHovered?: (hovering: boolean) => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void

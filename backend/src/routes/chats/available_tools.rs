@@ -4,18 +4,11 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::{routes::auth::AuthUser, services::error::ErrorService, state::AppState};
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct AvailableToolOut {
-    name: String,
-    /// The description the model is sent for this tool.
-    description: String,
-}
+use crate::{routes::auth::AuthUser, services::{error::ErrorService, tools::ToolCatalogEntry}, state::AppState};
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct AvailableToolsOut {
-    tools: Vec<AvailableToolOut>,
+    tools: Vec<ToolCatalogEntry>,
 }
 
 /// Every tool this user can be sent: the built-in ones and the ones their plugins have published.
@@ -35,9 +28,6 @@ pub async fn available_tools(
     let tools = state
         .tools
         .catalog(auth.id)
-        .await
-        .into_iter()
-        .map(|(name, description)| AvailableToolOut { name, description })
-        .collect();
+        .await;
     Ok(Json(AvailableToolsOut { tools }))
 }

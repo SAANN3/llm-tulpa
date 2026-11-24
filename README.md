@@ -15,6 +15,7 @@ A chat assistant that runs on your own computer and can actually do things: read
 - **A model that works with your files and your machine.** It reads and writes files, runs shell commands, downloads things and searches the web. Anything that could change or expose something asks you first (per folder for files, per site for web requests). Turn on auto-confirm in Settings when you want to let it work on its own.
 - **Setup on screen.** One command starts everything, and a setup wizard picks the right llama.cpp build for your hardware, downloads it and helps you choose a model. No config files and no `llama-server` flags.
 - **Long chats that keep working.** Old messages are folded into a summary before the model runs out of room, a run keeps going if you close the tab, and the model can hand long jobs to sub-agents or background jobs.
+- **Blueprints for work you do more than once.** Connect tools, models and other steps on a graph, run it on demand or on a schedule, and watch the results as each step finishes.
 - **Images, files and voice.** Attach images and documents, or press the microphone and talk.
 - **Plugins.** Chat with the agent from Telegram, Discord or VK, or connect an MCP server and use its tools. You can also write your own plugin in Python or Rust, as a separate program, and ask the model to install it for you ([`plugin-sdk/`](./plugin-sdk/README.md)).
 - **Several people, one machine.** The owner adds users, and everyone's chats and settings are their own.
@@ -44,6 +45,7 @@ It keeps the database, search and frontend in Docker and runs the backend with `
 |:---:|:---:|:---:|
 | <img src="./readme/home-screen.png" width="260"><br><sub>Home — a fresh chat starts with a generated greeting, and the model for it can be picked right there.</sub> | <img src="./readme/models-tab.png" width="260"><br><sub>Models — what is loaded and where it went, each model's launch profiles with Load, Test and Edit.</sub> | <img src="./readme/models-download.png" width="260"><br><sub>Download — search Hugging Face and download into your model folder; the free space is shown.</sub> |
 | <img src="./readme/chat-choose-model.png" width="260"><br><sub>Choose model — one chooser with a tab per provider, each launch profile with its settings.</sub> | <img src="./readme/settings-page.png" width="260"><br><sub>Settings — the Appearance tab: themes and animated backgrounds, with a live preview of the page.</sub> | <img src="./readme/plugins-page.png" width="260"><br><sub>Plugins — enable Telegram, Discord, or VK to talk to the agent from your own chat app, or install your own.</sub> |
+| <a href="./readme/blueprints.png"><img src="./readme/blueprints.png" alt="Blueprint editor in Rose Dusk, with agent and formatting nodes connected to HTML previews" width="260"></a><br><sub>Blueprints — connect steps on the graph, inspect a node's output and see HTML previews from the last run.</sub> | | |
 
 On a phone the same pages reflow: the sidebar slides over the page, tabs scroll sideways, and a menu or dialog stays inside the screen.
 

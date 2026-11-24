@@ -3,7 +3,10 @@
 //! calls to the process, and hands the registry proxy tools whose calls go there too. The process runs only while the plugin is
 //! switched on: `on_enabled` starts it and `on_disabled` ends it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use crate::facade::blueprint::definition::Literal;
+use crate::plugins::blueprint::{NodeContext, NodeDefinition, NodeResult, check_definitions};
+use super::blueprint::NodeSpec;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -136,7 +139,7 @@ impl PluginBuilder for ExternalPluginBuilder {
         self.supervisor.bind_tools(env.tools.clone());
         self.supervisor.bind_events(env.events.clone());
         let link = Link { label: format!("{}/{}", self.manifest.name, self.manifest.subname), supervisor: self.supervisor.clone() };
-        Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: RwLock::new(Arc::new(vec![])), data_dir: env.data_dir.clone() }))
+        Ok(Arc::new(ExternalPlugin { manifest: self.manifest.clone(), link, settings, tools: RwLock::new(Arc::new(vec![])), nodes: RwLock::new(vec![]), data_dir: env.data_dir.clone() }))
     }
 }
 
@@ -186,6 +189,7 @@ pub struct ExternalPlugin {
     /// `configure`; the registry reads them once the plugin is on, and again to take them out when it goes off, so they stay
     /// after it.
     tools: RwLock<Arc<Vec<ToolSpec>>>,
+    nodes: RwLock<Vec<NodeDefinition>>,
     data_dir: PathBuf,
 }
 
@@ -199,6 +203,12 @@ impl ExternalPlugin {
             None => vec![],
         };
         check_tools(&tools).map_err(|why| PluginError::FailedUnknown(format!("the plugin {}: {why}", link.label)))?;
+        let nodes = link.call_optional("blueprint_nodes", json!({}), DEFAULT_CALL_TIMEOUT).await?
+            .map(serde_json::from_value::<Vec<NodeSpec>>).transpose()
+            .map_err(|e| PluginError::InvalidState(format!("invalid blueprint node list: {e}")))?.unwrap_or_default();
+        let nodes = nodes.into_iter().map(NodeSpec::checked).collect::<Result<Vec<_>, _>>()?;
+        check_definitions(&nodes).map_err(PluginError::InvalidState)?;
+        *self.nodes.write().unwrap() = nodes;
         *self.tools.write().unwrap() = Arc::new(tools);
         link.call_optional("enable", json!({}), ENABLE_TIMEOUT).await?;
         Ok(())
@@ -207,6 +217,18 @@ impl ExternalPlugin {
 
 #[async_trait]
 impl Plugin for ExternalPlugin {
+    fn blueprint_nodes(&self) -> Vec<NodeDefinition> {
+        if self.link.supervisor.state() != State::Running { return vec![]; }
+        self.nodes.read().unwrap().clone()
+    }
+
+    async fn execute_blueprint_node(&self, node_type: &str, version: u32, arguments: BTreeMap<String, Literal>, ctx: NodeContext) -> Result<NodeResult, PluginError> {
+        let timeout = self.nodes.read().unwrap().iter().find(|n| n.node_type == node_type && n.version == version)
+            .map(|n| Duration::from_secs(n.timeout_s)).ok_or_else(|| PluginError::NotFound("node/version is unavailable".into()))?;
+        let result = self.link.supervisor.call("execute_blueprint_node", json!({"node_type": node_type, "version": version, "arguments": arguments, "ctx": ctx}), timeout).await.map_err(|e| self.link.error(e, timeout))?;
+        serde_json::from_value(result).map_err(|e| PluginError::FailedUnknown(format!("invalid blueprint node result: {e}")))
+    }
+
     fn plugin_name(&self) -> &str {
         &self.manifest.name
     }

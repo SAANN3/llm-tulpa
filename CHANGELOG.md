@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-11-24
+### Added
+- Blueprints. Build a workflow in a visual editor by wiring tools, one-shot model calls and agent chats together with conditions, loops and variables. Variables can stay within one run or persist across runs of the same blueprint. Run it by hand, at an interval or at a set time each day. Each user has one queue for their blueprints, with controls to reorder waiting runs, cancel them or stop the current run. The graph shows which step is running and what it produced, including text and HTML previews. History keeps the graph and results from each run, with links to the chats created by Agent nodes. Python and Rust plugins can add their own nodes.
+- A message typed while a chat is still working waits in line instead of being refused. The waiting lines sit above the message box, four at a time, and a long one is cut off. Each can be removed, Stop drops the whole line, and another tab or phone shows the same list. The queue is kept in the database: after the backend starts again it sends the oldest waiting message in each chat. A turn that was already running when the backend stopped is not continued. Schema version 34 adds `queued_prompts`.
+- The home page greeting and the suggestion in the empty box can be a line you write, instead of one the model writes. Settings → Appearance has a switch for each. Off, one line from the list below is picked at random on each visit; an empty list, or Use defaults, uses the ten built-in lines. A switch saves at once, and the list saves when you leave the field. Schema version 34 adds the columns on `user_settings`.
+- The message box keeps what you were writing, including attached files, when you leave the page or switch chats, until it is sent or the chat is deleted. It stays in that browser only.
+- The model can ask the user a question (`ui.ask_question`): two to six options and an optional typed answer. The call returns once the question is on screen. Several questions since your last message are answered one at a time above the composer, and the picks go out together as your next message. A sub-agent is not offered the tool.
+
+### Changed
+- A request that sends no tools at all (an empty whitelist, or a blacklist that leaves none) uses the short built-in system prompt and skips the notes request, the same as an empty whitelist already did. The built-in tools prompt, and the Skills and MCP plugin prompt sections, no longer name individual tools: the definitions on that request are the set.
+
+### Fixed
+- A cancelled llama.cpp model switch no longer leaves a stale request in the runtime queue that can block later model loads.
+- llama.cpp thinking levels are read from the model's chat template declarations, including the map used by Inkling. The model menu offers the declared levels and requests send values the template accepts.
+- The local development frontend can send `PUT` requests to the backend.
+
 ## [0.4.0] - 2026-11-04
 ### Added
 - A choice of which tools a chat sends. Settings → Behaviour → Tools in new chats (`/settings/tools`) is the default a new chat copies: blacklist (every tool except the ones switched off; the default, and an empty list sends every tool, including one a plugin adds later) or whitelist (only the ones switched on; none on means no tools). Tools are grouped by domain, a domain switch turns its tools all off when any is on and all on when none is, and domains fold (open to start). The chat's menu → Chat info → Tools is that chat's own choice, saved with the page's Save; Reset copies the user's default. On the home page the model menu's Tools item (under a Tools heading, at the top) sets the choice for the chat about to start; leaving it alone copies the default. A run that is going refuses the change. `GET /api/chats/available_tools` lists the tools; `GET` and `POST /api/settings/tools` and `/api/chats/tools` read and replace a selection (`mode` and `tools`). Schema version 27 adds `tool_mode` on chats and user settings and the `tool_names` table, and drops `tools_enabled` and `use_tools`. A chat or user that had tools off becomes an empty whitelist; everyone else an empty blacklist.

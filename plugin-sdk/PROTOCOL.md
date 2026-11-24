@@ -125,6 +125,8 @@ A failing `check` does not stop a new plugin from being installed: it is recorde
 | `configure` | `{settings}` | `null` |
 | `tools` | none | a list of tool specs (below) |
 | `call_tool` | `{tool, args, ctx}` | the tool's result, any JSON |
+| `blueprint_nodes` | none | versioned node specs (below), or method not found |
+| `execute_blueprint_node` | `{node_type, version, arguments, ctx}` | `{control_output, outputs}` (below) |
 | `enable` / `disable` | none | `null` |
 | `on_event` | one event, below | `null` |
 | `prompt_section` | `{user_id, tools}` | a string, or `null` for nothing |
@@ -268,3 +270,64 @@ A failed call answers with a JSON-RPC `error`: `{code, message}`. `message` is w
 ## Versioning
 
 `protocol = 1`. Adding an optional field is not a version change. Removing a field or changing what one means is, and a plugin that speaks a protocol the backend does not is refused with that said.
+
+## Blueprint nodes
+
+A plugin may declare graph nodes independently of its model tools. The optional host-to-plugin
+`blueprint_nodes` call follows `configure` and returns the complete list for this configured
+instance; method-not-found means an empty list. The whole list is checked before the plugin is
+published as enabled. Settings changes use the existing disable/configure/enable lifecycle.
+These definitions are global; every execution carries the owning user, whose data alone it uses.
+Per-user dynamic tools remain available through the existing Tool node.
+
+```json
+[{"node_type":"greet","version":1,"title":"Greeting","description":"Formats a greeting.",
+  "inputs":[{"name":"name","type":"string","description":"Who to greet","required":true}],
+  "outputs":[{"name":"text","type":"string","description":"Greeting","required":true}],
+  "control_outputs":["out"],"timeout_s":30}]
+```
+
+Inputs/outputs use the existing recursive parameter schema from Tool spec, including arrays and
+objects. Input names and output names are separate namespaces, as are control outputs. Names
+must be nonempty ASCII identifiers (letters, digits, `_`, `-`, `.`), at most 128 bytes; each
+list has at most 128 unique entries. A plugin declares at most 128 definitions, uniquely keyed
+by `(node_type, version)` with positive version. Titles are nonempty and at most 160 bytes;
+descriptions at most 8192 bytes. `timeout_s` defaults to 30 and must be 1–3600.
+
+The backend adds the plugin identity from its manifest. A node in a workflow refers to the exact
+`(plugin_name, plugin_subname, node_type, version)`; another plugin or version is never a fallback.
+Bump the node version when changing its schema/meaning. Definitions are immutable for a
+configured instance; after a process restart the SDK also rejects an undeclared node/version.
+
+`execute_blueprint_node` receives:
+
+```json
+{"node_type":"greet","version":1,"arguments":{"name":"Alice"},
+ "ctx":{"user_id":7,"blueprint_id":12,"run_id":40,"node_id":"greeting",
+        "execution_id":9,"iteration":[{"node_id":"loop","index":2}]}}
+```
+
+`execution_id` is unique within this run for each attempted node execution. `iteration` is an
+outer-to-inner list of enclosing repeat node ids and zero-based indices, empty outside repeat scopes.
+A step identifies a loop iteration or Merge delivery; Merge indices count successful deliveries
+across the run, including when that Merge is inside a loop.
+Both SDKs default missing execution_id/iteration to 0/empty for older hosts. Use the run and
+execution identities to distinguish repeated calls; node_id alone does not identify an invocation.
+
+The host invokes a node only after control activation and all bound data sources are ready,
+including nested input bindings. A skipped required source skips that invocation. This waiting
+uses the existing run/iteration identity and does not call the plugin with incomplete arguments.
+
+It returns `{"control_output":"out","outputs":{"text":"Hello, Alice!"}}`. Arguments are resolved by the
+existing graph bindings and checked against inputs; output fields and types are checked against
+outputs. No undeclared top-level argument/output is accepted. Choose exactly one declared control
+output; use `control_output: null` only if no control outputs were declared. Data outputs do not schedule a
+node. Each control output may connect to several sequential branches through the normal runner.
+A call's resolved inputs/results have the existing 1 MiB limit; persisted run state is 4 MiB.
+
+These are explicit graph actions, like Tool nodes, not model-selected calls. Stop waits for the
+current bounded call and then stops the graph. There is no cancellation RPC, automatic retry or
+rollback of side effects. A timeout/disconnect fails the node; timeout does not prove that external
+side effects stopped. Use background-job facilities for work that should outlive a bounded call.
+Disabling/unloading removes nodes from the catalog; a process being restarted has no available
+nodes until it runs again. Queued workflows retain their exact identity and fail if it is unavailable.

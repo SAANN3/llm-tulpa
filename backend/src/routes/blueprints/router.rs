@@ -1,0 +1,66 @@
+use super::{
+    answer, cancel_queued, catalog, clear_queue, create, delete, get as read, history, list, queue, reorder, run, start,
+    stop, update, validate, variables, reset_variables,
+};
+use crate::state::AppState;
+use axum::{
+    Router,
+    routing::{get, post},
+};
+use std::sync::Arc;
+use utoipa::OpenApi;
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/{id}/variables", get(variables::variables).delete(reset_variables::reset_variables))
+        .route("/{id}/runs/{run_id}/answer", post(answer::answer))
+        .route("/{id}/runs", get(history::history).post(start::start))
+        .route("/{id}/runs/{run_id}", get(run::get_run))
+        .route(
+            "/queue",
+            get(queue::queue)
+                .put(reorder::reorder)
+                .delete(clear_queue::clear_queue),
+        )
+        .route("/queue/stop", post(stop::stop))
+        .route("/queue/{run_id}", axum::routing::delete(cancel_queued::cancel_queued))
+        .route("/catalog", get(catalog::catalog))
+        .route("/validate", post(validate::validate))
+        .route("/", get(list::list).post(create::create))
+        .route(
+            "/{id}",
+            get(read::get).put(update::update).delete(delete::delete),
+        )
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        variables::variables,
+        reset_variables::reset_variables,
+        answer::answer,
+        start::start,
+        run::get_run,
+        history::history,
+        queue::queue,
+        reorder::reorder,
+        clear_queue::clear_queue,
+        cancel_queued::cancel_queued,
+        stop::stop,
+        catalog::catalog,
+        validate::validate,
+        create::create,
+        read::get,
+        list::list,
+        update::update,
+        delete::delete
+    ),
+    components(schemas(
+        read::BlueprintOut,
+        read::BlueprintDocumentOut,
+        create::CreateBlueprintIn,
+        update::UpdateBlueprintIn,
+        list::BlueprintListOut
+    ))
+)]
+pub struct ApiDoc;

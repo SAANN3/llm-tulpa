@@ -85,6 +85,16 @@ export interface TurnState {
     call: CallStatus | null
     /** The lists of steps of the work going on (a compaction, a plan), oldest first; the `run_steps` events replace them */
     steps: StepList[]
+    /** Prompts sent while this turn was still going, oldest first. Each starts once the turn finishes. */
+    queued: QueuedMessage[]
+}
+
+/** One prompt waiting behind the current turn. `images` is how many pictures are attached; the bytes are not in this poll. */
+export interface QueuedMessage {
+    id: number
+    prompt: string
+    images: number
+    file_ids: number[]
 }
 
 /** What a model call is for: the reply, or one of the three a compaction makes */
@@ -151,8 +161,10 @@ export interface ReplySoFar {
 
 /** Returned by `startTurn`: the run goes on in the background. */
 export interface StartTurnOut {
-    /** The id the user's own message was stored under. */
-    user_message_id: number
+    /** The id the user's own message was stored under. Null while `queued`: it is stored when its run starts. */
+    user_message_id: number | null
+    /** The turn was still going, so this prompt waits and starts on its own afterwards. */
+    queued: boolean
 }
 
 /** A chat with a run going on, from `GET /api/agent/runs` */

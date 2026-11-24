@@ -14,6 +14,7 @@
   },
   "searxng_url": "http://localhost:8090",
   "files_dir": null,
+  "blueprints_dir": null,
   "jobs_dir": null,
   "stt_dir": null,
   "plugins_dir": null,

@@ -37,7 +37,7 @@ impl Tool for RunAgentTool {
 
     fn description(&self) -> &str {
         "Hands a task to a sub-agent: a separate assistant with a fresh conversation of its own, the \
-         same tools you have (except this one and the background-job tools) and the permissions this \
+         same tools you have (except this one, asking the user a question, and the background-job tools) and the permissions this \
          chat has been given so far, which works on the task and reports back one result. Its work never \
          enters this conversation, so use it for a task that would take many tool calls whose \
          intermediate output you won't need afterwards — finding something across a large codebase, \

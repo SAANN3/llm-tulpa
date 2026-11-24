@@ -1,0 +1,29 @@
+@use 'tokens' as *;
+
+.create-named-form__mode {
+  display: flex;
+  gap: $space-2;
+  width: 100%;
+  box-sizing: border-box;
+
+  > button {
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  // A choice group draws its own dividers between the cells
+  &[data-choice-group] {
+    gap: 0;
+  }
+}
+
+.create-named-form__error {
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.create-named-form {
+  gap: $space-3;
+}

@@ -30,3 +30,45 @@ Write a function in `run_scenarios.py` with `@scenario`: `script(...)` the repli
 then check `messages(chat)`, `state(chat)` and `calls()` (what the fake was sent: kind `main`, `memory`, `summary`, `facts` or `notes`, whether it carried
 tools, the messages). A reply item is documented in the header of `fake_llama.py`; `match` ties a reply to a request by its system message, so a
 parent chat and its sub-agent can share one script.
+
+
+`blueprint_tools_use_shared_permissions_without_model_calls` also drives explicit Tool nodes:
+default approval, manual scopes/denial, stop during a permission wait, service-chat visibility and
+output bindings. It asserts that these nodes make no model calls. It uses only temporary files.
+
+`blueprint_generate_binds_text_and_cancels_without_a_chat` checks a single tool-free completion,
+text output bindings, model/sampling/effort parameters, provider errors and output limits,
+unexpected tool calls, cancellation and queue continuation without creating a chat.
+
+`blueprint_agent_uses_the_turn_runner_reuses_chat_and_obeys_permissions` drives Agent nodes
+through ordinary tool rounds, fresh/reused hidden chats, model switching, manual decisions,
+stopping waits/generation and mandatory compaction with notes/memory writes disabled.
+
+`stop_closes_a_permission_wait_without_running_the_tool` checks ordinary chat Stop during a
+permission pause, pending-call cleanup and continuing that chat without replaying the cancelled write.
+
+`blueprint_schedules_use_the_queue_and_record_readiness_failures` checks interval ticks, disabling,
+manual starts, immutable workflow content and failed readiness without model calls.
+
+`blueprint_plugin_nodes_use_both_sdks_and_existing_graph_bindings` uses the two hello examples
+to check exact versions, input/output references, enabling/disabling and tool-free graph execution.
+
+`blueprint_variables_are_run_local_and_operations_use_typed_values` checks ordered assignments,
+live variable reads versus stored output snapshots, fresh defaults on each run, static errors,
+formatting and all arithmetic/boolean/list operations without model requests.
+
+`blueprint_loops_repeat_scoped_bodies_and_preserve_variables` checks While/ForEach, zero iterations,
+exact iteration limits, snapshot lists, current variables, repeated execution identities/progress
+and static rejection of escaping body results and back edges.
+
+`blueprint_persistent_variables_are_scoped_and_committed_with_nodes` checks blueprint-scoped
+values across queued runs, independent run-local defaults and other blueprints, failed runs,
+type changes, revision-checked resets and Stop before assignment without model requests.
+
+`blueprint_nodes_wait_for_all_inputs_and_keep_iteration_results` checks four-source readiness,
+branch order, nested array/object bindings, skipped consumers, delayed variable declarations,
+parked loop bodies, final loop-header results and rejection of circular or cross-iteration inputs.
+
+`blueprint_merge_delivers_each_input_without_overwriting_active_results` checks ordered deliveries,
+parked continuations, inactive alternatives, typed objects/binding maps/paths, repeated loop
+inputs, nested Merge scopes and rejection of escaping results or implicit control convergence.

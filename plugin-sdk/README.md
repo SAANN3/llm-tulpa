@@ -54,3 +54,16 @@ Param::array("rows", ParamType::Object { properties: vec![
 ```
 
 Use `ParamType::Array { items: Box::new(element_type) }` for a nested array. Primitive `Param::array` calls retain their wire format. Code constructing the former unit variants `ParamType::Array` or `ParamType::Object` must provide their contents; use an empty property list for an opaque object.
+
+### Blueprint nodes
+
+`NodeResult` contains `control_output` (the selected branch) and `outputs` (data values).
+Both SDKs expose `NodeSpec`, `NodeContext`, `NodeResult` and the hooks `blueprint_nodes` /
+`execute_blueprint_node`. Declarations reuse `Param` schemas, and executions carry the owning
+user and graph run. Both hello-world examples declare the same `greet` node. See
+[the versioned node contract](PROTOCOL.md#blueprint-nodes).
+
+Blueprint `NodeContext.execution_id` distinguishes invocations within a run; `iteration` contains
+`NodeIteration(node_id, index)` entries from outermost to innermost repeat scope: loop iterations
+or Merge deliveries. Merge indices count deliveries across this run. An empty path means the node
+is outside a repeat scope. The same node can execute several times within one run.

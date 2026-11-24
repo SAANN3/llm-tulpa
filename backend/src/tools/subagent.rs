@@ -7,6 +7,7 @@ use super::llm::{return_agent::ReturnAgentTool, run_agent::RunAgentTool};
 use super::os::{
     job_kill::JobKillTool, job_output::JobOutputTool, list_jobs::ListJobsTool, start_job::StartJobTool,
 };
+use super::ui::ask_question::AskQuestionTool;
 
 /// Background-job tools a sub-agent doesn't get. A run ends when the sub-agent stops calling
 /// tools, and the last thing it wrote is taken as its answer — so a sub-agent that started a job
@@ -21,6 +22,7 @@ pub fn available_to(name: &str, is_subagent: bool) -> bool {
     match name {
         RunAgentTool::NAME => !is_subagent,
         ReturnAgentTool::NAME => is_subagent,
+        AskQuestionTool::NAME => !is_subagent,
         _ if JOB_TOOLS.contains(&name) => !is_subagent,
         _ => true,
     }

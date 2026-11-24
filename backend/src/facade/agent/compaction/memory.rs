@@ -119,6 +119,9 @@ impl Compaction {
                 return Ok(Asked::Not("not asked in a messaging plugin's chat"));
             };
             let chat = self.chat_store.chat(chat_id).await?;
+            if chat.agent_policy.as_ref().is_some_and(|p| !p.write_memory) {
+                return Ok(Asked::Not("memory writing is disabled for this chat"));
+            }
             if chat.parent_chat_id.is_some() {
                 // A sub-agent works for the chat that handed it a task; what it learns about the user is that chat's business
                 return Ok(Asked::Not("a sub-agent's chat"));
@@ -136,8 +139,9 @@ impl Compaction {
             let mut params = self.model.params(&chat).await?;
             params.max_reply_tokens = Some(MAX_REPLY_TOKENS);
             // The tools the live request sends, whatever the chat: the prompt has to be the same one the server holds
-            let (names, has_tools) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
+            let (names, _) = self.tool_selection.listed(chat.id, chat.tool_mode).await?;
             let tools_snapshot = Turn::tools_for(&chat, &names, self.tools.snapshot_tools(chat.user_id).await);
+            let has_tools = !tools_snapshot.is_empty();
             let tools: Vec<&dyn Tool> = tools_snapshot.iter().map(|t| t.as_ref()).collect();
             let mut history = self.history.for_chat(chat_id, has_tools).await?;
             let system_prompt = self.history.system_prompt(&chat, &mut history, has_tools).await?;
